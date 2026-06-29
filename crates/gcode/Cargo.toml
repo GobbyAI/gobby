@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "1.3.11"
+version = "1.3.12"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]

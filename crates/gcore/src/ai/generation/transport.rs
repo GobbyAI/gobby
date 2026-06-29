@@ -219,10 +219,28 @@ pub struct DaemonAgenticResult {
     pub usage: Option<TokenUsage>,
 }
 
+/// Caller-declared description of the agent's investigation surface on the
+/// daemon `tool_chat` route. gcore stays generic over *what* the agent does:
+/// the caller (codewiki, gwiki) names the executable family and the exact
+/// subcommands it may run. `cli` selects the family (`"gcode"`/`"gwiki"`),
+/// `tools` lists the exposed subcommands, and `allow_mutation` gates mutating
+/// subcommands — a read-only caller leaves it `false`. The daemon validates
+/// these against its own whitelist before executing any tool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolPolicy {
+    /// Executable family the daemon runs (`"gcode"` or `"gwiki"`).
+    pub cli: String,
+    /// Whitelisted subcommands the agent may invoke.
+    pub tools: Vec<String>,
+    /// Whether mutating subcommands are permitted (read-only callers: `false`).
+    pub allow_mutation: bool,
+}
+
 /// One-shot daemon-side agentic narrative generation. POSTs the system+user
-/// `messages` plus the feature `profile` and absolute `project_path` to the
-/// daemon's `/api/llm/chat/completions` endpoint; the daemon runs its own agent
-/// loop over the repo and returns the finished narrative. A single POST — no
+/// `messages` plus the feature `profile`, absolute `project_path`, and the
+/// caller's `tool_policy` to the daemon's `/api/llm/chat/completions` endpoint;
+/// the daemon runs its own agent loop over the repo (executing only the
+/// whitelisted tools) and returns the finished narrative. A single POST — no
 /// `tools`/`tool_choice`/`model` are sent and the response is never re-prompted
 /// (it carries the final answer and `investigation` provenance, not `tool_calls`
 /// to execute locally). Token auth, retry, and the `ToolChat` timeout match
@@ -231,6 +249,7 @@ pub fn daemon_agentic_chat(
     context: &AiContext,
     profile: &str,
     project_path: &str,
+    tool_policy: &ToolPolicy,
     messages: &[ChatMessage],
     max_turns: Option<usize>,
     reasoning_effort: Option<&str>,
@@ -242,6 +261,7 @@ pub fn daemon_agentic_chat(
         profile,
         context.project_id.as_deref(),
         project_path,
+        tool_policy,
         messages,
         max_turns,
         reasoning_effort,
@@ -267,13 +287,15 @@ pub fn daemon_agentic_chat(
 
 /// Build the daemon agentic-chat body: the system+user `messages`, the feature
 /// `profile`, the active `project_id`, the absolute `project_path` the daemon
-/// investigates, and optional `max_turns`/`reasoning_effort`. No
-/// `tools`/`tool_choice`/`model` — the daemon owns its own agent tools and
-/// provider/model selection.
+/// investigates, the caller's `tool_policy` (the daemon builds the executable
+/// tools from it and enforces its own whitelist), and optional
+/// `max_turns`/`reasoning_effort`. No `tools`/`tool_choice`/`model` — the daemon
+/// owns its provider/model selection and builds the tools from the policy.
 pub(crate) fn build_daemon_agentic_body(
     profile: &str,
     project_id: Option<&str>,
     project_path: &str,
+    tool_policy: &ToolPolicy,
     messages: &[ChatMessage],
     max_turns: Option<usize>,
     reasoning_effort: Option<&str>,
@@ -284,11 +306,31 @@ pub(crate) fn build_daemon_agentic_body(
     insert_trimmed(&mut body, "profile", Some(profile));
     insert_trimmed(&mut body, "project_id", project_id);
     insert_trimmed(&mut body, "project_path", Some(project_path));
+    body.insert("tool_policy".to_string(), tool_policy_to_json(tool_policy));
     if let Some(max_turns) = max_turns {
         body.insert("max_turns".to_string(), Value::from(max_turns));
     }
     insert_trimmed(&mut body, "reasoning_effort", reasoning_effort);
     Value::Object(body)
+}
+
+/// Serialize a [`ToolPolicy`] into the daemon's `{cli, tools, allow_mutation}`
+/// shape. The daemon rejects an empty `tools` list and validates each subcommand
+/// against its read-only whitelist before executing it.
+fn tool_policy_to_json(policy: &ToolPolicy) -> Value {
+    let tools: Vec<Value> = policy
+        .tools
+        .iter()
+        .map(|tool| Value::String(tool.clone()))
+        .collect();
+    let mut object = Map::new();
+    object.insert("cli".to_string(), Value::String(policy.cli.clone()));
+    object.insert("tools".to_string(), Value::Array(tools));
+    object.insert(
+        "allow_mutation".to_string(),
+        Value::Bool(policy.allow_mutation),
+    );
+    Value::Object(object)
 }
 
 /// Parse the daemon agentic-chat response into a [`DaemonAgenticResult`]:

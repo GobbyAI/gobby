@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use gobby_core::ai::generation::{
     ChatMessage, ChatTransport, DaemonAgenticResult, DirectChatTransport, DirectGenerationTarget,
-    GenerationTier, StopReason, ToolLoopLimits, ToolLoopOutcome, daemon_agentic_chat,
+    GenerationTier, StopReason, ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat,
     generate_one_shot, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{
@@ -24,6 +24,43 @@ use crate::{db, secrets};
 /// Backoff between generation attempts; the array length bounds the retries.
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
     [Duration::from_millis(200), Duration::from_millis(500)];
+
+/// Read-only gcode subcommands the daemon's Lane B agent may invoke while
+/// investigating the repo. The daemon validates this list against its own
+/// read-only whitelist (`gobby.ai._tool_chat_tools`); codewiki declares the
+/// full read surface and never permits mutation — gcode itself writes the page.
+const CODEWIKI_READONLY_GCODE_TOOLS: &[&str] = &[
+    "search",
+    "search-symbol",
+    "search-text",
+    "search-content",
+    "grep",
+    "outline",
+    "symbol",
+    "symbols",
+    "symbol-at",
+    "repo-outline",
+    "tree",
+    "kinds",
+    "callers",
+    "usages",
+    "imports",
+    "path",
+    "blast-radius",
+];
+
+/// The read-only gcode investigation policy codewiki hands the daemon: the agent
+/// may read the index via [`CODEWIKI_READONLY_GCODE_TOOLS`] but never mutate it.
+fn codewiki_readonly_tool_policy() -> ToolPolicy {
+    ToolPolicy {
+        cli: "gcode".to_string(),
+        tools: CODEWIKI_READONLY_GCODE_TOOLS
+            .iter()
+            .map(|tool| (*tool).to_string())
+            .collect(),
+        allow_mutation: false,
+    }
+}
 
 pub(crate) struct ResolvedTextGenerator {
     pub(crate) generator: Option<Box<TextGenerator<'static>>>,
@@ -929,10 +966,12 @@ pub(crate) fn resolve_tool_loop_generator(
                     ChatMessage::user(bounded_prompt.clone()),
                 ];
                 let binding = ai_context.binding(AiCapability::ToolChat);
+                let tool_policy = codewiki_readonly_tool_policy();
                 match daemon_agentic_chat(
                     &ai_context,
                     &profile,
                     &project_path,
+                    &tool_policy,
                     &messages,
                     Some(60),
                     binding.reasoning_effort.as_deref(),
@@ -1110,6 +1149,25 @@ mod tests {
     fn bound_seed_prompt_passes_small_prompts_through() {
         let prompt = "short seed";
         assert_eq!(bound_seed_prompt(prompt), prompt);
+    }
+
+    #[test]
+    fn codewiki_tool_policy_is_read_only_gcode() {
+        let policy = codewiki_readonly_tool_policy();
+        // codewiki investigates the gcode index but never mutates it — gcode
+        // itself writes the page, so the daemon agent gets a read-only surface.
+        assert_eq!(policy.cli, "gcode");
+        assert!(!policy.allow_mutation);
+        assert!(policy.tools.contains(&"search".to_string()));
+        assert!(policy.tools.contains(&"outline".to_string()));
+        assert!(policy.tools.contains(&"blast-radius".to_string()));
+        // No mutating subcommand may leak into the read-only investigation set.
+        for forbidden in ["index", "codewiki", "graph", "vector", "setup", "prune"] {
+            assert!(
+                !policy.tools.iter().any(|tool| tool == forbidden),
+                "read-only policy must not expose the mutating `{forbidden}` subcommand",
+            );
+        }
     }
 
     #[test]

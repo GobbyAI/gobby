@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::tool_loop::{MAX_FORCED_INVESTIGATION_RETRIES, run_tool_loop_with_clock};
 use super::transport::{
-    build_daemon_chat_body, build_request_body, daemon_agentic_chat, parse_completion,
+    ToolPolicy, build_daemon_chat_body, build_request_body, daemon_agentic_chat, parse_completion,
 };
 use super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
@@ -1184,10 +1184,16 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
         ChatMessage::user("Write the architecture page for crates/foo."),
     ];
 
+    let tool_policy = ToolPolicy {
+        cli: "gcode".to_string(),
+        tools: vec!["search".to_string(), "outline".to_string()],
+        allow_mutation: false,
+    };
     let result = daemon_agentic_chat(
         &context,
         "feature_high",
         "/abs/repo",
+        &tool_policy,
         &messages,
         Some(60),
         Some("high"),
@@ -1212,7 +1218,14 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
         body["messages"][1]["content"],
         "Write the architecture page for crates/foo."
     );
-    // Daemon-side agentic: no tool-call passthrough, no pinned model.
+    // The caller's read-only policy reaches the daemon, which builds the tools
+    // from it (the daemon route REQUIRES tool_policy).
+    assert_eq!(body["tool_policy"]["cli"], "gcode");
+    assert_eq!(body["tool_policy"]["tools"][0], "search");
+    assert_eq!(body["tool_policy"]["tools"][1], "outline");
+    assert_eq!(body["tool_policy"]["allow_mutation"], false);
+    // Daemon-side agentic: no raw tool-call passthrough, no pinned model — the
+    // daemon owns tool-schema construction and provider/model selection.
     assert!(body.get("tools").is_none());
     assert!(body.get("tool_choice").is_none());
     assert!(body.get("model").is_none());
@@ -1239,12 +1252,29 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
     let context = daemon_agentic_context(None);
     let messages = vec![ChatMessage::user("seed")];
 
-    let result = daemon_agentic_chat(&context, "feature_high", "/abs/repo", &messages, None, None)
-        .expect("agentic chat succeeds");
+    let tool_policy = ToolPolicy {
+        cli: "gcode".to_string(),
+        tools: vec!["search".to_string()],
+        allow_mutation: false,
+    };
+    let result = daemon_agentic_chat(
+        &context,
+        "feature_high",
+        "/abs/repo",
+        &tool_policy,
+        &messages,
+        None,
+        None,
+    )
+    .expect("agentic chat succeeds");
 
     let raw = handle.join().unwrap().unwrap();
     let body = request_body_json(&raw);
     assert_eq!(body["project_path"], "/abs/repo");
+    // The policy is always present even when optional fields are omitted.
+    assert_eq!(body["tool_policy"]["cli"], "gcode");
+    assert_eq!(body["tool_policy"]["tools"][0], "search");
+    assert_eq!(body["tool_policy"]["allow_mutation"], false);
     assert!(body.get("project_id").is_none());
     assert!(body.get("max_turns").is_none());
     assert!(body.get("reasoning_effort").is_none());
