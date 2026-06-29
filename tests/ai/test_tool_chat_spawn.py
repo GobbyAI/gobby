@@ -211,3 +211,25 @@ async def test_codex_adapter_rejects_mutation_under_readonly_policy() -> None:
 
     with pytest.raises(ToolPolicyError):
         await adapter.chat(request, _binding())
+
+
+async def test_codex_adapter_hard_fails_on_empty_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_run(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+    ) -> str:
+        # Agent ran but produced no final message: leave last-message.txt absent.
+        return ""
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    adapter = CodexSpawnToolChatAdapter(command_path="codex")
+
+    # No silent blank "completed" result — hard-fail so the caller surfaces it.
+    with pytest.raises(RuntimeError, match="no final message"):
+        await adapter.chat(_request(), _binding())

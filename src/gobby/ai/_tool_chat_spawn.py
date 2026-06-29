@@ -236,6 +236,14 @@ class CodexSpawnToolChatAdapter:
             )
             text = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
             tool_use_count, tools = count_tool_calls(log_path)
+        if not text:
+            # Hard-fail on an empty narrative rather than returning a silent
+            # blank "completed" result — the caller (e.g. codewiki) must surface
+            # a distinct failure, never a skeleton. No fallback.
+            raise RuntimeError(
+                "Codex tool_chat produced no final message "
+                f"(model={model}, tool_use_count={tool_use_count})"
+            )
         return ToolChatResult(
             text=text,
             provider=binding.provider,
