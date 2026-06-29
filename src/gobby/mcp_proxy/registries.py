@@ -242,6 +242,18 @@ def setup_internal_registries(
     manager.add_registry(wiki_registry)
     logger.debug("Wiki registry initialized")
 
+    # Initialize code-index registry — read-only gcode investigation tools so
+    # spawned Family B tool_chat agents (droid/grok/qwen/codex) can search the
+    # index via the gobby MCP (progressive discovery + call_tool) without shell.
+    from gobby.mcp_proxy.tools.code_index import create_index_registry
+
+    index_registry = create_index_registry(
+        db=db,
+        default_project_id=project_id,
+    )
+    manager.add_registry(index_registry)
+    logger.debug("Code index registry initialized")
+
     # Initialize metrics registry if metrics_manager is available
     if metrics_manager is not None:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
