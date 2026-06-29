@@ -475,6 +475,7 @@ _TOOL_CHAT_EXECUTABLE_STYLES: frozenset[AIAdapterStyle] = frozenset(
         AIAdapterStyle.LLM_PROVIDER,
         AIAdapterStyle.OPENAI_COMPATIBLE,
         AIAdapterStyle.LOCAL,
+        AIAdapterStyle.DAEMON,
     }
 )
 

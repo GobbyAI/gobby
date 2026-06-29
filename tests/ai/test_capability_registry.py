@@ -308,17 +308,15 @@ def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
         provider_installed=lambda _entry: True,
     )
 
-    # codex maps to the daemon style, whose tool_chat adapter is not built yet:
-    # the binding exists (visible in status) but is unavailable and filtered out
-    # of selection — no silent fallback to another provider.
+    # codex maps to the daemon style, whose tool_chat adapter
+    # (CodexSpawnToolChatAdapter — ``codex exec`` driving a read-only gcode shim)
+    # is built: the binding is available, tool-capable, and selectable.
     codex = registry.binding(AICapability.TOOL_CHAT, "codex")
     assert codex is not None
     assert codex.adapter_style == AIAdapterStyle.DAEMON
-    assert codex.available is False
-    assert codex.metadata["supports_tools"] is False
-
-    with pytest.raises(CapabilityUnavailableError):
-        registry.select(AICapability.TOOL_CHAT, provider="codex")
+    assert codex.available is True
+    assert codex.metadata["supports_tools"] is True
+    assert registry.select(AICapability.TOOL_CHAT, provider="codex") is codex
 
     # tool_chat is agentic, so it classifies transports like vision_extract,
     # NOT text_generate: grok/qwen are ACP clients and droid is a CLI agent.
