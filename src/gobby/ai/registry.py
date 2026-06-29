@@ -38,6 +38,7 @@ class AICapability(StrEnum):
     AUDIO_TRANSLATE = "audio_translate"
     VISION_EXTRACT = "vision_extract"
     TEXT_GENERATE = "text_generate"
+    TOOL_CHAT = "tool_chat"
     AGENT_SPAWN = "agent_spawn"
     WEB_CHAT = "web_chat"
 

@@ -46,6 +46,7 @@ def build_daemon_ai_capability_registry(
         _embedding_binding(config),
     ]
     bindings.extend(_local_text_generate_endpoint_bindings(config, feature_models_by_provider))
+    bindings.extend(_local_tool_chat_endpoint_bindings(config, feature_models_by_provider))
     bindings.extend(_local_vision_extract_endpoint_bindings(config, feature_models_by_provider))
     bindings.extend(_audio_bindings(config, whisper_runtime_available))
 
@@ -58,6 +59,14 @@ def build_daemon_ai_capability_registry(
         )
         if text_binding is not None:
             bindings.append(text_binding)
+        tool_chat_binding = _tool_chat_binding(
+            entry,
+            installed,
+            feature_models_by_provider,
+            provider_install_probe_ttl_seconds,
+        )
+        if tool_chat_binding is not None:
+            bindings.append(tool_chat_binding)
         if entry.provider == "agy":
             continue
         vision_binding = _vision_extract_binding(
@@ -456,6 +465,103 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
     if provider in {"agy", "droid", "grok", "qwen"}:
         return AIAdapterStyle.CLI
     return None
+
+
+# Adapter styles whose tool_chat adapter is implemented today. A binding for any
+# other style is registered as unavailable so it is excluded from tool_chat
+# selection yet still visible in /api/llm/status.
+_TOOL_CHAT_EXECUTABLE_STYLES: frozenset[AIAdapterStyle] = frozenset(
+    {
+        AIAdapterStyle.LLM_PROVIDER,
+        AIAdapterStyle.OPENAI_COMPATIBLE,
+        AIAdapterStyle.LOCAL,
+    }
+)
+
+
+def _tool_chat_adapter_style(provider: str) -> AIAdapterStyle | None:
+    if provider == "claude":
+        return AIAdapterStyle.LLM_PROVIDER
+    if provider == "codex":
+        return AIAdapterStyle.DAEMON
+    if provider in {"agy", "droid", "grok", "qwen"}:
+        return AIAdapterStyle.CLI
+    return None
+
+
+def _tool_chat_binding(
+    entry: ProviderMetadata,
+    provider_installed: Callable[[ProviderMetadata], bool],
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
+    provider_install_probe_ttl_seconds: float,
+) -> CapabilityBinding | None:
+    adapter_style = _tool_chat_adapter_style(entry.provider)
+    if adapter_style is None:
+        return None
+
+    metadata = _metadata_for_generation_binding(entry)
+    if entry.provider == "agy":
+        models = tuple(AGY_MODELS)
+        metadata["model_catalog_source"] = "agy-1.0.10-static"
+        strict_models = True
+    else:
+        models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
+        strict_models = False
+
+    if adapter_style not in _TOOL_CHAT_EXECUTABLE_STYLES:
+        metadata["supports_tools"] = False
+        return CapabilityBinding.unavailable(
+            AICapability.TOOL_CHAT,
+            entry.provider,
+            adapter_style=adapter_style,
+            reason=f"tool_chat is not yet available for adapter style '{adapter_style.value}'.",
+            models=models,
+            metadata=metadata,
+        )
+
+    metadata["supports_tools"] = True
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=AICapability.TOOL_CHAT,
+        provider=entry.provider,
+        adapter_style=adapter_style,
+        available=installed,
+        reason=f"{entry.display_name} CLI is not installed.",
+        models=models,
+        strict_models=strict_models,
+        metadata=metadata,
+        availability_probe=partial(provider_installed, entry),
+        availability_probe_ttl_seconds=provider_install_probe_ttl_seconds,
+    )
+
+
+def _local_tool_chat_endpoint_bindings(
+    config: DaemonConfig | None,
+    feature_models_by_provider: Mapping[str, tuple[str, ...]],
+) -> tuple[CapabilityBinding, ...]:
+    if config is None:
+        return ()
+    endpoints = config.ai.generation.local.endpoints
+    bindings: list[CapabilityBinding] = []
+    for name, endpoint in endpoints.items():
+        provider = local_endpoint_provider(name)
+        models = _local_endpoint_models(provider, endpoint.model, feature_models_by_provider)
+        bindings.append(
+            CapabilityBinding(
+                capability=AICapability.TOOL_CHAT,
+                provider=provider,
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=models,
+                metadata={
+                    "display_name": f"Local ({name})",
+                    "api_base": endpoint.api_base,
+                    "endpoint": name,
+                    "supports_tools": True,
+                },
+            )
+        )
+    return tuple(bindings)
 
 
 def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:

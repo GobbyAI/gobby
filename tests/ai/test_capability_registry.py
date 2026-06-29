@@ -266,6 +266,67 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     )
 
 
+def test_daemon_registry_registers_tool_chat_capability_per_style() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        endpoints={
+                            "lm-studio": {
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "gemma",
+                            },
+                        }
+                    )
+                )
+            ),
+        ),
+        provider_installed=lambda _entry: True,
+    )
+
+    # The llm_provider family (claude) is tool-capable today: available, with
+    # the dispatch style recorded and a supports_tools flag for the filter.
+    claude = registry.binding(AICapability.TOOL_CHAT, "claude")
+    assert claude is not None
+    assert claude.adapter_style == AIAdapterStyle.LLM_PROVIDER
+    assert claude.available is True
+    assert claude.metadata["supports_tools"] is True
+    assert registry.select(AICapability.TOOL_CHAT, provider="claude") is claude
+
+    # An openai_compatible local endpoint is tool-capable via the daemon loop.
+    lm_studio = registry.binding(AICapability.TOOL_CHAT, "local:lm-studio")
+    assert lm_studio is not None
+    assert lm_studio.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
+    assert lm_studio.available is True
+    assert lm_studio.metadata["supports_tools"] is True
+
+
+def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=lambda _entry: True,
+    )
+
+    # codex maps to the daemon style, whose tool_chat adapter is not built yet:
+    # the binding exists (visible in status) but is unavailable and filtered out
+    # of selection — no silent fallback to another provider.
+    codex = registry.binding(AICapability.TOOL_CHAT, "codex")
+    assert codex is not None
+    assert codex.adapter_style == AIAdapterStyle.DAEMON
+    assert codex.available is False
+    assert codex.metadata["supports_tools"] is False
+
+    with pytest.raises(CapabilityUnavailableError):
+        registry.select(AICapability.TOOL_CHAT, provider="codex")
+
+    # The capability is surfaced in status (a backward-compatible addition).
+    status = registry.status(AICapability.TOOL_CHAT)
+    assert status.capability == AICapability.TOOL_CHAT
+    providers = {binding.provider for binding in status.bindings}
+    assert {"claude", "codex"}.issubset(providers)
+
+
 def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),
