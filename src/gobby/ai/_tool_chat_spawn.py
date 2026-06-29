@@ -11,7 +11,9 @@ narrative. The daemon never runs the agent's loop.
 * **codex** — ``codex exec --sandbox workspace-write`` (Seatbelt on macOS).
 * **droid** — ``droid exec`` default read-only autonomy.
 * **grok** — ``grok --single --sandbox workspace``.
-* **qwen** — ``qwen --sandbox`` (Seatbelt ``permissive-open``).
+* **qwen** — ``qwen --sandbox`` (Seatbelt ``gobby-open``, a custom profile
+  written to the neutral cwd's ``.qwen/`` to work around a path-resolution
+  bug in qwen-code 0.19.x).
 
 The agent runs in a neutral temp working directory (never the target repo),
 so the target repo is byte-identical after a run. ``gcode`` reads the Postgres
@@ -34,6 +36,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from gobby.ai._text_generation_adapters import (
     _droid_isolated_env,
@@ -74,6 +77,66 @@ _DROID_DISABLED_TOOLS: tuple[str, ...] = (
 # workspace`` profile confines writes to the neutral temp cwd; these disabled
 # tools are defense-in-depth on top of the sandbox.
 _GROK_DISABLED_TOOLS = "Edit,Write,MultiEdit,NotebookEdit,Agent,Task"
+
+# Custom seatbelt profile name for the Qwen adapter.  The qwen-code package
+# (0.19.x) has a path-resolution bug: ``new URL('sandbox-macos-${profile}.sb',
+# import.meta.url)`` in ``chunks/gemini-NDTG7WAX.js`` resolves relative to the
+# chunk file inside ``chunks/``, but the ``.sb`` files live in the package
+# root — one directory up.  Builtin profile names trigger this broken path.
+# Custom (non-builtin) names fall back to ``path.join(".qwen",
+# "sandbox-macos-<name>.sb")`` relative to the cwd, which we can satisfy by
+# writing the profile into the neutral temp working directory.
+_QWEN_SEATBELT_PROFILE_NAME = "gobby-open"
+
+# Permissive-open seatbelt profile content (mirrors qwen-code's
+# ``sandbox-macos-permissive-open.sb``).  Allows all operations by default
+# except file writes, which are restricted to the sandbox-parameter paths
+# (TARGET_DIR, TMP_DIR, QWEN_DIR, etc.).  These parameters are injected by
+# qwen-code via ``sandbox-exec -D``.
+_QWEN_SEATBELT_PROFILE_CONTENT = """\
+(version 1)
+
+;; allow everything by default
+(allow default)
+
+;; deny all writes EXCEPT under specific paths
+(deny file-write*)
+(allow file-write*
+    (subpath (param "TARGET_DIR"))
+    (subpath (param "TMP_DIR"))
+    (subpath (param "CACHE_DIR"))
+    (subpath (param "QWEN_DIR"))
+    (subpath (param "RUNTIME_DIR"))
+    (subpath (string-append (param "HOME_DIR") "/.npm"))
+    (subpath (string-append (param "HOME_DIR") "/.cache"))
+    (subpath (string-append (param "HOME_DIR") "/.gitconfig"))
+    ;; Allow writes to included directories from --include-directories
+    (subpath (param "INCLUDE_DIR_0"))
+    (subpath (param "INCLUDE_DIR_1"))
+    (subpath (param "INCLUDE_DIR_2"))
+    (subpath (param "INCLUDE_DIR_3"))
+    (subpath (param "INCLUDE_DIR_4"))
+    (literal "/dev/stdout")
+    (literal "/dev/stderr")
+    (literal "/dev/null")
+    (literal "/dev/ptmx")
+    (regex #"^/dev/ttys[0-9]*$")
+)
+"""
+
+
+def _prepare_qwen_sandbox_profile(work_dir: Path) -> None:
+    """Write the seatbelt profile into ``<work_dir>/.qwen/`` for the qwen sandbox.
+
+    The qwen-code sandbox initializer looks for custom (non-builtin) profile
+    files at ``path.join(".qwen", "sandbox-macos-<name>.sb")`` relative to the
+    cwd.  We write the permissive-open profile content there so the sandbox
+    activates correctly despite the upstream path-resolution bug.
+    """
+    qwen_dir = work_dir / ".qwen"
+    qwen_dir.mkdir(parents=True, exist_ok=True)
+    profile_path = qwen_dir / f"sandbox-macos-{_QWEN_SEATBELT_PROFILE_NAME}.sb"
+    profile_path.write_text(_QWEN_SEATBELT_PROFILE_CONTENT, encoding="utf-8")
 
 
 def compose_gcode_direct_prompt(request: ToolChatRequest) -> str:
@@ -169,6 +232,87 @@ def parse_qwen_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
             if isinstance(result, str) and result.strip():
                 final_text = result
     return final_text.strip(), total, breakdown
+
+
+def _resolve_grok_session_dir(session_id: str, work_dir: Path) -> Path | None:
+    """Resolve the grok session directory for a given session ID and cwd.
+
+    Grok stores sessions under ``~/.grok/sessions/<url-encoded-cwd>/<session-id>/``.
+    The cwd is URL-encoded with ``/`` -> ``%2F`` (i.e. ``quote(path, safe='')``).
+    Falls back to a recursive glob under ``~/.grok/sessions/`` if the computed
+    path does not exist (handles edge cases where grok resolves symlinks
+    differently).
+    """
+    sessions_root = Path.home() / ".grok" / "sessions"
+    encoded_cwd = quote(str(work_dir), safe="")
+    direct = sessions_root / encoded_cwd / session_id
+    if direct.is_dir():
+        return direct
+    # Fallback: search by session ID across all encoded-cwd directories.
+    for candidate in sessions_root.rglob(session_id):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def parse_grok_session_signals(session_dir: Path) -> tuple[int, dict[str, int]]:
+    """Extract (tool_call_count, per_tool_breakdown) from a grok session directory.
+
+    Reads ``signals.json`` for the total ``toolCallCount`` and ``updates.jsonl``
+    for per-tool breakdown (counting ``sessionUpdate == "tool_call"`` events by
+    ``title``).  Falls back to ``(0, {})`` if neither file is available.
+    """
+    total = 0
+    breakdown: dict[str, int] = {}
+
+    # Primary source: updates.jsonl has per-tool-call records.
+    updates_path = session_dir / "updates.jsonl"
+    if updates_path.exists():
+        for raw in updates_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("method") != "session/update":
+                continue
+            params = event.get("params")
+            if not isinstance(params, dict):
+                continue
+            update = params.get("update")
+            if not isinstance(update, dict):
+                continue
+            if update.get("sessionUpdate") != "tool_call":
+                continue
+            title = str(update.get("title") or "tool")
+            total += 1
+            breakdown[title] = breakdown.get(title, 0) + 1
+        if total > 0:
+            return total, breakdown
+
+    # Fallback: signals.json has the aggregate count but no per-tool counts.
+    signals_path = session_dir / "signals.json"
+    if signals_path.exists():
+        try:
+            signals = json.loads(signals_path.read_text(encoding="utf-8"))
+            if isinstance(signals, dict):
+                count = signals.get("toolCallCount")
+                if isinstance(count, int) and count > 0:
+                    tools_used = signals.get("toolsUsed")
+                    if isinstance(tools_used, list):
+                        # Without per-tool counts from updates.jsonl, distribute
+                        # the total evenly as a best-effort approximation.
+                        for tool_name in tools_used:
+                            breakdown[str(tool_name)] = breakdown.get(str(tool_name), 0) + 1
+                    return count, breakdown
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return 0, {}
 
 
 class CodexSpawnToolChatAdapter:
@@ -392,8 +536,9 @@ class GrokSpawnToolChatAdapter:
     execution, and mutating built-in tools disabled. Grok runs its own agentic
     loop, investigates by running ``gcode`` via shell, and emits the final
     narrative as a single JSON object on stdout (``--output-format json``).
-    Tool-call counts are not available from the json output (known limitation:
-    ``streaming-json`` hangs in non-PTY context).
+    Tool-call provenance is extracted from the persisted session directory
+    (``signals.json`` and ``updates.jsonl``) after the run completes, since the
+    CLI output formats do not include tool-call events.
     """
 
     def __init__(
@@ -449,21 +594,32 @@ class GrokSpawnToolChatAdapter:
                 env_overrides={},
             )
         text = ""
+        session_id = ""
         try:
             result = json.loads(stdout)
             if isinstance(result, dict):
                 text = (result.get("text") or "").strip()
+                sid = result.get("sessionId")
+                if isinstance(sid, str):
+                    session_id = sid
         except (json.JSONDecodeError, TypeError):
             pass
         if not text:
             raise RuntimeError(f"Grok tool_chat produced no final message (model={model})")
+        # Extract tool-call provenance from the persisted session directory.
+        tool_use_count = 0
+        tools: dict[str, int] = {}
+        if session_id:
+            session_dir = _resolve_grok_session_dir(session_id, work)
+            if session_dir is not None:
+                tool_use_count, tools = parse_grok_session_signals(session_dir)
         return ToolChatResult(
             text=text,
             provider=binding.provider,
             model=model,
-            tool_use_count=0,
-            turns=0,
-            tools={},
+            tool_use_count=tool_use_count,
+            turns=tool_use_count,
+            tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
         )
@@ -479,6 +635,13 @@ class QwenSpawnToolChatAdapter:
     from the daemon's configured local endpoints (same pattern as the
     text_generate Qwen adapter). The agent runs ``gcode`` via shell in the
     sandbox.
+
+    A custom seatbelt profile (``gobby-open``) is written into the neutral temp
+    working directory's ``.qwen/`` folder before spawning.  This works around a
+    path-resolution bug in qwen-code 0.19.x where builtin profile names resolve
+    the ``.sb`` file relative to the bundled chunk directory instead of the
+    package root.  Custom profile names use a cwd-relative fallback path that we
+    can satisfy.
     """
 
     def __init__(
@@ -536,7 +699,10 @@ class QwenSpawnToolChatAdapter:
         validate_policy(request.tool_policy)
         model = request.model or next(iter(binding.models), None)
         command = self._build_command(request, model=model)
-        env: dict[str, str] = {"QWEN_CODE_SUPPRESS_YOLO_WARNING": "1"}
+        env: dict[str, str] = {
+            "QWEN_CODE_SUPPRESS_YOLO_WARNING": "1",
+            "SEATBELT_PROFILE": _QWEN_SEATBELT_PROFILE_NAME,
+        }
         endpoint = self._select_endpoint(model)
         if endpoint is not None:
             env["OPENAI_API_KEY"] = endpoint.api_key or "not-needed"
@@ -544,6 +710,7 @@ class QwenSpawnToolChatAdapter:
             env["OPENAI_MODEL"] = endpoint.model
         with tempfile.TemporaryDirectory(prefix="tool-chat-qwen-") as work_str:
             work = Path(work_str)
+            _prepare_qwen_sandbox_profile(work)
             stdout = await _run_cli_text_generation_command(
                 "Qwen tool_chat",
                 command,

@@ -7,8 +7,10 @@ external spawn stubbed out.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -24,6 +26,7 @@ from gobby.ai._tool_chat_spawn import (
     compose_gcode_direct_prompt,
     parse_codex_stream,
     parse_droid_stream,
+    parse_grok_session_signals,
     parse_qwen_stream,
 )
 from gobby.ai._tool_chat_tools import ToolPolicyError
@@ -183,6 +186,125 @@ def test_parse_qwen_stream_skips_non_json_lines() -> None:
 
     assert text == ""
     assert total == 0
+
+
+# --- Grok session signals parser -------------------------------------------
+
+
+def test_parse_grok_session_signals_extracts_tool_counts_from_updates(
+    tmp_path: Path,
+) -> None:
+    """updates.jsonl is the primary source: counts tool_call events by title."""
+    updates = "\n".join(
+        [
+            json.dumps(
+                {
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": "c1",
+                            "title": "run_terminal_command",
+                        },
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": "c1",
+                            "status": "completed",
+                        },
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": "c2",
+                            "title": "read_file",
+                        },
+                    },
+                }
+            ),
+        ]
+    )
+    (tmp_path / "updates.jsonl").write_text(updates, encoding="utf-8")
+
+    total, breakdown = parse_grok_session_signals(tmp_path)
+
+    assert total == 2
+    assert breakdown == {"run_terminal_command": 1, "read_file": 1}
+
+
+def test_parse_grok_session_signals_falls_back_to_signals_json(
+    tmp_path: Path,
+) -> None:
+    """When updates.jsonl has no tool_call events, signals.json provides the total."""
+    (tmp_path / "updates.jsonl").write_text(
+        json.dumps({"method": "session/update", "params": {"update": {"sessionUpdate": "text"}}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "signals.json").write_text(
+        json.dumps({"toolCallCount": 3, "toolsUsed": ["run_terminal_command", "read_file"]}),
+        encoding="utf-8",
+    )
+
+    total, breakdown = parse_grok_session_signals(tmp_path)
+
+    assert total == 3
+    assert "run_terminal_command" in breakdown
+    assert "read_file" in breakdown
+
+
+def test_parse_grok_session_signals_returns_zeros_when_files_missing(
+    tmp_path: Path,
+) -> None:
+    total, breakdown = parse_grok_session_signals(tmp_path)
+
+    assert total == 0
+    assert breakdown == {}
+
+
+def test_resolve_grok_session_dir_finds_by_encoded_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """_resolve_grok_session_dir locates the session dir via URL-encoded cwd."""
+    fake_home = tmp_path / "fake-home"
+    sessions_root = fake_home / ".grok" / "sessions"
+    work_dir = Path("/var/folders/test/tool-chat-grok-abc")
+    encoded = quote(str(work_dir), safe="")
+    session_dir = sessions_root / encoded / "session-123"
+    session_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    from gobby.ai._tool_chat_spawn import _resolve_grok_session_dir
+
+    result = _resolve_grok_session_dir("session-123", work_dir)
+
+    assert result == session_dir
+
+
+def test_resolve_grok_session_dir_returns_none_when_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    from gobby.ai._tool_chat_spawn import _resolve_grok_session_dir
+
+    result = _resolve_grok_session_dir("nonexistent", Path("/nonexistent/cwd"))
+
+    assert result is None
 
 
 # --- Codex adapter ---------------------------------------------------------
@@ -436,6 +558,8 @@ async def test_grok_adapter_captures_narrative_from_json(
         return '{"text":"## Auth\\n\\nNarrative citing src/auth.rs:10.","stopReason":"EndTurn"}'
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    # No sessionId in output -> no session dir lookup -> tool_use_count stays 0.
+    monkeypatch.setattr(spawn, "_resolve_grok_session_dir", lambda sid, wd: None)
     adapter = GrokSpawnToolChatAdapter(command_path="grok")
 
     result = await adapter.chat(_request(), _grok_binding())
@@ -443,6 +567,79 @@ async def test_grok_adapter_captures_narrative_from_json(
     assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
     assert result.provider == "grok"
     assert result.stop_reason == "completed"
+    # Graceful degradation: no session dir -> zero tool counts.
+    assert result.tool_use_count == 0
+    assert result.tools == {}
+
+
+async def test_grok_adapter_extracts_tool_counts_from_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When the JSON output includes sessionId, tool counts come from the session dir."""
+    session_id = "session-abc-123"
+    fake_session = tmp_path / "session-dir"
+    fake_session.mkdir()
+    (fake_session / "updates.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "method": "session/update",
+                        "params": {
+                            "update": {
+                                "sessionUpdate": "tool_call",
+                                "title": "run_terminal_command",
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "method": "session/update",
+                        "params": {
+                            "update": {
+                                "sessionUpdate": "tool_call",
+                                "title": "run_terminal_command",
+                            },
+                        },
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_run(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+    ) -> str:
+        return json.dumps(
+            {
+                "text": "## Auth\n\nNarrative citing src/auth.rs:10.",
+                "stopReason": "EndTurn",
+                "sessionId": session_id,
+            }
+        )
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    monkeypatch.setattr(
+        spawn,
+        "_resolve_grok_session_dir",
+        lambda sid, wd: fake_session if sid == session_id else None,
+    )
+    adapter = GrokSpawnToolChatAdapter(command_path="grok")
+
+    result = await adapter.chat(_request(), _grok_binding())
+
+    assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
+    assert result.tool_use_count == 2
+    assert result.tools == {"run_terminal_command": 2}
+    assert result.turns == 2
 
 
 async def test_grok_adapter_hard_fails_on_empty_output(
@@ -498,6 +695,7 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
             '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10."}',
         ]
     )
+    captured: dict[str, object] = {}
 
     async def fake_run(
         provider_name: str,
@@ -507,7 +705,15 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
         timeout_seconds: float,
         env_overrides: dict[str, str],
     ) -> str:
+        captured["env"] = env_overrides
         assert env_overrides.get("QWEN_CODE_SUPPRESS_YOLO_WARNING") == "1"
+        assert env_overrides.get("SEATBELT_PROFILE") == "gobby-open"
+        # Verify the seatbelt profile was written before the temp dir is cleaned up.
+        profile_path = neutral_cwd / ".qwen" / "sandbox-macos-gobby-open.sb"
+        assert profile_path.exists(), f"Seatbelt profile not found at {profile_path}"
+        content = profile_path.read_text(encoding="utf-8")
+        assert "(version 1)" in content
+        assert "file-write*" in content
         return qwen_stream
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
@@ -539,6 +745,21 @@ async def test_qwen_adapter_hard_fails_on_empty_output(
 
     with pytest.raises(RuntimeError, match="no final message"):
         await adapter.chat(_request(), _qwen_binding())
+
+
+def test_prepare_qwen_sandbox_profile_writes_correct_file(tmp_path: Path) -> None:
+    """The seatbelt profile file is written to .qwen/ with the right name and content."""
+    from gobby.ai._tool_chat_spawn import _QWEN_SEATBELT_PROFILE_NAME, _prepare_qwen_sandbox_profile
+
+    _prepare_qwen_sandbox_profile(tmp_path)
+
+    profile_path = tmp_path / ".qwen" / f"sandbox-macos-{_QWEN_SEATBELT_PROFILE_NAME}.sb"
+    assert profile_path.exists()
+    content = profile_path.read_text(encoding="utf-8")
+    assert "(version 1)" in content
+    assert "(allow default)" in content
+    assert "(deny file-write*)" in content
+    assert "TARGET_DIR" in content
 
 
 # --- ACP composite adapter -------------------------------------------------
