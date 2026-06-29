@@ -28,7 +28,6 @@ PANE_OWNER_COMMAND_SOURCES = {
     "droid": "droid",
     "grok": "grok",
     "qwen": "qwen",
-    "gemini": "gemini",
     "agy": "agy",
     "claude": "claude",
 }
