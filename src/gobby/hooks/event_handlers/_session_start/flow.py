@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from collections.abc import Mapping
 from typing import Any, cast
@@ -22,6 +23,15 @@ from .types import AgentActivationResult
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
+TMUX_COMMAND_TIMEOUT_SECONDS = 1.0
+PANE_OWNER_COMMAND_SOURCES = {
+    "droid": "droid",
+    "grok": "grok",
+    "qwen": "qwen",
+    "gemini": "gemini",
+    "agy": "agy",
+    "claude": "claude",
+}
 
 
 def _compat_module() -> Any:
@@ -154,6 +164,55 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
+def _source_for_pane_command(command: str) -> str | None:
+    normalized = command.strip().lower()
+    if not normalized:
+        return None
+    if normalized.startswith("codex"):
+        return "codex"
+    return PANE_OWNER_COMMAND_SOURCES.get(normalized)
+
+
+def _tmux_pane_current_command(terminal_context: dict[str, Any] | None) -> str | None:
+    if not terminal_context:
+        return None
+    pane_id = terminal_context.get("tmux_pane")
+    if not isinstance(pane_id, str) or not pane_id:
+        return None
+
+    command = ["tmux"]
+    socket_path = terminal_context.get("tmux_socket_path")
+    if isinstance(socket_path, str) and socket_path:
+        command.extend(["-S", socket_path])
+    command.extend(["display-message", "-p", "-t", pane_id, "#{pane_current_command}"])
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    pane_command = result.stdout.strip()
+    return pane_command or None
+
+
+def _session_start_is_nested_cli_child(
+    cli_source: str,
+    terminal_context: dict[str, Any] | None,
+) -> bool:
+    pane_command = _tmux_pane_current_command(terminal_context)
+    if pane_command is None:
+        return False
+    owner_source = _source_for_pane_command(pane_command)
+    return owner_source is not None and owner_source != cli_source
+
+
 def _expire_stale_terminal_sessions_for_context(
     handler: Any,
     *,
@@ -254,6 +313,16 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             },
         )
         return HookResponse()
+    if _session_start_is_nested_cli_child(cli_source, terminal_context):
+        handler.logger.info(
+            "Skipping session registration for nested CLI child process",
+            extra={
+                "cli": cli_source,
+                "external_id": external_id,
+                "tmux_pane": terminal_context.get("tmux_pane") if terminal_context else None,
+            },
+        )
+        return HookResponse(decision="allow")
     gobby_session_id_from_env = (
         terminal_context.get("gobby_session_id") if terminal_context else None
     )

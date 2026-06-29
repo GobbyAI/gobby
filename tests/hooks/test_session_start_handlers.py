@@ -837,6 +837,37 @@ class TestSessionStartNewSession:
             call_kwargs[1].get("parent_session_id") is None if call_kwargs[1] else True
         )
 
+    def test_nested_grok_session_in_droid_pane_is_not_registered(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        mock_dependencies["session_storage"].get.return_value = None
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="grok-child-session",
+            source="grok",
+            data={
+                "source": "startup",
+                "cwd": "/some/dir",
+                "terminal_context": {
+                    "tmux_pane": "%75",
+                    "tmux_socket_path": "/private/tmp/tmux-501/default",
+                },
+            },
+            metadata={},
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.flow.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="droid\n"),
+        ) as mock_run:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_run.assert_called_once()
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        mock_dependencies["session_storage"].find_parent.assert_not_called()
+
     def test_blank_external_id_returns_allow_without_registration(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
