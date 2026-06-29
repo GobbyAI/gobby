@@ -1345,3 +1345,72 @@ def test_strip_leading_preamble_drops_non_markdown_prefix() -> None:
 
     no_heading = "   Just prose, no heading.   "
     assert _strip_leading_preamble(no_heading) == "Just prose, no heading."
+
+
+def test_augment_system_prompt_with_code_index_gates_on_index(tmp_path: Path) -> None:
+    """_augment_system_prompt_with_code_index gates skill injection on the index marker."""
+    # No .gobby/project.json -> not a gcode-indexed repo -> prompt unchanged.
+    assert llm_module._augment_system_prompt_with_code_index("base", str(tmp_path)) == "base"
+
+    # Mark the dir as a Gobby project (carries a gcode index).
+    (tmp_path / ".gobby").mkdir()
+    (tmp_path / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
+
+    augmented = llm_module._augment_system_prompt_with_code_index("base", str(tmp_path))
+    assert augmented is not None
+    assert augmented.startswith("base")
+    assert "gcode" in augmented
+    # The bundled code-index skill content is appended verbatim.
+    assert "gcode outline" in augmented
+
+
+def test_augment_system_prompt_with_code_index_handles_missing_system_prompt(
+    tmp_path: Path,
+) -> None:
+    """A None/blank base prompt still yields the standalone skill on an indexed repo."""
+    (tmp_path / ".gobby").mkdir()
+    (tmp_path / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
+
+    augmented = llm_module._augment_system_prompt_with_code_index(None, str(tmp_path))
+    assert augmented is not None
+    assert "gcode" in augmented
+
+
+def test_chat_completions_injects_code_index_skill_for_indexed_repo(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The route teaches the agent to use gcode when project_path is indexed."""
+    (tmp_path / ".gobby").mkdir()
+    (tmp_path / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
+
+    result = SimpleNamespace(
+        text="## Overview\n\nGrounded narrative.",
+        model="opus",
+        tool_use_count=3,
+        turns=4,
+        tools={"Bash": 2, "Read": 1},
+        usage=None,
+        applied_reasoning_effort=None,
+    )
+    provider = _FakeAgenticProvider(result)
+    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+
+    response = client.post(
+        "/api/llm/chat/completions",
+        json={
+            "messages": [
+                {"role": "system", "content": "Base system prompt."},
+                {"role": "user", "content": "Document the auth module."},
+            ],
+            "project_path": str(tmp_path),
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(provider.calls) == 1
+    system_prompt = provider.calls[0]["system_prompt"]
+    assert isinstance(system_prompt, str)
+    assert system_prompt.startswith("Base system prompt.")
+    assert "gcode" in system_prompt

@@ -8,6 +8,7 @@ import os
 import stat
 import tempfile
 import time
+from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
@@ -133,6 +134,51 @@ def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
     return system_prompt, user_prompt
 
 
+@lru_cache(maxsize=1)
+def _code_index_skill_text() -> str:
+    """Return the bundled code-index skill that teaches agents to use ``gcode``."""
+    import gobby
+
+    skill_path = (
+        Path(gobby.__file__).resolve().parent
+        / "install"
+        / "shared"
+        / "skills"
+        / "code-index"
+        / "SKILL.md"
+    )
+    try:
+        return skill_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _augment_system_prompt_with_code_index(
+    system_prompt: str | None, project_path: str
+) -> str | None:
+    """Append the code-index skill when ``project_path`` is a gcode-indexed repo.
+
+    The agentic investigation runs with ``cwd=project_path``; when that repo is a
+    Gobby project (has ``.gobby/project.json``) it carries a ``gcode`` index, so
+    we teach the agent to investigate via ``gcode`` (AST-grounded, cheap) instead
+    of broad file reads. Non-indexed callers are left untouched so we never point
+    an agent at an index that does not exist.
+    """
+    if not (Path(project_path) / ".gobby" / "project.json").is_file():
+        return system_prompt
+    skill = _code_index_skill_text()
+    if not skill:
+        return system_prompt
+    guidance = (
+        "This repository is indexed by `gcode` (on your PATH). Prefer `gcode` for "
+        "code investigation over reading whole files — it is AST-grounded and "
+        "far cheaper. Follow this skill:\n\n" + skill
+    )
+    if system_prompt and system_prompt.strip():
+        return f"{system_prompt}\n\n{guidance}"
+    return guidance
+
+
 def _build_agentic_provider(config: Any) -> Any:
     """Construct the Claude provider used for agentic narrative generation.
 
@@ -204,10 +250,11 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
     async def chat_completions(payload: ChatCompletionsPayload) -> Any:
         """Run daemon-side agentic narrative generation via the Claude Agent SDK.
 
-        The Claude provider investigates ``project_path`` with read-only tools
-        (Read/Grep/Glob) over many turns, then returns a grounded Markdown
-        narrative shaped like an OpenAI chat completion plus an ``investigation``
-        provenance block.
+        The Claude provider investigates ``project_path`` over many turns —
+        driving the project's ``gcode`` code index via Bash (per the bundled
+        code-index skill) alongside Read/Grep/Glob — then returns a grounded
+        Markdown narrative shaped like an OpenAI chat completion plus an
+        ``investigation`` provenance block.
         """
         config = server.config
         if config is None:
@@ -218,6 +265,9 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         max_turns = _clamp_agentic_turns(payload.max_turns)
         try:
             system_prompt, user_prompt = _split_chat_messages(payload.messages)
+            system_prompt = _augment_system_prompt_with_code_index(
+                system_prompt, payload.project_path
+            )
             provider = _build_agentic_provider(config)
             result = await provider.generate_agentic(
                 system_prompt=system_prompt,

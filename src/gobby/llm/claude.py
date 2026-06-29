@@ -589,13 +589,14 @@ class ClaudeLLMProvider:
         model: str | None = None,
         max_turns: int = 60,
         reasoning_effort: str | None = None,
-        allowed_tools: Sequence[str] = ("Read", "Grep", "Glob"),
+        allowed_tools: Sequence[str] = ("Read", "Grep", "Glob", "Bash"),
         caller: str | None = None,
     ) -> AgenticGenerationResult:
         """Run a tool-enabled agentic investigation and return a grounded narrative.
 
         Unlike :meth:`generate_text` (single-turn, tools disabled, neutral cwd),
-        this enables read-only investigation tools, points ``cwd`` at the project
+        this enables investigation tools (including ``Bash`` so the agent can
+        drive the project's ``gcode`` code index), points ``cwd`` at the project
         repository, and grants a high ``max_turns`` so the model can explore the
         code before producing a grounded Markdown page with file citations.
 
@@ -676,9 +677,7 @@ class ClaudeLLMProvider:
             return result_text
 
         operation = f"generate_agentic[{caller}]" if caller else "generate_agentic"
-        raw_text: str = await self._execute_sdk_query(
-            operation, _run_query, options, max_retries=1
-        )
+        raw_text: str = await self._execute_sdk_query(operation, _run_query, options, max_retries=1)
         return AgenticGenerationResult(
             text=_strip_leading_preamble(raw_text),
             model=resolved_model,
