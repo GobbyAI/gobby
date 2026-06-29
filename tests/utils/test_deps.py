@@ -133,7 +133,7 @@ def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     with patch.object(Path, "home", return_value=tmp_path):
         claude = tmp_path / ".claude" / "settings.json"
         qwen = tmp_path / ".qwen" / "settings.json"
-        droid = tmp_path / ".factory" / "hooks" / "hooks.json"
+        droid = tmp_path / ".factory" / "hooks.json"
 
         claude.parent.mkdir()
         qwen.parent.mkdir()

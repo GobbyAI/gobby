@@ -45,6 +45,7 @@ class ValidationConfig:
     nested: bool  # True = hooks have nested "hooks" array (Claude/Qwen)
     check_enable_hooks: bool = False  # Qwen requires general.enableHooks=true
     check_version: int | None = None  # Reserved for future use
+    flat_hooks: bool = False  # Droid: hooks are top-level keys (no "hooks" wrapper)
 
 
 CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
@@ -114,6 +115,7 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         settings_file="hooks.json",
         required_hooks=DROID_PASCAL_HOOK_NAMES,
         nested=True,
+        flat_hooks=True,
     ),
 }
 
@@ -170,11 +172,14 @@ def validate(config: ValidationConfig) -> int:
     print(f"JSON syntax is valid ({config.cli_name})")
 
     # 3. Check hooks section exists
-    if "hooks" not in settings:
-        print(f"No 'hooks' section found in {config.settings_file}")
-        return 1
-
-    hooks = settings["hooks"]
+    if config.flat_hooks:
+        # Droid 0.159.1: hook event names are top-level keys (no "hooks" wrapper)
+        hooks = settings
+    else:
+        if "hooks" not in settings:
+            print(f"No 'hooks' section found in {config.settings_file}")
+            return 1
+        hooks = settings["hooks"]
     print("Hooks section found")
 
     # 4. CLI-specific extra checks

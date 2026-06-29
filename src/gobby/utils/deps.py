@@ -190,7 +190,7 @@ def _droid_hooks_file() -> Path:
         return Path(override).expanduser()
     if hooks_dir := os.environ.get("GOBBY_HOOKS_DIR"):
         return Path(hooks_dir).expanduser() / "hooks.json"
-    return Path.home() / ".factory" / "hooks" / "hooks.json"
+    return Path.home() / ".factory" / "hooks.json"
 
 
 def _check_hooks_in_file(path: Path) -> bool:

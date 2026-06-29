@@ -58,8 +58,9 @@ def test_install_droid_global_writes_hooks_and_mcp(
     assert result["trust"]["files_written"] == []
 
     hooks_file = droid_env / ".factory" / "hooks.json"
-    hooks = _load_json(hooks_file)["hooks"]
+    hooks = _load_json(hooks_file)
     assert tuple(hooks) == DROID_PASCAL_HOOK_NAMES
+    assert "hooks" not in hooks  # flat format, no wrapper
     for hook_type in DROID_PASCAL_HOOK_NAMES:
         command = hooks[hook_type][0]["hooks"][0]["command"]
         base = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
@@ -153,7 +154,10 @@ def test_install_droid_creates_backup_when_rewriting_existing_hooks(
 
     assert result["success"] is True
     assert (hooks_file.parent / "hooks.json.1234567890.backup").exists()
-    assert "Other" in _load_json(hooks_file)["hooks"]
+    flat = _load_json(hooks_file)
+    assert "Other" in flat  # preserved non-Gobby entry
+    assert "hooks" not in flat  # unwrapped to flat format
+    assert "PreToolUse" in flat  # Gobby hooks added at top level
 
 
 def test_uninstall_droid_removes_only_gobby_entries(
@@ -191,9 +195,10 @@ def test_uninstall_droid_removes_only_gobby_entries(
 
     assert result["success"] is True
     assert result["hooks_removed"] == ["PreToolUse"]
-    hooks = _load_json(hooks_file)["hooks"]
-    assert hooks["PreToolUse"] == [{"hooks": [{"type": "command", "command": "custom"}]}]
-    assert "Custom" in hooks
+    flat = _load_json(hooks_file)
+    assert "hooks" not in flat  # unwrapped to flat format
+    assert flat["PreToolUse"] == [{"hooks": [{"type": "command", "command": "custom"}]}]
+    assert "Custom" in flat
     assert set(_load_json(mcp_file)["mcpServers"]) == {"other"}
 
 

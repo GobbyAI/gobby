@@ -82,7 +82,7 @@ def install_global_hooks() -> list[str]:
     return installed
 
 
-def clean_project_hooks(settings_file: Path) -> list[str]:
+def clean_project_hooks(settings_file: Path, *, flat: bool = False) -> list[str]:
     """Remove gobby hooks from a project-level settings/hooks JSON file.
 
     When hooks are installed globally, project-level hooks cause duplicates
@@ -92,6 +92,9 @@ def clean_project_hooks(settings_file: Path) -> list[str]:
 
     Args:
         settings_file: Path to the project-level JSON config file
+        flat: When True, treat the entire JSON object as a flat hooks map
+            (hook event names as top-level keys, no ``hooks`` wrapper).  Used
+            for Droid 0.159.1 which expects flat-format ``hooks.json``.
 
     Returns:
         List of hook types that were removed
@@ -106,21 +109,29 @@ def clean_project_hooks(settings_file: Path) -> list[str]:
         logger.warning(f"Could not read project settings for hook cleanup: {e}")
         return []
 
-    if "hooks" not in settings:
+    if flat:
+        hooks_map: dict[str, Any] = settings
+    else:
+        if "hooks" not in settings:
+            return []
+        hooks_map = settings["hooks"]
+
+    if not isinstance(hooks_map, dict):
         return []
 
     removed: list[str] = []
-    for hook_type in list(settings["hooks"].keys()):
-        if config_contains_gobby_hook(settings["hooks"][hook_type]):
-            del settings["hooks"][hook_type]
+    for hook_type in list(hooks_map.keys()):
+        if config_contains_gobby_hook(hooks_map[hook_type]):
+            del hooks_map[hook_type]
             removed.append(hook_type)
 
     if not removed:
         return []
 
-    # Remove empty hooks dict
-    if not settings["hooks"]:
-        del settings["hooks"]
+    if not flat:
+        # Remove empty hooks dict
+        if not settings["hooks"]:
+            del settings["hooks"]
 
     try:
         fd, temp_path = tempfile.mkstemp(

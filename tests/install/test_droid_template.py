@@ -28,7 +28,10 @@ def test_droid_template_matches_contract_and_rewrites_commands() -> None:
         ghook_bin="/Users/test/.gobby/bin/ghook",
     )
 
-    for hook_type, hook_configs in hooks.items():
+    # After rewriting, the template is unwrapped to flat format (hook event
+    # names as top-level keys) for Droid 0.159.1 compatibility.
+    flat = template["hooks"]
+    for hook_type, hook_configs in flat.items():
         assert isinstance(hook_configs, list)
         assert len(hook_configs) == 1
         hook_config = hook_configs[0]
