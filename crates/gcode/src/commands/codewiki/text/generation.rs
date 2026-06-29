@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use gobby_core::ai::generation::{
-    ChatMessage, ChatTransport, DaemonChatTransport, DirectChatTransport, DirectGenerationTarget,
-    GenerationTier, StopReason, ToolLoopLimits, ToolLoopOutcome, generate_one_shot,
-    profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    ChatMessage, ChatTransport, DaemonAgenticResult, DirectChatTransport, DirectGenerationTarget,
+    GenerationTier, StopReason, ToolLoopLimits, ToolLoopOutcome, daemon_agentic_chat,
+    generate_one_shot, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{
     AiNoticeKind, daemon::generate_via_daemon_with_max_tokens, effective_route,
@@ -572,6 +572,42 @@ impl GenerationOutcome {
         }
     }
 
+    /// Map a one-shot daemon-agentic [`DaemonAgenticResult`] into a structured
+    /// `GenerationOutcome`. The daemon ran its own server-side investigation
+    /// loop and returned a finished narrative, so this is always a completed run
+    /// (there is no local stop reason to derive); content is classified with the
+    /// same vocabulary as [`from_tool_loop`] — missing/echoed/refused/empty
+    /// content is a failure with a distinct cause, usable content is
+    /// `Generated`. The daemon's tool-use / turn counts and reported usage are
+    /// preserved for `_meta` recording.
+    pub(crate) fn from_daemon_agentic(result: DaemonAgenticResult, prompt: &str) -> Self {
+        let observability = GenerationObservability {
+            stop_reason: Some(StopReason::Completed),
+            tool_call_count: result.tool_use_count,
+            turns: result.turns,
+            usage: result.usage,
+        };
+        match result.content {
+            None => Self::rejected_with_observability(
+                GenerationFailureCause::Unavailable,
+                observability,
+            ),
+            Some(text) if is_prompt_echo(&text, prompt) => {
+                Self::rejected_with_observability(GenerationFailureCause::PromptEcho, observability)
+            }
+            Some(text) if is_model_refusal(&text) => {
+                Self::rejected_with_observability(GenerationFailureCause::Refusal, observability)
+            }
+            Some(text) => match clean_generated(text) {
+                Some(clean) => Self::generated_with_observability(clean, observability),
+                None => Self::rejected_with_observability(
+                    GenerationFailureCause::Unavailable,
+                    observability,
+                ),
+            },
+        }
+    }
+
     /// The per-attempt observability (stop reason, tool-call count, turns,
     /// usage), read by the aggregate builders to record `lane: tool_loop` +
     /// counts into page frontmatter and `_meta/codewiki.json` (#978).
@@ -758,6 +794,26 @@ fn lane_b_system_prompt(page_system: &str) -> String {
     format!("{page_system}\n\n{LANE_B_SYSTEM_DIRECTIVE}")
 }
 
+/// Lane B operating directive for the *daemon* route. Unlike
+/// [`LANE_B_SYSTEM_DIRECTIVE`] it is tool-agnostic: the daemon's Claude Agent
+/// SDK investigates with its own Read/Grep/Glob tools (not gcode's), so naming
+/// gcode tool names here would be wrong. It still enforces the grounding and
+/// section-completeness contract so the daemon writes a real, cited narrative.
+const LANE_B_DAEMON_DIRECTIVE: &str = "Investigation mode: investigate the \
+modules and files named in this task by reading the actual source in the \
+repository before writing, so every claim is grounded in real code. Cite the \
+file:line anchors you actually read; never invent files, symbols, or line \
+numbers. If the task requires specific section headings, include every one \
+verbatim and in order. When you have gathered enough, write the complete \
+response as a single final message in exactly the format the task requires.";
+
+/// Compose the daemon-route Lane B system prompt: the page-specific system
+/// prompt followed by the tool-agnostic [`LANE_B_DAEMON_DIRECTIVE`]. The daemon
+/// runs its own agent loop, so this never names gcode tools.
+fn lane_b_daemon_system_prompt(page_system: &str) -> String {
+    format!("{page_system}\n\n{LANE_B_DAEMON_DIRECTIVE}")
+}
+
 fn run_lane_b_loop(
     transport: &dyn ChatTransport,
     ctx: &Context,
@@ -855,20 +911,39 @@ pub(crate) fn resolve_tool_loop_generator(
     let max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
     let ctx_owned = ctx.clone();
+    // The daemon route runs its agent loop over the repo, so it needs the
+    // absolute project root (gcode discovers it by walking up to
+    // `.gobby/project.json`); the Direct route walks the local index instead.
+    let project_path = ctx.project_root.display().to_string();
     let generator: Box<ToolLoopGenerator<'static>> = Box::new(move |prompt, system| {
         let system = prompts::with_register(system, register);
         match route {
-            AiRouting::Daemon => match DaemonChatTransport::new(&ai_context, profile.clone()) {
-                Ok(transport) => run_lane_b_loop(
-                    &transport,
-                    &ctx_owned,
-                    graph_availability,
-                    system.as_ref(),
-                    prompt,
-                    max_tokens,
-                ),
-                Err(_) => LaneBResult::unavailable(),
-            },
+            // Daemon route: one server-side agentic POST. The daemon's Claude
+            // Agent SDK investigates with its own Read/Grep/Glob tools and
+            // returns the FINAL narrative, so this never runs a local tool loop
+            // (a single-turn passthrough transport would re-prompt forever).
+            AiRouting::Daemon => {
+                let bounded_prompt = bound_seed_prompt(prompt);
+                let messages = vec![
+                    ChatMessage::system(lane_b_daemon_system_prompt(system.as_ref())),
+                    ChatMessage::user(bounded_prompt.clone()),
+                ];
+                let binding = ai_context.binding(AiCapability::ToolChat);
+                match daemon_agentic_chat(
+                    &ai_context,
+                    &profile,
+                    &project_path,
+                    &messages,
+                    Some(60),
+                    binding.reasoning_effort.as_deref(),
+                ) {
+                    Ok(result) => LaneBResult {
+                        outcome: GenerationOutcome::from_daemon_agentic(result, &bounded_prompt),
+                        data_source_degraded: Vec::new(),
+                    },
+                    Err(_) => LaneBResult::unavailable(),
+                }
+            }
             AiRouting::Direct => match direct_target.clone() {
                 Some(target) => {
                     match DirectChatTransport::new(&ai_context, target, Some(profile.clone())) {
@@ -1412,6 +1487,103 @@ mod tests {
             tool_loop_outcome(
                 Some("I cannot write this documentation for the codebase."),
                 StopReason::Completed,
+                1,
+                1,
+            ),
+            prompt,
+        );
+        assert_eq!(
+            refusal.failure_cause(),
+            Some(GenerationFailureCause::Refusal)
+        );
+    }
+
+    #[test]
+    fn lane_b_daemon_system_prompt_is_tool_agnostic() {
+        let composed = lane_b_daemon_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
+        // Page contract stays first and intact; the daemon directive follows.
+        assert!(composed.starts_with(prompts::CONCEPT_PAGE_SYSTEM));
+        assert!(composed.contains("Investigation mode"));
+        // Tool-agnostic: the daemon uses its own Read/Grep/Glob, so gcode tool
+        // names must NOT leak into this directive (unlike LANE_B_SYSTEM_DIRECTIVE).
+        assert!(!composed.contains("search_code"));
+        assert!(!composed.contains("outline_file"));
+        assert!(!composed.contains("read_symbol"));
+        // Grounding + section-completeness contract is still enforced.
+        assert!(composed.contains("grounded in real code"));
+        assert!(composed.contains("verbatim and in order"));
+        assert!(composed.contains("in exactly the format the task"));
+    }
+
+    fn daemon_agentic_result(
+        content: Option<&str>,
+        tool_use_count: usize,
+        turns: usize,
+    ) -> DaemonAgenticResult {
+        DaemonAgenticResult {
+            content: content.map(str::to_string),
+            model: Some("claude-opus".to_string()),
+            tool_use_count,
+            turns,
+            usage: Some(TokenUsage {
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                total_tokens: Some(150),
+            }),
+        }
+    }
+
+    #[test]
+    fn from_daemon_agentic_maps_completed_content_with_provenance() {
+        let outcome = GenerationOutcome::from_daemon_agentic(
+            daemon_agentic_result(Some("A grounded narrative body."), 7, 4),
+            "investigate the repo",
+        );
+        assert_eq!(outcome.observability().tool_call_count, 7);
+        assert_eq!(outcome.observability().turns, 4);
+        assert_eq!(
+            outcome.observability().stop_reason,
+            Some(StopReason::Completed)
+        );
+        assert_eq!(
+            outcome
+                .observability()
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.token_count()),
+            Some(150)
+        );
+        assert!(matches!(
+            outcome.into_content(),
+            GenerationContent::Generated(text) if text == "A grounded narrative body."
+        ));
+    }
+
+    #[test]
+    fn from_daemon_agentic_classifies_missing_echo_and_refusal() {
+        // No content from the daemon -> unavailable, with provenance preserved.
+        let empty = GenerationOutcome::from_daemon_agentic(daemon_agentic_result(None, 3, 2), "p");
+        assert_eq!(
+            empty.failure_cause(),
+            Some(GenerationFailureCause::Unavailable)
+        );
+        assert_eq!(empty.observability().turns, 2);
+
+        // Echoing a prompt past the echo-detection floor -> prompt-echo.
+        let prompt = "Summarize the architecture of this codebase in thorough detail for the \
+                      reader, covering every subsystem boundary and data flow.";
+        let echo = GenerationOutcome::from_daemon_agentic(
+            daemon_agentic_result(Some(prompt), 1, 1),
+            prompt,
+        );
+        assert_eq!(
+            echo.failure_cause(),
+            Some(GenerationFailureCause::PromptEcho)
+        );
+
+        let refusal = GenerationOutcome::from_daemon_agentic(
+            daemon_agentic_result(
+                Some("I cannot write this documentation for the codebase."),
                 1,
                 1,
             ),

@@ -25,7 +25,7 @@ use crate::ai::{
     timeout_for,
 };
 use crate::ai_context::AiContext;
-use crate::ai_types::AiError;
+use crate::ai_types::{AiError, TokenUsage};
 use crate::config::AiCapability;
 
 use super::profile::DirectGenerationTarget;
@@ -193,6 +193,132 @@ impl ChatTransport for DaemonChatTransport<'_> {
 
     fn profile(&self) -> Option<&str> {
         Some(&self.profile)
+    }
+}
+
+/// Final result of a one-shot daemon-side agentic narrative generation call
+/// (CodeWiki Lane B daemon route).
+///
+/// Unlike [`DaemonChatTransport`] — single-turn tool-call passthrough that would
+/// re-prompt forever against an agentic endpoint which never returns
+/// `tool_calls` — the daemon runs its own Claude Agent SDK investigation loop
+/// (Read/Grep/Glob over the repo) server-side and returns the finished
+/// narrative plus investigation provenance. This CLI runs no local tool loop for
+/// this route.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DaemonAgenticResult {
+    /// Final assistant narrative, if the daemon produced any.
+    pub content: Option<String>,
+    /// Model the daemon selected for its agent.
+    pub model: Option<String>,
+    /// Tool invocations the daemon's agent made during its investigation.
+    pub tool_use_count: usize,
+    /// Investigation turns the daemon's agent ran.
+    pub turns: usize,
+    /// Token usage, when reported.
+    pub usage: Option<TokenUsage>,
+}
+
+/// One-shot daemon-side agentic narrative generation. POSTs the system+user
+/// `messages` plus the feature `profile` and absolute `project_path` to the
+/// daemon's `/api/llm/chat/completions` endpoint; the daemon runs its own agent
+/// loop over the repo and returns the finished narrative. A single POST — no
+/// `tools`/`tool_choice`/`model` are sent and the response is never re-prompted
+/// (it carries the final answer and `investigation` provenance, not `tool_calls`
+/// to execute locally). Token auth, retry, and the `ToolChat` timeout match
+/// [`DaemonChatTransport::complete`].
+pub fn daemon_agentic_chat(
+    context: &AiContext,
+    profile: &str,
+    project_path: &str,
+    messages: &[ChatMessage],
+    max_turns: Option<usize>,
+    reasoning_effort: Option<&str>,
+) -> Result<DaemonAgenticResult, AiError> {
+    let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH);
+    let client = daemon_client()?;
+    let token = read_local_cli_token()?;
+    let body = build_daemon_agentic_body(
+        profile,
+        context.project_id.as_deref(),
+        project_path,
+        messages,
+        max_turns,
+        reasoning_effort,
+    );
+
+    let _permit = context.limiter.acquire();
+    let value = retry_with_backoff(
+        || {
+            let http = with_local_token(
+                client
+                    .post(&url)
+                    .timeout(timeout_for(AiCapability::ToolChat))
+                    .json(&body),
+                &token,
+            );
+            parse_json_response(http.send().map_err(reqwest_error)?)
+        },
+        std::thread::sleep,
+    )?;
+
+    Ok(parse_daemon_agentic(&value))
+}
+
+/// Build the daemon agentic-chat body: the system+user `messages`, the feature
+/// `profile`, the active `project_id`, the absolute `project_path` the daemon
+/// investigates, and optional `max_turns`/`reasoning_effort`. No
+/// `tools`/`tool_choice`/`model` — the daemon owns its own agent tools and
+/// provider/model selection.
+pub(crate) fn build_daemon_agentic_body(
+    profile: &str,
+    project_id: Option<&str>,
+    project_path: &str,
+    messages: &[ChatMessage],
+    max_turns: Option<usize>,
+    reasoning_effort: Option<&str>,
+) -> Value {
+    let mut body = Map::new();
+    let messages: Vec<Value> = messages.iter().map(message_to_json).collect();
+    body.insert("messages".to_string(), Value::Array(messages));
+    insert_trimmed(&mut body, "profile", Some(profile));
+    insert_trimmed(&mut body, "project_id", project_id);
+    insert_trimmed(&mut body, "project_path", Some(project_path));
+    if let Some(max_turns) = max_turns {
+        body.insert("max_turns".to_string(), Value::from(max_turns));
+    }
+    insert_trimmed(&mut body, "reasoning_effort", reasoning_effort);
+    Value::Object(body)
+}
+
+/// Parse the daemon agentic-chat response into a [`DaemonAgenticResult`]:
+/// `choices[0].message.content` is the narrative, `model` the agent's model, and
+/// `investigation.tool_use_count`/`investigation.turns` the provenance (0 when
+/// absent). Token usage reuses the shared chat-completion usage parser.
+pub(crate) fn parse_daemon_agentic(value: &Value) -> DaemonAgenticResult {
+    let content = value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .filter(|content| !content.is_empty())
+        .map(str::to_string);
+    let investigation = value.get("investigation");
+    let count = |key: &str| {
+        investigation
+            .and_then(|inv| inv.get(key))
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0)
+    };
+    DaemonAgenticResult {
+        content,
+        model: chat_completion_model(value),
+        tool_use_count: count("tool_use_count"),
+        turns: count("turns"),
+        usage: chat_completion_usage(value),
     }
 }
 
