@@ -162,13 +162,18 @@ def test_parse_droid_stream_falls_back_to_last_assistant_message() -> None:
 
 
 def test_parse_qwen_stream_extracts_narrative_and_tool_counts() -> None:
+    # Real qwen-code stream shape: assistant/user messages nest content under
+    # `message` (Claude-Code stream format), captured from qwen-code 0.x.
     stream = "\n".join(
         [
             '{"type":"system","tools":[],"model":"m"}',
-            '{"type":"assistant","content":[{"type":"text","text":"thinking..."},'
-            '{"type":"tool_use","name":"run_shell_command","input":{}}]}',
-            '{"type":"user","content":[{"type":"tool_result","is_error":false}]}',
-            '{"type":"assistant","content":[{"type":"tool_use","name":"run_shell_command"}]}',
+            '{"type":"assistant","message":{"role":"assistant","content":'
+            '[{"type":"thinking","thinking":"..."},'
+            '{"type":"tool_use","name":"run_shell_command","input":{}}]}}',
+            '{"type":"user","message":{"role":"user","content":'
+            '[{"type":"tool_result","tool_use_id":"1","is_error":false}]}}',
+            '{"type":"assistant","message":{"role":"assistant","content":'
+            '[{"type":"tool_use","name":"run_shell_command"}]}}',
             '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10.",'
             '"usage":{"input_tokens":100,"output_tokens":50}}',
         ]
@@ -439,6 +444,8 @@ def test_droid_build_command_enables_execute_and_uses_gcode_prompt() -> None:
 
     assert command[0] == "droid"
     assert "exec" in command
+    # `--auto high` lets droid's Execute tool run the gcode binary.
+    assert command[command.index("--auto") + 1] == "high"
     assert command[command.index("--output-format") + 1] == "stream-json"
     disabled = command[command.index("--disabled-tools") + 1]
     # Execute must NOT be disabled — the agent needs shell access for gcode.
@@ -693,7 +700,8 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
 ) -> None:
     qwen_stream = "\n".join(
         [
-            '{"type":"assistant","content":[{"type":"tool_use","name":"run_shell_command"}]}',
+            '{"type":"assistant","message":{"role":"assistant","content":'
+            '[{"type":"tool_use","name":"run_shell_command"}]}}',
             '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10."}',
         ]
     )

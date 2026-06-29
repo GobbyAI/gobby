@@ -221,7 +221,13 @@ def parse_qwen_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
             continue
         etype = event.get("type")
         if etype == "assistant":
-            content = event.get("content")
+            # qwen-code nests the assistant message under `message` (Claude-Code
+            # stream shape); tool_use blocks live in message.content, not at the
+            # top level. Fall back to top-level content for forward-compat.
+            message = event.get("message")
+            content = (message.get("content") if isinstance(message, dict) else None) or event.get(
+                "content"
+            )
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
@@ -481,6 +487,11 @@ class DroidSpawnToolChatAdapter:
         command = [
             self._resolve_command_path(),
             "exec",
+            # `--auto high` lets droid's Execute tool run the gcode binary; droid
+            # gates arbitrary external-command exec at the high autonomy tier.
+            # Truly destructive ops stay blocked without --skip-permissions-unsafe.
+            "--auto",
+            "high",
             "--output-format",
             "stream-json",
             "--disabled-tools",
