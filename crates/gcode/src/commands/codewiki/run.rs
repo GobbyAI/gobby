@@ -12,9 +12,9 @@ use crate::output::{self, Format};
 use crate::visibility;
 
 use super::{
-    BuiltDoc, CodewikiAiOptions, CodewikiInput, CodewikiProgress, CodewikiRunSummary,
-    DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, ReusePlan,
-    build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
+    BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput, CodewikiProgress,
+    CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT,
+    ReusePlan, build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
     build_feature_catalog_doc, build_system_model, build_truth_digest, fetch_codewiki_graph_edges,
     generation, in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator,
     resolve_text_verifier, resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
@@ -97,7 +97,14 @@ pub fn run(
     // resolves (AI off) — aggregates then fall back to the Lane A path. The run's
     // resolved graph availability lets the executor's graph tools return an
     // explicit graph-unavailable result instead of an empty one.
-    let mut tool_loop_generator = resolve_tool_loop_generator(ctx, &ai, input.graph_availability);
+    let resolved_tool_loop_generator =
+        resolve_tool_loop_generator(ctx, &ai, input.graph_availability);
+    let aggregate_ai_outcome = if resolved_tool_loop_generator.generator.is_some() {
+        resolved_tool_loop_generator.ai_outcome
+    } else {
+        ai_outcome
+    };
+    let mut tool_loop_generator = resolved_tool_loop_generator.generator;
     let mut verifier = resolve_text_verifier(ctx, &ai);
     let ai_enabled = generator.is_some();
     let ai_mode = if ai_outcome.route == AiRouting::Off
@@ -169,7 +176,8 @@ pub fn run(
         if doc.path.starts_with("code/files/") {
             file_count += 1;
         }
-        sink.persist(&doc)?;
+        let write_outcome = ai_outcome_for_doc(&doc.path, ai_outcome, aggregate_ai_outcome);
+        sink.persist_with_ai_outcome(&doc, write_outcome)?;
         Ok(())
     };
     generation::generate_hierarchical_docs_with_ownership(
@@ -184,6 +192,7 @@ pub fn run(
         tool_loop_generator.as_deref_mut(),
         verifier.as_deref_mut(),
         ai_depth,
+        aggregate_ai_outcome,
         &mut reuse,
         &mut progress,
         &doc_scope,
@@ -266,6 +275,21 @@ pub fn run(
     }?;
 
     Ok(())
+}
+
+fn ai_outcome_for_doc(
+    path: &str,
+    lane_a: CodewikiAiOutcome,
+    aggregate: CodewikiAiOutcome,
+) -> CodewikiAiOutcome {
+    match path {
+        "code/concepts/index.md" => lane_a,
+        "code/repo.md" | "code/_architecture.md" => aggregate,
+        path if path.starts_with("code/concepts/") || path.starts_with("code/narrative/") => {
+            aggregate
+        }
+        _ => lane_a,
+    }
 }
 
 #[derive(Default)]

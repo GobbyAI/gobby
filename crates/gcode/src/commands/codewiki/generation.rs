@@ -6,16 +6,17 @@ use crate::index::hasher;
 use crate::models::Symbol;
 
 use super::{
-    AiDepth, AuditContext, BuiltDoc, CodewikiGraphEdge, CodewikiGraphEdgeKind, CodewikiInput,
-    CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition, LeadingChunk,
-    ModuleDoc, OwnershipMeta, OwnershipOptions, ReusePlan, SourceSpan, SystemModel, TextGenerator,
-    TextVerifier, ToolLoopGenerator, build_architecture_doc, build_curated_navigation_docs,
-    build_deprecations_doc, build_file_doc, build_hotspots_doc, build_infrastructure_doc,
-    build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
-    cluster, cluster_file_modules, file_doc_path, is_ai_generation_failure_code, is_core_file,
-    module_doc_path, module_for_file, relationship_facts_for_file, render_architecture_doc,
-    render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
-    render_infrastructure_doc, render_module_doc, render_onboarding_doc, span_files,
+    AiDepth, AuditContext, BuiltDoc, CodewikiAiOutcome, CodewikiGraphEdge, CodewikiGraphEdgeKind,
+    CodewikiInput, CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition,
+    LeadingChunk, ModuleDoc, OwnershipMeta, OwnershipOptions, ReusePlan, SourceSpan, SystemModel,
+    TextGenerator, TextVerifier, ToolLoopGenerator, build_architecture_doc,
+    build_curated_navigation_docs, build_deprecations_doc, build_file_doc, build_hotspots_doc,
+    build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
+    build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
+    is_ai_generation_failure_code, is_core_file, module_doc_path, module_for_file,
+    relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
+    render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
+    render_module_doc, render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -45,6 +46,7 @@ fn generate_hierarchical_docs_with_graph_availability(
         &mut None,
         &mut None,
         AiDepth::Symbols,
+        CodewikiAiOutcome::default(),
         &mut None,
         &mut progress,
         &doc_scope,
@@ -70,6 +72,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
     mut tool_loop: Option<&mut ToolLoopGenerator<'_>>,
     mut verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
+    aggregate_ai_outcome: CodewikiAiOutcome,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
     doc_scope: &DocPruneScope,
@@ -85,6 +88,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
         &mut tool_loop,
         &mut verify,
         ai_depth,
+        aggregate_ai_outcome,
         reuse,
         progress,
         doc_scope,
@@ -123,6 +127,7 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
         &mut None,
         &mut None,
         ai_depth,
+        CodewikiAiOutcome::default(),
         reuse,
         progress,
         &doc_scope,
@@ -162,6 +167,7 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
         &mut None,
         &mut verify,
         ai_depth,
+        CodewikiAiOutcome::default(),
         &mut None,
         &mut progress,
         &doc_scope,
@@ -230,6 +236,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
+    aggregate_ai_outcome: CodewikiAiOutcome,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
     doc_scope: &DocPruneScope,
@@ -369,6 +376,7 @@ pub(crate) fn generate_hierarchical_docs_core(
         verify,
         reuse,
         progress,
+        aggregate_ai_outcome,
     )? {
         emit(doc)?;
     }
@@ -391,6 +399,7 @@ pub(crate) fn generate_hierarchical_docs_core(
         tool_loop,
         reuse,
         progress,
+        aggregate_ai_outcome,
     )?;
     emit(
         BuiltDoc {
@@ -428,12 +437,20 @@ pub(crate) fn generate_hierarchical_docs_core(
             .collect::<Vec<_>>(),
     );
     let reused_architecture = match architecture_key.as_deref() {
-        Some(key) => reuse
-            .as_deref_mut()
-            .and_then(|plan| plan.reusable_page_keyed("code/_architecture.md", key)),
-        None => reuse
-            .as_deref_mut()
-            .and_then(|plan| plan.reusable_page("code/_architecture.md", &architecture_sources)),
+        Some(key) => reuse.as_deref_mut().and_then(|plan| {
+            plan.reusable_page_keyed_with_ai_outcome(
+                "code/_architecture.md",
+                key,
+                aggregate_ai_outcome,
+            )
+        }),
+        None => reuse.as_deref_mut().and_then(|plan| {
+            plan.reusable_page_with_ai_outcome(
+                "code/_architecture.md",
+                &architecture_sources,
+                aggregate_ai_outcome,
+            )
+        }),
     };
     let architecture_built = match reused_architecture {
         Some(page) => {

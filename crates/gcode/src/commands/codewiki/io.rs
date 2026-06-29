@@ -175,8 +175,16 @@ impl<'a> DocSink<'a> {
     /// Write one doc unless it is provably unchanged, then flush the meta log
     /// so what is on disk always matches what the meta records.
     pub(crate) fn persist(&mut self, doc: &BuiltDoc) -> anyhow::Result<bool> {
+        self.persist_with_ai_outcome(doc, self.ai_outcome)
+    }
+
+    pub(crate) fn persist_with_ai_outcome(
+        &mut self,
+        doc: &BuiltDoc,
+        ai_outcome: CodewikiAiOutcome,
+    ) -> anyhow::Result<bool> {
         let target = safe_doc_path(self.out_dir, &doc.path)?;
-        let write_outcome = self.ai_outcome.for_doc(doc.degraded);
+        let write_outcome = ai_outcome.for_doc(doc.degraded);
         let content = apply_ai_outcome_to_markdown(&doc.content, write_outcome);
         let previous_meta = self.previous_docs.get(&doc.path);
         if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
@@ -184,9 +192,9 @@ impl<'a> DocSink<'a> {
             && target.exists()
             && !meta.degraded
             && meta.ai_mode == self.ai_mode
-            && meta.ai_route == self.ai_outcome.route_label()
-            && meta.ai_fallback == self.ai_outcome.fallback
-            && meta.ai_generation_status == self.ai_outcome.status.as_str()
+            && meta.ai_route == ai_outcome.route_label()
+            && meta.ai_fallback == ai_outcome.fallback
+            && meta.ai_generation_status == ai_outcome.status.as_str()
             && meta.render_version == CODEWIKI_RENDER_VERSION
             && !meta.source_hashes.is_empty()
             && (doc.summary.is_none() || meta.summary.is_some())
@@ -225,9 +233,9 @@ impl<'a> DocSink<'a> {
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
-                    && meta.ai_route == self.ai_outcome.route_label()
-                    && meta.ai_fallback == self.ai_outcome.fallback
-                    && meta.ai_generation_status == self.ai_outcome.status.as_str()
+                    && meta.ai_route == ai_outcome.route_label()
+                    && meta.ai_fallback == ai_outcome.fallback
+                    && meta.ai_generation_status == ai_outcome.status.as_str()
                     && meta.render_version == CODEWIKI_RENDER_VERSION
                     && match &doc.invalidation_key {
                         Some(key) => {
@@ -256,9 +264,9 @@ impl<'a> DocSink<'a> {
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
-                    && meta.ai_route == self.ai_outcome.route_label()
-                    && meta.ai_fallback == self.ai_outcome.fallback
-                    && meta.ai_generation_status == self.ai_outcome.status.as_str()
+                    && meta.ai_route == ai_outcome.route_label()
+                    && meta.ai_fallback == ai_outcome.fallback
+                    && meta.ai_generation_status == ai_outcome.status.as_str()
                     && meta.render_version == CODEWIKI_RENDER_VERSION
                     && source_hash_key_sets_match(&meta.source_hashes, &source_hashes)
                     && source_hash_key_sets_match(&meta.neighbor_hashes, &neighbor_hashes)

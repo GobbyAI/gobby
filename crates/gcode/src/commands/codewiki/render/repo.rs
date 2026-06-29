@@ -13,6 +13,7 @@ pub(crate) fn build_repo_doc(
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
+    aggregate_ai_outcome: CodewikiAiOutcome,
 ) -> anyhow::Result<(String, bool, String)> {
     let top_modules = modules
         .iter()
@@ -55,7 +56,12 @@ pub(crate) fn build_repo_doc(
     // appendix set is the same; nothing downstream consumes its summary, so the
     // on-disk page is returned verbatim.
     if let Some(page) = reuse.as_deref_mut().and_then(|plan| {
-        plan.reusable_page_keyed_with_sources("code/repo.md", &repo_key, &source_files)
+        plan.reusable_page_keyed_with_sources_and_ai_outcome(
+            "code/repo.md",
+            &repo_key,
+            &source_files,
+            aggregate_ai_outcome,
+        )
     }) {
         progress.emit("reusing repo overview (sources unchanged)");
         return Ok((page, false, repo_key));
@@ -78,7 +84,19 @@ pub(crate) fn build_repo_doc(
     let summary = match aggregate.content {
         GenerationContent::Generated(generated) => {
             let markers = citation_markers(&source_spans, &generated);
-            ground_text(&generated, &source_spans, Some(&markers))
+            let grounded = ground_text(&generated, &source_spans, Some(&markers));
+            if grounded.trim().is_empty() {
+                degraded_sources.push("grounding-empty".to_string());
+                if aggregate.lane == LANE_TOOL_LOOP {
+                    anyhow::bail!(
+                        "Lane B repo overview generation grounded to empty; \
+                         page not written (no skeleton, no Lane A fallback)"
+                    );
+                }
+                ground_text(&fallback, &source_spans, None)
+            } else {
+                grounded
+            }
         }
         GenerationContent::Failed(cause) => {
             degraded_sources.push(cause.reason_code().to_string());
@@ -88,7 +106,7 @@ pub(crate) fn build_repo_doc(
     };
     let degraded = degraded_sources
         .iter()
-        .any(|source| is_ai_generation_failure_code(source));
+        .any(|source| source != GRAPH_UNAVAILABLE);
 
     let doc = render_repo_doc(
         &summary,
@@ -241,4 +259,91 @@ pub(crate) fn render_repo_doc(
     }
     write_references(&mut doc, source_spans);
     doc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file_doc(path: &str) -> FileDoc {
+        FileDoc {
+            path: path.to_string(),
+            module: String::new(),
+            summary: "Root file summary.".to_string(),
+            body: String::new(),
+            source_spans: vec![SourceSpan {
+                file: path.to_string(),
+                line_start: 1,
+                line_end: 3,
+            }],
+            symbols: Vec::new(),
+            component_ids: Vec::new(),
+            degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            reused_page: None,
+        }
+    }
+
+    #[test]
+    fn repo_lane_a_grounding_empty_falls_back_and_marks_degraded() {
+        let mut files = vec![file_doc("src/lib.rs")];
+        files[0].source_spans.clear();
+        let mut generate = |_prompt: &str, _system: &str, _tier: PromptTier| {
+            Some("[src/missing.rs:99]".to_string())
+        };
+        let mut generate = Some(&mut generate as &mut TextGenerator<'_>);
+        let mut tool_loop = None;
+        let mut reuse = None;
+        let mut progress = CodewikiProgress::stderr(false);
+
+        let (doc, degraded, _key) = build_repo_doc(
+            &files,
+            &[],
+            &BTreeMap::new(),
+            &[],
+            &mut generate,
+            &mut tool_loop,
+            &mut reuse,
+            &mut progress,
+            CodewikiAiOutcome::default(),
+        )
+        .expect("repo falls back");
+
+        assert!(degraded);
+        assert!(doc.contains("grounding-empty"), "{doc}");
+        assert!(
+            doc.contains("Repository code documentation covers 1 file across 0 modules."),
+            "{doc}"
+        );
+    }
+
+    #[test]
+    fn repo_lane_b_grounding_empty_hard_fails_without_fallback() {
+        let mut files = vec![file_doc("src/lib.rs")];
+        files[0].source_spans.clear();
+        let mut tool_loop = |_prompt: &str, _system: &str| LaneBResult {
+            outcome: GenerationOutcome::generated("[src/missing.rs:99]".to_string()),
+            data_source_degraded: Vec::new(),
+        };
+        let mut tool_loop = Some(&mut tool_loop as &mut ToolLoopGenerator<'_>);
+        let mut generate = None;
+        let mut reuse = None;
+        let mut progress = CodewikiProgress::stderr(false);
+
+        let error = build_repo_doc(
+            &files,
+            &[],
+            &BTreeMap::new(),
+            &[],
+            &mut generate,
+            &mut tool_loop,
+            &mut reuse,
+            &mut progress,
+            CodewikiAiOutcome::generated(gobby_core::config::AiRouting::Daemon, false),
+        )
+        .expect_err("Lane B grounding-empty hard-fails");
+
+        assert!(error.to_string().contains("grounded to empty"), "{error}");
+    }
 }

@@ -177,7 +177,15 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
                         }
                       ],
                       "sections": [],
-                      "narrative_pages": []
+                      "narrative_pages": [
+                        {
+                          "title": "Overview",
+                          "summary": "How query requests flow through search.",
+                          "concepts": ["query-engine"],
+                          "modules": ["src"],
+                          "files": ["src/search.rs"]
+                        }
+                      ]
                     }"#
                     .to_string(),
                 )
@@ -185,6 +193,11 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
         } else if system == prompts::CONCEPT_PAGE_SYSTEM {
             Some(
                 "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\n## How it works\n\n1. Requests enter the query path [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs a hybrid search [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing index | Search has no results [src/search.rs:4] |\n\n## How to change it\n\nUpdate `query` and rerun focused tests [src/search.rs:4].\n\n## What to read next\n\nBegin with `query` [src/search.rs:4].\n"
+                    .to_string(),
+            )
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(
+                "## Why this matters\n\nQuery flow is the first tour stop [src/search.rs:4].\n\n## How it works\n\nRequests enter search and return ranked answers [src/search.rs:4].\n\n## Key components\n\n| Component | Role |\n| --- | --- |\n| search | Resolves repository answers [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Empty results | Check index freshness [src/search.rs:4] |\n\n## How to change it\n\nUpdate the search path with focused tests [src/search.rs:4].\n\n## What to read next\n\nContinue into the query engine concept [src/search.rs:4].\n"
                     .to_string(),
             )
         } else {
@@ -204,6 +217,12 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
     assert!(index.contains("Query Engine"), "{index}");
     // A recovered flaky failure must not degrade the curated layer.
     assert!(!index.contains("degraded: true"), "{index}");
+    let narrative = rendered_doc(&docs, "code/narrative/01-overview.md");
+    assert!(
+        narrative.contains("Query flow is the first tour stop"),
+        "{narrative}"
+    );
+    assert!(!narrative.contains("degraded: true"), "{narrative}");
 }
 
 #[test]

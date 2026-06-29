@@ -72,12 +72,27 @@ pub(crate) fn build_curated_navigation_docs(
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
+    aggregate_ai_outcome: CodewikiAiOutcome,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
     let all_spans = all_input_spans(files, modules);
     let all_sources = span_files(&all_spans);
     if let Some(reused_docs) = reuse.as_deref_mut().and_then(|plan| {
-        plan.reusable_page("code/concepts/index.md", &all_sources)?;
-        plan.reusable_pages_with_prefixes(&["code/concepts/", "code/narrative/"])
+        let lane_a_ai_outcome = plan.ai_outcome();
+        plan.reusable_page_with_ai_outcome(
+            "code/concepts/index.md",
+            &all_sources,
+            lane_a_ai_outcome,
+        )?;
+        plan.reusable_pages_with_prefixes_by_ai_outcome(
+            &["code/concepts/", "code/narrative/"],
+            |path| {
+                if path == "code/concepts/index.md" {
+                    lane_a_ai_outcome
+                } else {
+                    aggregate_ai_outcome
+                }
+            },
+        )
     }) {
         progress.emit("reusing curated navigation docs (sources unchanged)");
         return Ok(reused_docs);

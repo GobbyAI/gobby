@@ -254,6 +254,13 @@ pub fn daemon_agentic_chat(
     max_turns: Option<usize>,
     reasoning_effort: Option<&str>,
 ) -> Result<DaemonAgenticResult, AiError> {
+    let profile = profile.trim();
+    if profile.is_empty() {
+        return Err(AiError::not_configured(
+            Some(AiCapability::ToolChat.as_str().to_string()),
+            "daemon agentic chat profile is required",
+        ));
+    }
     let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH);
     let client = daemon_client()?;
     let token = read_local_cli_token()?;

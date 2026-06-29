@@ -89,15 +89,20 @@ impl ReusePlan {
         })
     }
 
+    pub(crate) fn ai_outcome(&self) -> CodewikiAiOutcome {
+        self.ai_outcome
+    }
+
     /// The on-disk page of a reusable doc, or `None` when the doc must be
     /// regenerated. Emitting disk content verbatim keeps a forced rewrite
     /// lossless.
-    pub(crate) fn reusable_page(
+    pub(crate) fn reusable_page_with_ai_outcome(
         &mut self,
         doc_path: &str,
         sources: &BTreeSet<String>,
+        ai_outcome: CodewikiAiOutcome,
     ) -> Option<String> {
-        if !self.reusable(doc_path, sources, &BTreeSet::new()) {
+        if !self.reusable(doc_path, sources, &BTreeSet::new(), ai_outcome) {
             return None;
         }
         let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
@@ -109,15 +114,16 @@ impl ReusePlan {
     /// a source-file set (Leaf H, #893). Reused only when the recorded digest
     /// matches `invalidation_key` — so a model-irrelevant edit (a function body)
     /// keeps the page even though source files changed.
-    pub(crate) fn reusable_page_keyed(
+    pub(crate) fn reusable_page_keyed_with_ai_outcome(
         &mut self,
         doc_path: &str,
         invalidation_key: &str,
+        ai_outcome: CodewikiAiOutcome,
     ) -> Option<String> {
         let entry = self.docs.get(doc_path)?;
         if entry.degraded
             || entry.ai_mode != self.ai_mode
-            || !entry_matches_ai_outcome(entry, self.ai_outcome)
+            || !entry_matches_ai_outcome(entry, ai_outcome)
             || entry.render_version != CODEWIKI_RENDER_VERSION
             || entry.invalidation_key.as_deref() != Some(invalidation_key)
         {
@@ -130,17 +136,18 @@ impl ReusePlan {
         std::fs::read_to_string(target).ok()
     }
 
-    pub(crate) fn reusable_page_keyed_with_sources(
+    pub(crate) fn reusable_page_keyed_with_sources_and_ai_outcome(
         &mut self,
         doc_path: &str,
         invalidation_key: &str,
         sources: &BTreeSet<String>,
+        ai_outcome: CodewikiAiOutcome,
     ) -> Option<String> {
         let entry = self.docs.get(doc_path)?;
         if entry.invalidation_key.as_deref() != Some(invalidation_key) {
             return None;
         }
-        if !self.reusable(doc_path, sources, &BTreeSet::new()) {
+        if !self.reusable(doc_path, sources, &BTreeSet::new(), ai_outcome) {
             return None;
         }
         let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
@@ -167,7 +174,7 @@ impl ReusePlan {
         neighbors: &BTreeSet<String>,
     ) -> Option<(String, String)> {
         let summary = self.docs.get(doc_path)?.summary.clone()?;
-        if !self.reusable(doc_path, sources, neighbors) {
+        if !self.reusable(doc_path, sources, neighbors, self.ai_outcome) {
             return None;
         }
         let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
@@ -175,9 +182,10 @@ impl ReusePlan {
         Some((page, summary))
     }
 
-    pub(crate) fn reusable_pages_with_prefixes(
+    pub(crate) fn reusable_pages_with_prefixes_by_ai_outcome(
         &mut self,
         prefixes: &[&str],
+        mut ai_outcome_for_path: impl FnMut(&str) -> CodewikiAiOutcome,
     ) -> Option<Vec<BuiltDoc>> {
         let paths = self
             .docs
@@ -194,7 +202,8 @@ impl ReusePlan {
             let entry = self.docs.get(&path)?;
             let sources = entry.source_hashes.keys().cloned().collect::<BTreeSet<_>>();
             let summary = entry.summary.clone();
-            let content = self.reusable_page(&path, &sources)?;
+            let content =
+                self.reusable_page_with_ai_outcome(&path, &sources, ai_outcome_for_path(&path))?;
             docs.push(BuiltDoc {
                 path,
                 content,
@@ -214,6 +223,7 @@ impl ReusePlan {
         doc_path: &str,
         sources: &BTreeSet<String>,
         neighbors: &BTreeSet<String>,
+        ai_outcome: CodewikiAiOutcome,
     ) -> bool {
         let Some(entry) = self.docs.get(doc_path) else {
             return false;
@@ -224,7 +234,7 @@ impl ReusePlan {
         // hashes cannot see (#677).
         if entry.degraded
             || entry.ai_mode != self.ai_mode
-            || !entry_matches_ai_outcome(entry, self.ai_outcome)
+            || !entry_matches_ai_outcome(entry, ai_outcome)
             || entry.render_version != CODEWIKI_RENDER_VERSION
             || entry.source_hashes.is_empty()
         {

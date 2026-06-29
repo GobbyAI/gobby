@@ -750,6 +750,11 @@ impl LaneBResult {
 /// [`TextGenerator`] for Lane A; aggregate-only (leaf pages stay Lane A).
 pub(crate) type ToolLoopGenerator<'a> = dyn FnMut(&str, &str) -> LaneBResult + 'a;
 
+pub(crate) struct ResolvedToolLoopGenerator {
+    pub(crate) generator: Option<Box<ToolLoopGenerator<'static>>>,
+    pub(crate) ai_outcome: CodewikiAiOutcome,
+}
+
 /// Run one Lane B tool loop against the gcode index for the given transport,
 /// returning the classified outcome plus the executor's data-source
 /// degradation. Builds a fresh read-only executor per call.
@@ -918,21 +923,38 @@ fn resolve_aggregate_direct_target(
 
 /// Resolve the Lane B aggregate generator for the `tool_chat` capability,
 /// mirroring [`resolve_text_generator`] but for the tool-calling chat route.
-/// Returns `None` when the route is off/auto or the Direct route has no usable
-/// aggregate target; in those cases aggregate pages fall back to the Lane A
-/// path (or structural output when AI is off). Tool-chat reuses the
-/// `text_generate` config tree (Aggregate → `feature_high`), with daemon-side
-/// tool-capability filtering layered on; there is no parallel config tree.
+/// When the route is off/auto or the Direct route has no usable aggregate
+/// target, the returned generator is empty and the outcome records the observed
+/// skip metadata; aggregate pages then fall back to the Lane A path (or
+/// structural output when AI is off). Tool-chat reuses the `text_generate`
+/// config tree (Aggregate → `feature_high`), with daemon-side tool-capability
+/// filtering layered on; there is no parallel config tree.
 pub(crate) fn resolve_tool_loop_generator(
     ctx: &Context,
     ai: &CodewikiAiOptions,
     graph_availability: CodewikiGraphAvailability,
-) -> Option<Box<ToolLoopGenerator<'static>>> {
-    let ai_context = resolve_ai_context(ctx, ai.routing).ok()?;
+) -> ResolvedToolLoopGenerator {
+    let ai_context = match resolve_ai_context(ctx, ai.routing) {
+        Ok(ai_context) => ai_context,
+        Err(_) => {
+            let requested = ai.routing.unwrap_or(AiRouting::Auto);
+            let (route, fallback) = match requested {
+                AiRouting::Auto => (AiRouting::Off, true),
+                route => (route, false),
+            };
+            return ResolvedToolLoopGenerator {
+                generator: None,
+                ai_outcome: CodewikiAiOutcome::skipped(route, fallback),
+            };
+        }
+    };
     let observed = resolve_route_observed(&ai_context, AiCapability::ToolChat);
     let route = observed.route;
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
-        return None;
+        return ResolvedToolLoopGenerator {
+            generator: None,
+            ai_outcome: CodewikiAiOutcome::skipped(route, observed.fallback),
+        };
     }
     let aggregate_profile = ai.aggregate_profile.clone();
     let profile = profile_for_tier(GenerationTier::Aggregate, aggregate_profile.as_deref());
@@ -940,7 +962,12 @@ pub(crate) fn resolve_tool_loop_generator(
         let target = resolve_aggregate_direct_target(ctx, aggregate_profile.as_deref());
         // No resolved api_base means a Direct-route Lane B cannot run; decline
         // rather than build a generator that always errors.
-        target.api_base()?;
+        if target.api_base().is_none() {
+            return ResolvedToolLoopGenerator {
+                generator: None,
+                ai_outcome: CodewikiAiOutcome::skipped(route, observed.fallback),
+            };
+        }
         Some(target)
     } else {
         None
@@ -1002,7 +1029,10 @@ pub(crate) fn resolve_tool_loop_generator(
             AiRouting::Off | AiRouting::Auto => LaneBResult::skipped(),
         }
     });
-    Some(generator)
+    ResolvedToolLoopGenerator {
+        generator: Some(generator),
+        ai_outcome: CodewikiAiOutcome::generated(route, observed.fallback),
+    }
 }
 
 /// Run the Lane B generator if present, returning a [`LaneBResult`]. A `None`

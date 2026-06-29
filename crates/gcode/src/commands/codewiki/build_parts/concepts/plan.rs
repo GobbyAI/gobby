@@ -210,14 +210,46 @@ pub(super) fn parse_plan(raw: &str) -> Option<CuratedNavigationPlan> {
     if let Some(plan) = parse_plan_json(json) {
         return Some(plan);
     }
-    // A tool-using model may wrap the plan in reasoning or commentary despite the
-    // "return only JSON" instruction; recover by parsing the outermost {...} span.
-    let start = json.find('{')?;
-    let end = json.rfind('}')?;
-    if end <= start {
-        return None;
+    // A tool-using model may wrap the plan in reasoning or commentary despite
+    // the "return only JSON" instruction. Try every balanced object span so an
+    // earlier invalid braced aside does not poison recovery.
+    parse_plan_from_brace_spans(json)
+}
+
+fn parse_plan_from_brace_spans(json: &str) -> Option<CuratedNavigationPlan> {
+    let mut starts = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, ch) in json.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => starts.push(index),
+            '}' => {
+                let Some(start) = starts.pop() else {
+                    continue;
+                };
+                let end = index + ch.len_utf8();
+                if let Some(plan) = parse_plan_json(&json[start..end]) {
+                    return Some(plan);
+                }
+            }
+            _ => {}
+        }
     }
-    parse_plan_json(&json[start..=end])
+
+    None
 }
 
 /// Parse a JSON span into a plan, repairing invalid escape sequences first. A
@@ -742,6 +774,12 @@ mod tests {
         assert!(
             parse_plan(&wrapped).is_some(),
             "wrapped JSON must be recovered"
+        );
+        let wrapped_after_invalid_braces =
+            format!("I checked {{not valid json}} before emitting:\n{clean}");
+        assert!(
+            parse_plan(&wrapped_after_invalid_braces).is_some(),
+            "valid JSON after invalid braced commentary must be recovered"
         );
         // Fenced JSON keeps parsing (existing behavior).
         let fenced = format!("```json\n{clean}\n```");

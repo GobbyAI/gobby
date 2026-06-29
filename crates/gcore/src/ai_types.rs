@@ -211,7 +211,11 @@ impl fmt::Display for AiError {
                     .filter(|value| !value.is_empty())
                 {
                     Some(value) => {
-                        let snippet: String = value.chars().take(400).collect();
+                        let snippet: String = value
+                            .chars()
+                            .take(400)
+                            .flat_map(char::escape_default)
+                            .collect();
                         write!(f, "AI endpoint returned HTTP {status}: {snippet}")
                     }
                     None => write!(f, "AI endpoint returned HTTP {status}"),
@@ -325,6 +329,19 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("HTTP 400"));
         assert!(rendered.contains("context length exceeded"));
+    }
+
+    #[test]
+    fn http_status_display_escapes_newlines_and_control_characters() {
+        let error = AiError::HttpStatus {
+            status: 400,
+            body: Some("bad\nbody\u{7}".to_string()),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "AI endpoint returned HTTP 400: bad\\nbody\\u{7}"
+        );
     }
 
     #[test]

@@ -378,7 +378,13 @@ fn render_narrative_page(
         }
         doc.push('\n');
     }
-    append_explore_section(&mut doc, &page.modules, &[], module_lookup, file_lookup);
+    append_explore_section(
+        &mut doc,
+        &page.modules,
+        &page.files,
+        module_lookup,
+        file_lookup,
+    );
     curated_content::append_tour_nav(&mut doc, prev, next);
     doc
 }
@@ -663,5 +669,57 @@ mod tests {
         assert!(doc.contains("Guide"));
         assert!(doc.contains("Fallback text."));
         assert!(!doc.contains("# Only A Title"));
+    }
+
+    #[test]
+    fn narrative_page_explore_lists_files_when_no_modules_are_present() {
+        let module_lookup = std::collections::BTreeMap::new();
+        let mut file_lookup = std::collections::BTreeMap::new();
+        let file = FileDoc {
+            path: "src/search.rs".to_string(),
+            module: String::new(),
+            summary: "Ranks search results.".to_string(),
+            body: String::new(),
+            source_spans: Vec::new(),
+            symbols: Vec::new(),
+            component_ids: Vec::new(),
+            degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            reused_page: None,
+        };
+        file_lookup.insert(file.path.as_str(), &file);
+        let page = NarrativePage {
+            slug: "01-overview".to_string(),
+            title: "Overview".to_string(),
+            summary: "How search fits together.".to_string(),
+            concepts: Vec::new(),
+            modules: Vec::new(),
+            files: vec![file.path.clone()],
+            body: None,
+            body_degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            body_observability: GenerationObservability::default(),
+        };
+        let concept_titles = std::collections::BTreeMap::new();
+
+        let doc = render_narrative_page(
+            &page,
+            &[],
+            &concept_titles,
+            &[],
+            LANE_ONE_SHOT,
+            None,
+            None,
+            None,
+            &module_lookup,
+            &file_lookup,
+        );
+
+        assert!(doc.contains("## Explore"), "{doc}");
+        assert!(
+            doc.contains("[[code/files/src/search.rs\\|src/search.rs]]"),
+            "{doc}"
+        );
     }
 }

@@ -159,6 +159,8 @@ pub use repair::{CitationRepairSummary, repair_citations};
 // In-process tool executor for the Lane B narrative tool loop (#978).
 pub(crate) use tool_executor::CodewikiToolExecutor;
 // AI and structural text helpers.
+#[cfg(test)]
+pub(crate) use text::LaneBResult;
 pub(crate) use text::{
     CitationResolver, FrontmatterLaneB, GRAPH_UNAVAILABLE, GenerationContent,
     GenerationObservability, GenerationOutcome, LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator,

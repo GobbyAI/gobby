@@ -33,6 +33,8 @@ pub(crate) use citations::MAX_FALLBACK_CITATIONS;
 #[cfg(test)]
 pub(crate) use frontmatter::frontmatter;
 #[cfg(test)]
+pub(crate) use generation::LaneBResult;
+#[cfg(test)]
 pub(crate) use generation::generate_with_bounded_retry;
 
 #[cfg(test)]

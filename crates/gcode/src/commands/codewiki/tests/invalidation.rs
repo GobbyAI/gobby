@@ -98,6 +98,7 @@ fn run_generate_with_audit(
         &mut None,
         &mut None,
         AiDepth::Symbols,
+        CodewikiAiOutcome::default(),
         &mut reuse,
         &mut progress,
         &doc_scope,

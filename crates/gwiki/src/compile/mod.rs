@@ -127,12 +127,6 @@ pub fn compile_to_wiki_with_options(
     handoff.bundle.write_intent = write_intent;
     handoff.state.write_intent = write_intent;
     session.record_compile_state(handoff.state.clone())?;
-    if handoff.bundle.write_intent
-        && let Some(target_page) = handoff.bundle.target_page.as_ref()
-    {
-        let rendered = render_bundle(&handoff.bundle);
-        write_target_page(session.scope.root(), target_page, &rendered)?;
-    }
 
     let vault_root = session.scope.root();
     let source_paths: Vec<PathBuf> = handoff
@@ -187,6 +181,12 @@ pub fn compile_to_wiki_with_options(
                  (no skeleton, no Lane A fallback)"
             ),
         });
+    }
+    if handoff.bundle.write_intent
+        && let Some(target_page) = handoff.bundle.target_page.as_ref()
+    {
+        let rendered = render_bundle(&handoff.bundle);
+        write_target_page(session.scope.root(), target_page, &rendered)?;
     }
     let article = synthesize_article(vault_root, &input, target_page, &explainer)?;
     let mut pages = vec![article.clone()];

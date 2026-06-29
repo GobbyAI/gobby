@@ -570,8 +570,8 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
         CompileRequest {
             topic: "Hard Fail Compile".to_string(),
             outline: vec!["Overview".to_string()],
-            target_page: None,
-            write_intent: false,
+            target_page: Some(PathBuf::from("hard-fail-compile.md")),
+            write_intent: true,
         },
         WikiCompileOptions {
             hard_fail_on_generation_failure: true,
@@ -596,6 +596,10 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
     assert!(
         !scope.root().join("knowledge").exists(),
         "no skeleton article should be written on Lane B hard-fail"
+    );
+    assert!(
+        !scope.root().join("hard-fail-compile.md").exists(),
+        "write-intent target handoff should not be written on Lane B hard-fail"
     );
 }
 

@@ -17,6 +17,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 
 use gobby_core::ai::generation::{ToolCall, ToolError, ToolExecutor, ToolSchema};
 use serde_json::{Value, json};
@@ -187,14 +188,7 @@ impl<'a> CodewikiToolExecutor<'a> {
             .get("end_line")
             .and_then(Value::as_u64)
             .map(|value| value as usize);
-        let full = self.ctx.project_root.join(&path);
-        if !security::is_symlink_safe(&full, &self.ctx.project_root)
-            || !security::validate_path(&full, &self.ctx.project_root)
-        {
-            return Err(tool_err(format!(
-                "path `{path}` is outside the project root or unsafe to read"
-            )));
-        }
+        let full = safe_read_path(&self.ctx.project_root, &path)?;
         let content = std::fs::read_to_string(&full)
             .map_err(|error| tool_err(format!("cannot read `{path}`: {error}")))?;
         let lines: Vec<&str> = content.lines().collect();
@@ -204,11 +198,7 @@ impl<'a> CodewikiToolExecutor<'a> {
                 "`{path}` has {total} line(s); start_line {start_line} is past the end."
             ));
         }
-        let max_end = start_line + MAX_READ_LINES - 1;
-        let end = end_line
-            .unwrap_or(start_line + DEFAULT_READ_LINES - 1)
-            .min(max_end)
-            .min(total);
+        let end = clamped_end_line(start_line, end_line, total);
         let mut out = format!("`{path}` lines {start_line}-{end} of {total}:\n```\n");
         for (offset, line) in lines[start_line - 1..end].iter().enumerate() {
             let _ = writeln!(out, "{}: {}", start_line + offset, line);
@@ -218,23 +208,7 @@ impl<'a> CodewikiToolExecutor<'a> {
     }
 
     fn read_byte_snippet(&self, symbol: &Symbol) -> Result<String, ToolError> {
-        let full = self.ctx.project_root.join(&symbol.file_path);
-        if !security::validate_path(&full, &self.ctx.project_root) {
-            return Err(tool_err(
-                "symbol source path is outside the project".to_string(),
-            ));
-        }
-        let bytes = std::fs::read(&full)
-            .map_err(|error| tool_err(format!("cannot read symbol source: {error}")))?;
-        let start = symbol.byte_start.min(bytes.len());
-        let end = symbol
-            .byte_end
-            .min(bytes.len())
-            .min(start + MAX_SNIPPET_BYTES);
-        if end <= start {
-            return Ok(String::new());
-        }
-        Ok(String::from_utf8_lossy(&bytes[start..end]).into_owned())
+        read_byte_snippet_from_root(&self.ctx.project_root, symbol)
     }
 
     /// Run a code-graph query, mapping an unreachable/unconfigured FalkorDB to
@@ -266,6 +240,43 @@ impl<'a> CodewikiToolExecutor<'a> {
             Err(error) => Err(tool_err(format!("{tool} failed: {error}"))),
         }
     }
+}
+
+fn safe_read_path(project_root: &Path, relative_path: &str) -> Result<PathBuf, ToolError> {
+    let full = project_root.join(relative_path);
+    if !security::is_symlink_safe(&full, project_root)
+        || !security::validate_path(&full, project_root)
+    {
+        return Err(tool_err(format!(
+            "path `{relative_path}` is outside the project root or unsafe to read"
+        )));
+    }
+    Ok(full)
+}
+
+fn clamped_end_line(start_line: usize, requested_end: Option<usize>, total: usize) -> usize {
+    let default_end = start_line.saturating_add(DEFAULT_READ_LINES - 1);
+    let max_end = start_line.saturating_add(MAX_READ_LINES - 1);
+    requested_end
+        .unwrap_or(default_end)
+        .max(start_line)
+        .min(max_end)
+        .min(total)
+}
+
+fn read_byte_snippet_from_root(project_root: &Path, symbol: &Symbol) -> Result<String, ToolError> {
+    let full = safe_read_path(project_root, &symbol.file_path)?;
+    let bytes = std::fs::read(&full)
+        .map_err(|error| tool_err(format!("cannot read symbol source: {error}")))?;
+    let start = symbol.byte_start.min(bytes.len());
+    let end = symbol
+        .byte_end
+        .min(bytes.len())
+        .min(start.saturating_add(MAX_SNIPPET_BYTES));
+    if end <= start {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&bytes[start..end]).into_owned())
 }
 
 impl ToolExecutor for CodewikiToolExecutor<'_> {
@@ -603,6 +614,63 @@ mod tests {
             arg_str_opt(&json!({"path": "src/lib.rs"}), "path").as_deref(),
             Some("src/lib.rs")
         );
+    }
+
+    #[test]
+    fn read_file_range_clamps_requested_end_to_start_and_caps() {
+        assert_eq!(clamped_end_line(10, Some(5), 25), 10);
+        assert_eq!(
+            clamped_end_line(10, Some(10_000), 10_000),
+            10 + MAX_READ_LINES - 1
+        );
+        assert_eq!(clamped_end_line(10, None, 12), 12);
+    }
+
+    #[test]
+    fn read_file_range_saturates_end_calculations() {
+        assert_eq!(
+            clamped_end_line(usize::MAX - 1, None, usize::MAX),
+            usize::MAX
+        );
+        assert_eq!(
+            clamped_end_line(usize::MAX - 1, Some(usize::MAX), usize::MAX),
+            usize::MAX
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_byte_snippet_rejects_symlink_outside_project() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let outside_file = outside.path().join("secret.rs");
+        std::fs::write(&outside_file, "fn secret() {}\n").expect("outside file");
+        std::os::unix::fs::symlink(&outside_file, project.path().join("link.rs")).expect("symlink");
+        let symbol = Symbol {
+            id: "sym-1".to_string(),
+            project_id: "p".to_string(),
+            file_path: "link.rs".to_string(),
+            name: "secret".to_string(),
+            qualified_name: "secret".to_string(),
+            kind: "function".to_string(),
+            language: "rust".to_string(),
+            byte_start: 0,
+            byte_end: 10,
+            line_start: 1,
+            line_end: 1,
+            signature: None,
+            docstring: None,
+            parent_symbol_id: None,
+            content_hash: String::new(),
+            summary: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+
+        let error = read_byte_snippet_from_root(project.path(), &symbol)
+            .expect_err("outside symlink rejected");
+
+        assert!(error.message.contains("unsafe to read"), "{error:?}");
     }
 
     #[test]
