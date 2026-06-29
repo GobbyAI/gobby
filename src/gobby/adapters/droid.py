@@ -69,27 +69,62 @@ class DroidAdapter(BaseAdapter):
         """Convert Droid native payload to a unified HookEvent."""
 
         hook_type = self._resolve_hook_type(native_event)
-        input_data = native_event.get("input_data", {}) or {}
+        raw_input_data = native_event.get("input_data", {}) or {}
+        input_data = raw_input_data if isinstance(raw_input_data, dict) else {}
 
         if not input_data and "hook_event_name" in native_event:
             input_data = native_event
 
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
         normalized_data = self._normalize_event_data(input_data)
+        session_id = self._resolve_session_id(native_event, input_data)
+        if session_id and not normalized_data.get("session_id"):
+            normalized_data["session_id"] = session_id
+        if event_type is HookEventType.SESSION_START and not session_id:
+            logger.warning(
+                "Droid SessionStart missing session id",
+                extra={
+                    "native_keys": sorted(native_event.keys()),
+                    "input_data_keys": sorted(input_data.keys()),
+                },
+            )
         is_failure = bool(normalized_data.get("is_error", False))
         metadata = {"is_failure": is_failure} if is_failure else {}
         self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
             event_type=event_type,
-            session_id=input_data.get("session_id", ""),
+            session_id=session_id,
             source=self.source,
             timestamp=datetime.now(UTC),
-            machine_id=input_data.get("machine_id"),
-            cwd=input_data.get("cwd"),
+            machine_id=self._resolve_text_field(
+                native_event, input_data, "machine_id", "machineId"
+            ),
+            cwd=self._resolve_text_field(native_event, input_data, "cwd"),
             data=normalized_data,
             metadata=metadata,
         )
+
+    def _resolve_session_id(
+        self,
+        native_event: dict[str, Any],
+        input_data: dict[str, Any],
+    ) -> str:
+        """Resolve Droid's external session id from supported payload shapes."""
+        return self._resolve_text_field(native_event, input_data, "session_id", "sessionId") or ""
+
+    def _resolve_text_field(
+        self,
+        native_event: dict[str, Any],
+        input_data: dict[str, Any],
+        *field_names: str,
+    ) -> str | None:
+        for source in (input_data, native_event):
+            for field_name in field_names:
+                value = source.get(field_name)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """Normalize Droid event data for CLI-agnostic processing."""

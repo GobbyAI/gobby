@@ -14,7 +14,10 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
-from gobby.hooks.event_handlers._session_start.flow import _log_session_start_timing
+from gobby.hooks.event_handlers._session_start.flow import (
+    _expire_stale_terminal_sessions_for_context,
+    _log_session_start_timing,
+)
 from gobby.hooks.events import HookEventType
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -67,6 +70,56 @@ def test_log_session_start_timing_tolerates_missing_total() -> None:
 
     assert debug_messages == ["SESSION_START timing [codex]: resolve=5ms"]
     assert info_messages == []
+
+
+def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
+    session_manager = MagicMock()
+    session_manager.db.fetchall.return_value = [
+        {
+            "id": "stale-same-pane",
+            "terminal_context": {
+                "tmux_pane": "%73",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        },
+        {
+            "id": "different-pane",
+            "terminal_context": {
+                "tmux_pane": "%74",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        },
+        {
+            "id": "different-socket",
+            "terminal_context": {
+                "tmux_pane": "%73",
+                "tmux_socket_path": "/tmp/tmux-501/other",
+            },
+        },
+    ]
+    session_manager.mark_session_expired.return_value = True
+    handler = SimpleNamespace(_session_manager=session_manager, logger=MagicMock())
+
+    _expire_stale_terminal_sessions_for_context(
+        handler,
+        session_id="current-session",
+        project_id="project-1",
+        terminal_context={
+            "tmux_pane": "%73",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        },
+    )
+
+    session_manager.db.fetchall.assert_called_once()
+    assert session_manager.db.fetchall.call_args.args[1] == (
+        "project-1",
+        "terminal",
+        "active",
+        "paused",
+        "current-session",
+        200,
+    )
+    session_manager.mark_session_expired.assert_called_once_with("stale-same-pane")
 
 
 class TestSessionHandlers:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Mapping
 from typing import Any, cast
 
 import psycopg
@@ -11,6 +12,7 @@ import psycopg
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
+from gobby.sessions.handoff_identity import terminal_contexts_match
 
 from .agents import _seed_memory_recall_vars
 from .context import classify_session_start_context, mark_startup_context_injected
@@ -19,6 +21,7 @@ from .profile import seed_user_profile_content
 from .types import AgentActivationResult
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
+STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
 
 
 def _compat_module() -> Any:
@@ -140,6 +143,79 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         )
     except (json.JSONDecodeError, KeyError, psycopg.Error) as e:
         handler.logger.warning(f"Failed to reset agent context injection flag: {e}")
+
+
+def _row_value(row: Any, key: str) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        return None
+
+
+def _expire_stale_terminal_sessions_for_context(
+    handler: Any,
+    *,
+    session_id: str | None,
+    project_id: str | None,
+    terminal_context: dict[str, Any] | None,
+) -> None:
+    if not session_id or not project_id or not terminal_context or not handler._session_manager:
+        return
+
+    db = getattr(handler._session_manager, "db", None)
+    if db is None or not hasattr(db, "fetchall"):
+        return
+
+    try:
+        rows = db.fetchall(
+            """
+            SELECT id, source, terminal_context FROM sessions
+            WHERE project_id = %s
+            AND session_type = %s
+            AND status IN (%s, %s)
+            AND id <> %s
+            AND terminal_context IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT %s
+            """,
+            (
+                project_id,
+                "terminal",
+                "active",
+                "paused",
+                session_id,
+                STALE_TERMINAL_SESSION_SCAN_LIMIT,
+            ),
+        )
+    except psycopg.Error as e:
+        handler.logger.warning(f"Failed to scan stale terminal sessions: {e}")
+        return
+
+    expired_session_ids: list[str] = []
+    for row in rows:
+        candidate_id = _row_value(row, "id")
+        if not isinstance(candidate_id, str) or not candidate_id:
+            continue
+        stored_context = _row_value(row, "terminal_context")
+        if not terminal_contexts_match(terminal_context, stored_context):
+            continue
+        try:
+            if handler._session_manager.mark_session_expired(candidate_id):
+                expired_session_ids.append(candidate_id)
+        except Exception as e:
+            handler.logger.warning(f"Failed to expire stale terminal session {candidate_id}: {e}")
+
+    if expired_session_ids:
+        handler.logger.info(
+            "Expired stale terminal sessions for reused terminal context",
+            extra={
+                "session_id": session_id,
+                "expired_count": len(expired_session_ids),
+                "expired_session_ids": expired_session_ids[:10],
+            },
+        )
 
 
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
@@ -336,6 +412,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             handler.logger.debug(f"Marked parent session {parent_session_id} as expired")
         except Exception as e:
             handler.logger.warning(f"Failed to mark parent session as expired: {e}")
+
+    _expire_stale_terminal_sessions_for_context(
+        handler,
+        session_id=session_id,
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
 
     handler._setup_code_index(session_id, project_id)
 

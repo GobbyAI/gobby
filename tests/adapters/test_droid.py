@@ -75,6 +75,45 @@ class TestDroidTranslateToHookEvent:
         assert event.event_type is HookEventType.BEFORE_TOOL
         assert event.session_id == "direct-session"
 
+    def test_input_data_session_id_wins_over_top_level_camel_case(self) -> None:
+        adapter = DroidAdapter()
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "SessionStart",
+                "sessionId": "top-level-session",
+                "input_data": {"session_id": "nested-session", "cwd": "/repo"},
+            }
+        )
+        assert event.event_type is HookEventType.SESSION_START
+        assert event.session_id == "nested-session"
+        assert event.data["session_id"] == "nested-session"
+
+    def test_input_data_camel_case_session_id_is_canonicalized(self) -> None:
+        adapter = DroidAdapter()
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "SessionStart",
+                "input_data": {"sessionId": "camel-session", "cwd": "/repo"},
+            }
+        )
+        assert event.session_id == "camel-session"
+        assert event.data["session_id"] == "camel-session"
+        assert event.cwd == "/repo"
+
+    def test_top_level_camel_case_session_id_fallback(self) -> None:
+        adapter = DroidAdapter()
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "SessionStart",
+                "sessionId": "top-level-session",
+                "machineId": "machine-1",
+                "input_data": {"cwd": "/repo"},
+            }
+        )
+        assert event.session_id == "top-level-session"
+        assert event.machine_id == "machine-1"
+        assert event.data["session_id"] == "top-level-session"
+
     def test_unknown_hook_type_falls_back_to_notification(self) -> None:
         adapter = DroidAdapter()
         event = adapter.translate_to_hook_event(
