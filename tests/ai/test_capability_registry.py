@@ -307,39 +307,28 @@ def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
         DaemonConfig(),
         provider_installed=lambda _entry: True,
     )
-
-    # codex maps to the daemon style; CodexSpawnToolChatAdapter (``codex exec``
-    # driving a read-only gcode shim) is built, so the binding is available,
-    # tool-capable, and selectable — a provider-agnostic peer of claude/lm-studio.
-    codex = registry.binding(AICapability.TOOL_CHAT, "codex")
-    assert codex is not None
-    assert codex.adapter_style == AIAdapterStyle.DAEMON
-    assert codex.available is True
-    assert codex.metadata["supports_tools"] is True
-    assert registry.select(AICapability.TOOL_CHAT, provider="codex") is codex
-
-    # tool_chat is agentic, so it classifies transports like vision_extract,
-    # NOT text_generate: grok/qwen are ACP clients and droid is a CLI agent.
-    # Their adapters are not built yet, so the bindings are visible but
-    # unavailable and filtered from selection (no silent fallback).
+    # codex (daemon), droid (cli), grok (acp), and qwen (acp) all have
+    # tool_chat spawn adapters that run gcode directly in-sandbox. With
+    # providers installed, all four are available, tool-capable, and
+    # selectable — provider-agnostic peers of claude/lm-studio.
     for provider, style in (
+        ("codex", AIAdapterStyle.DAEMON),
+        ("droid", AIAdapterStyle.CLI),
         ("grok", AIAdapterStyle.ACP),
         ("qwen", AIAdapterStyle.ACP),
-        ("droid", AIAdapterStyle.CLI),
     ):
         binding = registry.binding(AICapability.TOOL_CHAT, provider)
         assert binding is not None, provider
         assert binding.adapter_style == style, provider
-        assert binding.available is False, provider
-        assert binding.metadata["supports_tools"] is False, provider
-        with pytest.raises(CapabilityUnavailableError):
-            registry.select(AICapability.TOOL_CHAT, provider=provider)
+        assert binding.available is True, provider
+        assert binding.metadata["supports_tools"] is True, provider
+        assert registry.select(AICapability.TOOL_CHAT, provider=provider) is binding
 
     # The capability is surfaced in status (a backward-compatible addition).
     status = registry.status(AICapability.TOOL_CHAT)
     assert status.capability == AICapability.TOOL_CHAT
     providers = {binding.provider for binding in status.bindings}
-    assert {"claude", "codex"}.issubset(providers)
+    assert {"claude", "codex", "droid", "grok", "qwen"}.issubset(providers)
 
 
 def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
