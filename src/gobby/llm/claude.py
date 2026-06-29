@@ -590,6 +590,8 @@ class ClaudeLLMProvider:
         max_turns: int = 60,
         reasoning_effort: str | None = None,
         allowed_tools: Sequence[str] = ("Read", "Grep", "Glob", "Bash"),
+        disallowed_tools: Sequence[str] | None = None,
+        mcp_servers: dict[str, Any] | None = None,
         caller: str | None = None,
     ) -> AgenticGenerationResult:
         """Run a tool-enabled agentic investigation and return a grounded narrative.
@@ -616,13 +618,18 @@ class ClaudeLLMProvider:
         applied_reasoning_effort = reasoning_options.get("effort")
         resolved_model = model or self._default_model
 
-        # tools (custom in-process SDK tools) stays at its SDK default (None);
-        # allowed_tools is the allowlist that enables the built-in CLI tools.
+        # ``mcp_servers`` registers in-process SDK MCP tools (e.g. a caller's
+        # read-only gcode surface); ``allowed_tools`` advertises which tools the
+        # agent may use, and ``disallowed_tools`` is the hard deny lever that
+        # remains authoritative under ``bypassPermissions`` (e.g. to forbid
+        # Bash/Write so a read-only investigation cannot mutate the repo).
         options = ClaudeAgentOptions(
             system_prompt=system_prompt or "You are a helpful assistant.",
             max_turns=max_turns,
             model=resolved_model,
             allowed_tools=list(allowed_tools),
+            disallowed_tools=list(disallowed_tools) if disallowed_tools else [],
+            mcp_servers=dict(mcp_servers) if mcp_servers else {},
             permission_mode="bypassPermissions",
             setting_sources=[],
             cli_path=cli_path,

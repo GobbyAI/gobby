@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult
@@ -173,3 +173,121 @@ def _accumulate_usage(total: dict[str, int], usage: Any) -> None:
         value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
         if isinstance(value, int):
             total[key] = total.get(key, 0) + value
+
+
+# ---------------------------------------------------------------------------
+# Family B: external agent runs its own loop (llm_provider = Claude Agent SDK)
+# ---------------------------------------------------------------------------
+
+# Built-in agent tools denied for every tool_chat run. Mutation is permitted
+# only through a caller's declared (policy-validated) MCP tools — never through
+# raw shell/file tools — so a read-only policy cannot write to the repo and a
+# write-capable policy still mutates only via its own tools.
+_DISALLOWED_TOOLS: tuple[str, ...] = (
+    "Bash",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "Task",
+    "Agent",
+)
+_REPO_MCP_SERVER_NAME = "repo"
+_ARGS_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"args": {"type": "array", "items": {"type": "string"}}},
+    "required": [],
+}
+
+# Given the selected binding, return a provider exposing ``generate_agentic``.
+ClaudeProviderFactory = Callable[[CapabilityBinding], Any]
+
+
+def _mcp_tool_name(tool_name: str) -> str:
+    return f"mcp__{_REPO_MCP_SERVER_NAME}__{tool_name}"
+
+
+def _make_tool_handler(
+    runtime: ToolRuntime, tool_name: str
+) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
+    async def handler(args: dict[str, Any]) -> dict[str, Any]:
+        try:
+            text = await runtime.execute(tool_name, args)
+            return {"content": [{"type": "text", "text": text}]}
+        except ToolPolicyError as exc:
+            return {
+                "content": [{"type": "text", "text": f"[error: {exc}]"}],
+                "is_error": True,
+            }
+
+    return handler
+
+
+def build_repo_mcp_server(runtime: ToolRuntime) -> tuple[Any, list[str]]:
+    """Build an in-process SDK MCP server exposing the policy's tools.
+
+    Returns ``(server_config, allowed_tool_names)``. Each tool delegates to the
+    shared :class:`ToolRuntime`, so policy enforcement (read-only/project_path/
+    caps) is identical to the Family A loop.
+    """
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    descriptions = {
+        schema["function"]["name"]: schema["function"]["description"]
+        for schema in runtime.openai_schemas()
+    }
+    sdk_tools = []
+    allowed: list[str] = []
+    for tool_name in runtime.tool_names():
+        description = descriptions.get(tool_name, tool_name)
+        sdk_tools.append(
+            tool(tool_name, description, _ARGS_INPUT_SCHEMA)(_make_tool_handler(runtime, tool_name))
+        )
+        allowed.append(_mcp_tool_name(tool_name))
+    server = create_sdk_mcp_server(name=_REPO_MCP_SERVER_NAME, version="1.0.0", tools=sdk_tools)
+    return server, allowed
+
+
+class ClaudeToolChatAdapter:
+    """Family B adapter for the ``llm_provider`` style (Claude Agent SDK).
+
+    Exposes the caller's tool policy as an in-process MCP server and runs the
+    Agent SDK loop with mutation/shell tools denied, so a read-only policy
+    cannot write to the repo. The concrete provider is built from the binding.
+    """
+
+    def __init__(self, provider_factory: ClaudeProviderFactory) -> None:
+        self._provider_factory = provider_factory
+
+    async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
+        runtime = ToolRuntime(
+            request.tool_policy,
+            project_path=request.project_path,
+            limits=request.limits,
+        )
+        server, allowed_tools = build_repo_mcp_server(runtime)
+        provider = self._provider_factory(binding)
+        model = request.model or next(iter(binding.models), None)
+        result = await provider.generate_agentic(
+            system_prompt=request.system_prompt,
+            prompt=request.prompt,
+            project_path=request.project_path,
+            model=model,
+            max_turns=request.max_turns or 60,
+            reasoning_effort=request.reasoning_effort,
+            allowed_tools=tuple(allowed_tools),
+            disallowed_tools=_DISALLOWED_TOOLS,
+            mcp_servers={_REPO_MCP_SERVER_NAME: server},
+            caller=request.caller or "tool_chat-llm_provider",
+        )
+        return ToolChatResult(
+            text=result.text,
+            provider=binding.provider,
+            model=getattr(result, "model", None) or model,
+            tool_use_count=getattr(result, "tool_use_count", 0),
+            turns=getattr(result, "turns", 0),
+            tools=dict(getattr(result, "tools", {}) or {}),
+            usage=getattr(result, "usage", None),
+            applied_reasoning_effort=getattr(result, "applied_reasoning_effort", None),
+            stop_reason="completed",
+        )
