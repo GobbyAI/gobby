@@ -18,7 +18,7 @@ from gobby.ai._tool_chat_adapters import (
     OpenAICompatibleToolChatAdapter,
 )
 from gobby.ai._tool_chat_service import ToolChatAdapterFactory, ToolChatService
-from gobby.ai._tool_chat_spawn import CodexSpawnToolChatAdapter
+from gobby.ai._tool_chat_spawn import CodexSpawnToolChatAdapter, DroidSpawnToolChatAdapter
 from gobby.ai.local_endpoints import resolve_local_generation_endpoint
 from gobby.ai.registry import (
     AIAdapterStyle,
@@ -58,6 +58,7 @@ def _daemon_tool_chat_adapter_factories(
             client_factory=_local_client_factory(config)
         ),
         AIAdapterStyle.DAEMON: lambda: CodexSpawnToolChatAdapter(),
+        AIAdapterStyle.CLI: lambda: DroidSpawnToolChatAdapter(),
     }
 
 

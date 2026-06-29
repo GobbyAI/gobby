@@ -24,6 +24,7 @@ service, route, or call-site.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -31,11 +32,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gobby.ai._text_generation_adapters import (
+    _droid_isolated_env,
     _extend_reasoning_args,
     _run_cli_text_generation_command,
+    _seed_droid_factory_state,
 )
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult
-from gobby.ai._tool_chat_tools import validate_policy
+from gobby.ai._tool_chat_tools import tool_name_for, validate_policy
 
 if TYPE_CHECKING:
     from gobby.ai._tool_chat_contracts import ToolPolicy
@@ -242,6 +245,170 @@ class CodexSpawnToolChatAdapter:
             # a distinct failure, never a skeleton. No fallback.
             raise RuntimeError(
                 "Codex tool_chat produced no final message "
+                f"(model={model}, tool_use_count={tool_use_count})"
+            )
+        return ToolChatResult(
+            text=text,
+            provider=binding.provider,
+            model=model,
+            tool_use_count=tool_use_count,
+            turns=tool_use_count,
+            tools=tools,
+            applied_reasoning_effort=request.reasoning_effort,
+            stop_reason="completed",
+        )
+
+
+# Droid tools removed so a no-OS-sandbox agent cannot mutate or escape to the
+# shell: file writes, patches, the shell, automations/crons, and sub-agent
+# spawning. Investigation flows ONLY through the read-only ``gobby-index`` MCP
+# server (``gobby___*`` tools), which droid already connects to. Note: droid's
+# default ``exec`` autonomy is itself read-only (writes are refused), so this is
+# defense-in-depth on top of that guarantee, not the sole control.
+_DROID_DISABLED_TOOLS: tuple[str, ...] = (
+    "Execute",
+    "Edit",
+    "ApplyPatch",
+    "Create",
+    "CreateAutomation",
+    "EditAutomation",
+    "DeleteAutomation",
+    "CronCreate",
+    "CronDelete",
+    "GenerateDroid",
+    "Task",
+)
+
+
+def compose_index_investigation_prompt(request: ToolChatRequest) -> str:
+    """Compose the seed prompt plus a read-only ``gobby-index`` usage preamble.
+
+    Spawn agents that have no in-process tool surface (droid, grok, qwen)
+    investigate the indexed codebase through the one gobby MCP server they
+    already connect to, reaching the read-only ``gobby-index`` tools via
+    progressive discovery + ``call_tool`` — never the shell or direct file I/O.
+    """
+    cli = request.tool_policy.cli
+    tools = ", ".join(tool_name_for(cli, sub) for sub in request.tool_policy.tools)
+    project = request.project_path
+    preamble = (
+        "Investigate the indexed codebase ONLY through the gobby MCP server named "
+        '`gobby-index` (read-only). Discover its tools with list_tools("gobby-index"), '
+        'then call them: call_tool("gobby-index", "<tool>", '
+        f'{{"args": [...], "project": "{project}"}}). Always pass project="{project}". '
+        f"Useful tools: {tools}. Do NOT use the shell, do NOT read or write files "
+        "directly, do NOT modify anything. Ground every claim in `file:line` "
+        "citations from the index. Output ONLY the finished documentation, with no "
+        "preamble or tool transcripts."
+    )
+    parts = [part for part in (request.system_prompt, request.prompt, preamble) if part]
+    return "\n\n".join(parts)
+
+
+def parse_droid_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
+    """Parse droid ``--output-format stream-json`` into (final_text, tool_calls, breakdown).
+
+    The narrative is the ``completion`` event's ``finalText`` (falling back to the
+    last assistant ``message``). Tool-call provenance comes from ``tool_call``
+    events, counted by ``toolName``.
+    """
+    final_text = ""
+    last_assistant = ""
+    breakdown: dict[str, int] = {}
+    total = 0
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        if etype == "tool_call":
+            name = str(event.get("toolName") or event.get("toolId") or "tool")
+            breakdown[name] = breakdown.get(name, 0) + 1
+            total += 1
+        elif etype == "message" and event.get("role") == "assistant":
+            text = event.get("text")
+            if isinstance(text, str) and text.strip():
+                last_assistant = text
+        elif etype == "completion":
+            final = event.get("finalText")
+            if isinstance(final, str):
+                final_text = final
+    return (final_text or last_assistant).strip(), total, breakdown
+
+
+class DroidSpawnToolChatAdapter:
+    """Family B adapter for the ``cli`` style — Droid via ``droid exec``.
+
+    Spawns ``droid exec --output-format stream-json`` in an isolated, neutral
+    working directory (its Factory home seeded from the real one, so auth + the
+    gobby ``mcp.json`` travel) with mutating/shell tools disabled. Droid runs its
+    own agentic loop, investigates the index through the read-only ``gobby-index``
+    MCP server, and emits the final narrative; tool-call provenance is read from
+    the stream-json ``tool_call`` events. Read-only rests on droid's default
+    read-only ``exec`` autonomy plus ``gobby-index`` exposing only read-only
+    gcode subcommands — droid has no OS write-sandbox of its own.
+    """
+
+    def __init__(
+        self,
+        *,
+        command_path: str | None = None,
+        timeout_seconds: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
+    ) -> None:
+        self._command_path = command_path
+        self._timeout_seconds = timeout_seconds
+
+    def _resolve_command_path(self) -> str:
+        path = self._command_path or shutil.which("droid")
+        if not path:
+            raise FileNotFoundError("Droid CLI not found in PATH")
+        return path
+
+    def _build_command(self, request: ToolChatRequest, *, model: str | None) -> list[str]:
+        command = [
+            self._resolve_command_path(),
+            "exec",
+            "--output-format",
+            "stream-json",
+            "--disabled-tools",
+            ",".join(_DROID_DISABLED_TOOLS),
+        ]
+        if model:
+            command.extend(["--model", model])
+        _extend_reasoning_args(command, "droid", request.reasoning_effort)
+        command.append(compose_index_investigation_prompt(request))
+        return command
+
+    async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
+        validate_policy(request.tool_policy)
+        model = request.model or next(iter(binding.models), None)
+        command = self._build_command(request, model=model)
+        with tempfile.TemporaryDirectory(prefix="tool-chat-droid-") as work_str:
+            work = Path(work_str)
+            temp_home = work / "home"
+            temp_home.mkdir(parents=True, exist_ok=True)
+            base_env = os.environ.copy()
+            _seed_droid_factory_state(base_env, temp_home)
+            isolated_env = _droid_isolated_env(base_env, temp_home)
+            stdout = await _run_cli_text_generation_command(
+                "Droid tool_chat",
+                command,
+                neutral_cwd=work,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=isolated_env,
+            )
+        text, tool_use_count, tools = parse_droid_stream(stdout)
+        if not text:
+            # No silent blank "completed" result — hard-fail so the caller
+            # surfaces a distinct failure rather than writing a skeleton page.
+            raise RuntimeError(
+                "Droid tool_chat produced no final message "
                 f"(model={model}, tool_use_count={tool_use_count})"
             )
         return ToolChatResult(
