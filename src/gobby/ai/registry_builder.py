@@ -480,11 +480,18 @@ _TOOL_CHAT_EXECUTABLE_STYLES: frozenset[AIAdapterStyle] = frozenset(
 
 
 def _tool_chat_adapter_style(provider: str) -> AIAdapterStyle | None:
+    # tool_chat is an agentic capability, so it mirrors vision_extract's
+    # transport classification, NOT text_generate's. grok/qwen drive their own
+    # loop over ACP; droid via its CLI; codex via the app-server daemon; claude
+    # via the Agent SDK. agy has no documented agentic/spawn transport yet (its
+    # agent_spawn binding is unavailable), so it gets no tool_chat binding.
     if provider == "claude":
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"agy", "droid", "grok", "qwen"}:
+    if provider in {"grok", "qwen"}:
+        return AIAdapterStyle.ACP
+    if provider == "droid":
         return AIAdapterStyle.CLI
     return None
 

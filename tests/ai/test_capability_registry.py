@@ -320,6 +320,23 @@ def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
     with pytest.raises(CapabilityUnavailableError):
         registry.select(AICapability.TOOL_CHAT, provider="codex")
 
+    # tool_chat is agentic, so it classifies transports like vision_extract,
+    # NOT text_generate: grok/qwen are ACP clients and droid is a CLI agent.
+    # Their adapters are not built yet, so the bindings are visible but
+    # unavailable and filtered from selection (no silent fallback).
+    for provider, style in (
+        ("grok", AIAdapterStyle.ACP),
+        ("qwen", AIAdapterStyle.ACP),
+        ("droid", AIAdapterStyle.CLI),
+    ):
+        binding = registry.binding(AICapability.TOOL_CHAT, provider)
+        assert binding is not None, provider
+        assert binding.adapter_style == style, provider
+        assert binding.available is False, provider
+        assert binding.metadata["supports_tools"] is False, provider
+        with pytest.raises(CapabilityUnavailableError):
+            registry.select(AICapability.TOOL_CHAT, provider=provider)
+
     # The capability is surfaced in status (a backward-compatible addition).
     status = registry.status(AICapability.TOOL_CHAT)
     assert status.capability == AICapability.TOOL_CHAT
