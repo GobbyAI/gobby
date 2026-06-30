@@ -367,10 +367,11 @@ class TestShouldUpdateDigestTitle:
 
         assert _should_update_digest_title(LegacySession()) is True
 
-    def test_provisional_title_is_replaceable(self) -> None:
+    @pytest.mark.parametrize("title_source", ["heuristic", "provisional"])
+    def test_fallback_title_is_replaceable(self, title_source: str) -> None:
         session = MagicMock()
         session.title = "#42 codex"
-        session.title_source = "provisional"
+        session.title_source = title_source
 
         assert _should_update_digest_title(session) is True
 
@@ -380,6 +381,7 @@ class TestShouldUpdateDigestTitle:
             ("Manual Title", "manual", False),
             ("Legacy Title", None, False),
             ("", None, True),
+            ("", "native", True),
         ],
     )
     def test_manual_and_legacy_title_policy(
@@ -394,11 +396,11 @@ class TestShouldUpdateDigestTitle:
 
         assert _should_update_digest_title(session) is expected
 
-    def test_native_title_is_refinable_by_digest(self) -> None:
+    def test_non_empty_native_title_is_preserved(self) -> None:
         session = MagicMock()
         session.title = "Fix auth bug"
         session.title_source = "native"
-        assert _should_update_digest_title(session) is True
+        assert _should_update_digest_title(session) is False
 
 
 class TestCanReplaceWithNativeTitle:
@@ -1380,6 +1382,40 @@ class TestBuildTurnAndDigest:
         mock_session_manager.persist_digest_state.assert_called_once()
         assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] == "Fix Auth Bug"
         assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
+        mock_session_manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preserves_native_title_from_digest_title(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """A trusted native title is not replaced by digest title synthesis."""
+        session = mock_session_manager.get.return_value
+        session.title = "Native Session Title"
+        session.title_source = "native"
+        mock_llm_service.call_feature = AsyncMock(
+            return_value=_turn_record_json(
+                "User asked to preserve native titles. Agent updated digest title policy.",
+                "Digest Replacement Title",
+            )
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Keep the native title",
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+        )
+
+        assert result is not None
+        assert "title" not in result
+        mock_session_manager.persist_digest_state.assert_called_once()
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] is None
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] is None
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio

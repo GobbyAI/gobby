@@ -361,7 +361,9 @@ def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
         return False
     if not existing_title:
         return True
-    return title_source in {"heuristic", "llm", "provisional", "native"} or not title_source
+    if title_source == "native":
+        return False
+    return title_source in {"heuristic", "llm", "provisional"} or not title_source
 
 
 def _can_replace_with_heuristic_title(session: Any) -> bool:
