@@ -149,6 +149,7 @@ async def _run_cli_text_generation_command(
     neutral_cwd: Path,
     timeout_seconds: float,
     env_overrides: Mapping[str, str],
+    stdin_input: str | None = None,
 ) -> str:
     # One-shot text generation never runs in the project directory: ``neutral_cwd``
     # is a per-call temp dir owned by the calling adapter (see neutral_textgen_cwd).
@@ -159,7 +160,7 @@ async def _run_cli_text_generation_command(
     env["GOBBY_HOOKS_DISABLED"] = "1"
     process = await asyncio.create_subprocess_exec(
         *command,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=(asyncio.subprocess.PIPE if stdin_input is not None else asyncio.subprocess.DEVNULL),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(neutral_cwd),
@@ -167,8 +168,13 @@ async def _run_cli_text_generation_command(
         start_new_session=True,
     )
     try:
+        communicate_coro = (
+            process.communicate(input=stdin_input.encode("utf-8"))
+            if stdin_input is not None
+            else process.communicate()
+        )
         stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
+            communicate_coro,
             timeout=timeout_seconds,
         )
     except TimeoutError as exc:
@@ -512,7 +518,10 @@ class CodexCLITextGenerateAdapter:
         _extend_reasoning_args(command, "codex", request.reasoning_effort)
         # Intentionally no ``--cd``: one-shot generation runs in a neutral temp dir,
         # never the project directory (avoids the project-context startup tax).
-        command.append(_compose_prompt(request))
+        # Codex ``exec`` reads instructions from stdin when the prompt arg is ``-``.
+        # The prompt is fed via stdin (see ``generate``) so large aggregate prompts
+        # do not overflow ARG_MAX as a command-line argument (#17457).
+        command.append("-")
         return command
 
     async def generate(self, request: TextGenerationRequest) -> str:
@@ -525,6 +534,7 @@ class CodexCLITextGenerateAdapter:
                 neutral_cwd=cwd,
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=self._env,
+                stdin_input=_compose_prompt(request),
             )
             return output_path.read_text(encoding="utf-8").strip()
 

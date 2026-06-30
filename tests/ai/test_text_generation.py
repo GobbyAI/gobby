@@ -2313,6 +2313,7 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
+        stdin_input: str | None = None,
     ) -> str:
         output_path = Path(command[command.index("--output-last-message") + 1])
         output_path.write_text("final answer\n", encoding="utf-8")
@@ -2323,6 +2324,7 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
                 "neutral_cwd": neutral_cwd,
                 "timeout_seconds": timeout_seconds,
                 "env_overrides": env_overrides,
+                "stdin_input": stdin_input,
             }
         )
         return "stdout is ignored"
@@ -2377,7 +2379,9 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     assert command[command.index("-c") + 1] == 'model_reasoning_effort="xhigh"'
     # request.cwd must NOT leak into the command as --cd.
     assert "--cd" not in command
-    assert command[-1] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
+    # Prompt is fed over stdin (codex reads '-'), not embedded in argv (#17457).
+    assert command[-1] == "-"
+    assert call["stdin_input"] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
 
 
 def test_cli_text_generate_adapters_treat_auto_reasoning_effort_as_unset() -> None:
@@ -2422,6 +2426,7 @@ async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
+        stdin_input: str | None = None,
     ) -> str:
         recorded_timeouts.append(timeout_seconds)
         output_path = Path(command[command.index("--output-last-message") + 1])
