@@ -1,9 +1,10 @@
 //! Bootstrap config resolution.
 //!
 //! Reads `~/.gobby/bootstrap.yaml` to discover how the Gobby daemon is
-//! reachable: its TCP port and bind host. Falls back to loopback defaults
-//! when the file is missing, unreadable, or malformed — clients should
-//! always get *something* usable rather than error on startup.
+//! reachable: either an explicit dial URL or its TCP port and bind host.
+//! Falls back to loopback defaults when the file is missing, unreadable, or
+//! malformed — clients should always get *something* usable rather than error
+//! on startup.
 //!
 //! The daemon advertises `bind_host` as a listen address. `0.0.0.0` and
 //! `::` are valid listen addresses but invalid dial addresses — a user who
@@ -28,6 +29,7 @@ const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 pub struct HubDatabaseBootstrap {
     pub hub_backend: Option<String>,
     pub database_url: Option<String>,
+    pub daemon_url: Option<String>,
 }
 
 /// A daemon endpoint as advertised by bootstrap.yaml.
@@ -37,6 +39,7 @@ pub struct HubDatabaseBootstrap {
 /// unroutable listen addresses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonEndpoint {
+    pub daemon_url: Option<String>,
     pub host: String,
     pub port: u16,
 }
@@ -44,6 +47,7 @@ pub struct DaemonEndpoint {
 impl Default for DaemonEndpoint {
     fn default() -> Self {
         Self {
+            daemon_url: None,
             host: DEFAULT_BIND_HOST.to_string(),
             port: DEFAULT_DAEMON_PORT,
         }
@@ -94,7 +98,16 @@ pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint {
         .map(str::to_owned)
         .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string());
 
-    DaemonEndpoint { host, port }
+    let daemon_url = yaml
+        .get("daemon_url")
+        .and_then(|v| v.as_str())
+        .and_then(non_empty_trimmed);
+
+    DaemonEndpoint {
+        daemon_url,
+        host,
+        port,
+    }
 }
 
 pub fn read_hub_database_bootstrap_file(
@@ -131,6 +144,7 @@ pub fn parse_hub_database_bootstrap(
     Ok(Some(HubDatabaseBootstrap {
         hub_backend: optional_string_field(map, "hub_backend")?,
         database_url: optional_string_field(map, "database_url")?,
+        daemon_url: optional_string_field(map, "daemon_url")?,
     }))
 }
 
@@ -218,6 +232,26 @@ mod tests {
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "daemon_port: 60887\nbind_host: 0.0.0.0\n").unwrap();
         let ep = read_daemon_endpoint_at(&path);
+        assert_eq!(ep.port, 60887);
+        assert_eq!(ep.host, "0.0.0.0");
+    }
+
+    #[test]
+    fn reads_explicit_daemon_url() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(
+            &path,
+            "daemon_url: '  http://gobby.example.test:62000/  '\n\
+             daemon_port: 60887\n\
+             bind_host: 0.0.0.0\n",
+        )
+        .unwrap();
+        let ep = read_daemon_endpoint_at(&path);
+        assert_eq!(
+            ep.daemon_url.as_deref(),
+            Some("http://gobby.example.test:62000/")
+        );
         assert_eq!(ep.port, 60887);
         assert_eq!(ep.host, "0.0.0.0");
     }
@@ -319,6 +353,26 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("postgresql://localhost/gobby")
+        );
+    }
+
+    #[test]
+    fn hub_database_bootstrap_reads_daemon_url() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(
+            &path,
+            "hub_backend: postgres\n\
+             database_url: postgresql://localhost/gobby\n\
+             daemon_url: '  http://gobby.example.test:62000/  '\n",
+        )
+        .unwrap();
+
+        let bootstrap = read_hub_database_bootstrap_file(&path).unwrap().unwrap();
+
+        assert_eq!(
+            bootstrap.daemon_url.as_deref(),
+            Some("http://gobby.example.test:62000/")
         );
     }
 

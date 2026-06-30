@@ -418,6 +418,36 @@ fn daemon_post_includes_local_machine_identity() -> TestResult {
 }
 
 #[test]
+fn daemon_post_uses_bootstrap_daemon_url_when_env_url_is_empty() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"decision":"accept","reason":"ok"}"#;
+    let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+    fs::write(
+        gobby_home.path().join("bootstrap.yaml"),
+        format!("daemon_url: {daemon_url}/\n"),
+    )?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        "",
+        VALID_STDIN,
+        &[],
+    )?;
+    let request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::from_str(body)?)?;
+    assert_stderr_empty(&output, "bootstrap daemon_url success")?;
+    assert!(request.contains("\"source\":\"codex\""));
+
+    Ok(())
+}
+
+#[test]
 fn valid_daemon_success_removes_envelope_and_writes_no_failure() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
@@ -751,6 +781,8 @@ fn run_ghook_with_dirs(
         .env("HOME", home)
         .env("GOBBY_HOME", gobby_home)
         .env("GOBBY_DAEMON_URL", daemon_url)
+        .env_remove("GOBBY_PORT")
+        .env_remove("GOBBY_DAEMON_PORT")
         .env_remove("GOBBY_HOOKS_DISABLED")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
