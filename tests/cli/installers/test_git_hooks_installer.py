@@ -948,8 +948,12 @@ class TestHookTemplates:
         assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in content
         assert '-H "Content-Type: application/json" \\' in content
         assert '--data "{\\"root_path\\":\\"$JSON_ROOT\\"}" \\' in content
+        assert 'DAEMON_URL="${GOBBY_DAEMON_URL:-}"' in content
+        assert 'DAEMON_PORT="${GOBBY_PORT:-${GOBBY_DAEMON_PORT:-60887}}"' in content
+        assert '"${DAEMON_URL}/api/code-index/codewiki/refresh"' in content
         assert "codewiki refresh request failed" in content
         assert "/api/code-index/codewiki/refresh" in content
+        assert '"http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh"' not in content
         assert "--get" not in content
 
         git_dir = tmp_path / ".git"
@@ -967,8 +971,12 @@ class TestHookTemplates:
         assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in installed
         assert '-H "Content-Type: application/json" \\' in installed
         assert '--data "{\\"root_path\\":\\"$JSON_ROOT\\"}" \\' in installed
+        assert 'DAEMON_URL="${GOBBY_DAEMON_URL:-}"' in installed
+        assert 'DAEMON_PORT="${GOBBY_PORT:-${GOBBY_DAEMON_PORT:-60887}}"' in installed
+        assert '"${DAEMON_URL}/api/code-index/codewiki/refresh"' in installed
         assert "codewiki refresh request failed" in installed
         assert "/api/code-index/codewiki/refresh" in installed
+        assert '"http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh"' not in installed
         assert "--get" not in installed
 
     def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:

@@ -1587,18 +1587,15 @@ class TestHelperFunctions:
         assert mock_manager_cls.call_args is not None
         assert result == mock_manager
 
-    @patch("gobby.config.app.load_config")
-    def test_get_daemon_url(self, mock_load_config: MagicMock) -> None:
-        """Test get_daemon_url returns correct URL."""
+    def test_get_daemon_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test get_daemon_url returns the resolved daemon URL."""
         from gobby.cli.agents import get_daemon_url
 
-        mock_config = MagicMock()
-        mock_config.daemon_port = 9876
-        mock_load_config.return_value = mock_config
+        monkeypatch.setenv("GOBBY_DAEMON_URL", "http://daemon.example.test:9876/")
 
         result = get_daemon_url()
 
-        assert result == "http://localhost:9876"
+        assert result == "http://daemon.example.test:9876"
 
 
 # ==============================================================================

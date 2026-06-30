@@ -16,8 +16,13 @@ pytestmark = pytest.mark.unit
 
 
 class _FakeHTTPResponse:
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], status_code: int = 200) -> None:
         self.payload = payload
+        self.status_code = status_code
+
+    @property
+    def is_error(self) -> bool:
+        return self.status_code >= 400
 
     def raise_for_status(self) -> None:
         return None

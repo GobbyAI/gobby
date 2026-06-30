@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import click
 
+from gobby.cli.utils_config import get_daemon_client
 from gobby.config.app import DaemonConfig
 
 if TYPE_CHECKING:
@@ -12,11 +13,9 @@ if TYPE_CHECKING:
 
 def _get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get a DaemonClient for calling daemon HTTP API."""
-    from gobby.utils.daemon_client import DaemonClient
-
     if not isinstance(ctx.obj, dict):
         raise click.ClickException("Daemon config is unavailable in CLI context")
     config = ctx.obj.get("config")
     if not isinstance(config, DaemonConfig):
         raise click.ClickException("Daemon config is unavailable in CLI context")
-    return DaemonClient(host="localhost", port=config.daemon_port)
+    return get_daemon_client()

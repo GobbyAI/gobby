@@ -25,6 +25,7 @@ import httpx
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
+from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -43,14 +44,6 @@ def worktree_manager_context() -> Iterator[LocalWorktreeManager]:
         yield manager
     finally:
         manager.db.close()
-
-
-def get_daemon_url() -> str:
-    """Get daemon URL from config."""
-    from gobby.config.app import load_config
-
-    config = load_config()
-    return f"http://localhost:{config.daemon_port}"
 
 
 def _call_worktree_tool(

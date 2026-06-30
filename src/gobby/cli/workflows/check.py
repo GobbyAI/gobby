@@ -5,6 +5,7 @@ import json
 import click
 import httpx
 
+from gobby.cli.utils_config import get_daemon_client
 from gobby.cli.workflows import common
 
 
@@ -23,9 +24,7 @@ def check_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
         gobby workflows check meeseeks-box
         gobby workflows check worker-inline --json
     """
-    from gobby.utils.daemon_client import DaemonClient
-
-    client = DaemonClient()
+    client = get_daemon_client()
     try:
         result = client.call_mcp_tool(
             server_name="gobby-workflows",

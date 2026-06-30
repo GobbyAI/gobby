@@ -11,6 +11,7 @@ import httpx
 from croniter import croniter
 
 from gobby.cli.utils import resolve_project_ref
+from gobby.cli.utils_config import get_daemon_client
 from gobby.config.app import DaemonConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
@@ -31,7 +32,7 @@ def _get_daemon_client(ctx: click.Context) -> DaemonClient:
             "Daemon configuration is unavailable. Run this command through the main "
             "gobby CLI after the daemon has been configured and started."
         )
-    return DaemonClient(host="localhost", port=config.daemon_port)
+    return get_daemon_client()
 
 
 def _daemon_error_message(response: Any) -> str:

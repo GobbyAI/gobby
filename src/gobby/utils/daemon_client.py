@@ -30,6 +30,7 @@ from typing import Any, ClassVar, cast
 import httpx
 
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
+from gobby.utils.daemon_url import validate_daemon_url
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
 
@@ -64,6 +65,8 @@ class DaemonClient:
         port: int = 60887,
         timeout: float = 5.0,
         logger: logging.Logger | None = None,
+        *,
+        url: str | None = None,
     ):
         """
         Initialize DaemonClient.
@@ -73,8 +76,11 @@ class DaemonClient:
             port: Daemon port number
             timeout: HTTP request timeout in seconds
             logger: Optional logger instance (creates one if not provided)
+            url: Fully resolved daemon base URL. Overrides host/port when provided.
         """
-        self.url = f"http://{host}:{port}"
+        self.url = (
+            validate_daemon_url(url, source="daemon client URL") if url else f"http://{host}:{port}"
+        )
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
 
@@ -86,6 +92,17 @@ class DaemonClient:
         self._cached_error: str | None = None
         self._health_log_lock = threading.Lock()
         self._health_failed_since_last_success = False
+
+    @classmethod
+    def from_url(
+        cls,
+        url: str,
+        *,
+        timeout: float = 5.0,
+        logger: logging.Logger | None = None,
+    ) -> "DaemonClient":
+        """Create a daemon client from a resolved base URL."""
+        return cls(timeout=timeout, logger=logger, url=url)
 
     def check_health(self) -> tuple[bool, str | None]:
         """

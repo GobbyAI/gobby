@@ -21,6 +21,7 @@ import click
 import httpx
 
 from gobby.cli.utils import resolve_session_id
+from gobby.cli.utils_config import get_daemon_client, get_daemon_url
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sql_dialect import older_than_now_expr
@@ -172,14 +173,6 @@ def resolve_agent_run_id(run_ref: str) -> str:
         raise click.ClickException(f"Ambiguous agent run reference: {run_ref}")
 
     return str(rows[0]["id"])
-
-
-def get_daemon_url() -> str:
-    """Get daemon URL from config."""
-    from gobby.config.app import load_config
-
-    config = load_config()
-    return f"http://localhost:{config.daemon_port}"
 
 
 @click.group()
@@ -570,8 +563,6 @@ def agent_status(run_ref: str) -> None:
 @click.confirmation_option(prompt="Are you sure you want to stop this agent run?")
 def stop_agent(run_ref: str) -> None:
     """Stop a running agent and cancel the run."""
-    from gobby.utils.daemon_client import DaemonClient
-
     run_id = resolve_agent_run_id(run_ref)
     with agent_run_manager_context() as manager:
         run = manager.get(run_id)
@@ -582,7 +573,7 @@ def stop_agent(run_ref: str) -> None:
     if run.status not in ("pending", "running"):
         raise click.ClickException(f"Cannot stop agent in status: {run.status}")
 
-    client = DaemonClient()
+    client = get_daemon_client()
     try:
         result = client.call_mcp_tool(
             server_name="gobby-agents",
@@ -617,8 +608,6 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
         gobby agents kill abc123 -s -y     # Kill and end workflow
         gobby agents kill abc123 -fs -y    # Force kill and end workflow
     """
-    from gobby.utils.daemon_client import DaemonClient
-
     run_id = resolve_agent_run_id(run_ref)
 
     if not yes:
@@ -629,7 +618,7 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
             return
 
     # Call daemon MCP tool
-    client = DaemonClient()
+    client = get_daemon_client()
     try:
         result = client.call_mcp_tool(
             server_name="gobby-agents",
@@ -685,8 +674,6 @@ def check_agent(
         gobby agents check meeseeks-qwen --workflow worker --session #1071
         gobby agents check meeseeks-qwen --json
     """
-    from gobby.utils.daemon_client import DaemonClient
-
     arguments: dict[str, Any] = {"agent": agent_name}
     if workflow:
         arguments["workflow"] = workflow
@@ -699,7 +686,7 @@ def check_agent(
     if provider:
         arguments["provider"] = provider
 
-    client = DaemonClient()
+    client = get_daemon_client()
     try:
         result = client.call_mcp_tool(
             server_name="gobby-agents",

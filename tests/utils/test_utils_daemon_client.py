@@ -6,6 +6,7 @@ import pytest
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.daemon_url import DaemonUrlError
 
 pytestmark = pytest.mark.unit
 
@@ -28,6 +29,18 @@ class TestDaemonClientInit:
 
         assert client.url == "http://192.168.1.1:9000"
         assert client.timeout == 10.0
+
+    def test_url_constructor(self) -> None:
+        """Test URL-based initialization values."""
+        client = DaemonClient.from_url("http://daemon.example.test:61999/", timeout=10.0)
+
+        assert client.url == "http://daemon.example.test:61999"
+        assert client.timeout == 10.0
+
+    def test_url_constructor_rejects_invalid_url(self) -> None:
+        """Test URL-based initialization validates the URL."""
+        with pytest.raises(DaemonUrlError):
+            DaemonClient.from_url("ftp://daemon.example.test:61999")
 
     def test_custom_logger(self) -> None:
         """Test with custom logger."""

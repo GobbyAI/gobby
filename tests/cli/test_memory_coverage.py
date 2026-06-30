@@ -75,16 +75,21 @@ def test_get_daemon_client_rejects_invalid_cli_context_config() -> None:
         _get_daemon_client(ctx)
 
 
-def test_get_daemon_client_uses_daemon_config_port() -> None:
+def test_get_daemon_client_uses_resolved_daemon_url(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.memory import _get_daemon_client
 
+    monkeypatch.setenv("GOBBY_PORT", "12345")
     ctx = click.Context(click.Command("memory"), obj={"config": DaemonConfig(daemon_port=12345)})
 
     with patch("gobby.utils.daemon_client.DaemonClient") as daemon_client:
         client = _get_daemon_client(ctx)
 
     assert client is daemon_client.return_value
-    daemon_client.assert_called_once_with(host="localhost", port=12345)
+    daemon_client.assert_called_once_with(
+        url="http://127.0.0.1:12345",
+        timeout=5.0,
+        logger=None,
+    )
 
 
 # =============================================================================

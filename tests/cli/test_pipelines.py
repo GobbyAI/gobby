@@ -573,8 +573,16 @@ class TestPipelinesDaemonApproval:
                 }
 
         class FakeDaemonClient:
-            def __init__(self, *, port: int) -> None:
-                self.port = port
+            def __init__(
+                self,
+                *,
+                url: str,
+                timeout: float = 5.0,
+                logger: object | None = None,
+            ) -> None:
+                self.url = url
+                self.timeout = timeout
+                self.logger = logger
 
             def check_health(self) -> tuple[bool, str | None]:
                 return True, None
@@ -608,8 +616,16 @@ class TestPipelinesDaemonApproval:
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         class FakeDaemonClient:
-            def __init__(self, *, port: int) -> None:
-                self.port = port
+            def __init__(
+                self,
+                *,
+                url: str,
+                timeout: float = 5.0,
+                logger: object | None = None,
+            ) -> None:
+                self.url = url
+                self.timeout = timeout
+                self.logger = logger
 
             def check_health(self) -> tuple[bool, str | None]:
                 return True, None

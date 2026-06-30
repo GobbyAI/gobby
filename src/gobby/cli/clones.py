@@ -16,6 +16,7 @@ import click
 import httpx
 
 from gobby.cli.utils import resolve_project_ref
+from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 
@@ -24,14 +25,6 @@ def get_clone_manager() -> LocalCloneManager:
     """Get initialized clone manager."""
     db = open_runtime_hub_database(apply_migrations=False)
     return LocalCloneManager(db)
-
-
-def get_daemon_url() -> str:
-    """Get daemon URL from config."""
-    from gobby.config.app import load_config
-
-    config = load_config()
-    return f"http://localhost:{config.daemon_port}"
 
 
 @click.group()

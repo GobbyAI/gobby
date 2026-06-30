@@ -169,11 +169,9 @@ def _try_daemon_build(
     try:
         import httpx
 
-        from gobby.config.app import load_config
-        from gobby.utils.daemon_client import DaemonClient
+        from gobby.cli.utils_config import get_daemon_client
 
-        config = load_config()
-        client = DaemonClient(port=config.daemon_port, timeout=5.0)
+        client = get_daemon_client(timeout=5.0)
         is_healthy, _ = client.check_health()
         if not is_healthy:
             return None
@@ -222,11 +220,9 @@ def _try_daemon_build_control(
     try:
         import httpx
 
-        from gobby.config.app import load_config
-        from gobby.utils.daemon_client import DaemonClient
+        from gobby.cli.utils_config import get_daemon_client
 
-        config = load_config()
-        client = DaemonClient(port=config.daemon_port, timeout=5.0)
+        client = get_daemon_client(timeout=5.0)
         is_healthy, _ = client.check_health()
         if not is_healthy:
             return None

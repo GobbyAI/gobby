@@ -665,6 +665,77 @@ class TestEnsureDaemonRunning:
                         assert mock_start.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_starts_daemon_on_resolved_gobby_port(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GOBBY_PORT controls the stdio wrapper's local daemon dial target."""
+        monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
+        monkeypatch.setenv("GOBBY_PORT", "61999")
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=False):
+                with patch(
+                    "gobby.mcp_proxy.stdio.start_daemon_process",
+                    new_callable=AsyncMock,
+                    return_value={"success": True},
+                ) as mock_start:
+                    with patch(
+                        "gobby.mcp_proxy.stdio.check_daemon_http_health",
+                        new_callable=AsyncMock,
+                        return_value=True,
+                    ) as mock_health:
+                        from gobby.mcp_proxy.stdio import (
+                            DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+                            DaemonProxy,
+                            ensure_daemon_running,
+                        )
+
+                        assert DaemonProxy(60887).base_url == "http://127.0.0.1:61999"
+                        result = await ensure_daemon_running()
+
+        assert result is None
+        mock_start.assert_awaited_once_with(61999, 60888)
+        mock_health.assert_awaited_once_with(
+            61999,
+            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+            base_url="http://127.0.0.1:61999",
+        )
+
+    @pytest.mark.asyncio
+    async def test_remote_daemon_url_does_not_auto_start_local_daemon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Remote daemon URLs are reachability checks, not local lifecycle targets."""
+        monkeypatch.setenv("GOBBY_DAEMON_URL", "http://daemon.example.test:61999")
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            with patch(
+                "gobby.mcp_proxy.stdio.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_health:
+                with patch(
+                    "gobby.mcp_proxy.stdio.start_daemon_process",
+                    new_callable=AsyncMock,
+                ) as mock_start:
+                    from gobby.mcp_proxy.stdio import (
+                        DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+                        DaemonProxy,
+                        ensure_daemon_running,
+                    )
+
+                    assert DaemonProxy(60887).base_url == "http://daemon.example.test:61999"
+                    result = await ensure_daemon_running()
+
+        assert result is None
+        mock_health.assert_awaited_once_with(
+            61999,
+            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+            base_url="http://daemon.example.test:61999",
+        )
+        mock_start.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_managed_agent_refuses_to_auto_start_daemon(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -761,6 +832,45 @@ class TestDaemonProxy:
 
         mock_health.assert_awaited_once()
         assert mock_client.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_request_uses_resolved_daemon_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gobby.mcp_proxy.stdio import DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS, DaemonProxy
+
+        monkeypatch.setenv("GOBBY_DAEMON_URL", "http://daemon.example.test:61999/")
+
+        proxy = DaemonProxy(60887)
+        proxy._project_id = None
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"success": True}
+        with (
+            patch(
+                "gobby.mcp_proxy.stdio.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_health,
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = await proxy._request("GET", "/api/admin/status", preflight=True)
+
+        assert result == {"success": True}
+        mock_health.assert_awaited_once_with(
+            60887,
+            timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+            base_url="http://daemon.example.test:61999",
+        )
+        mock_client.request.assert_awaited_once()
+        assert mock_client.request.await_args is not None
+        assert (
+            mock_client.request.await_args.args[1]
+            == "http://daemon.example.test:61999/api/admin/status"
+        )
 
     @pytest.mark.asyncio
     async def test_request_timeout_returns_request_timeout(self) -> None:

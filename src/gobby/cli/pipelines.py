@@ -109,11 +109,9 @@ def _daemon_error_message(response: Any) -> str:
 def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[str, Any] | None:
     """Try to run pipeline via daemon HTTP API. Returns None only if unavailable."""
     try:
-        from gobby.config.app import load_config
-        from gobby.utils.daemon_client import DaemonClient
+        from gobby.cli.utils_config import get_daemon_client
 
-        config = load_config()
-        client = DaemonClient(port=config.daemon_port)
+        client = get_daemon_client()
         response = client.call_http_api(
             "/api/pipelines/run",
             method="POST",
@@ -140,11 +138,9 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
 def _try_daemon_approval(action: str, token: str) -> dict[str, Any] | None:
     """Try to approve/reject via daemon. Returns None only if daemon is unavailable."""
     try:
-        from gobby.config.app import load_config
-        from gobby.utils.daemon_client import DaemonClient
+        from gobby.cli.utils_config import get_daemon_client
 
-        config = load_config()
-        client = DaemonClient(port=config.daemon_port)
+        client = get_daemon_client()
         is_healthy, health_error = client.check_health()
         if not is_healthy:
             logger.debug("Daemon %s skipped: %s", action, health_error)

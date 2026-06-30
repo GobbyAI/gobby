@@ -770,9 +770,10 @@ def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
             return {"success": True, "result": payload, "error": None}
 
     class FakeDaemonClient:
-        def __init__(self, *, port: int, timeout: float) -> None:
-            self.port = port
+        def __init__(self, *, url: str, timeout: float, logger: object | None = None) -> None:
+            self.url = url
             self.timeout = timeout
+            self.logger = logger
 
         def check_health(self) -> tuple[bool, dict[str, object]]:
             return True, {}

@@ -515,10 +515,13 @@ class TestShowStatusEdgeCases:
 
 
 class TestGetDaemonUrl:
-    @patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:60887")
-    def test_get_daemon_url(self, mock_url: MagicMock) -> None:
-        result = mock_url()
-        assert result == "http://localhost:60887"
+    def test_get_daemon_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gobby.cli.agents import get_daemon_url
+
+        monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
+        monkeypatch.setenv("GOBBY_PORT", "61999")
+
+        assert get_daemon_url() == "http://127.0.0.1:61999"
 
 
 # =============================================================================

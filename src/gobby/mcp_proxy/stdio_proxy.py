@@ -37,10 +37,17 @@ from gobby.mcp_proxy.wait_tools import (
     WAIT_TOOL_NAMES,
     mcp_wrapper_process_fingerprint,
 )
+from gobby.utils.daemon_url import daemon_url
 
 
 class CheckDaemonHealth(Protocol):
-    def __call__(self, port: int, timeout: float = 5.0) -> Awaitable[bool]: ...
+    def __call__(
+        self,
+        port: int,
+        timeout: float = 5.0,
+        *,
+        base_url: str | None = None,
+    ) -> Awaitable[bool]: ...
 
 
 class ResolveSessionIdFromTerminalContext(Protocol):
@@ -81,7 +88,7 @@ class DaemonProxy:
         deps_factory: Callable[[], DaemonProxyDependencies] | None = None,
     ):
         self.port = port
-        self.base_url = f"http://localhost:{port}"
+        self.base_url = daemon_url()
         self._deps_factory = deps_factory or default_daemon_proxy_dependencies
         self._project_id: str | None = self._deps_factory().read_project_id()
         self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
@@ -126,6 +133,7 @@ class DaemonProxy:
                 if not await self._deps_factory().check_daemon_http_health(
                     self.port,
                     timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+                    base_url=self.base_url,
                 ):
                     return _daemon_unavailable_result(
                         self.port,

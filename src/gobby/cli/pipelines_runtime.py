@@ -66,11 +66,9 @@ def _daemon_error_message(response: Any) -> str:
 def try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[str, Any] | None:
     """Try to run pipeline via daemon HTTP API. Returns None only if unavailable."""
     try:
-        from gobby.config.app import load_config
-        from gobby.utils.daemon_client import DaemonClient
+        from gobby.cli.utils_config import get_daemon_client
 
-        config = load_config()
-        client = DaemonClient(port=config.daemon_port)
+        client = get_daemon_client()
         response = client.call_http_api(
             "/api/pipelines/run",
             method="POST",

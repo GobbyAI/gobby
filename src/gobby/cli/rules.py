@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 import click
 
-from gobby.config.app import DaemonConfig
+from gobby.cli.utils_config import get_daemon_client
 from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.daemon_client import DaemonClient
@@ -66,10 +66,7 @@ def _audit_manager_context() -> Iterator[WorkflowAuditManager]:
 
 def _get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get daemon client from CLI context."""
-    config = (ctx.obj or {}).get("config")
-    if isinstance(config, DaemonConfig):
-        return DaemonClient(host="localhost", port=config.daemon_port)
-    return DaemonClient()
+    return get_daemon_client()
 
 
 def _response_detail(response: Any) -> str:

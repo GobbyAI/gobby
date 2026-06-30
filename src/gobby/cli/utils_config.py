@@ -16,6 +16,7 @@ from gobby.config.bootstrap import BootstrapConfigError
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.utils.daemon_client import DaemonClient
 
 logger = logging.getLogger(__name__)
 _EXPECTED_CONFIG_LOAD_ERRORS = (
@@ -27,6 +28,24 @@ _EXPECTED_CONFIG_LOAD_ERRORS = (
     ValueError,
     psycopg.Error,
 )
+
+
+def get_daemon_url() -> str:
+    """Return the resolved daemon HTTP base URL for CLI client calls."""
+    from gobby.utils.daemon_url import daemon_url
+
+    return daemon_url()
+
+
+def get_daemon_client(
+    *,
+    timeout: float = 5.0,
+    logger: logging.Logger | None = None,
+) -> DaemonClient:
+    """Create a daemon client for the resolved CLI dial target."""
+    from gobby.utils.daemon_client import DaemonClient
+
+    return DaemonClient(url=get_daemon_url(), timeout=timeout, logger=logger)
 
 
 def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:

@@ -34,12 +34,17 @@ if [ -n "$CHANGED_FILES" ]; then
             if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then
                 ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
                 if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
-                    DAEMON_PORT="${GOBBY_DAEMON_PORT:-60887}"
+                    DAEMON_URL="${GOBBY_DAEMON_URL:-}"
+                    if [ -z "$DAEMON_URL" ]; then
+                        DAEMON_PORT="${GOBBY_PORT:-${GOBBY_DAEMON_PORT:-60887}}"
+                        DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}"
+                    fi
+                    DAEMON_URL="${DAEMON_URL%/}"
                     if command -v jq >/dev/null 2>&1; then
                         if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
                             -H "Content-Type: application/json" \
                             --data-binary @- \
-                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                            "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
                             echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
                         fi
                     elif printf '%s' "$ROOT_PATH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
@@ -49,7 +54,7 @@ if [ -n "$CHANGED_FILES" ]; then
                         if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
                             -H "Content-Type: application/json" \
                             --data "{\"root_path\":\"$JSON_ROOT\"}" \
-                            "http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
+                            "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
                             echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
                         fi
                     fi

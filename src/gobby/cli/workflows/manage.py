@@ -114,11 +114,10 @@ def _notify_daemon_reload() -> None:
     try:
         import httpx
 
-        from gobby.config.app import load_config
+        from gobby.cli.utils_config import get_daemon_url
 
-        config = load_config()
         response = httpx.post(
-            f"http://localhost:{config.daemon_port}/api/admin/workflows/reload",
+            f"{get_daemon_url()}/api/admin/workflows/reload",
             timeout=2.0,
         )
         if response.status_code == 200:
@@ -208,12 +207,11 @@ def reload_workflows(ctx: click.Context) -> None:
     import httpx
     import psutil
 
-    from gobby.config.app import load_config
+    from gobby.cli.utils_config import get_daemon_url
 
     # Try to tell daemon to reload
     try:
-        config = load_config()
-        port = config.daemon_port
+        daemon_url = get_daemon_url()
 
         # Check if running
         is_running = False
@@ -241,9 +239,7 @@ def reload_workflows(ctx: click.Context) -> None:
 
         if is_running:
             try:
-                response = httpx.post(
-                    f"http://localhost:{port}/api/admin/workflows/reload", timeout=2.0
-                )
+                response = httpx.post(f"{daemon_url}/api/admin/workflows/reload", timeout=2.0)
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("status") == "success":

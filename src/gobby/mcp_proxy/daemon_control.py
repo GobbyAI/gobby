@@ -16,11 +16,17 @@ DaemonShutdownIntent = Literal["stop", "restart"]
 DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
 
 
-async def check_daemon_http_health(port: int, timeout: float = 5.0) -> bool:
+async def check_daemon_http_health(
+    port: int,
+    timeout: float = 5.0,
+    *,
+    base_url: str | None = None,
+) -> bool:
     """Check if daemon is healthy via HTTP."""
+    url = (base_url.rstrip("/") if base_url else f"http://localhost:{port}") + "/api/admin/health"
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://localhost:{port}/api/admin/health", timeout=timeout)
+            resp = await client.get(url, timeout=timeout)
             return resp.status_code == 200
     except Exception:
         return False

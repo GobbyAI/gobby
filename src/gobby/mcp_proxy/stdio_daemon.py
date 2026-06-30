@@ -8,6 +8,7 @@ import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 
@@ -23,10 +24,17 @@ from gobby.mcp_proxy.stdio_results import (
     DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
     DAEMON_HEALTH_RETRY_DELAY_SECONDS,
 )
+from gobby.utils.daemon_url import daemon_url
 
 
 class CheckDaemonHealth(Protocol):
-    def __call__(self, port: int, timeout: float = 5.0) -> Awaitable[bool]: ...
+    def __call__(
+        self,
+        port: int,
+        timeout: float = 5.0,
+        *,
+        base_url: str | None = None,
+    ) -> Awaitable[bool]: ...
 
 
 class StartDaemonProcess(Protocol):
@@ -58,6 +66,17 @@ def default_daemon_startup_dependencies() -> DaemonStartupDependencies:
     )
 
 
+_LOCAL_DAEMON_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _resolved_dial_target(default_port: int) -> tuple[str, int, bool]:
+    resolved_url = daemon_url()
+    parsed = urlsplit(resolved_url)
+    host = parsed.hostname or ""
+    port = parsed.port or default_port
+    return resolved_url, port, host.lower() in _LOCAL_DAEMON_HOSTS
+
+
 async def ensure_daemon_running(
     *,
     deps: DaemonStartupDependencies | None = None,
@@ -65,14 +84,29 @@ async def ensure_daemon_running(
     """Ensure the Gobby daemon is running and healthy."""
     effective_deps = deps or default_daemon_startup_dependencies()
     config = effective_deps.load_config()
-    port = config.daemon_port
+    dial_url, port, is_local_dial_target = _resolved_dial_target(config.daemon_port)
     ws_port = config.websocket.port
+
+    if not is_local_dial_target:
+        if await effective_deps.check_daemon_http_health(
+            port,
+            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+            base_url=dial_url,
+        ):
+            return
+        effective_deps.logger.error(
+            "Remote Gobby daemon is not healthy at %s; refusing to start a local daemon "
+            "for a remote dial target.",
+            dial_url,
+        )
+        return
 
     if effective_deps.is_daemon_running():
         for attempt in range(DAEMON_HEALTH_ATTEMPTS):
             if await effective_deps.check_daemon_http_health(
                 port,
                 timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+                base_url=dial_url,
             ):
                 return
             if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
@@ -112,6 +146,7 @@ async def ensure_daemon_running(
         last_health_response = await effective_deps.check_daemon_http_health(
             port,
             timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+            base_url=dial_url,
         )
         if last_health_response:
             return

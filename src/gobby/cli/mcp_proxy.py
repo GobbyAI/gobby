@@ -18,14 +18,15 @@ from typing import Any, cast
 
 import click
 
-from gobby.config.app import DaemonConfig
+from gobby.cli.utils_config import get_daemon_client as _shared_daemon_client
 from gobby.utils.daemon_client import DaemonClient
 
 
 def get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get daemon client from context config."""
-    config: DaemonConfig = ctx.obj["config"]
-    return DaemonClient(host="localhost", port=config.daemon_port)
+    if ctx.obj is None or "config" not in ctx.obj:
+        raise click.ClickException("Daemon config is unavailable in CLI context")
+    return _shared_daemon_client()
 
 
 def check_daemon_running(client: DaemonClient) -> bool:

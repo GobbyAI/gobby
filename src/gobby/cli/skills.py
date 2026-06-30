@@ -40,6 +40,7 @@ from gobby.cli._skills_metadata import unset_metadata as _unset_metadata
 from gobby.cli._skills_scaffold import create_skill as _create_skill
 from gobby.cli._skills_scaffold import init_skills as _init_skills
 from gobby.cli._skills_validation import validate_skill as _validate_skill
+from gobby.cli.utils_config import get_daemon_client as _shared_daemon_client
 from gobby.config.app import DaemonConfig
 from gobby.skills import metadata as skills_metadata
 from gobby.storage.hub.runtime import open_runtime_hub_database
@@ -70,7 +71,7 @@ def get_daemon_client(ctx: click.Context) -> DaemonClient:
         raise click.ClickException(
             f"Invalid configuration type: expected DaemonConfig, got {type(config).__name__}"
         )
-    return DaemonClient(host="localhost", port=config.daemon_port)
+    return _shared_daemon_client()
 
 
 def call_skills_tool(
