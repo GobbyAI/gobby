@@ -11,10 +11,13 @@ candidate list raises :class:`~gobby.ai.registry.CapabilityUnavailableError`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
+from gobby.ai._text_generation_helpers import _CandidateTimeoutError
+from gobby.ai._text_generation_service import _SPAWN_COLD_ADAPTER_STYLES
 from gobby.ai._tool_chat_contracts import (
     ToolChatAdapter,
     ToolChatRequest,
@@ -58,10 +61,14 @@ class ToolChatService:
         profile_defaults: (
             Mapping[FeatureProfile, Sequence[str | FeatureCandidateConfig]] | None
         ) = None,
+        candidate_timeout_seconds: float | None = None,
+        cli_candidate_timeout_seconds: float | None = None,
     ) -> None:
         self._registry = registry
         self._adapters: dict[AIAdapterStyle, ToolChatAdapter] = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
+        self._candidate_timeout_seconds = candidate_timeout_seconds
+        self._cli_candidate_timeout_seconds = cli_candidate_timeout_seconds
         self._profile_defaults = {
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
@@ -84,7 +91,7 @@ class ToolChatService:
             try:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_style(binding.adapter_style)
-                result = await adapter.chat(candidate, binding)
+                result = await self._await_chat_candidate(adapter, candidate, binding)
                 return replace(
                     result,
                     provider=result.provider or binding.provider,
@@ -115,6 +122,51 @@ class ToolChatService:
             AICapability.TOOL_CHAT,
             reason=(f"No tool_chat candidate succeeded (tried: {attempted}; errors: {errors})"),
         ) from last_error
+
+    def _candidate_timeout_for_binding(
+        self, request: ToolChatRequest, binding: CapabilityBinding | None
+    ) -> float | None:
+        """Select the per-candidate timeout for the lane behind ``binding``.
+
+        Mirrors ``TextGenerationService``: spawn-cold lanes (CLI subprocess,
+        daemon, Claude SDK, ACP) get the larger ``cli_candidate_timeout_seconds``;
+        fast API lanes keep the tight ``candidate_timeout_seconds``. One tool_chat
+        turn is a full reasoning generation, so it shares that candidate budget.
+        """
+        if binding is not None and binding.adapter_style in _SPAWN_COLD_ADAPTER_STYLES:
+            return (
+                request.cli_candidate_timeout_seconds
+                if request.cli_candidate_timeout_seconds is not None
+                else self._cli_candidate_timeout_seconds
+            )
+        return (
+            request.candidate_timeout_seconds
+            if request.candidate_timeout_seconds is not None
+            else self._candidate_timeout_seconds
+        )
+
+    async def _await_chat_candidate(
+        self,
+        adapter: ToolChatAdapter,
+        request: ToolChatRequest,
+        binding: CapabilityBinding,
+    ) -> ToolChatResult:
+        """Bound one tool_chat candidate by its lane-appropriate timeout.
+
+        Unbounded ``adapter.chat`` lets a stuck multi-turn agentic loop wedge the
+        caller indefinitely (the one-shot ``/api/llm/generate`` path is already
+        bounded). On timeout this candidate fails so ``chat_result`` moves to the
+        next one; a single timed-out candidate surfaces the timeout error.
+        """
+        timeout = self._candidate_timeout_for_binding(request, binding)
+        if timeout is None:
+            return await adapter.chat(request, binding)
+        try:
+            return await asyncio.wait_for(adapter.chat(request, binding), timeout=timeout)
+        except TimeoutError as exc:
+            raise _CandidateTimeoutError(
+                f"tool_chat candidate timed out after {timeout:g}s"
+            ) from exc
 
     def _candidate_requests(self, request: ToolChatRequest) -> tuple[ToolChatRequest, ...]:
         if request.candidates:
