@@ -204,6 +204,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "298_drop_session_wiki_schema.postgres.sql",
         "299_unmodeled_observations.postgres.sql",
         "300_purge_unmodeled_observations_for_hash_v2.postgres.sql",
+        "301_github_issue_source_text.postgres.sql",
     ]
 
 
@@ -215,7 +216,7 @@ def test_postgres_baseline_version_is_flattened_to_297() -> None:
     # post-baseline migrations ship above 297, so
     # latest_known_version reflects the migration file.
     assert module.BASELINE_VERSION == 297
-    assert module.latest_known_version() == 300
+    assert module.latest_known_version() == 301
 
 
 def test_unmodeled_observation_hash_v2_purge_migration() -> None:
@@ -353,6 +354,7 @@ def test_session_wiki_schema_removed_from_baseline_and_dropped_by_migration() ->
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
     baseline = _baseline_text()
     indexed_files_table = _table_definition(baseline, "code_indexed_files")
+    symbols_table = _table_definition(baseline, "code_symbols")
 
     projection_snippets = (
         "CREATE TABLE code_index_projection_cleanup_pending",
@@ -367,7 +369,7 @@ def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
         "graph_sync_attempted_at TIMESTAMPTZ",
         "vector_sync_attempted_at TIMESTAMPTZ",
     )
-    failure_snippets = ("summary_attempted_at TIMESTAMPTZ",)
+    symbol_retry_snippets = ("summary_attempted_at TIMESTAMPTZ",)
     prune_snippets = (
         "CREATE TABLE code_index_prune_dirty_projects",
         "project_id TEXT PRIMARY KEY",
@@ -383,7 +385,7 @@ def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
         indexed_files_table,
         indexed_file_sync_snippets,
     )
-    _assert_contains_all("code index failure attempts baseline", baseline, failure_snippets)
+    _assert_contains_all("code_symbols retry attempts baseline", symbols_table, symbol_retry_snippets)
     _assert_contains_all("code index prune dirty baseline", baseline, prune_snippets)
 
 
