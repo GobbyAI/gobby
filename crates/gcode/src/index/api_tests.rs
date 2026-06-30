@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::db;
 use crate::models::{CallRelation, ImportRelation, IndexedFile, IndexedProject, Symbol};
 
 use super::api;
@@ -82,10 +83,37 @@ mod serial_db {
         let mut file = indexed_file(&project_id, rel, "file-hash-v1", 1, 16);
         api::upsert_file(&mut conn, &file).expect("insert indexed file");
 
+        assert!(
+            db::mark_vector_sync_attempted(&mut conn, &project_id, rel)
+                .expect("mark vector attempt")
+        );
+        assert_eq!(
+            vector_sync_state(&mut conn, &project_id, rel),
+            (false, true)
+        );
+        assert!(db::mark_vectors_synced(&mut conn, &project_id, rel).expect("mark vectors synced"));
+        assert_eq!(
+            db::reset_vectors_sync_for_project(&mut conn, &project_id).expect("reset vectors"),
+            1
+        );
+        assert_eq!(
+            vector_sync_state(&mut conn, &project_id, rel),
+            (false, false)
+        );
+        assert_eq!(
+            db::mark_project_vector_sync_attempted(&mut conn, &project_id)
+                .expect("mark project vector attempt"),
+            1
+        );
+        assert_eq!(
+            db::mark_project_vectors_synced(&mut conn, &project_id).expect("mark project vectors"),
+            1
+        );
+        assert_eq!(vector_sync_state(&mut conn, &project_id, rel), (true, true));
+
         conn.execute(
             "UPDATE code_indexed_files
          SET graph_synced = true,
-             vectors_synced = true,
              graph_sync_attempted_at = NOW()
          WHERE id = $1",
             &[&file.id],
@@ -104,7 +132,8 @@ mod serial_db {
                     byte_size,
                     graph_synced,
                     vectors_synced,
-                    graph_sync_attempted_at IS NULL
+                    graph_sync_attempted_at IS NULL,
+                    vector_sync_attempted_at IS NULL
              FROM code_indexed_files
              WHERE id = $1",
                 &[&file.id],
@@ -116,6 +145,7 @@ mod serial_db {
         let graph_synced: bool = row.get(3);
         let vectors_synced: bool = row.get(4);
         let graph_attempt_cleared: bool = row.get(5);
+        let vector_attempt_cleared: bool = row.get(6);
 
         assert_eq!(content_hash, "file-hash-v2");
         assert_eq!(symbol_count, 2);
@@ -125,6 +155,10 @@ mod serial_db {
         assert!(
             graph_attempt_cleared,
             "reindex must clear the previous graph sync attempt timestamp"
+        );
+        assert!(
+            vector_attempt_cleared,
+            "reindex must clear the previous vector sync attempt timestamp"
         );
     }
 
@@ -264,6 +298,22 @@ fn symbol_summary(conn: &mut postgres::Client, symbol_id: &str) -> Option<String
     )
     .expect("load symbol summary")
     .get(0)
+}
+
+fn vector_sync_state(
+    conn: &mut postgres::Client,
+    project_id: &str,
+    file_path: &str,
+) -> (bool, bool) {
+    let row = conn
+        .query_one(
+            "SELECT vectors_synced, vector_sync_attempted_at IS NOT NULL AS attempted
+             FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2",
+            &[&project_id, &file_path],
+        )
+        .expect("load vector sync state");
+    (row.get("vectors_synced"), row.get("attempted"))
 }
 
 fn unique_test_project_id(prefix: &str) -> String {

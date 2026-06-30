@@ -1,4 +1,4 @@
-mod contracts;
+pub(crate) mod contracts;
 mod ddl;
 mod identifiers;
 mod postgres;

@@ -108,6 +108,20 @@ pub fn reset_graph_sync_for_project(
     )?)
 }
 
+pub fn mark_vector_sync_attempted(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    let updated = conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = false, vector_sync_attempted_at = NOW()
+         WHERE project_id = $1 AND file_path = $2",
+        &[&project_id, &file_path],
+    )?;
+    Ok(updated > 0)
+}
+
 pub fn mark_vectors_synced(
     conn: &mut impl GenericClient,
     project_id: &str,
@@ -115,11 +129,23 @@ pub fn mark_vectors_synced(
 ) -> anyhow::Result<bool> {
     let updated = conn.execute(
         "UPDATE code_indexed_files
-         SET vectors_synced = true
+         SET vectors_synced = true, vector_sync_attempted_at = NOW()
          WHERE project_id = $1 AND file_path = $2",
         &[&project_id, &file_path],
     )?;
     Ok(updated > 0)
+}
+
+pub fn mark_project_vector_sync_attempted(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<u64> {
+    Ok(conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = false, vector_sync_attempted_at = NOW()
+         WHERE project_id = $1",
+        &[&project_id],
+    )?)
 }
 
 pub fn mark_project_vectors_synced(
@@ -128,7 +154,7 @@ pub fn mark_project_vectors_synced(
 ) -> anyhow::Result<u64> {
     Ok(conn.execute(
         "UPDATE code_indexed_files
-         SET vectors_synced = true
+         SET vectors_synced = true, vector_sync_attempted_at = NOW()
          WHERE project_id = $1",
         &[&project_id],
     )?)
@@ -161,7 +187,7 @@ pub fn reset_vectors_sync_for_project(
 ) -> anyhow::Result<u64> {
     Ok(conn.execute(
         "UPDATE code_indexed_files
-         SET vectors_synced = false
+         SET vectors_synced = false, vector_sync_attempted_at = NULL
          WHERE project_id = $1",
         &[&project_id],
     )?)

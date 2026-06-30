@@ -3,6 +3,7 @@ use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
 use crate::setup::DEFAULT_SCHEMA;
+use crate::setup::contracts::{TABLE_CONTRACTS, TableContract};
 
 const REQUIRED_TABLES: &[&str] = &[
     "code_indexed_projects",
@@ -37,6 +38,14 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         bail!(
             "PostgreSQL hub is missing required code-index tables: {}. {MIGRATION_HINT}",
             missing_tables.join(", ")
+        );
+    }
+
+    let missing_columns = missing_table_columns(client, DEFAULT_SCHEMA, TABLE_CONTRACTS)?;
+    if !missing_columns.is_empty() {
+        bail!(
+            "PostgreSQL hub is missing required code-index columns: {}. {MIGRATION_HINT}",
+            missing_columns.join(", ")
         );
     }
 
@@ -87,6 +96,34 @@ fn missing_relations(client: &mut Client, relations: &[&str]) -> anyhow::Result<
     Ok(missing)
 }
 
+fn missing_table_columns(
+    client: &mut Client,
+    schema: &str,
+    contracts: &[TableContract],
+) -> anyhow::Result<Vec<String>> {
+    let mut missing = Vec::new();
+    for contract in contracts {
+        let rows = client
+            .query(
+                "SELECT column_name
+                 FROM information_schema.columns
+                 WHERE table_schema = $1 AND table_name = $2",
+                &[&schema, &contract.name],
+            )
+            .with_context(|| format!("query columns for table {}", contract.name))?;
+        let existing = rows
+            .into_iter()
+            .map(|row| row.get::<_, String>("column_name"))
+            .collect::<Vec<_>>();
+        for column in contract.required_columns {
+            if !existing.iter().any(|existing| existing == column) {
+                missing.push(format!("{}.{}", contract.name, column));
+            }
+        }
+    }
+    Ok(missing)
+}
+
 #[cfg(test)]
 fn required_relation_regclass_name(relation: &str) -> String {
     format!("{DEFAULT_SCHEMA}.{relation}")
@@ -99,6 +136,24 @@ mod tests {
     fn required_schema_contract_names_code_index_tables_and_bm25_indexes() {
         assert!(REQUIRED_TABLES.contains(&"code_symbols"));
         assert!(REQUIRED_TABLES.contains(&"code_content_chunks"));
+        let indexed_files = TABLE_CONTRACTS
+            .iter()
+            .find(|contract| contract.name == "code_indexed_files")
+            .expect("code_indexed_files contract");
+        assert!(
+            indexed_files
+                .required_columns
+                .contains(&"vector_sync_attempted_at")
+        );
+        let code_symbols = TABLE_CONTRACTS
+            .iter()
+            .find(|contract| contract.name == "code_symbols")
+            .expect("code_symbols contract");
+        assert!(
+            code_symbols
+                .required_columns
+                .contains(&"summary_attempted_at")
+        );
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_symbols_search_bm25"));
         assert!(REQUIRED_BM25_INDEXES.contains(&"code_content_search_bm25"));
         assert_eq!(BM25_SCORE_REGPROCEDURE, "pdb.score(anyelement)");

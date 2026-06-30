@@ -81,6 +81,7 @@ impl GcodeStandaloneSetup {
                         graph_synced BOOLEAN NOT NULL DEFAULT FALSE,
                         vectors_synced BOOLEAN NOT NULL DEFAULT FALSE,
                         graph_sync_attempted_at TIMESTAMPTZ,
+                        vector_sync_attempted_at TIMESTAMPTZ,
                         indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         UNIQUE (project_id, file_path)
                     );"
@@ -127,6 +128,7 @@ impl GcodeStandaloneSetup {
                         parent_symbol_id TEXT,
                         content_hash TEXT NOT NULL,
                         summary TEXT,
+                        summary_attempted_at TIMESTAMPTZ,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     );"

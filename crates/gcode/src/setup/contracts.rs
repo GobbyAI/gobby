@@ -2,9 +2,9 @@ pub(crate) const DEFAULT_SCHEMA: &str = "public";
 pub(super) const NAMESPACE: &str = "gcode";
 pub(super) const OVERWRITE_GUIDANCE: &str = "Rerun with `gcode setup --standalone --overwrite-code-index` to replace only gcode-owned code-index relations.";
 
-pub(super) struct TableContract {
-    pub(super) name: &'static str,
-    pub(super) required_columns: &'static [&'static str],
+pub(crate) struct TableContract {
+    pub(crate) name: &'static str,
+    pub(crate) required_columns: &'static [&'static str],
 }
 
 pub(super) struct IndexContract {
@@ -13,7 +13,7 @@ pub(super) struct IndexContract {
     pub(super) method: &'static str,
 }
 
-pub(super) const TABLE_CONTRACTS: &[TableContract] = &[
+pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
     TableContract {
         name: "code_indexed_projects",
         required_columns: &[
@@ -40,6 +40,7 @@ pub(super) const TABLE_CONTRACTS: &[TableContract] = &[
             "graph_synced",
             "vectors_synced",
             "graph_sync_attempted_at",
+            "vector_sync_attempted_at",
             "indexed_at",
         ],
     },
@@ -62,6 +63,7 @@ pub(super) const TABLE_CONTRACTS: &[TableContract] = &[
             "parent_symbol_id",
             "content_hash",
             "summary",
+            "summary_attempted_at",
             "created_at",
             "updated_at",
         ],

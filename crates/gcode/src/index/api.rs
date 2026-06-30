@@ -245,8 +245,8 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
         "INSERT INTO code_indexed_files (
             id, project_id, file_path, language, content_hash,
             symbol_count, byte_size, graph_synced, vectors_synced,
-            graph_sync_attempted_at, indexed_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,false,false,NULL,NOW())
+            graph_sync_attempted_at, vector_sync_attempted_at, indexed_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,false,false,NULL,NULL,NOW())
         ON CONFLICT(id) DO UPDATE SET
             content_hash=excluded.content_hash,
             symbol_count=excluded.symbol_count,
@@ -254,6 +254,7 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
             graph_synced=false,
             vectors_synced=false,
             graph_sync_attempted_at=NULL,
+            vector_sync_attempted_at=NULL,
             indexed_at=NOW()",
         &[
             &file.id,

@@ -372,7 +372,7 @@ struct VectorProjectionState<'a> {
 
 impl VectorProjectionState<'_> {
     fn sync_file(&mut self, file_path: &str) -> anyhow::Result<ProjectionFileSyncOutcome> {
-        if !db::indexed_file_exists(&mut self.conn, &self.ctx.project_id, file_path)? {
+        if !db::mark_vector_sync_attempted(&mut self.conn, &self.ctx.project_id, file_path)? {
             return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
         }
         let symbols =

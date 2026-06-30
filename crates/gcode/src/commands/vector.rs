@@ -51,7 +51,7 @@ pub fn sync_file(
     format: Format,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    if !db::indexed_file_exists(&mut conn, &ctx.project_id, file_path)? {
+    if !db::mark_vector_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
         if allow_missing_indexed_file {
             return print_skipped_missing_indexed_file(ctx, file_path, format);
         }
@@ -144,6 +144,7 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
     db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
+    db::mark_project_vector_sync_attempted(&mut conn, &ctx.project_id)?;
     let symbols = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?;
     let output = lifecycle.rebuild_symbols(&symbols)?;
     let files_synced = db::mark_project_vectors_synced(&mut conn, &ctx.project_id)? as usize;
