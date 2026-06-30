@@ -114,6 +114,7 @@ pub use generation::generate_hierarchical_docs;
 pub(crate) use generation::{
     generate_hierarchical_docs_core, generate_hierarchical_docs_with_progress,
     generate_hierarchical_docs_with_reuse, generate_hierarchical_docs_with_verify,
+    generate_hierarchical_docs_with_verify_scope,
 };
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
@@ -180,7 +181,7 @@ pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 pub use types::{
     AiDepth, CodewikiAiOptions, CodewikiGraphAvailability, CodewikiGraphEdge,
     CodewikiGraphEdgeKind, CodewikiInput, CodewikiRunSummary, LeadingChunk, PromptTier, ProseDepth,
-    ProseRegister, TextGenerator, TextVerifier,
+    ProseRegister, TextGenerator, TextVerifier, VerifyScope,
 };
 pub(crate) use types::{
     AiGenerationStatus, ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiAiOutcome,

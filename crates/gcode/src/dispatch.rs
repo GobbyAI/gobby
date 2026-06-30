@@ -128,6 +128,7 @@ fn codewiki_ai_options(
     ai_register: Option<cli::AiRegisterArg>,
     ai_aggregate_profile: Option<String>,
     ai_verify_profile: Option<String>,
+    ai_verify_scope: cli::AiVerifyScopeArg,
 ) -> commands::codewiki::CodewikiAiOptions {
     commands::codewiki::CodewikiAiOptions {
         routing: ai.map(AiRouteArg::into),
@@ -138,6 +139,7 @@ fn codewiki_ai_options(
         verify_profile: ai_verify_profile,
         verify_model: None,
         verify_api_key: None,
+        verify_scope: ai_verify_scope.into(),
     }
 }
 
@@ -547,6 +549,7 @@ fn run() -> anyhow::Result<()> {
             ai_depth,
             ai_aggregate_profile,
             ai_verify_profile,
+            ai_verify_scope,
             ai_prose_depth,
             ai_register,
             edge_limit,
@@ -569,6 +572,7 @@ fn run() -> anyhow::Result<()> {
                     ai_register,
                     ai_aggregate_profile,
                     ai_verify_profile,
+                    ai_verify_scope,
                 ),
                 edge_limit,
                 include_docs,

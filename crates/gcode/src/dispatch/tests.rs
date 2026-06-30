@@ -123,6 +123,7 @@ fn codewiki_ai_options_routes_verify_profile_override() {
         Some(cli::AiRegisterArg::Newcomer),
         Some("aggregate_profile".to_string()),
         Some("feature_mid".to_string()),
+        cli::AiVerifyScopeArg::All,
     );
 
     assert_eq!(
@@ -137,5 +138,9 @@ fn codewiki_ai_options_routes_verify_profile_override() {
     assert_eq!(
         options.register,
         Some(gobby_code::commands::codewiki::ProseRegister::Newcomer)
+    );
+    assert_eq!(
+        options.verify_scope,
+        gobby_code::commands::codewiki::VerifyScope::All
     );
 }

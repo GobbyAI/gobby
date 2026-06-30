@@ -15,6 +15,7 @@ fn generate_docs_for_scope(input: &CodewikiInput, doc_scope: &DocPruneScope) -> 
         &mut None,
         &mut None,
         AiDepth::Symbols,
+        VerifyScope::All,
         CodewikiAiOutcome::default(),
         &mut None,
         &mut progress,

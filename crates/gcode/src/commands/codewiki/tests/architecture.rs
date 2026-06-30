@@ -427,6 +427,7 @@ fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
         &mut None,
         &mut None,
         AiDepth::Symbols,
+        VerifyScope::All,
         CodewikiAiOutcome::default(),
         &mut None,
         &mut progress,

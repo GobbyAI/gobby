@@ -36,6 +36,7 @@ pub fn run(
 ) -> anyhow::Result<()> {
     validate_edge_limit(edge_limit)?;
     let ai_depth = ai.depth;
+    let verify_scope = ai.verify_scope;
 
     let mut progress = CodewikiProgress::stderr(verbose && !ctx.quiet);
 
@@ -192,6 +193,7 @@ pub fn run(
         tool_loop_generator.as_deref_mut(),
         verifier.as_deref_mut(),
         ai_depth,
+        verify_scope,
         aggregate_ai_outcome,
         &mut reuse,
         &mut progress,

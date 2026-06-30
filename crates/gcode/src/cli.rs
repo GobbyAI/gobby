@@ -100,6 +100,24 @@ impl From<AiProseDepthArg> for gobby_code::commands::codewiki::ProseDepth {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AiVerifyScopeArg {
+    /// Verify only the aggregate/curated pages (default); skip per-file leaves.
+    #[default]
+    Aggregates,
+    /// Verify every page, including per-file leaves (the prior behavior).
+    All,
+}
+
+impl From<AiVerifyScopeArg> for gobby_code::commands::codewiki::VerifyScope {
+    fn from(value: AiVerifyScopeArg) -> Self {
+        match value {
+            AiVerifyScopeArg::Aggregates => Self::Aggregates,
+            AiVerifyScopeArg::All => Self::All,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum AiRegisterArg {
     Newcomer,
@@ -376,6 +394,10 @@ pub(crate) enum Command {
         /// [default: feature_mid]
         #[arg(long, value_name = "PROFILE")]
         ai_verify_profile: Option<String>,
+        /// Which pages run grounded verification: aggregates (curated/handbook
+        /// pages only — the default) or all (also per-file leaves, slower).
+        #[arg(long, value_enum, default_value_t = AiVerifyScopeArg::Aggregates)]
+        ai_verify_scope: AiVerifyScopeArg,
         /// Prose verbosity: brief (terser), standard (default), or deep (longer,
         /// richer). Orthogonal to --ai-depth; raises the per-page token budget.
         #[arg(long, value_enum, default_value_t = AiProseDepthArg::Standard)]

@@ -9,7 +9,7 @@ use super::{
     AiDepth, AuditContext, BuiltDoc, CodewikiAiOutcome, CodewikiGraphEdge, CodewikiGraphEdgeKind,
     CodewikiInput, CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition,
     LeadingChunk, ModuleDoc, OwnershipMeta, OwnershipOptions, ReusePlan, SourceSpan, SystemModel,
-    TextGenerator, TextVerifier, ToolLoopGenerator, build_architecture_doc,
+    TextGenerator, TextVerifier, ToolLoopGenerator, VerifyScope, build_architecture_doc,
     build_curated_navigation_docs, build_deprecations_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
     build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
@@ -46,6 +46,7 @@ fn generate_hierarchical_docs_with_graph_availability(
         &mut None,
         &mut None,
         AiDepth::Symbols,
+        VerifyScope::All,
         CodewikiAiOutcome::default(),
         &mut None,
         &mut progress,
@@ -72,6 +73,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
     mut tool_loop: Option<&mut ToolLoopGenerator<'_>>,
     mut verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
+    verify_scope: VerifyScope,
     aggregate_ai_outcome: CodewikiAiOutcome,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -88,6 +90,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
         &mut tool_loop,
         &mut verify,
         ai_depth,
+        verify_scope,
         aggregate_ai_outcome,
         reuse,
         progress,
@@ -127,6 +130,7 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
         &mut None,
         &mut None,
         ai_depth,
+        VerifyScope::All,
         CodewikiAiOutcome::default(),
         reuse,
         progress,
@@ -152,6 +156,26 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
     verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
 ) -> Vec<BuiltDoc> {
+    generate_hierarchical_docs_with_verify_scope(
+        input,
+        generate,
+        verify,
+        ai_depth,
+        VerifyScope::All,
+    )
+}
+
+/// Like [`generate_hierarchical_docs_with_verify`] but pins the
+/// [`VerifyScope`], so a test can assert the default `Aggregates` scope skips
+/// per-file-leaf verification while `All` restores it (gobby-cli #1001).
+#[cfg(test)]
+pub(crate) fn generate_hierarchical_docs_with_verify_scope(
+    input: &CodewikiInput,
+    generate: Option<&mut TextGenerator<'_>>,
+    verify: Option<&mut TextVerifier<'_>>,
+    ai_depth: AiDepth,
+    verify_scope: VerifyScope,
+) -> Vec<BuiltDoc> {
     let mut generate = generate;
     let mut verify = verify;
     let mut progress = CodewikiProgress::silent();
@@ -167,6 +191,7 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
         &mut None,
         &mut verify,
         ai_depth,
+        verify_scope,
         CodewikiAiOutcome::default(),
         &mut None,
         &mut progress,
@@ -236,6 +261,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
+    verify_scope: VerifyScope,
     aggregate_ai_outcome: CodewikiAiOutcome,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -243,6 +269,10 @@ pub(crate) fn generate_hierarchical_docs_core(
     emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let emit = &mut |doc: BuiltDoc| emit(doc.with_normalized_markdown());
+    // Per-file-leaf verification dominates verify cost on large repos.
+    // `VerifyScope::Aggregates` (the default) skips it; the aggregate/curated
+    // pages below still verify regardless (gobby-cli #1001).
+    let verify_leaves = verify_scope.verifies_leaves();
     let mut files = input
         .files
         .iter()
@@ -297,6 +327,13 @@ pub(crate) fn generate_hierarchical_docs_core(
                 .collect::<HashSet<&str>>();
             relationship_facts_for_file(file, &file_symbol_ids, &symbols_by_id, &input.graph_edges)
         };
+        // Leaf verification is gated by `verify_scope`; aggregates skip it.
+        let mut leaf_no_verify: Option<&mut TextVerifier<'_>> = None;
+        let leaf_verify = if verify_leaves {
+            &mut *verify
+        } else {
+            &mut leaf_no_verify
+        };
         let file_doc = build_file_doc(
             file,
             file_modules
@@ -309,7 +346,7 @@ pub(crate) fn generate_hierarchical_docs_core(
             audit.map(|audit| &audit.deprecations),
             audit.map(|audit| &audit.tests),
             generate,
-            verify,
+            leaf_verify,
             reuse,
             ai_depth,
             progress,

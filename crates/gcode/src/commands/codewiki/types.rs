@@ -806,6 +806,25 @@ pub enum ProseRegister {
     Agent,
 }
 
+/// Which pages run the grounded verification pass. The aggregate/curated
+/// pages always verify; this gates the expensive per-file-leaf verification,
+/// which dominates verify cost on large repos.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VerifyScope {
+    /// Verify the aggregate/curated pages; skip per-file-leaf verification.
+    #[default]
+    Aggregates,
+    /// Verify every generated page, including per-file leaves.
+    All,
+}
+
+impl VerifyScope {
+    /// Whether per-file-leaf pages run the grounded verification pass.
+    pub fn verifies_leaves(self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CodewikiAiOptions {
     pub routing: Option<AiRouting>,
@@ -828,6 +847,11 @@ pub struct CodewikiAiOptions {
     pub verify_profile: Option<String>,
     pub verify_model: Option<String>,
     pub verify_api_key: Option<String>,
+    /// Which pages run the grounded verification pass. Default
+    /// ([`VerifyScope::Aggregates`]) verifies the aggregate/curated pages and
+    /// skips the expensive per-file-leaf verification; [`VerifyScope::All`]
+    /// restores leaf verification.
+    pub verify_scope: VerifyScope,
 }
 
 impl SourceSpan {

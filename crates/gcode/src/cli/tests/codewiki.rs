@@ -186,3 +186,32 @@ fn parse_setup_standalone() {
         _ => panic!("expected setup command"),
     }
 }
+
+#[test]
+fn parse_codewiki_verify_scope_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki {
+            ai_verify_scope, ..
+        } => assert_eq!(
+            ai_verify_scope,
+            AiVerifyScopeArg::Aggregates,
+            "verify scope defaults to aggregates"
+        ),
+        _ => panic!("expected codewiki command"),
+    }
+
+    for (raw, expected) in [
+        ("aggregates", AiVerifyScopeArg::Aggregates),
+        ("all", AiVerifyScopeArg::All),
+    ] {
+        let cli = Cli::try_parse_from(["gcode", "codewiki", "--ai-verify-scope", raw])
+            .expect("codewiki --ai-verify-scope parses");
+        match cli.command {
+            Command::Codewiki {
+                ai_verify_scope, ..
+            } => assert_eq!(ai_verify_scope, expected),
+            _ => panic!("expected codewiki command"),
+        }
+    }
+}

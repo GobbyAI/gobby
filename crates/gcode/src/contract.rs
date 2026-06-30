@@ -315,6 +315,7 @@ pub fn contract() -> CliContract {
                     ai_depth_flag(),
                     FlagContract::value("--ai-aggregate-profile", "PROFILE"),
                     FlagContract::value("--ai-verify-profile", "PROFILE"),
+                    ai_verify_scope_flag(),
                     ai_prose_depth_flag(),
                     ai_register_flag(),
                     FlagContract::value("--edge-limit", "N"),
@@ -561,6 +562,10 @@ fn ai_depth_flag() -> FlagContract {
 fn ai_prose_depth_flag() -> FlagContract {
     FlagContract::value("--ai-prose-depth", "brief|standard|deep")
         .allowed(vec!["brief", "standard", "deep"])
+}
+
+fn ai_verify_scope_flag() -> FlagContract {
+    FlagContract::value("--ai-verify-scope", "aggregates|all").allowed(vec!["aggregates", "all"])
 }
 
 fn ai_register_flag() -> FlagContract {

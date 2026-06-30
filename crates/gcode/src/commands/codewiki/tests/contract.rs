@@ -470,3 +470,60 @@ fn inline_marker_count(text: &str) -> usize {
         })
         .count()
 }
+
+#[test]
+fn file_leaf_verify_skipped_when_scope_is_aggregates() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client {",
+        )],
+    };
+
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        (system == prompts::FILE_SYSTEM).then(|| {
+            "## Overview\n\nThe file defines the client [src/lib.rs:1].\n\n\
+             Fabricated: it also mines bitcoin at midnight [src/lib.rs:1].\n\n\
+             ## How it fits\n\nIt anchors the module [src/lib.rs:1]."
+                .to_string()
+        })
+    };
+    // Under the default `Aggregates` scope the leaf verifier must never run.
+    let verify_calls = std::cell::Cell::new(0usize);
+    let mut verifier = |_prompt: &str, _system: &str| -> Option<String> {
+        verify_calls.set(verify_calls.get() + 1);
+        None
+    };
+
+    let docs = generate_hierarchical_docs_with_verify_scope(
+        &input,
+        Some(&mut generator),
+        Some(&mut verifier),
+        AiDepth::Files,
+        VerifyScope::Aggregates,
+    );
+    let file = docs
+        .iter()
+        .find(|doc| doc.path == "code/files/src/lib.rs.md")
+        .expect("file doc");
+
+    // The leaf page still generates; it is simply not verified.
+    assert!(
+        file.content.contains("The file defines the client"),
+        "{}",
+        file.content
+    );
+    assert!(!file.content.contains("verify_notes:"), "{}", file.content);
+    assert_eq!(
+        verify_calls.get(),
+        0,
+        "aggregates scope must not run the per-file-leaf verifier"
+    );
+}
