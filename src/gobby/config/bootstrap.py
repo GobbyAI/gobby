@@ -62,6 +62,7 @@ class BootstrapConfig:
     hub_backend: HubBackend = "postgres"
     database_url: str | None = None
     postgres_install_mode: PostgresInstallMode | None = None
+    daemon_url: str | None = None
 
     def to_config_dict(self) -> dict[str, Any]:
         """Convert to a dict suitable for DaemonConfig construction.
@@ -137,6 +138,7 @@ def load_bootstrap(
             hub_backend=hub_backend,
             database_url=database_url,
             postgres_install_mode=postgres_install_mode,
+            daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),
         )
     except BootstrapConfigError:
         raise
@@ -178,6 +180,14 @@ def _parse_optional_str(value: object, field_name: str) -> str | None:
         raise BootstrapConfigError(f"{field_name} must be a string")
     text = str(value)
     return text if text.strip() else None
+
+
+def _parse_optional_daemon_url(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise BootstrapConfigError("daemon_url must be a string")
+    return str(value)
 
 
 def _validate_bootstrap_file_permissions(path: Path) -> None:
