@@ -359,6 +359,7 @@ fn transient_generation_failure_retries_to_healthy_doc() {
                 status: None,
                 body: None,
                 source: "connection reset".to_string(),
+                timeout: false,
             })
         } else {
             Ok("Generated prose.".to_string())

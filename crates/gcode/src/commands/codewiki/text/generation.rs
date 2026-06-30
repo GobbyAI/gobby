@@ -353,6 +353,11 @@ pub(crate) fn generate_with_bounded_retry<T>(
 }
 
 fn retryable_generation_error(error: &AiError) -> bool {
+    if error.is_timeout() {
+        // A client-side request timeout retried just times out again; the
+        // daemon bounds each candidate, so retrying serially compounds latency.
+        return false;
+    }
     match error {
         AiError::TransportFailure { .. } | AiError::RateLimited { .. } => true,
         AiError::HttpStatus { status, .. } => *status >= 500,

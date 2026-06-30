@@ -342,6 +342,7 @@ mod tests {
             status: None,
             body: None,
             source: "connection reset".to_string(),
+            timeout: false,
         }
     }
 

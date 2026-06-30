@@ -112,6 +112,9 @@ pub enum AiError {
         status: Option<u16>,
         body: Option<String>,
         source: String,
+        /// A client-side request timeout, distinct from other transport
+        /// failures because retrying it usually just times out again.
+        timeout: bool,
     },
     RateLimited {
         status: Option<u16>,
@@ -154,7 +157,25 @@ impl AiError {
             status,
             body: body.map(str::to_string),
             source: source.into(),
+            timeout: false,
         }
+    }
+
+    /// A client-side request timeout, surfaced as a non-retryable transport
+    /// failure: the daemon already bounds each candidate, so retrying a
+    /// timed-out request just times out again and serially compounds latency.
+    pub fn transport_timeout(source: impl Into<String>) -> Self {
+        Self::TransportFailure {
+            status: None,
+            body: None,
+            source: source.into(),
+            timeout: true,
+        }
+    }
+
+    /// Whether this is a client-side request timeout (a non-retryable transport failure).
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::TransportFailure { timeout: true, .. })
     }
 
     pub fn rate_limited(retry_after: Option<Duration>, body: Option<&str>) -> Self {
@@ -361,6 +382,16 @@ mod tests {
         let rendered = format!("{error:?}");
         assert!(!rendered.contains("reqwest::"));
         assert!(!rendered.contains("ureq::"));
+    }
+
+    #[test]
+    fn transport_timeout_is_a_non_retryable_timeout_path() {
+        let timeout = AiError::transport_timeout("request timed out");
+        assert!(timeout.is_timeout());
+        assert_eq!(timeout.status(), None);
+        // A normal transport failure is not a timeout.
+        let other = AiError::transport_failure(None, None, "connection reset");
+        assert!(!other.is_timeout());
     }
 
     #[test]

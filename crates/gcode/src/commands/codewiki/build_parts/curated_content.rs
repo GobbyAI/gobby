@@ -71,7 +71,6 @@ pub(crate) fn curated_page_body(
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     spans: &[SourceSpan],
     generate: &mut Option<&mut TextGenerator<'_>>,
-    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> anyhow::Result<CuratedBody> {
     let members = member_evidence_rows(member_modules, member_files, module_lookup, file_lookup);
@@ -107,12 +106,15 @@ pub(crate) fn curated_page_body(
         CuratedPageKind::Narrative => prompts::NARRATIVE_PAGE_SYSTEM,
     };
 
-    // Aggregate-tier page: Lane B tool loop when configured, else Lane A. A
-    // Lane B generation failure hard-fails the run via `generate_aggregate`; an
-    // empty/incomplete Lane B body is also a hard fail below (no skeleton). Lane
-    // A failures degrade to the structural body, as before.
+    // Curated concept/narrative bodies are a Lane A one-shot (gobby-cli #1001),
+    // matching the curated navigation plan (#993): the page already carries
+    // assembled member/symbol/source evidence in its prompt, so the multi-turn
+    // Lane B agentic loop only added serial cold-spawn latency and parse
+    // instability without earning grounding. `tool_loop` is intentionally not
+    // forwarded here; Lane B stays for the repo/architecture aggregates. An
+    // empty/incomplete one-shot degrades to the structural body below.
     let aggregate = generate_aggregate(
-        tool_loop,
+        &mut None,
         generate,
         &prompt,
         system,

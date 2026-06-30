@@ -62,17 +62,14 @@ fn maybe_dump_nav_failure(prompt: &str, raw: &str) {
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 pub(crate) fn build_curated_navigation_docs(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
-    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-    aggregate_ai_outcome: CodewikiAiOutcome,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
     let all_spans = all_input_spans(files, modules);
     let all_sources = span_files(&all_spans);
@@ -85,13 +82,10 @@ pub(crate) fn build_curated_navigation_docs(
         )?;
         plan.reusable_pages_with_prefixes_by_ai_outcome(
             &["code/concepts/", "code/narrative/"],
-            |path| {
-                if path == "code/concepts/index.md" {
-                    lane_a_ai_outcome
-                } else {
-                    aggregate_ai_outcome
-                }
-            },
+            // Concept/narrative bodies are Lane A one-shot (gobby-cli #1001),
+            // like the nav index, so all curated pages reuse on the Lane A
+            // outcome.
+            |_path| lane_a_ai_outcome,
         )
     }) {
         progress.emit("reusing curated navigation docs (sources unchanged)");
@@ -180,7 +174,6 @@ pub(crate) fn build_curated_navigation_docs(
         &plan_observability,
         leading_chunks,
         generate,
-        tool_loop,
         verify,
     )
 }

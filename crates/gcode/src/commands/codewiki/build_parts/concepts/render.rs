@@ -18,7 +18,6 @@ pub(super) fn render_curated_navigation_docs(
     plan_observability: &GenerationObservability,
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
-    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
     let module_lookup = modules
@@ -56,7 +55,6 @@ pub(super) fn render_curated_navigation_docs(
             leading_chunks,
             &all_spans,
             generate,
-            tool_loop,
             verify,
         )?;
         concept.body = result.body;
@@ -77,7 +75,6 @@ pub(super) fn render_curated_navigation_docs(
             leading_chunks,
             &all_spans,
             generate,
-            tool_loop,
             verify,
         )?;
         page.body = result.body;

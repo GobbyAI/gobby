@@ -282,6 +282,11 @@ pub fn retry_with_backoff<T>(
 }
 
 fn is_retryable(error: &AiError) -> bool {
+    if error.is_timeout() {
+        // A client-side request timeout retried just times out again; the
+        // daemon already gives each candidate a full bounded budget.
+        return false;
+    }
     match error {
         AiError::RateLimited { .. } => true,
         AiError::TransportFailure { status, .. } => status
@@ -357,6 +362,9 @@ fn parse_retry_after(value: &str) -> Option<Duration> {
 }
 
 pub(crate) fn reqwest_error(error: reqwest::Error) -> AiError {
+    if error.is_timeout() {
+        return AiError::transport_timeout(error.to_string());
+    }
     AiError::transport_failure(
         error.status().map(|status| status.as_u16()),
         None,
@@ -436,6 +444,24 @@ mod tests {
 
         assert!(matches!(result, Err(AiError::TransportFailure { .. })));
         assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn retry_with_backoff_does_not_retry_a_timeout() {
+        let mut attempts = 0;
+        let result: Result<(), AiError> = retry_with_backoff(
+            || {
+                attempts += 1;
+                Err(AiError::transport_timeout("request timed out"))
+            },
+            |_| {},
+        );
+
+        assert!(matches!(
+            result,
+            Err(AiError::TransportFailure { timeout: true, .. })
+        ));
+        assert_eq!(attempts, 1);
     }
 
     #[test]

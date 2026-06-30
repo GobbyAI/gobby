@@ -372,11 +372,9 @@ pub(crate) fn generate_hierarchical_docs_core(
         &module_docs,
         &input.leading_chunks,
         generate,
-        tool_loop,
         verify,
         reuse,
         progress,
-        aggregate_ai_outcome,
     )? {
         emit(doc)?;
     }
