@@ -230,6 +230,8 @@ fn build_dispatch_envelope(
     mut input_data: Value,
     project_id: Option<&str>,
 ) -> Envelope {
+    inject_machine_identity(&mut input_data);
+
     if terminal_context::enabled_for_hook(hook_type) {
         terminal_context::inject(&mut input_data);
     }
@@ -252,6 +254,31 @@ fn build_dispatch_envelope(
         detect_source(cfg),
         headers,
     )
+}
+
+fn inject_machine_identity(input_data: &mut Value) {
+    let Some(obj) = input_data.as_object_mut() else {
+        return;
+    };
+
+    match gobby_core::machine::read_local_machine_id() {
+        Ok(machine_id) => {
+            obj.insert("machine_id".into(), Value::String(machine_id));
+            obj.insert(
+                "os".into(),
+                Value::String(gobby_core::machine::local_os_name().to_string()),
+            );
+            obj.remove("machine_id_error");
+        }
+        Err(error) => {
+            obj.remove("machine_id");
+            obj.remove("os");
+            obj.insert(
+                "machine_id_error".into(),
+                Value::String(error.code().to_string()),
+            );
+        }
+    }
 }
 
 fn delivered_action(
@@ -325,13 +352,81 @@ fn success_failure_kind(response_body: &str) -> diagnostics::FailureKind {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::ffi::OsStr;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_tmux_env<T>(tmux: Option<&str>, tmux_pane: Option<&str>, f: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap();
-        temp_env::with_vars([("TMUX", tmux), ("TMUX_PANE", tmux_pane)], f)
+        let gobby_home = tempfile::tempdir().unwrap();
+        let vars: [(&str, Option<&OsStr>); 3] = [
+            ("TMUX", tmux.map(OsStr::new)),
+            ("TMUX_PANE", tmux_pane.map(OsStr::new)),
+            ("GOBBY_HOME", Some(gobby_home.path().as_os_str())),
+        ];
+        temp_env::with_vars(vars, f)
+    }
+
+    fn with_gobby_home<T>(gobby_home: &Path, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        temp_env::with_var("GOBBY_HOME", Some(gobby_home), f)
+    }
+
+    #[test]
+    fn dispatch_envelope_injects_local_machine_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("machine_id"), "machine-client\n").unwrap();
+
+        with_gobby_home(dir.path(), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope =
+                build_dispatch_envelope(&cfg, "PreToolUse", json!({"machine_id": "stale"}), None);
+
+            assert_eq!(envelope.input_data["machine_id"], "machine-client");
+            assert_eq!(
+                envelope.input_data["os"],
+                gobby_core::machine::local_os_name()
+            );
+            assert!(envelope.input_data.get("machine_id_error").is_none());
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_reports_missing_machine_id_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        with_gobby_home(dir.path(), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope = build_dispatch_envelope(
+                &cfg,
+                "PreToolUse",
+                json!({"machine_id": "stale", "os": "stale-os"}),
+                None,
+            );
+
+            assert!(envelope.input_data.get("machine_id").is_none());
+            assert!(envelope.input_data.get("os").is_none());
+            assert_eq!(
+                envelope.input_data["machine_id_error"],
+                "machine_id_missing"
+            );
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_reports_empty_machine_id_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("machine_id"), " \n").unwrap();
+
+        with_gobby_home(dir.path(), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope =
+                build_dispatch_envelope(&cfg, "PreToolUse", json!({"session_id": "sess-1"}), None);
+
+            assert!(envelope.input_data.get("machine_id").is_none());
+            assert_eq!(envelope.input_data["machine_id_error"], "machine_id_empty");
+        });
     }
 
     #[test]

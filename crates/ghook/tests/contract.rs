@@ -390,6 +390,34 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
 }
 
 #[test]
+fn daemon_post_includes_local_machine_identity() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    fs::write(gobby_home.path().join("machine_id"), "machine-client\n")?;
+    let body = r#"{"decision":"accept","reason":"ok"}"#;
+    let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::from_str(body)?)?;
+    assert_stderr_empty(&output, "machine identity success")?;
+    assert!(request.contains("\"machine_id\":\"machine-client\""));
+    assert!(request.contains("\"os\":\""));
+    assert!(!request.contains("machine_id_error"));
+
+    Ok(())
+}
+
+#[test]
 fn valid_daemon_success_removes_envelope_and_writes_no_failure() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
