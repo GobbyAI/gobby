@@ -197,9 +197,8 @@ class BaseAdapter(ABC):
 
         This method handles the full round-trip:
         1. Translate native event to HookEvent
-        2. Inject daemon's machine_id if not provided by CLI
-        3. Process through HookManager
-        4. Translate response back to native format
+        2. Process through HookManager
+        3. Translate response back to native format
 
         Note: This method is synchronous for Phase 2A-2B compatibility.
         In Phase 2C+, when HookManager.handle() is async, subclasses may
@@ -219,13 +218,6 @@ class BaseAdapter(ABC):
         if hook_event is None:
             # Event ignored by adapter
             return {}
-
-        # Inject daemon's machine_id if CLI didn't provide it
-        # This centralizes machine_id handling - adapters don't generate IDs
-        if not hook_event.machine_id:
-            from gobby.utils.machine_id import get_machine_id
-
-            hook_event.machine_id = get_machine_id()
 
         hook_response = hook_manager.handle(hook_event)
         return self.translate_from_hook_response(hook_response)

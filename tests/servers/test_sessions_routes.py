@@ -17,8 +17,10 @@ from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
 from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import LEGACY_MISSING_MACHINE_ID_PREFIX
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -205,13 +207,14 @@ class TestRegisterSessionEdgeCases:
         data = response.json()
         assert "Internal server error" in data["detail"]
 
-    def test_register_machine_id_fallback_to_unknown(
+    def test_register_missing_machine_id_uses_session_only_legacy_id(
         self,
         client: TestClient,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
-        """Test that machine_id falls back to 'unknown-machine' when get_machine_id returns None."""
-        with patch("gobby.utils.machine_id.get_machine_id", return_value=None):
+        """Missing client machine_id is persisted only on the session row."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=None) as get_id:
             response = client.post(
                 "/api/sessions/register",
                 json={
@@ -223,7 +226,10 @@ class TestRegisterSessionEdgeCases:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["machine_id"] == "unknown-machine"
+        machine_id = data["machine_id"]
+        assert machine_id.startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
+        assert LocalMachineManager(session_storage.db).get(machine_id) is None
+        get_id.assert_not_called()
 
 
 # ============================================================================
@@ -590,7 +596,7 @@ class TestFindParentSessionEdgeCases:
         session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
-        """Test find_parent falls back to machine_id when not provided."""
+        """Missing client machine_id does not match rows using daemon identity."""
         # Create a session with handoff_ready status
         session = session_storage.register(
             external_id="parent-fallback-test",
@@ -600,27 +606,30 @@ class TestFindParentSessionEdgeCases:
         )
         session_storage.update_status(session.id, "handoff_ready")
 
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-fallback"):
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="test-machine-fallback",
+        ) as get_id:
             response = client.post(
                 "/api/sessions/find_parent",
                 json={
                     "source": "claude",
-                    # No machine_id - should be resolved via get_machine_id
                     "project_id": test_project["id"],
                 },
             )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["session"]["id"] == session.id
+        assert data["session"] is None
+        get_id.assert_not_called()
 
     def test_find_parent_machine_id_unknown_fallback(
         self,
         client: TestClient,
         test_project: dict[str, Any],
     ) -> None:
-        """Test find_parent uses 'unknown-machine' when get_machine_id returns None."""
-        with patch("gobby.utils.machine_id.get_machine_id", return_value=None):
+        """Missing client machine_id uses a legacy sentinel without daemon fallback."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=None) as get_id:
             response = client.post(
                 "/api/sessions/find_parent",
                 json={
@@ -633,6 +642,7 @@ class TestFindParentSessionEdgeCases:
         assert response.status_code == 200
         data = response.json()
         assert data["session"] is None
+        get_id.assert_not_called()
 
     def test_find_parent_internal_error(
         self,

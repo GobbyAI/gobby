@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.servers.routes.sessions import create_sessions_router
+from gobby.utils.machine_id import LEGACY_MISSING_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
 
@@ -48,6 +49,7 @@ class _Session:
             "title": self.title,
             "status": self.status,
             "session_type": self.session_type,
+            "machine_id": self.machine_id,
             "updated_at": "2026-02-10T12:00:00+00:00",
         }
 
@@ -97,6 +99,7 @@ class _SM:
         project_id: str | None,
         title: str | None = None,
         session_type: str = "terminal",
+        title_source: str | None = None,
     ) -> _Session:
         row = _Session(
             id=f"sess-{external_id}",
@@ -105,6 +108,7 @@ class _SM:
             source=source,
             project_id=project_id or "",
             title=title,
+            title_source=title_source,
             session_type=session_type,
         )
         self.rows[row.id] = row
@@ -236,6 +240,7 @@ def test_discover_returns_summary_shape() -> None:
     body = resp.json()
     assert set(body) == {"sessions", "skipped", "providers"}
     assert len(body["sessions"]) == 1
+    assert body["sessions"][0]["machine_id"].startswith(LEGACY_MISSING_MACHINE_ID_PREFIX)
     assert body["providers"] == [
         {
             "provider": "qwen",

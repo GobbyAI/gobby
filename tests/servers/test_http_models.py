@@ -56,6 +56,7 @@ class TestWebChatSessionRequest:
 
         assert request.provider == "claude"
         assert request.project_id is None
+        assert request.machine_id is None
         assert request.cwd is None
         assert request.title is None
         assert request.model is None
@@ -65,6 +66,7 @@ class TestWebChatSessionRequest:
         request = WebChatSessionRequest(
             provider="codex",
             project_id="project-uuid",
+            machine_id="client-machine",
             cwd="/repo",
             title="Web Chat",
             model="gpt-5.4",
@@ -73,6 +75,7 @@ class TestWebChatSessionRequest:
 
         assert request.provider == "codex"
         assert request.project_id == "project-uuid"
+        assert request.machine_id == "client-machine"
         assert request.cwd == "/repo"
         assert request.title == "Web Chat"
         assert request.model == "gpt-5.4"

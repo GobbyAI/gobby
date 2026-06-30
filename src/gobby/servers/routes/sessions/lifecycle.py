@@ -22,6 +22,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _legacy_missing_machine_id() -> str:
+    from gobby.utils.machine_id import new_legacy_missing_machine_id
+
+    machine_id = new_legacy_missing_machine_id()
+    logger.warning(
+        "Session discovery missing client machine_id; using session-only %s",
+        machine_id,
+    )
+    return machine_id
+
+
 def _get_session_stats(db: "HubDatabase", session: Any) -> dict[str, int]:
     """Get activity stats for a session (tasks closed, memories, commits).
 
@@ -277,16 +288,9 @@ def register_lifecycle_routes(
             if not source:
                 raise HTTPException(status_code=400, detail="Required field: source")
 
+            machine_id = machine_id.strip() if isinstance(machine_id, str) else None
             if not machine_id:
-                from gobby.utils.machine_id import get_machine_id
-
-                machine_id = get_machine_id()
-
-            if not machine_id:
-                logger.warning(
-                    "Failed to determine machine_id for session discovery, using fallback"
-                )
-                machine_id = "unknown-machine"
+                machine_id = _legacy_missing_machine_id()
 
             # Resolve project_id from cwd if not provided
             if not project_id:

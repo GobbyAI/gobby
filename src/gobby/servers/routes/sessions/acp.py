@@ -32,6 +32,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _legacy_missing_machine_id() -> str:
+    from gobby.utils.machine_id import new_legacy_missing_machine_id
+
+    machine_id = new_legacy_missing_machine_id()
+    logger.warning(
+        "ACP discovery missing client machine_id; using session-only %s",
+        machine_id,
+    )
+    return machine_id
+
+
 def _raise_for_lifecycle_error(exc: ACPLifecycleError) -> NoReturn:
     """Map an ACP lifecycle error onto its locked HTTP status code."""
     if isinstance(exc, ACPSessionNotFoundError):
@@ -64,13 +75,11 @@ def register_acp_routes(
     def _service() -> ACPSessionLifecycleService:
         service = service_box.get("service")
         if service is None:
-            from gobby.utils.machine_id import get_machine_id
-
             service = ACPSessionLifecycleService(
                 session_manager=get_session_manager(),
                 runtime_manager=getattr(server.services, "web_chat_runtime_manager", None),
                 resolve_project_id=_resolve_project_id,
-                machine_id=get_machine_id() or "unknown-machine",
+                machine_id_factory=_legacy_missing_machine_id,
             )
             service_box["service"] = service
         return service

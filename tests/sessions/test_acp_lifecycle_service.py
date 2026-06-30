@@ -317,6 +317,30 @@ async def test_discover_creates_new_external_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discover_uses_machine_id_factory_per_new_row() -> None:
+    sm = _FakeSessionManager()
+    backend = _FakeBackend(
+        capabilities={"list": True},
+        pages=[_page(_info("s1"), _info("s2"))],
+    )
+    rm = _FakeRuntimeManager({"qwen": backend})
+    machine_ids = iter(["legacy-missing:one", "legacy-missing:two"])
+    service = ACPSessionLifecycleService(
+        session_manager=sm,
+        runtime_manager=rm,
+        resolve_project_id=_resolve,
+        machine_id_factory=lambda: next(machine_ids),
+    )
+
+    await service.discover()
+
+    assert [row.machine_id for row in sm.registered] == [
+        "legacy-missing:one",
+        "legacy-missing:two",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_discover_matched_row_is_conservative_no_register_no_move() -> None:
     sm = _FakeSessionManager()
     sm.seed(

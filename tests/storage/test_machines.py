@@ -17,7 +17,15 @@ def _count_machines(temp_db) -> int:
 
 class TestNormalizeMachineId:
     def test_skips_missing_and_placeholder_ids(self) -> None:
-        for value in (None, "", "   ", "unknown", "unknown-machine", "UNKNOWN"):
+        for value in (
+            None,
+            "",
+            "   ",
+            "unknown",
+            "unknown-machine",
+            "UNKNOWN",
+            "legacy-missing:00000000-0000-0000-0000-000000000000",
+        ):
             assert normalize_machine_id(value) is None
 
     def test_trims_real_id(self) -> None:
@@ -54,6 +62,7 @@ class TestLocalMachineManager:
         manager = LocalMachineManager(temp_db)
 
         assert manager.upsert_seen("unknown-machine") is None
+        assert manager.upsert_seen("legacy-missing:00000000-0000-0000-0000-000000000000") is None
         assert manager.upsert_seen("   ") is None
 
         assert _count_machines(temp_db) == 0

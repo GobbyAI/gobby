@@ -134,13 +134,17 @@ class ACPSessionLifecycleService:
         session_manager: SessionManager,
         runtime_manager: WebChatRuntimeManager | None,
         resolve_project_id: Callable[[str | None], str | None],
-        machine_id: str,
+        machine_id: str | None = None,
+        machine_id_factory: Callable[[], str] | None = None,
         page_cap: int = ACP_DISCOVER_PAGE_CAP,
     ) -> None:
+        if machine_id is None and machine_id_factory is None:
+            raise ValueError("machine_id or machine_id_factory is required")
         self._session_manager = session_manager
         self._runtime_manager = runtime_manager
         self._resolve_project_id = resolve_project_id
         self._machine_id = machine_id
+        self._machine_id_factory = machine_id_factory
         self._page_cap = max(1, page_cap)
         # Per-provider/cwd in-flight scan tasks. Concurrent discover calls join
         # the matching scan instead of hammering the ACP subprocess again.
@@ -322,9 +326,10 @@ class ACPSessionLifecycleService:
 
     def _upsert(self, provider: str, mapped: MappedSessionInfo) -> Session:
         """Conservative upsert: never move an existing row; only refresh provisional titles."""
+        machine_id = self._registration_machine_id()
         existing = self._session_manager.find_by_external_id(
             mapped.external_id,
-            self._machine_id,
+            machine_id,
             mapped.project_id,
             provider,
             session_type=SESSION_TYPE_WEB_CHAT,
@@ -342,13 +347,19 @@ class ACPSessionLifecycleService:
             return existing
         return self._session_manager.register(
             external_id=mapped.external_id,
-            machine_id=self._machine_id,
+            machine_id=machine_id,
             source=provider,
             project_id=mapped.project_id,
             title=mapped.title,
             session_type=SESSION_TYPE_WEB_CHAT,
             title_source=_ACP_TITLE_SOURCE if mapped.title else None,
         )
+
+    def _registration_machine_id(self) -> str:
+        if self._machine_id_factory is not None:
+            return self._machine_id_factory()
+        assert self._machine_id is not None
+        return self._machine_id
 
     @staticmethod
     def _title_is_provisional(session: Session) -> bool:

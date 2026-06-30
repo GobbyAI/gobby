@@ -41,6 +41,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _legacy_missing_machine_id() -> str:
+    from gobby.utils.machine_id import new_legacy_missing_machine_id
+
+    machine_id = new_legacy_missing_machine_id()
+    logger.warning(
+        "Session registration missing client machine_id; using session-only %s",
+        machine_id,
+    )
+    return machine_id
+
+
 def _get_commit_count(db: "HubDatabase", session: Any) -> int:
     """Count git commits made during a session's timeframe.
 
@@ -218,9 +229,9 @@ def register_core_routes(
 
             project_id = server.resolve_project_id(body.project_id, body.cwd)
 
-            from gobby.utils.machine_id import get_machine_id
-
-            machine_id = get_machine_id() or "unknown-machine"
+            machine_id = body.machine_id.strip() if body.machine_id else None
+            if not machine_id:
+                machine_id = _legacy_missing_machine_id()
             model = body.model if isinstance(body.model, str) and body.model else None
             from gobby.llm.local_detection import is_local_agent_definition
 
@@ -280,16 +291,9 @@ def register_core_routes(
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            # Get machine_id from request or generate
-            machine_id = request_data.machine_id
+            machine_id = request_data.machine_id.strip() if request_data.machine_id else None
             if not machine_id:
-                from gobby.utils.machine_id import get_machine_id
-
-                machine_id = get_machine_id()
-
-            if not machine_id:
-                # Should unlikely happen if get_machine_id works, but type safe
-                machine_id = "unknown-machine"
+                machine_id = _legacy_missing_machine_id()
 
             # Extract git branch if project path exists but git_branch not provided
             git_branch = request_data.git_branch

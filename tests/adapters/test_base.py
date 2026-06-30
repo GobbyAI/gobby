@@ -10,7 +10,7 @@ Tests cover:
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -314,6 +314,24 @@ class TestHandleNative:
 
         # Verify response was translated
         assert result == {"decision": "allow", "continue": True}
+
+    def test_handle_native_does_not_stamp_daemon_machine_id(
+        self, sample_hook_event, mock_hook_manager
+    ) -> None:
+        """handle_native preserves client-provided machine identity only."""
+        adapter = ConcreteAdapter(
+            translate_result=sample_hook_event,
+            response_result={"decision": "allow", "continue": True},
+        )
+
+        with patch(
+            "gobby.utils.machine_id.get_machine_id", return_value="daemon-machine"
+        ) as get_id:
+            adapter.handle_native({"native": "event"}, mock_hook_manager)
+
+        get_id.assert_not_called()
+        handled_event = mock_hook_manager.handle.call_args.args[0]
+        assert handled_event.machine_id is None
 
     def test_handle_native_returns_empty_when_event_is_none(self, mock_hook_manager) -> None:
         """handle_native returns empty dict when translate returns None."""

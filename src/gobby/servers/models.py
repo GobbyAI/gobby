@@ -42,6 +42,7 @@ class WebChatSessionRequest(BaseModel):
         description="CLI provider backing the web chat session (claude, grok, qwen, codex, droid)",
     )
     project_id: str | None = Field(None, description="Project ID to associate with session")
+    machine_id: str | None = Field(None, description="Unique client machine identifier")
     cwd: str | None = Field(
         None,
         description="Working directory used to resolve the project when project_id is omitted",
