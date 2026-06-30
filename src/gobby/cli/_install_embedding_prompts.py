@@ -297,7 +297,11 @@ def _select_embedding_model(
     Returns None when the picker should be skipped (non-interactive, CLI
     overrides supplied, or provider doesn't support catalog selection).
     """
-    if no_interactive or cli_overrides_supplied or provider in ("none", "openai", "openai-compatible"):
+    if (
+        no_interactive
+        or cli_overrides_supplied
+        or provider in ("none", "openai", "openai-compatible")
+    ):
         return None
 
     from gobby.ai.embedding_catalog import DEFAULT_CATALOG_ID, get_spec, picker_keys

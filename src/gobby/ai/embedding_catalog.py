@@ -91,8 +91,7 @@ class EmbeddingModelSpec:
 # Per Qwen3-Embedding model card (HuggingFace Qwen/Qwen3-Embedding-8B-GGUF).
 # Applied to queries only; documents get no prefix.
 _QWEN3_QUERY_PREFIX = (
-    "Instruct: Given a search query, retrieve relevant passages that answer the query\n"
-    "Query: "
+    "Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: "
 )
 
 _NOMIC_GGUF_REPO = "nomic-ai/nomic-embed-text-v1.5-GGUF"
@@ -102,17 +101,61 @@ _QWEN3_8B_GGUF_REPO = "Qwen/Qwen3-Embedding-8B-GGUF"
 
 # GGUF file checksums from HuggingFace LFS metadata (public, not secrets).
 # Fragments are split with underscores and stripped at load to avoid scanners.
-_SHA_NOMIC_Q4 = "d4e3_8889_4e09_cf38_16e8_b089_6d81_d265_b55e_7a9f_ff9a_b03f_e8bf_4ef5_e112_95ac".replace("_", "")
-_SHA_NOMIC_Q8 = "3e24_3421_64b3_d949_91ba_9692_fdc0_dd08_e3fd_7362_e0aa_cc39_6a9a_5c54_a544_c3b7".replace("_", "")
-_SHA_NOMIC_F16 = "f7af_6f66_802f_4df8_6eda_10fe_9bbc_fc75_c395_62be_d48e_f6ac_e719_a251_cf1c_2fdb".replace("_", "")
-_SHA_QWEN3_06B_Q8 = "0650_7c7b_4268_8469_c4e7_298b_0a1e_16de_ff06_caf2_91cf_0a5b_278c_3082_49c3_e439".replace("_", "")
-_SHA_QWEN3_06B_F16 = "421a_27e5_8d16_5478_cc7a_cb98_4a68_8c2a_a414_0496_8b02_03e7_cd74_3ece_44c5_4340".replace("_", "")
-_SHA_QWEN3_4B_Q4 = "2b0c_f8f1_7b4c_723c_2730_3015_383c_27ec_4bf2_d831_4bb6_77d0_5e92_0dd7_0bb0_f16b".replace("_", "")
-_SHA_QWEN3_4B_Q8 = "b60a_e5ce_2dd6_a0b7_7f82_cadf_21de_f1f3_10a3_e10c_de38_0ad0_081b_07a9_d416_949d".replace("_", "")
-_SHA_QWEN3_4B_F16 = "e8b4_e85c_8fcc_2607_9d27_418c_f8d6_a16d_f1a0_9890_cba0_9663_24a9_7280_f91e_782c".replace("_", "")
-_SHA_QWEN3_8B_Q4 = "3fcd_3feb_ec8b_3fd6_4435_204d_b75b_f0dd_73b9_1e8d_0661_e033_1acf_e7e7_c312_0b85".replace("_", "")
-_SHA_QWEN3_8B_Q8 = "d20d_dc71_e8a5_c434_4f23_4348_1e24_2233_a997_dc5e_aff4_4242_7a94_5836_c97b_4deb".replace("_", "")
-_SHA_QWEN3_8B_F16 = "9a2d_fcc2_e867_8289_0945_6dd5_2a69_e377_5b67_7bdc_e181_6f7c_c55f_3657_393e_7e53".replace("_", "")
+_SHA_NOMIC_Q4 = (
+    "d4e3_8889_4e09_cf38_16e8_b089_6d81_d265_b55e_7a9f_ff9a_b03f_e8bf_4ef5_e112_95ac".replace(
+        "_", ""
+    )
+)
+_SHA_NOMIC_Q8 = (
+    "3e24_3421_64b3_d949_91ba_9692_fdc0_dd08_e3fd_7362_e0aa_cc39_6a9a_5c54_a544_c3b7".replace(
+        "_", ""
+    )
+)
+_SHA_NOMIC_F16 = (
+    "f7af_6f66_802f_4df8_6eda_10fe_9bbc_fc75_c395_62be_d48e_f6ac_e719_a251_cf1c_2fdb".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_06B_Q8 = (
+    "0650_7c7b_4268_8469_c4e7_298b_0a1e_16de_ff06_caf2_91cf_0a5b_278c_3082_49c3_e439".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_06B_F16 = (
+    "421a_27e5_8d16_5478_cc7a_cb98_4a68_8c2a_a414_0496_8b02_03e7_cd74_3ece_44c5_4340".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_4B_Q4 = (
+    "2b0c_f8f1_7b4c_723c_2730_3015_383c_27ec_4bf2_d831_4bb6_77d0_5e92_0dd7_0bb0_f16b".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_4B_Q8 = (
+    "b60a_e5ce_2dd6_a0b7_7f82_cadf_21de_f1f3_10a3_e10c_de38_0ad0_081b_07a9_d416_949d".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_4B_F16 = (
+    "e8b4_e85c_8fcc_2607_9d27_418c_f8d6_a16d_f1a0_9890_cba0_9663_24a9_7280_f91e_782c".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_8B_Q4 = (
+    "3fcd_3feb_ec8b_3fd6_4435_204d_b75b_f0dd_73b9_1e8d_0661_e033_1acf_e7e7_c312_0b85".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_8B_Q8 = (
+    "d20d_dc71_e8a5_c434_4f23_4348_1e24_2233_a997_dc5e_aff4_4242_7a94_5836_c97b_4deb".replace(
+        "_", ""
+    )
+)
+_SHA_QWEN3_8B_F16 = (
+    "9a2d_fcc2_e867_8289_0945_6dd5_2a69_e377_5b67_7bdc_e181_6f7c_c55f_3657_393e_7e53".replace(
+        "_", ""
+    )
+)
 
 _CATALOG: dict[str, EmbeddingModelSpec] = {
     # --- Nomic v1.5 ---
@@ -312,8 +355,7 @@ def get_spec_or_raise(key: str) -> EmbeddingModelSpec:
     spec = _CATALOG.get(key)
     if spec is None:
         raise ValueError(
-            f"Unknown embedding catalog key: '{key}'. "
-            f"Available keys: {', '.join(sorted(_CATALOG))}"
+            f"Unknown embedding catalog key: '{key}'. Available keys: {', '.join(sorted(_CATALOG))}"
         )
     return spec
 

@@ -624,7 +624,11 @@ def _semantic_smoke_test(
                 )
                 return False
 
-            for label, vec in [("query", query_vec), ("related", related_vec), ("unrelated", unrelated_vec)]:
+            for label, vec in [
+                ("query", query_vec),
+                ("related", related_vec),
+                ("unrelated", unrelated_vec),
+            ]:
                 norm = _vector_norm(vec)
                 if abs(norm - 1.0) > 0.1:
                     logger.warning(

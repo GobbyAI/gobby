@@ -720,9 +720,7 @@ class VectorStore:
                 await asyncio.to_thread(
                     client.update_collection_aliases,
                     change_aliases_operations=[
-                        DeleteAliasOperation(
-                            delete_alias=DeleteAlias(alias_name=alias_name)
-                        )
+                        DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=alias_name))
                     ],
                 )
             except Exception as exc:
