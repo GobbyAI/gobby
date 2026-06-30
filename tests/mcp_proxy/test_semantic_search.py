@@ -232,6 +232,34 @@ class TestSemanticToolSearch:
         assert call_kwargs["payload"]["description"] == "Does useful things"
 
     @pytest.mark.asyncio
+    async def test_collection_override_targets_rebuild_collection(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Test that rebuilds can write tool embeddings to a physical collection."""
+        mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
+        search = SemanticToolSearch(
+            temp_db,
+            vector_store=mock_vs,
+            collection_name="tool_embeddings@4096-run",
+        )
+
+        await search.store_embedding(
+            tool_id="tool-1",
+            server_name="test-server",
+            project_id="proj-1",
+            embedding=[0.1] * 768,
+        )
+
+        mock_vs.ensure_collection.assert_called_once_with(
+            "tool_embeddings@4096-run",
+            DEFAULT_EMBEDDING_DIM,
+            recreate_on_mismatch=True,
+        )
+        assert mock_vs.upsert.call_args[1]["collection_name"] == "tool_embeddings@4096-run"
+
+    @pytest.mark.asyncio
     async def test_store_embedding_no_vectorstore(
         self, semantic_search: SemanticToolSearch
     ) -> None:

@@ -86,8 +86,10 @@ async def test_upsert_uses_dedicated_collection_and_payload() -> None:
     args, kwargs = vector_store.upsert.await_args
     assert args[0] == point_id
     assert args[1] == [0.1, 0.2]
+    embed_fn.assert_awaited_once_with(build_issue_content(issue))
     assert args[2]["project_id"] == "project-1"
     assert args[2]["task_id"] == "task-1"
+    assert args[2]["source_text"] == build_issue_content(issue)
     assert kwargs["collection_name"] == GITHUB_ISSUE_COLLECTION
 
 

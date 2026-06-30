@@ -9,6 +9,7 @@ import pytest
 from gobby.ai.embedding_switch import (
     PHASE_ABORTED,
     PHASE_BUILDING,
+    PHASE_GC,
     PHASE_STAGING,
     SwitchAlreadyActiveError,
     SwitchJournal,
@@ -18,6 +19,7 @@ from gobby.ai.embedding_switch import (
     build_physical_names,
     complete_switch,
     get_switch_status,
+    record_switch_error,
     start_switch,
 )
 from gobby.memory.vectorstore import EMBEDDING_COLLECTION_KINDS, CollectionNameResolver
@@ -85,6 +87,7 @@ class TestSwitchJournal:
             phase=PHASE_STAGING,
             started_at="2026-06-29T00:00:00Z",
             updated_at="2026-06-29T00:00:00Z",
+            old_physical_names={"memories": "memories@old"},
         )
         data = journal.to_json()
         restored = SwitchJournal.from_json(data)
@@ -92,6 +95,7 @@ class TestSwitchJournal:
         assert restored.catalog_key == journal.catalog_key
         assert restored.target_dim == journal.target_dim
         assert restored.phase == journal.phase
+        assert restored.old_physical_names == {"memories": "memories@old"}
 
 
 class TestSwitchStateMachine:
@@ -117,6 +121,17 @@ class TestSwitchStateMachine:
         assert journal.old_dim == 768
         assert journal.old_catalog_id == "nomic-v1.5-f16"
         store.set.assert_called_once()
+
+    def test_start_switch_can_clear_target_api_base(self) -> None:
+        store = self._mock_store()
+        journal, _ = start_switch(
+            store,
+            "qwen3-8b-q8",
+            "openai",
+            current_api_base="http://localhost:11434/v1",
+            target_api_base=None,
+        )
+        assert journal.target_api_base is None
 
     def test_start_switch_rejects_unknown_key(self) -> None:
         store = self._mock_store()
@@ -146,14 +161,25 @@ class TestSwitchStateMachine:
     def test_advance_phase_updates_journal(self) -> None:
         store = self._mock_store()
         journal, _ = start_switch(store, "qwen3-8b-q8", "ollama")
+        journal.error = "previous failure"
         journal = advance_phase(store, journal, PHASE_BUILDING)
         assert journal.phase == PHASE_BUILDING
+        assert journal.error is None
+        store.set.assert_called()
+
+    def test_record_switch_error_persists_error_without_advancing(self) -> None:
+        store = self._mock_store()
+        journal, _ = start_switch(store, "qwen3-8b-q8", "ollama")
+        failed = record_switch_error(store, journal, "boom")
+        assert failed.phase == PHASE_STAGING
+        assert failed.error == "boom"
         store.set.assert_called()
 
     def test_complete_switch_deletes_journal(self) -> None:
         store = self._mock_store()
         journal, _ = start_switch(store, "qwen3-8b-q8", "ollama")
         complete_switch(store, journal)
+        assert journal.phase == PHASE_GC
         store.delete.assert_called_once()
 
     def test_abort_switch_returns_journal(self) -> None:

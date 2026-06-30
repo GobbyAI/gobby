@@ -108,6 +108,7 @@ class SemanticToolSearch:
         embedding_api_key: str | None = None,
         api_base: str | None = None,
         vector_store: VectorStore | None = None,
+        collection_name: str | None = None,
     ):
         """
         Initialize semantic search manager.
@@ -119,6 +120,7 @@ class SemanticToolSearch:
             embedding_api_key: API key for the configured embedding endpoint
             api_base: API base URL for embedding endpoint
             vector_store: Qdrant vector store for embedding storage/search
+            collection_name: Optional Qdrant collection override for rebuilds
         """
         self.db = db
         self.embedding_model = embedding_model
@@ -132,6 +134,7 @@ class SemanticToolSearch:
             dim=embedding_dim,
         )
         self._vector_store = vector_store
+        self._collection_name = collection_name or self.TOOL_COLLECTION
 
     @staticmethod
     def _is_dimension_mismatch_error(error: Exception) -> bool:
@@ -149,11 +152,11 @@ class SemanticToolSearch:
             return None
 
         try:
-            existing_dim = await self._vector_store.get_collection_dimension(self.TOOL_COLLECTION)
+            existing_dim = await self._vector_store.get_collection_dimension(self._collection_name)
         except Exception as exc:
             logger.debug(
                 "Failed to read semantic tool collection dimension for '%s': %s",
-                self.TOOL_COLLECTION,
+                self._collection_name,
                 exc,
             )
             return None
@@ -170,14 +173,14 @@ class SemanticToolSearch:
             logger.warning(
                 "Semantic tool collection '%s' dimension drift detected before %s "
                 "(expected_dim=%s, observed_dim=%s); recreating collection",
-                self.TOOL_COLLECTION,
+                self._collection_name,
                 operation,
                 self.embedding_dim,
                 existing_dim,
             )
 
         await self._vector_store.ensure_collection(
-            self.TOOL_COLLECTION,
+            self._collection_name,
             self.embedding_dim,
             recreate_on_mismatch=True,
         )
@@ -196,14 +199,14 @@ class SemanticToolSearch:
         logger.warning(
             "Semantic tool collection '%s' dimension mismatch during %s "
             "(expected_dim=%s, observed_dim=%s); recreating collection and retrying once: %s",
-            self.TOOL_COLLECTION,
+            self._collection_name,
             operation,
             self.embedding_dim,
             existing_dim if existing_dim is not None else "unknown",
             error,
         )
         await self._vector_store.ensure_collection(
-            self.TOOL_COLLECTION,
+            self._collection_name,
             self.embedding_dim,
             recreate_on_mismatch=True,
         )
@@ -252,7 +255,7 @@ class SemanticToolSearch:
                 memory_id=tool_id,
                 embedding=embedding,
                 payload=payload,
-                collection_name=self.TOOL_COLLECTION,
+                collection_name=self._collection_name,
             )
 
         await self._ensure_tool_collection("store_embedding")
@@ -286,7 +289,7 @@ class SemanticToolSearch:
                 query_embedding=[0.0] * self.embedding_dim,
                 limit=1,
                 filters={"project_id": project_id},
-                collection_name=self.TOOL_COLLECTION,
+                collection_name=self._collection_name,
             )
             return len(results) > 0
         except Exception:
@@ -529,7 +532,7 @@ class SemanticToolSearch:
                 query_embedding=query_embedding,
                 limit=top_k,
                 filters=filters,
-                collection_name=self.TOOL_COLLECTION,
+                collection_name=self._collection_name,
             )
 
         await self._ensure_tool_collection("search_tools")

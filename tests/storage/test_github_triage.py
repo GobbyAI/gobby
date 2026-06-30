@@ -117,6 +117,7 @@ def test_issue_record_upsert_preserves_task_link_and_latest_decision(
         vector_point_id="point-1",
         dedup_issue_key=None,
         source="webhook",
+        source_text="Title: First\nRepository: owner/repo\n\nBody",
     )
     second = store.upsert_issue_record(
         project_id=sample_project["id"],
@@ -133,6 +134,7 @@ def test_issue_record_upsert_preserves_task_link_and_latest_decision(
         vector_point_id="point-2",
         dedup_issue_key=None,
         source="reconcile",
+        source_text="Title: Second\nRepository: owner/repo\n\nUpdated body",
     )
 
     assert second.id == first.id
@@ -140,4 +142,8 @@ def test_issue_record_upsert_preserves_task_link_and_latest_decision(
     assert second.labels == ("bug", "triaged")
     assert second.task_id == task.id
     assert second.vector_point_id == "point-2"
+    assert second.source_text == "Title: Second\nRepository: owner/repo\n\nUpdated body"
     assert json.loads(second.decision_json)["reason"] == "needs owner"
+
+    records = store.list_issue_records(project_id=sample_project["id"])
+    assert [record.source_text for record in records] == [second.source_text]

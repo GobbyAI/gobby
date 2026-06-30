@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
@@ -35,14 +35,17 @@ PHASE_ACTIVE = "active"
 PHASE_GC = "gc"
 PHASE_ABORTED = "aborted"
 
-_VALID_PHASES = frozenset({
-    PHASE_STAGING,
-    PHASE_BUILDING,
-    PHASE_FLIPPING,
-    PHASE_ACTIVE,
-    PHASE_GC,
-    PHASE_ABORTED,
-})
+_VALID_PHASES = frozenset(
+    {
+        PHASE_STAGING,
+        PHASE_BUILDING,
+        PHASE_FLIPPING,
+        PHASE_ACTIVE,
+        PHASE_GC,
+        PHASE_ABORTED,
+    }
+)
+_TARGET_API_BASE_UNSET = object()
 
 
 @dataclass
@@ -61,6 +64,7 @@ class SwitchJournal:
     updated_at: str
     old_catalog_id: str | None = None
     old_dim: int | None = None
+    old_physical_names: dict[str, str] = field(default_factory=dict)
     error: str | None = None
 
     def to_json(self) -> str:
@@ -69,6 +73,7 @@ class SwitchJournal:
     @staticmethod
     def from_json(data: str) -> SwitchJournal:
         d = json.loads(data)
+        d.setdefault("old_physical_names", {})
         return SwitchJournal(**d)
 
 
@@ -146,6 +151,7 @@ def start_switch(
     current_dim: int | None = None,
     current_catalog_id: str | None = None,
     current_api_base: str | None = None,
+    target_api_base: str | None | object = _TARGET_API_BASE_UNSET,
 ) -> tuple[SwitchJournal, EmbeddingModelSpec]:
     """Open a switch journal and return it with the resolved spec.
 
@@ -157,6 +163,19 @@ def start_switch(
         raise SwitchAlreadyActiveError(existing)
 
     spec = get_spec_or_raise(catalog_key)
+    if provider == "ollama":
+        target_model = spec.ollama_tag
+    elif provider == "lmstudio":
+        target_model = spec.lmstudio_ref
+    else:
+        target_model = spec.key
+    resolved_target_api_base = (
+        current_api_base
+        if target_api_base is _TARGET_API_BASE_UNSET
+        else target_api_base
+        if isinstance(target_api_base, str)
+        else None
+    )
 
     run_id = f"{spec.dim}-{uuid.uuid4().hex[:8]}"
     from datetime import UTC, datetime
@@ -166,9 +185,9 @@ def start_switch(
         run_id=run_id,
         catalog_key=catalog_key,
         target_dim=spec.dim,
-        target_model=spec.ollama_tag if provider == "ollama" else spec.lmstudio_ref,
+        target_model=target_model,
         target_query_prefix=spec.query_prefix,
-        target_api_base=current_api_base,
+        target_api_base=resolved_target_api_base,
         provider=provider,
         phase=PHASE_STAGING,
         started_at=now,
@@ -187,6 +206,36 @@ def advance_phase(config_store: Any, journal: SwitchJournal, phase: str) -> Swit
     from datetime import UTC, datetime
 
     journal.phase = phase
+    journal.updated_at = datetime.now(UTC).isoformat()
+    journal.error = None
+    _write_journal(config_store, journal)
+    return journal
+
+
+def record_switch_error(
+    config_store: Any,
+    journal: SwitchJournal,
+    error: str,
+    *,
+    phase: str | None = None,
+) -> SwitchJournal:
+    """Persist a resumable switch error on the journal."""
+    from datetime import UTC, datetime
+
+    if phase is not None:
+        if phase not in _VALID_PHASES:
+            raise ValueError(f"Invalid phase: {phase}")
+        journal.phase = phase
+    journal.error = error
+    journal.updated_at = datetime.now(UTC).isoformat()
+    _write_journal(config_store, journal)
+    return journal
+
+
+def persist_journal(config_store: Any, journal: SwitchJournal) -> SwitchJournal:
+    """Persist journal metadata without changing phase."""
+    from datetime import UTC, datetime
+
     journal.updated_at = datetime.now(UTC).isoformat()
     _write_journal(config_store, journal)
     return journal

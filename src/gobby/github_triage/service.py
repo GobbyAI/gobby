@@ -18,6 +18,7 @@ from gobby.github_triage.issue_index import (
     GitHubIssueIndexer,
     IssueDuplicate,
     IssueSnapshot,
+    build_issue_content,
     content_hash,
 )
 from gobby.integrations.github_helper import parse_github_repo
@@ -347,6 +348,7 @@ class GitHubIssueTriageService:
             vector_point_id=point_id,
             dedup_issue_key=outcome.duplicate.issue_key if outcome.duplicate else None,
             source=source,
+            source_text=build_issue_content(issue),
         )
         result["content_hash"] = current_hash
         result["vector_point_id"] = point_id

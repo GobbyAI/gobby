@@ -189,7 +189,8 @@ class GitHubIssueIndexer:
             GITHUB_ISSUE_COLLECTION,
             recreate_on_mismatch=True,
         )
-        embedding = await self.embed_fn(build_issue_content(issue))
+        source_text = build_issue_content(issue)
+        embedding = await self.embed_fn(source_text)
         await self.vector_store.upsert(
             point_id,
             embedding,
@@ -203,6 +204,7 @@ class GitHubIssueIndexer:
                 "updated_at": issue.updated_at,
                 "content_hash": content_hash(issue),
                 "task_id": task_id,
+                "source_text": source_text,
             },
             collection_name=GITHUB_ISSUE_COLLECTION,
         )

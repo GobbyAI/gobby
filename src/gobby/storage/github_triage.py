@@ -136,6 +136,7 @@ class GitHubIssueTriageRecord:
     vector_point_id: str | None
     dedup_issue_key: str | None
     source: str
+    source_text: str | None
     last_triaged_at: str
     created_at: str
     updated_at: str
@@ -159,6 +160,7 @@ class GitHubIssueTriageRecord:
             vector_point_id=row["vector_point_id"],
             dedup_issue_key=row["dedup_issue_key"],
             source=row["source"],
+            source_text=row.get("source_text"),
             last_triaged_at=row["last_triaged_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -356,6 +358,7 @@ class GitHubTriageStore:
         vector_point_id: str | None,
         dedup_issue_key: str | None,
         source: str,
+        source_text: str | None = None,
     ) -> GitHubIssueTriageRecord:
         row_id = hashlib.sha256(f"{project_id}:{repo}:{issue_number}".encode()).hexdigest()
         now = _now()
@@ -371,10 +374,10 @@ class GitHubTriageStore:
                 INSERT INTO gh_issues_triaged (
                     id, project_id, repo, issue_number, issue_url, issue_state,
                     labels_json, issue_updated_at, content_hash, verdict, decision_json,
-                    task_id, vector_point_id, dedup_issue_key, source, last_triaged_at,
-                    created_at, updated_at
+                    task_id, vector_point_id, dedup_issue_key, source, source_text,
+                    last_triaged_at, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id, repo, issue_number) DO UPDATE SET
                     issue_url = excluded.issue_url,
                     issue_state = excluded.issue_state,
@@ -390,6 +393,10 @@ class GitHubTriageStore:
                     ),
                     dedup_issue_key = excluded.dedup_issue_key,
                     source = excluded.source,
+                    source_text = COALESCE(
+                        excluded.source_text,
+                        gh_issues_triaged.source_text
+                    ),
                     last_triaged_at = excluded.last_triaged_at,
                     updated_at = excluded.updated_at
                 """,
@@ -409,6 +416,7 @@ class GitHubTriageStore:
                     vector_point_id,
                     dedup_issue_key,
                     source,
+                    source_text,
                     now,
                     created_at,
                     now,
@@ -422,6 +430,30 @@ class GitHubTriageStore:
         if row is None:
             raise RuntimeError(f"Failed to upsert GitHub issue triage row {repo}#{issue_number}")
         return GitHubIssueTriageRecord.from_row(row)
+
+    def list_issue_records(
+        self,
+        *,
+        project_id: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[GitHubIssueTriageRecord]:
+        """List durable GitHub issue triage records for rebuild jobs."""
+        if limit <= 0:
+            return []
+
+        if project_id is None:
+            rows = self.db.fetchall(
+                "SELECT * FROM gh_issues_triaged ORDER BY updated_at DESC LIMIT %s OFFSET %s",
+                (limit, offset),
+            )
+        else:
+            rows = self.db.fetchall(
+                "SELECT * FROM gh_issues_triaged WHERE project_id = %s "
+                "ORDER BY updated_at DESC LIMIT %s OFFSET %s",
+                (project_id, limit, offset),
+            )
+        return [GitHubIssueTriageRecord.from_row(row) for row in rows]
 
     def get_issue_record(
         self, project_id: str, repo: str, issue_number: int

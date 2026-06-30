@@ -1156,6 +1156,7 @@ CREATE TABLE gh_issues_triaged (
     vector_point_id TEXT,
     dedup_issue_key TEXT,
     source TEXT NOT NULL,
+    source_text TEXT,
     last_triaged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

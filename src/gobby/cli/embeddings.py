@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -11,12 +12,7 @@ import click
 import psycopg
 
 from gobby.config.embedding_keys import (
-    AI_EMBEDDING_API_BASE_KEY,
-    AI_EMBEDDING_CATALOG_KEY,
     AI_EMBEDDING_CONFIG_KEYS,
-    AI_EMBEDDING_DIM_KEY,
-    AI_EMBEDDING_MODEL_KEY,
-    AI_EMBEDDING_QUERY_PREFIX_KEY,
     AI_EMBEDDINGS_CONFIG_PREFIX,
 )
 
@@ -45,7 +41,9 @@ def doctor(ctx: click.Context) -> None:
 @click.option("--status", is_flag=True, help="Show the current switch run status.")
 @click.option("--resume", is_flag=True, help="Resume an interrupted switch run.")
 @click.option("--abort", is_flag=True, help="Abort the current switch run.")
-@click.option("--provider", default=None, help="Provider to use (ollama, lmstudio). Auto-detected if omitted.")
+@click.option(
+    "--provider", default=None, help="Provider to use (ollama, lmstudio). Auto-detected if omitted."
+)
 @click.pass_context
 def switch(
     ctx: click.Context,
@@ -78,13 +76,13 @@ def switch(
                 _switch_abort(store)
                 return
             if resume:
-                _switch_resume(store)
+                _switch_resume(store, db)
                 return
             if catalog_key is None:
                 click.echo("Error: catalog_key is required to start a switch.", err=True)
                 click.echo("Available keys: gobby embeddings catalog")
                 raise click.exceptions.Exit(1)
-            _switch_start(store, catalog_key, provider)
+            _switch_start(store, db, catalog_key, provider)
 
     except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
         logger.error("Failed to run embeddings switch: %s", exc, exc_info=True)
@@ -110,18 +108,27 @@ def _switch_status(store: Any) -> None:
     if journal is None:
         click.echo("No active embedding switch.")
         return
-    click.echo(json.dumps({
-        "run_id": journal.run_id,
-        "catalog_key": journal.catalog_key,
-        "target_dim": journal.target_dim,
-        "target_model": journal.target_model,
-        "phase": journal.phase,
-        "started_at": journal.started_at,
-        "updated_at": journal.updated_at,
-        "old_catalog_id": journal.old_catalog_id,
-        "old_dim": journal.old_dim,
-        "error": journal.error,
-    }, indent=2, sort_keys=True))
+    click.echo(
+        json.dumps(
+            {
+                "run_id": journal.run_id,
+                "catalog_key": journal.catalog_key,
+                "target_dim": journal.target_dim,
+                "target_model": journal.target_model,
+                "target_api_base": journal.target_api_base,
+                "provider": journal.provider,
+                "phase": journal.phase,
+                "started_at": journal.started_at,
+                "updated_at": journal.updated_at,
+                "old_catalog_id": journal.old_catalog_id,
+                "old_dim": journal.old_dim,
+                "old_physical_names": journal.old_physical_names,
+                "error": journal.error,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def _switch_abort(store: Any) -> None:
@@ -136,29 +143,21 @@ def _switch_abort(store: Any) -> None:
     click.echo("Note: staged artifacts (physical collections) may need manual cleanup.")
 
 
-def _switch_resume(store: Any) -> None:
+def _switch_resume(store: Any, db: Any) -> None:
     """Resume an interrupted switch run."""
-    from gobby.ai.embedding_switch import get_switch_status
+    from gobby.ai.embedding_switch_runner import resume_embedding_switch
 
-    journal = get_switch_status(store)
-    if journal is None:
-        click.echo("No active embedding switch to resume.")
-        return
-    click.echo(f"Resuming switch run {journal.run_id} at phase: {journal.phase}")
-    click.echo("Resume logic is not yet fully implemented. Use --status to check progress.")
+    report = asyncio.run(resume_embedding_switch(store, db))
+    _echo_switch_report(report)
 
 
-def _switch_start(store: Any, catalog_key: str, provider: str | None) -> None:
+def _switch_start(store: Any, db: Any, catalog_key: str, provider: str | None) -> None:
     """Start a new embedding switch run."""
     from gobby.ai.embedding_catalog import get_spec
-    from gobby.ai.embedding_switch import (
-        PHASE_ACTIVE,
-        PHASE_BUILDING,
-        PHASE_FLIPPING,
-        SwitchAlreadyActiveError,
-        advance_phase,
-        complete_switch,
-        start_switch,
+    from gobby.ai.embedding_switch import SwitchAlreadyActiveError
+    from gobby.ai.embedding_switch_runner import (
+        detect_provider_from_config,
+        start_embedding_switch,
     )
 
     spec = get_spec(catalog_key)
@@ -166,84 +165,57 @@ def _switch_start(store: Any, catalog_key: str, provider: str | None) -> None:
         click.echo(f"Error: unknown embedding catalog key: {catalog_key}", err=True)
         raise click.exceptions.Exit(1)
 
-    # Read current config to determine old state
-    current_dim = store.get(AI_EMBEDDING_DIM_KEY)
-    current_catalog_id = store.get(AI_EMBEDDING_CATALOG_KEY)
-    current_api_base = store.get(AI_EMBEDDING_API_BASE_KEY)
-
-    # Auto-detect provider from api_base if not specified
-    if provider is None:
-        if current_api_base and isinstance(current_api_base, str):
-            if "11434" in current_api_base:
-                provider = "ollama"
-            elif "1234" in current_api_base:
-                provider = "lmstudio"
-            else:
-                provider = "ollama"
-        else:
-            provider = "ollama"
+    provider_name = provider or detect_provider_from_config(store)
 
     # Warn about experimental providers
-    if provider == "lmstudio" and spec.compatibility.lmstudio == "experimental":
+    if provider_name == "lmstudio" and spec.compatibility.lmstudio == "experimental":
         click.echo("WARNING: This model is experimental on LM Studio (issue #965).", err=True)
 
     # Warn about nomic quant not being real on Ollama
-    if provider == "ollama" and not spec.ollama_quant_real:
+    if provider_name == "ollama" and not spec.ollama_quant_real:
         click.echo(
             f"WARNING: {spec.label} on Ollama uses F16 only (quant choice is not real on Ollama).",
             err=True,
         )
 
     try:
-        journal, spec = start_switch(
-            store,
-            catalog_key,
-            provider,
-            current_dim=current_dim if isinstance(current_dim, int) else None,
-            current_catalog_id=current_catalog_id if isinstance(current_catalog_id, str) else None,
-            current_api_base=current_api_base if isinstance(current_api_base, str) else None,
-        )
+        report = asyncio.run(start_embedding_switch(store, db, catalog_key, provider_name))
     except SwitchAlreadyActiveError as exc:
         click.echo(f"Error: {exc}", err=True)
         raise click.exceptions.Exit(1) from exc
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        raise click.exceptions.Exit(1) from exc
 
-    click.echo(f"Switch started: {catalog_key} (dim={spec.dim}, run_id={journal.run_id})")
-    click.echo(f"  Provider: {provider}")
-    click.echo(f"  Old dim: {journal.old_dim} → New dim: {spec.dim}")
-    click.echo("")
-    click.echo("Phase 0 (Staging): Pulling model and running smoke test...")
+    click.echo(f"Switch run: {catalog_key} (dim={spec.dim}, provider={provider_name})")
+    _echo_switch_report(report)
 
-    # Phase 0: Stage — pull model, probe dim, smoke test
-    # This is where we'd call the installer's pull + smoke test logic.
-    # For now, advance through phases with status messages.
-    advance_phase(store, journal, PHASE_BUILDING)
-    click.echo("Phase 1 (Building): Building new versioned collections...")
-    click.echo("  (Build logic requires reindexing memories, tools, and github issues)")
-    click.echo("  Use --status to check progress.")
 
-    # Phase 2: Flip — repoint aliases, write config
-    advance_phase(store, journal, PHASE_FLIPPING)
-    click.echo("Phase 2 (Flipping): Repointing aliases and writing config...")
+def _echo_switch_report(report: Any) -> None:
+    """Print a switch runner report and fail the CLI when a phase recorded an error."""
+    if report.journal is None and not report.completed:
+        click.echo("No active embedding switch.")
+        return
 
-    # Write the new canonical config
+    for phase_result in report.phase_results:
+        suffix = f" ({phase_result.count} items)" if phase_result.count is not None else ""
+        click.echo(f"{phase_result.phase}: {phase_result.message}{suffix}")
 
-    entries = {
-        AI_EMBEDDING_MODEL_KEY: journal.target_model,
-        AI_EMBEDDING_DIM_KEY: journal.target_dim,
-        AI_EMBEDDING_CATALOG_KEY: journal.catalog_key,
-        AI_EMBEDDING_QUERY_PREFIX_KEY: journal.target_query_prefix,
-    }
-    if journal.target_api_base is not None:
-        entries[AI_EMBEDDING_API_BASE_KEY] = journal.target_api_base
-    store.set_many(entries, source="embedding_switch")
+    if report.failed:
+        if report.journal is not None:
+            click.echo(
+                f"Switch paused at phase {report.journal.phase}; run "
+                "`gobby embeddings switch --resume` after resolving the error.",
+                err=True,
+            )
+        click.echo(f"Error: {report.error}", err=True)
+        raise click.exceptions.Exit(1)
 
-    advance_phase(store, journal, PHASE_ACTIVE)
-    click.echo("Phase 3 (GC): Cleaning up old collections...")
-
-    complete_switch(store, journal)
-    click.echo("")
-    click.echo(f"Switch complete: {catalog_key} (dim={spec.dim})")
-    click.echo("Restart the daemon to apply the new embedding model.")
+    if report.completed:
+        click.echo("Switch complete.")
+        click.echo("Restart the daemon to apply the new embedding model.")
+    elif report.journal is not None:
+        click.echo(f"Switch paused at phase {report.journal.phase}.")
 
 
 def _doctor_payload(config: Any) -> dict[str, Any]:
@@ -283,4 +255,3 @@ def _fingerprint(api_key: Any) -> str | None:
     if not isinstance(api_key, str) or api_key == "":
         return None
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
-
