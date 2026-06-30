@@ -104,6 +104,7 @@ class _FakeSessionManager:
         project_id: str | None,
         title: str | None = None,
         session_type: str = "terminal",
+        title_source: str | None = None,
     ) -> _FakeSession:
         session_id = f"sess-{source}-{external_id}"
         row = _FakeSession(
@@ -113,7 +114,7 @@ class _FakeSessionManager:
             source=source,
             project_id=project_id or "",
             title=title,
-            title_source="provisional" if title is None else None,
+            title_source="provisional" if title is None else title_source,
             status="active",
             session_type=session_type,
         )
@@ -296,6 +297,7 @@ async def test_discover_creates_new_external_rows() -> None:
     assert len(result["sessions"]) == 2
     assert len(sm.registered) == 2
     assert {row.session_type for row in sm.registered} == {"web_chat"}
+    assert {row.title_source for row in sm.registered} == {"native"}
     assert sm.events == [("session_created", "sess-qwen-s1"), ("session_created", "sess-qwen-s2")]
     assert result["skipped"] == []
     assert result["providers"] == [
@@ -341,6 +343,7 @@ async def test_discover_matched_row_is_conservative_no_register_no_move() -> Non
     assert sm.title_updates == []  # non-provisional title is not clobbered
     row = sm.rows["sess-qwen-s1"]
     assert row.title == "Real Title"
+    assert row.title_source == "manual"
     assert row.status == "active"  # status/project untouched
     assert row.project_id == "proj-1"
     assert len(result["sessions"]) == 1
@@ -369,10 +372,10 @@ async def test_discover_refreshes_only_provisional_title() -> None:
 
     await _service(sm, rm).discover()
 
-    assert sm.title_updates == [("sess-qwen-s1", "Fix the parser", "manual")]
+    assert sm.title_updates == [("sess-qwen-s1", "Fix the parser", "native")]
     row = sm.rows["sess-qwen-s1"]
     assert row.title == "Fix the parser"
-    assert row.title_source == "manual"
+    assert row.title_source == "native"
     assert row.status == "active"
     assert sm.registered == []
 
@@ -424,6 +427,7 @@ async def test_discover_provider_without_list_contributes_nothing() -> None:
     result = await _service(sm, rm).discover()
 
     assert result["sessions"] == []
+    assert sm.registered == []
     assert backend.list_calls == []
     assert result["providers"] == [
         {

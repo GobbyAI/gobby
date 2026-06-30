@@ -26,6 +26,7 @@ class _SessionWebChatCRUDHost(Protocol):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
+        title_source: str | None = None,
     ) -> Session: ...
 
     def get(self, session_id: str) -> Session | None: ...

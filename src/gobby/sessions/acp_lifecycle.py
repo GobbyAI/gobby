@@ -48,9 +48,8 @@ logger = logging.getLogger(__name__)
 ACP_DISCOVER_PAGE_CAP = 20
 
 # Title source recorded when an ACP-provided title upgrades a provisional row.
-# The title is authoritative (the agent named the session), so it is locked
-# against later heuristic regeneration.
-_ACP_TITLE_SOURCE = "manual"
+# ACP session/list titles are provider-native; "manual" is reserved for user renames.
+_ACP_TITLE_SOURCE = "native"
 
 
 class ACPLifecycleError(Exception):
@@ -348,6 +347,7 @@ class ACPSessionLifecycleService:
             project_id=mapped.project_id,
             title=mapped.title,
             session_type=SESSION_TYPE_WEB_CHAT,
+            title_source=_ACP_TITLE_SOURCE if mapped.title else None,
         )
 
     @staticmethod

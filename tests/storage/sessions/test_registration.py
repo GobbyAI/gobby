@@ -327,6 +327,54 @@ class TestSessionManagerRegistration:
         assert session.title == "Caller Supplied Title"
         assert session.title_source is None
 
+    def test_register_with_explicit_native_title_source(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="explicit-native-title",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Caller Supplied Title",
+            title_source="native",
+        )
+
+        assert session.title == "Caller Supplied Title"
+        assert session.title_source == "native"
+
+    def test_register_rejects_invalid_title_source(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        with pytest.raises(ValueError, match="Invalid title_source"):
+            session_manager.register(
+                external_id="invalid-title-source",
+                machine_id="machine",
+                source="codex",
+                project_id=sample_project["id"],
+                title="Caller Supplied Title",
+                title_source="provider",
+            )
+
+    def test_register_without_title_forces_provisional_title_source(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="provisional-ignores-caller-source",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            title_source="native",
+        )
+
+        assert session.title == f"#{session.seq_num} codex"
+        assert session.title_source == PROVISIONAL_TITLE_SOURCE
+
     def test_register_existing_blank_title_backfills_provisional_title(
         self,
         session_manager: SessionManager,

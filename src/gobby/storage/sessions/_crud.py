@@ -26,6 +26,7 @@ from ._web_chat_crud import _SessionWebChatCRUDMixin
 class _SessionCRUDHost(Protocol):
     db: HubDatabase
     _VALID_CHAT_MODES: ClassVar[set[str]]
+    _VALID_TITLE_SOURCES: ClassVar[set[str]]
 
     def find_by_external_id(
         self,
@@ -66,6 +67,7 @@ class _SessionCRUDHost(Protocol):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
+        title_source: str | None = None,
     ) -> Session: ...
 
 
@@ -88,6 +90,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
+        title_source: str | None = None,
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -102,6 +105,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
             source: CLI source (claude, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
             title: Optional session title
+            title_source: Optional provenance for an explicit session title
             transcript_path: Path to transcript file
             git_branch: Git branch name
             parent_session_id: Parent session for handoff
@@ -114,6 +118,10 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         now = datetime.now(UTC).isoformat()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
+
+        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
+            sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))
+            raise ValueError(f"Invalid title_source {title_source!r}. Must be one of: {sources}")
 
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
@@ -158,7 +166,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
 
             if existing:
                 registration_title = title
-                registration_title_source = None
+                registration_title_source = title_source if title is not None else None
                 existing_seq_num = existing.seq_num
                 if (
                     title is None
@@ -223,7 +231,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
 
                 try:
                     insert_title = title
-                    insert_title_source = None
+                    insert_title_source = title_source if title is not None else None
                     if insert_title is None:
                         insert_title = format_provisional_session_title(next_seq_num, source)
                         insert_title_source = PROVISIONAL_TITLE_SOURCE
@@ -300,7 +308,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
                         context="session registration",
                     )
                     registration_title = title
-                    registration_title_source = None
+                    registration_title_source = title_source if title is not None else None
                     conflicting_seq_num = conflicting.seq_num
                     if (
                         title is None
