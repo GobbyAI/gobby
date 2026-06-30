@@ -21,7 +21,9 @@ from gobby.hooks.dispatchers.mcp import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.memory.context import format_memory_metadata_suffix
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -106,6 +108,32 @@ def manager_with_mocks(mock_components: MagicMock) -> HookManager:
 
 
 # ─── Tests for handle() method ──────────────────────────────────────────
+
+
+def test_record_machine_ingress_upserts_payload_metadata(
+    manager_with_mocks: HookManager,
+    make_event: Callable[..., HookEvent],
+    temp_db,
+) -> None:
+    manager_with_mocks._session_manager = SessionManager(temp_db)
+    event = make_event(
+        data={
+            "hostname": "workstation",
+            "os": "Darwin",
+            "machine_label": "desk",
+            "tailscale_name": "workstation.tailnet",
+        }
+    )
+    event.machine_id = "machine-hook"
+
+    manager_with_mocks._record_machine_ingress(event)
+
+    machine = LocalMachineManager(temp_db).get("machine-hook")
+    assert machine is not None
+    assert machine.hostname == "workstation"
+    assert machine.os == "Darwin"
+    assert machine.label == "desk"
+    assert machine.tailscale_name == "workstation.tailnet"
 
 
 class TestHandleInternalDaemonNotReady:

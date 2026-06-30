@@ -745,6 +745,7 @@ class TestListSessions:
                 ("task_ref_role", "created"),
                 ("created_after", "2026-04-01T00:00:00+00:00"),
                 ("created_before", "2026-04-30T00:00:00+00:00"),
+                ("machine_id", "machine-filter"),
             ],
         )
 
@@ -761,6 +762,7 @@ class TestListSessions:
         assert kwargs["task_ref_roles"] == ["claimed", "created"]
         assert kwargs["created_after"] == "2026-04-01T00:00:00+00:00"
         assert kwargs["created_before"] == "2026-04-30T00:00:00+00:00"
+        assert kwargs["machine_id"] == "machine-filter"
 
     def test_list_status_in_alone_reaches_storage(self, client, mock_server) -> None:
         """status_in is wired through even when no other filter params are sent."""

@@ -379,7 +379,7 @@ async def test_list_sessions(mock_session_manager, full_sessions_registry):
     result = await full_sessions_registry.call("list_sessions", {"limit": 10})
 
     mock_session_manager.list.assert_called_with(
-        project_id=None, status=None, source=None, limit=10
+        project_id=None, status=None, source=None, machine_id=None, limit=10
     )
     assert result["count"] == 2
     assert result["total"] == 2
@@ -398,7 +398,11 @@ async def test_list_sessions_with_filters(mock_session_manager, full_sessions_re
     )
 
     mock_session_manager.list.assert_called_with(
-        project_id="proj-123", status="active", source="claude_code", limit=20
+        project_id="proj-123",
+        status="active",
+        source="claude_code",
+        machine_id=None,
+        limit=20,
     )
     assert result["filters"]["status"] == "active"
     assert result["filters"]["source"] == "claude_code"

@@ -509,7 +509,7 @@ def test_list_sessions_filters(mock_session_manager) -> None:
     assert result.exit_code == 0
 
     mock_session_manager.list.assert_called_with(
-        project_id=None, status="active", source="claude", limit=5
+        project_id=None, status="active", source="claude", machine_id=None, limit=5
     )
 
 
@@ -520,7 +520,7 @@ def test_list_sessions_filters_droid_source(mock_session_manager) -> None:
 
     assert result.exit_code == 0
     mock_session_manager.list.assert_called_with(
-        project_id=None, status=None, source="droid", limit=20
+        project_id=None, status=None, source="droid", machine_id=None, limit=20
     )
 
 
@@ -531,7 +531,7 @@ def test_list_sessions_project_filter(mock_session_manager) -> None:
 
         assert result.exit_code == 0
         mock_session_manager.list.assert_called_with(
-            project_id="p1", status=None, source=None, limit=20
+            project_id="p1", status=None, source=None, machine_id=None, limit=20
         )
 
 

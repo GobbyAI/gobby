@@ -61,6 +61,17 @@ def test_list_sessions_populated(mock_session_manager) -> None:
     assert "Test Session" in result.output
 
 
+def test_list_sessions_filters_by_machine_id(mock_session_manager) -> None:
+    """Test 'sessions list --machine-id' forwards the filter."""
+    mock_session_manager.list.return_value = []
+
+    runner = CliRunner()
+    result = runner.invoke(sessions, ["list", "--machine-id", "machine-filter"])
+
+    assert result.exit_code == 0
+    assert mock_session_manager.list.call_args.kwargs["machine_id"] == "machine-filter"
+
+
 def test_show_session_found(mock_session_manager) -> None:
     """Test 'sessions show' with valid ID."""
     mock_session_manager.get.return_value = MOCK_SESSION

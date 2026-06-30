@@ -152,6 +152,22 @@ CREATE TABLE agent_runs (
     id TEXT PRIMARY KEY
 );
 
+CREATE TABLE machines (
+    machine_id TEXT PRIMARY KEY,
+    hostname TEXT,
+    os TEXT,
+    label TEXT,
+    tailscale_name TEXT,
+    owner_user_id TEXT,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_machines_last_seen ON machines(last_seen);
+
+CREATE INDEX idx_machines_owner_user_id ON machines(owner_user_id)
+WHERE owner_user_id IS NOT NULL;
+
 CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
     external_id TEXT NOT NULL,

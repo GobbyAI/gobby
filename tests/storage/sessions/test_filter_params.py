@@ -23,6 +23,7 @@ def _register(
     *,
     external_id: str,
     source: str = "claude",
+    machine_id: str = "machine-abc",
     model: str | None = None,
     seq_num: int | None = None,
     agent_depth: int = 0,
@@ -32,7 +33,7 @@ def _register(
 ) -> str:
     session = session_manager.register(
         external_id=external_id,
-        machine_id="machine-abc",
+        machine_id=machine_id,
         source=source,
         project_id=sample_project["id"],
     )
@@ -53,6 +54,50 @@ def _register(
         ),
     )
     return session.id
+
+
+class TestMachineIdFilter:
+    def test_machine_id_filter(self, session_manager: SessionManager, sample_project: dict) -> None:
+        _register(
+            session_manager,
+            sample_project,
+            external_id="machine-a-session",
+            machine_id="machine-a",
+        )
+        _register(
+            session_manager,
+            sample_project,
+            external_id="machine-b-session",
+            machine_id="machine-b",
+        )
+
+        results = session_manager.list(project_id=sample_project["id"], machine_id="machine-a")
+
+        assert [session.external_id for session in results] == ["machine-a-session"]
+
+    def test_machine_id_count_filter(
+        self, session_manager: SessionManager, sample_project: dict
+    ) -> None:
+        _register(
+            session_manager,
+            sample_project,
+            external_id="machine-a-count",
+            machine_id="machine-a",
+        )
+        _register(
+            session_manager,
+            sample_project,
+            external_id="machine-b-count",
+            machine_id="machine-b",
+        )
+
+        assert (
+            session_manager.count(
+                project_id=sample_project["id"],
+                machine_id="machine-b",
+            )
+            == 1
+        )
 
 
 def _insert_task(

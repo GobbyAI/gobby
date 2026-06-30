@@ -101,10 +101,14 @@ def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
     discovered = runner._discover_migrations()
 
     # Only post-baseline incremental migrations remain on disk; the rest is
-    # folded into postgres_baseline_schema.sql. 298 drops the session wiki schema.
+    # folded into postgres_baseline_schema.sql.
     assert [(migration.version, migration.name) for migration in discovered] == [
         (295, "relabel_gemini_sessions"),
         (298, "drop_session_wiki_schema"),
+        (299, "unmodeled_observations"),
+        (300, "purge_unmodeled_observations_for_hash_v2"),
+        (301, "github_issue_source_text"),
+        (302, "machines_registry"),
     ]
 
 

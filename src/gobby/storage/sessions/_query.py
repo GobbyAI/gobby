@@ -32,6 +32,7 @@ def _build_session_filters(
     status: str | None,
     source: str | None,
     *,
+    machine_id: str | None = None,
     sources: Sequence[str] | None = None,
     statuses: Sequence[str] | None = None,
     modes: Sequence[str] | None = None,
@@ -65,6 +66,9 @@ def _build_session_filters(
     if source:
         conditions.append("source = %s")
         params.append(source)
+    if machine_id:
+        conditions.append("machine_id = %s")
+        params.append(machine_id)
     if sources:
         placeholders = ",".join(["%s"] * len(sources))
         conditions.append(f"source IN ({placeholders})")
@@ -135,6 +139,7 @@ class _QueryMixin:
         source: str | None = None,
         limit: int = 100,
         exclude_subagents: bool = False,
+        machine_id: str | None = None,
         cursor_updated_at: str | None = None,
         cursor_id: str | None = None,
         sources: Sequence[str] | None = None,
@@ -165,6 +170,7 @@ class _QueryMixin:
                 Both must be supplied together; supplying one without the other is ignored.
             sources: Multi-value source filter (source IN ...). Combined with `source` via AND
                 if both are supplied — most callers use one or the other.
+            machine_id: Filter by client machine id.
             statuses: Multi-value status filter (status IN ...). Stacks on top of the
                 exclude-deleted base predicate; the legacy `status` positional and
                 `statuses` are independent (most callers use one or the other).
@@ -186,6 +192,7 @@ class _QueryMixin:
             project_id,
             status,
             source,
+            machine_id=machine_id,
             sources=sources,
             statuses=statuses,
             modes=modes,
@@ -227,6 +234,7 @@ class _QueryMixin:
         project_id: str | None = None,
         status: str | None = None,
         source: str | None = None,
+        machine_id: str | None = None,
     ) -> int:
         """
         Count sessions with optional filters.
@@ -235,11 +243,17 @@ class _QueryMixin:
             project_id: Filter by project
             status: Filter by status
             source: Filter by CLI source
+            machine_id: Filter by client machine id
 
         Returns:
             Count of matching sessions
         """
-        conditions, params = _build_session_filters(project_id, status, source)
+        conditions, params = _build_session_filters(
+            project_id,
+            status,
+            source,
+            machine_id=machine_id,
+        )
         where_clause = " AND ".join(conditions)
 
         result = self.db.fetchone(

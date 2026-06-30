@@ -31,6 +31,7 @@ from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
+from gobby.storage.machines import LocalMachineManager
 from gobby.telemetry.tracing import create_span
 from gobby.utils.session_refs import try_resolve_session_field
 
@@ -41,6 +42,14 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
+
+
+def _hook_text_field(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 class HookManager:
@@ -220,6 +229,28 @@ class HookManager:
         """Get cached daemon status without making an HTTP call."""
         return self._health_monitor.get_cached_status()
 
+    def _record_machine_ingress(self, event: HookEvent) -> None:
+        db = getattr(self._session_manager, "db", None)
+        if db is None:
+            return
+
+        data = event.data if isinstance(event.data, dict) else {}
+        machine_id = event.machine_id or _hook_text_field(data, "machine_id", "machineId")
+        try:
+            LocalMachineManager(db).upsert_seen(
+                machine_id,
+                hostname=_hook_text_field(data, "hostname", "host_name", "host"),
+                os=_hook_text_field(data, "os", "platform", "operating_system"),
+                label=_hook_text_field(data, "machine_label", "machineLabel"),
+                tailscale_name=_hook_text_field(data, "tailscale_name", "tailscaleName"),
+            )
+        except Exception as exc:
+            self.logger.debug(
+                "Failed to refresh machine registry from hook ingress: %s",
+                exc,
+                exc_info=True,
+            )
+
     def handle(self, event: HookEvent) -> HookResponse:
         """Handle a unified HookEvent from any CLI source."""
         with create_span(
@@ -280,6 +311,8 @@ class HookManager:
 
     def _handle_after_daemon_ready(self, event: HookEvent) -> HookResponse:
         """Run hook handling after the daemon readiness gate has passed."""
+        self._record_machine_ingress(event)
+
         # SESSION_START is special: the handler establishes the canonical
         # platform session first (including pre-created web-chat rows). Doing a
         # generic lookup here can auto-register a stray duplicate before the

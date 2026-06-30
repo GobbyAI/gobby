@@ -13,6 +13,7 @@ from gobby.storage.hub.protocol import (
     SessionRegistration,
     SessionSeqMutation,
 )
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 
@@ -118,6 +119,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         now = datetime.now(UTC).isoformat()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
+        LocalMachineManager(self.db).upsert_seen(machine_id, seen_at=now)
 
         if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
             sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))

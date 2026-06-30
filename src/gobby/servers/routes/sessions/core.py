@@ -485,6 +485,7 @@ def register_core_routes(
         project_id: str | None = None,
         status: str | None = None,
         source: str | None = None,
+        machine_id: str | None = Query(None, description="Filter by client machine id"),
         limit: int = Query(100, ge=1, le=1000),
         exclude_subagents: bool = Query(
             False, description="Exclude subagent sessions (agent_depth > 0)"
@@ -557,6 +558,7 @@ def register_core_routes(
             project_id: Filter by project ID
             status: Filter by status (active, archived, etc)
             source: Filter by source (Claude Code, Qwen, etc)
+            machine_id: Filter by client machine id
             limit: Max results (default 100)
             exclude_subagents: If true, only return top-level sessions
             include_resumability: If true, enrich with resumability and filter non-resumable
@@ -583,6 +585,7 @@ def register_core_routes(
                 project_id=project_id,
                 status=status,
                 source=source,
+                machine_id=machine_id,
                 limit=fetch_limit,
                 exclude_subagents=exclude_subagents,
                 cursor_updated_at=cursor_updated_at,

@@ -159,6 +159,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         project_id: str | None = None,
         status: str | None = None,
         source: str | None = None,
+        machine_id: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
         """
@@ -168,6 +169,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                     project_id: Filter by project ID
                     status: Filter by status (active, paused, expired, archived, handoff_ready)
         source: Filter by CLI source (claude, grok, qwen, codex, droid, agy)
+                    machine_id: Filter by client machine id
                     limit: Max results (default 20)
 
                 Returns:
@@ -180,6 +182,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             project_id=project_id,
             status=status,
             source=source,
+            machine_id=machine_id,
             limit=limit,
         )
 
@@ -187,6 +190,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             project_id=project_id,
             status=status,
             source=source,
+            machine_id=machine_id,
         )
 
         # Detect likely misuse pattern: trying to find own session
@@ -206,6 +210,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                     "project_id": project_id,
                     "status": status,
                     "source": source,
+                    "machine_id": machine_id,
                 },
             }
 
@@ -218,6 +223,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                 "project_id": project_id,
                 "status": status,
                 "source": source,
+                "machine_id": machine_id,
             },
         }
 

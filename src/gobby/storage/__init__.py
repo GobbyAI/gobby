@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from gobby.storage.inter_session_messages import (
         InterSessionMessageManager as InterSessionMessageManager,
     )
+    from gobby.storage.machines import LocalMachineManager as LocalMachineManager
     from gobby.storage.mcp import LocalMCPManager as LocalMCPManager
     from gobby.storage.plans import LocalPlanManager as LocalPlanManager
     from gobby.storage.projects import LocalProjectManager as LocalProjectManager
@@ -23,6 +24,7 @@ __all__ = [
     "InterSessionMessageManager",
     "LocalCommunicationsStore",
     "LocalExpansionRunManager",
+    "LocalMachineManager",
     "LocalMCPManager",
     "LocalPlanManager",
     "LocalProjectManager",
@@ -40,6 +42,7 @@ _EXPORTS = {
     "LocalCommunicationsStore": ("gobby.storage.communications", "LocalCommunicationsStore"),
     "TaskDeliveryStateManager": ("gobby.storage.delivery", "TaskDeliveryStateManager"),
     "LocalExpansionRunManager": ("gobby.storage.expansion_runs", "LocalExpansionRunManager"),
+    "LocalMachineManager": ("gobby.storage.machines", "LocalMachineManager"),
     "LocalMCPManager": ("gobby.storage.mcp", "LocalMCPManager"),
     "LocalPlanManager": ("gobby.storage.plans", "LocalPlanManager"),
     "LocalProjectManager": ("gobby.storage.projects", "LocalProjectManager"),

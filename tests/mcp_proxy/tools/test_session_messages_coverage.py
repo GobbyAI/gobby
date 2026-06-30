@@ -863,6 +863,32 @@ class TestListSessions:
         assert result["total"] == 1
         assert len(result["sessions"]) == 1
 
+    def test_list_sessions_passes_machine_id_filter(self) -> None:
+        """Machine ID filter reaches storage list/count."""
+        session_manager = MagicMock()
+        session_manager.list.return_value = []
+        session_manager.count.return_value = 0
+
+        registry = create_test_registry(session_manager=session_manager)
+        list_sessions = registry.get_tool("list_sessions")
+
+        result = list_sessions(machine_id="machine-filter")
+
+        assert result["filters"]["machine_id"] == "machine-filter"
+        session_manager.list.assert_called_once_with(
+            project_id=None,
+            status=None,
+            source=None,
+            machine_id="machine-filter",
+            limit=20,
+        )
+        session_manager.count.assert_called_once_with(
+            project_id=None,
+            status=None,
+            source=None,
+            machine_id="machine-filter",
+        )
+
     def test_list_sessions_with_filters(self) -> None:
         """Test session listing with filters."""
         session_manager = MagicMock()
@@ -880,7 +906,11 @@ class TestListSessions:
         assert result["limit"] == 10
 
         session_manager.list.assert_called_once_with(
-            project_id="proj-1", status="active", source="claude_code", limit=10
+            project_id="proj-1",
+            status="active",
+            source="claude_code",
+            machine_id=None,
+            limit=10,
         )
 
     def test_list_sessions_misuse_warning(self) -> None:
