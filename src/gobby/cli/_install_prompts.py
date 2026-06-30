@@ -70,7 +70,7 @@ def _ensure_db_and_secrets(
     local_store: SecretStore | None = secret_store
     try:
         if local_db is None:
-            local_db = open_runtime_hub_database(apply_migrations=False)
+            local_db = open_runtime_hub_database()
             owns_db = True
         if local_store is None:
             local_store = _SecretStore(local_db)

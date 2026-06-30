@@ -8,10 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from click import ClickException
 from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.install import (
+    _configure_secret_kek_posture,
     _ensure_daemon_config,
     _is_agy_cli_installed,
     _is_claude_code_installed,
@@ -20,8 +22,41 @@ from gobby.cli.install import (
     _is_qwen_cli_installed,
     uninstall,
 )
+from gobby.storage.secrets import POSTURE_SCRYPT_PASSPHRASE, SECRET_KEK_PASSPHRASE_ENV
 
 pytestmark = pytest.mark.unit
+
+
+class _SecretKekStore:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    def set_kek_posture(self, posture: str, *, passphrase: str | None = None) -> None:
+        self.calls.append((posture, passphrase))
+
+
+class TestSecretKekPostureInstall:
+    def test_key_file_posture_is_noop(self) -> None:
+        store = _SecretKekStore()
+
+        _configure_secret_kek_posture(store, "key-file", no_interactive=True)
+
+        assert store.calls == []
+
+    def test_passphrase_posture_uses_env_in_non_interactive(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = _SecretKekStore()
+        monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
+
+        _configure_secret_kek_posture(store, "passphrase", no_interactive=True)
+
+        assert store.calls == [(POSTURE_SCRYPT_PASSPHRASE, "correct horse")]
+
+    def test_passphrase_posture_requires_env_in_non_interactive(self) -> None:
+        with pytest.raises(ClickException, match=SECRET_KEK_PASSPHRASE_ENV):
+            _configure_secret_kek_posture(MagicMock(), "passphrase", no_interactive=True)
 
 
 @pytest.fixture(autouse=True)

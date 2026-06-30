@@ -21,7 +21,12 @@ from gobby.config.bootstrap import (
     DEFAULT_WEBSOCKET_PORT,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.secrets import SecretStore
+from gobby.storage.secrets import (
+    POSTURE_KEY_FILE,
+    POSTURE_SCRYPT_PASSPHRASE,
+    SECRET_KEK_PASSPHRASE_ENV,
+    SecretStore,
+)
 
 from ._detectors import (
     _is_agy_cli_installed,
@@ -202,6 +207,36 @@ def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
     )
 
 
+def _configure_secret_kek_posture(
+    secret_store: SecretStore | None,
+    posture: str,
+    *,
+    no_interactive: bool,
+) -> None:
+    storage_posture = POSTURE_SCRYPT_PASSPHRASE if posture == "passphrase" else POSTURE_KEY_FILE
+    if storage_posture == POSTURE_KEY_FILE:
+        return
+    if secret_store is None:
+        raise click.ClickException("Cannot configure passphrase KEK posture without hub access.")
+
+    passphrase = os.environ.get(SECRET_KEK_PASSPHRASE_ENV)
+    if not passphrase:
+        if no_interactive:
+            raise click.ClickException(
+                f"--secret-kek-posture passphrase requires {SECRET_KEK_PASSPHRASE_ENV} "
+                "in --no-interactive mode."
+            )
+        passphrase = str(
+            click.prompt(
+                "Secret KEK passphrase",
+                hide_input=True,
+                confirmation_prompt=True,
+            )
+        )
+    secret_store.set_kek_posture(storage_posture, passphrase=passphrase)
+    click.echo("Secret KEK posture: passphrase")
+
+
 @click.command("install")
 @click.option(
     "--claude",
@@ -333,6 +368,14 @@ def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
     help="Override the embedding dimension. Omit to auto-detect via /v1/embeddings probe.",
 )
 @click.option(
+    "--secret-kek-posture",
+    "secret_kek_posture",
+    type=click.Choice(["key-file", "passphrase"]),
+    default="key-file",
+    show_default=True,
+    help="KEK posture for daemon-local secret encryption.",
+)
+@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
@@ -364,6 +407,7 @@ def install(
     embedding_provider: str | None,
     embedding_model: str | None,
     embedding_dim: int | None,
+    secret_kek_posture: str,
     no_interactive_flag: bool,
     working_dir: Path | None,
 ) -> None:
@@ -517,7 +561,7 @@ def install(
         from gobby.storage.hub.runtime import open_runtime_hub_database
 
         load_full_config_from_db()
-        db = open_runtime_hub_database(apply_migrations=False)
+        db = open_runtime_hub_database()
         secret_store = SecretStore(db)
     except (FileNotFoundError, PermissionError, OSError, RuntimeError, ValueError) as exc:
         # Missing config file, unavailable hub, malformed config values.
@@ -528,6 +572,12 @@ def install(
             type(exc).__name__,
             exc,
         )
+
+    _configure_secret_kek_posture(
+        secret_store,
+        secret_kek_posture,
+        no_interactive=no_interactive_flag,
+    )
 
     try:
         # Standard CLIs (claude, grok, agy, qwen, codex, droid)

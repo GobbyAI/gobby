@@ -8,19 +8,27 @@ is mocked.
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from cryptography.fernet import Fernet
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import (
+    POSTURE_KEY_FILE,
+    POSTURE_SCRYPT_PASSPHRASE,
+    SECRET_KEK_PASSPHRASE_ENV,
     SECRET_REF_PATTERN,
     VALID_CATEGORIES,
     SecretInfo,
+    SecretKeyUnavailable,
+    SecretMigrationError,
     SecretStore,
     _derive_fernet_key,
+    _get_or_create_kek_file_key,
     _get_or_create_salt,
 )
 
@@ -34,9 +42,13 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def salt_dir(tmp_path: Path) -> Path:
-    """Provide a temp directory for the salt file, patching SALT_FILE."""
+    """Provide temp secret key files, patching SALT_FILE and KEK_FILE."""
     salt_file = tmp_path / ".secret_salt"
-    with patch("gobby.storage.secrets.SALT_FILE", salt_file):
+    kek_file = tmp_path / ".secret_kek"
+    with (
+        patch("gobby.storage.secrets.SALT_FILE", salt_file),
+        patch("gobby.storage.secrets.KEK_FILE", kek_file),
+    ):
         yield tmp_path
     return tmp_path
 
@@ -45,6 +57,36 @@ def salt_dir(tmp_path: Path) -> Path:
 def store(temp_db: HubDatabase, salt_dir: Path, mock_machine_id: str) -> SecretStore:
     """SecretStore backed by real DB, real encryption, temp salt, mocked machine ID."""
     return SecretStore(temp_db)
+
+
+def _insert_legacy_secret(
+    db: HubDatabase,
+    name: str,
+    plaintext: str | None = None,
+    *,
+    machine_id: str = "machine-A",
+    encrypted_value: str | None = None,
+) -> str:
+    normalized = SecretStore._normalize_name(name)
+    token = encrypted_value
+    if token is None:
+        salt = _get_or_create_salt()
+        legacy = Fernet(_derive_fernet_key(machine_id, salt))
+        token = legacy.encrypt((plaintext or "").encode("utf-8")).decode("utf-8")
+    db.execute(
+        """INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+        (
+            str(uuid.uuid4()),
+            normalized,
+            token,
+            "general",
+            None,
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
+        ),
+    )
+    return token
 
 
 # =============================================================================
@@ -126,6 +168,21 @@ class TestGetOrCreateSalt:
         assert mode == "0o600"
 
 
+class TestGetOrCreateKekFile:
+    def test_creates_kek_file(self, salt_dir: Path) -> None:
+        kek_file = salt_dir / ".secret_kek"
+        assert not kek_file.exists()
+        key = _get_or_create_kek_file_key()
+        assert key == kek_file.read_bytes()
+        assert len(key) == 44
+
+    def test_kek_file_permissions(self, salt_dir: Path) -> None:
+        _get_or_create_kek_file_key()
+        kek_file = salt_dir / ".secret_kek"
+        mode = oct(kek_file.stat().st_mode & 0o777)
+        assert mode == "0o600"
+
+
 # =============================================================================
 # _derive_fernet_key
 # =============================================================================
@@ -183,11 +240,14 @@ class TestGetFernet:
         f2 = store._get_fernet()
         assert f1 is f2
 
-    def test_raises_when_no_machine_id(self, temp_db: HubDatabase, salt_dir: Path) -> None:
+    def test_key_file_envelope_does_not_require_machine_id(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
         with patch("gobby.storage.secrets.get_machine_id", return_value=None):
             s = SecretStore(temp_db)
-            with pytest.raises(RuntimeError, match="machine ID unavailable"):
-                s._get_fernet()
+            assert s._get_fernet() is not None
 
 
 # =============================================================================
@@ -242,10 +302,7 @@ class TestSecretStoreSet:
         def patched_fetchone(sql: str, params: tuple = ()) -> Any:
             nonlocal call_count
             call_count += 1
-            # The set() method calls fetchone twice:
-            # 1st: check if exists (SELECT id FROM secrets WHERE name = ?)
-            # 2nd: read back after insert (SELECT * FROM secrets WHERE id = ?)
-            if call_count == 2:
+            if "SELECT * FROM secrets WHERE id" in sql:
                 return None  # Simulate row vanishing
             return original_fetchone(sql, params)
 
@@ -288,17 +345,15 @@ class TestSecretStoreGet:
         assert store.get("KEY") == "new"
 
     def test_get_invalid_token_returns_none(self, temp_db: HubDatabase, salt_dir: Path) -> None:
-        """If the machine ID changes, decryption fails gracefully."""
-        # Store with one machine ID
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
-            store_a = SecretStore(temp_db)
-            store_a.set("KEY", "secret")
+        """Corrupt envelope tokens fail gracefully."""
+        store = SecretStore(temp_db)
+        store.set("KEY", "secret")
+        temp_db.execute(
+            "UPDATE secrets SET encrypted_value = %s WHERE name = %s",
+            ("not-a-fernet-token", "key"),
+        )
 
-        # Try to read with a different machine ID
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"):
-            store_b = SecretStore(temp_db)
-            result = store_b.get("KEY")
-            assert result is None
+        assert SecretStore(temp_db).get("KEY") is None
 
     def test_get_invalid_token_logs_safe_identifier(
         self,
@@ -307,16 +362,15 @@ class TestSecretStoreGet:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Decrypt failures log a deterministic hash, not the secret name."""
-        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
-            store_a = SecretStore(temp_db)
-            store_a.set("KEY", "secret")
+        store = SecretStore(temp_db)
+        store.set("KEY", "secret")
+        temp_db.execute(
+            "UPDATE secrets SET encrypted_value = %s WHERE name = %s",
+            ("not-a-fernet-token", "key"),
+        )
 
-        with (
-            patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"),
-            caplog.at_level("ERROR", logger="gobby.storage.secrets"),
-        ):
-            store_b = SecretStore(temp_db)
-            assert store_b.get("KEY") is None
+        with caplog.at_level("ERROR", logger="gobby.storage.secrets"):
+            assert SecretStore(temp_db).get("KEY") is None
 
         assert "sha256:" in caplog.text
         assert "KEY" not in caplog.text
@@ -336,6 +390,153 @@ class TestSecretStoreGet:
             name = f"VAR_{i}"
             store.set(name, val)
             assert store.get(name) == val
+
+
+class TestSecretStoreEnvelope:
+    def test_machine_id_change_does_not_break_envelope_decryption(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
+        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
+            SecretStore(temp_db).set("KEY", "secret")
+
+        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"):
+            assert SecretStore(temp_db).get("KEY") == "secret"
+
+    def test_posture_swap_rewraps_dek_without_reencrypting_secret_rows(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
+        store = SecretStore(temp_db)
+        store.set("KEY", "secret")
+        before = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", ("key",))
+        assert before is not None
+
+        store.set_kek_posture(POSTURE_SCRYPT_PASSPHRASE, passphrase="correct horse")
+        after_passphrase = temp_db.fetchone(
+            "SELECT encrypted_value FROM secrets WHERE name = %s",
+            ("key",),
+        )
+        assert after_passphrase is not None
+        assert after_passphrase["encrypted_value"] == before["encrypted_value"]
+        assert SecretStore(temp_db, kek_passphrase="correct horse").get("KEY") == "secret"
+
+        SecretStore(temp_db, kek_passphrase="correct horse").set_kek_posture(POSTURE_KEY_FILE)
+        after_key_file = temp_db.fetchone(
+            "SELECT encrypted_value FROM secrets WHERE name = %s",
+            ("key",),
+        )
+        assert after_key_file is not None
+        assert after_key_file["encrypted_value"] == before["encrypted_value"]
+        assert SecretStore(temp_db).get("KEY") == "secret"
+
+    def test_passphrase_posture_requires_passphrase(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = SecretStore(temp_db)
+        store.set("KEY", "secret")
+        store.set_kek_posture(POSTURE_SCRYPT_PASSPHRASE, passphrase="correct horse")
+
+        with pytest.raises(SecretKeyUnavailable, match=SECRET_KEK_PASSPHRASE_ENV):
+            SecretStore(temp_db)._get_fernet()
+
+        monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
+        assert SecretStore(temp_db).get("KEY") == "secret"
+
+
+class TestSecretStoreLegacyMigration:
+    def test_dry_run_reports_without_writing(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
+        original = _insert_legacy_secret(temp_db, "KEY", "secret")
+
+        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
+            report = SecretStore(temp_db).migrate_legacy_machine_id_secrets(dry_run=True)
+
+        assert report.dry_run is True
+        assert report.migrated == 1
+        assert report.entries[0].status == "would_migrate"
+        assert (
+            temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
+            is None
+        )
+        row = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", ("key",))
+        assert row is not None
+        assert row["encrypted_value"] == original
+
+    def test_migrates_legacy_machine_bound_secret(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
+        original = _insert_legacy_secret(temp_db, "KEY", "secret")
+
+        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"):
+            report = SecretStore(temp_db).migrate_legacy_machine_id_secrets()
+
+        assert report.migrated == 1
+        assert report.entries[0].status == "migrated"
+        assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
+        row = temp_db.fetchone("SELECT encrypted_value FROM secrets WHERE name = %s", ("key",))
+        assert row is not None
+        assert row["encrypted_value"] != original
+
+        with patch("gobby.storage.secrets.get_machine_id", return_value="machine-B"):
+            assert SecretStore(temp_db).get("KEY") == "secret"
+
+    def test_required_legacy_secret_failure_raises(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
+        _insert_legacy_secret(temp_db, "KEY", encrypted_value="not-a-fernet-token")
+
+        with (
+            patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"),
+            pytest.raises(SecretMigrationError) as exc_info,
+        ):
+            SecretStore(temp_db).ensure_ready(required_secret_names={"key"})
+
+        assert exc_info.value.report.failed == 1
+        assert exc_info.value.report.entries[0].required is True
+        assert (
+            temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
+            is None
+        )
+
+    def test_optional_legacy_secret_failure_skips_for_reentry(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _insert_legacy_secret(temp_db, "KEY", encrypted_value="not-a-fernet-token")
+
+        with (
+            patch("gobby.storage.secrets.get_machine_id", return_value="machine-A"),
+            caplog.at_level("WARNING", logger="gobby.storage.secrets"),
+        ):
+            report = SecretStore(temp_db).ensure_ready()
+
+        assert report.skipped == 1
+        assert report.entries[0].status == "skipped"
+        assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
+        assert SecretStore(temp_db).get("KEY") is None
+        assert "sha256:" in caplog.text
+        assert "KEY" not in caplog.text
+
+    def test_find_secret_references_normalizes_explicit_refs(self) -> None:
+        refs = SecretStore.find_secret_references(
+            ["token=$secret:API_KEY", "${NOT_REQUIRED}", "$secret:Other_Key"]
+        )
+        assert refs == {"api_key", "other_key"}
 
 
 # =============================================================================

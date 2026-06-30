@@ -1235,13 +1235,25 @@ CREATE INDEX idx_step_executions_execution ON step_executions(execution_id);
 CREATE INDEX idx_step_executions_approval_token ON step_executions(approval_token);
 
 CREATE TABLE secrets (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    encrypted_value TEXT NOT NULL,
-    category TEXT DEFAULT 'general',
-    description TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+id TEXT PRIMARY KEY,
+name TEXT NOT NULL UNIQUE,
+encrypted_value TEXT NOT NULL,
+category TEXT DEFAULT 'general',
+description TEXT,
+created_at TIMESTAMPTZ NOT NULL,
+updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE secret_key_material (
+id TEXT PRIMARY KEY,
+wrapped_dek TEXT NOT NULL,
+kek_posture TEXT NOT NULL,
+kek_salt TEXT,
+kek_kdf_n INTEGER,
+kek_kdf_r INTEGER,
+kek_kdf_p INTEGER,
+created_at TIMESTAMPTZ NOT NULL,
+updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX idx_secrets_category ON secrets(category);

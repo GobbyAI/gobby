@@ -87,6 +87,15 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.secret_store = SecretStore(runner.database)
     runner.config_store = ConfigStore(runner.database)
+    required_secret_names = runner.secret_store.find_secret_references(
+        runner.config_store.get_all().values()
+    )
+    secret_migration = runner.secret_store.ensure_ready(required_secret_names=required_secret_names)
+    if secret_migration.migrated:
+        logger.info(
+            "Migrated %s legacy machine-bound secrets to envelope encryption",
+            secret_migration.migrated,
+        )
     runner.config = load_config(
         config_file=runner._config_file,
         secret_resolver=runner.secret_store.get,
