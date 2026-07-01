@@ -1,10 +1,11 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.mcp_proxy import mcp_proxy
+from gobby.cli.mcp_proxy import get_daemon_client, mcp_proxy
 from gobby.config.app import DaemonConfig
 from gobby.utils.daemon_client import DaemonClient
 
@@ -29,6 +30,13 @@ def cli_runner(mock_daemon_client: MagicMock) -> CliRunner:
 @pytest.fixture
 def mock_config() -> MagicMock:
     return MagicMock(spec=DaemonConfig, daemon_port=60887)
+
+
+def test_get_daemon_client_rejects_non_mapping_context_obj() -> None:
+    ctx = click.Context(mcp_proxy, obj=object())
+
+    with pytest.raises(click.ClickException, match="Daemon config is unavailable"):
+        get_daemon_client(ctx)
 
 
 def test_list_servers_success(cli_runner, mock_daemon_client, mock_config) -> None:

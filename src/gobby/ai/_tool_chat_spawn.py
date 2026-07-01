@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -149,7 +150,7 @@ def compose_gcode_direct_prompt(request: ToolChatRequest) -> str:
     """
     cli = request.tool_policy.cli
     subcommands = ", ".join(request.tool_policy.tools)
-    project = request.project_path
+    project = shlex.quote(request.project_path)
     preamble = (
         f"You are investigating an indexed codebase via the read-only `{cli}` "
         f"CLI. Run `{cli} <subcommand> --project {project} <args>` in the shell "
@@ -572,6 +573,11 @@ class GrokSpawnToolChatAdapter:
         return path
 
     def _build_command(self, request: ToolChatRequest, *, model: str | None) -> list[str]:
+        max_turns = (
+            request.limits.max_turns
+            if request.limits.max_turns is not None
+            else (request.max_turns or 30)
+        )
         command = [
             self._resolve_command_path(),
             "--single",
@@ -586,7 +592,7 @@ class GrokSpawnToolChatAdapter:
             "--disallowed-tools",
             _GROK_DISABLED_TOOLS,
             "--max-turns",
-            str(request.max_turns or 30),
+            str(max_turns),
         ]
         if model:
             command.extend(["--model", model])

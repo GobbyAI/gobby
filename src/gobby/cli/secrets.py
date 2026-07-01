@@ -188,9 +188,21 @@ def migrate_secrets(dry_run: bool) -> None:
 def rekey_secrets(posture: str) -> None:
     """Re-wrap the DEK without re-encrypting secret values."""
     storage_posture = POSTURE_SCRYPT_PASSPHRASE if posture == "passphrase" else POSTURE_KEY_FILE
-    passphrase = _prompt_kek_passphrase() if storage_posture == POSTURE_SCRYPT_PASSPHRASE else None
+    new_passphrase = (
+        _prompt_kek_passphrase() if storage_posture == POSTURE_SCRYPT_PASSPHRASE else None
+    )
     with _SecretStoreContext() as store:
         before = store.current_kek_posture()
-        store.set_kek_posture(storage_posture, passphrase=passphrase)
+        if before == POSTURE_SCRYPT_PASSPHRASE:
+            current_passphrase = os.environ.get(SECRET_KEK_PASSPHRASE_ENV)
+            if not current_passphrase:
+                current_passphrase = str(
+                    click.prompt(
+                        "Current secret KEK passphrase",
+                        hide_input=True,
+                    )
+                )
+            store.kek_passphrase = current_passphrase
+        store.set_kek_posture(storage_posture, passphrase=new_passphrase)
         after = store.current_kek_posture()
     click.echo(f"Re-wrapped secret DEK: {_display_posture(before)} -> {_display_posture(after)}")

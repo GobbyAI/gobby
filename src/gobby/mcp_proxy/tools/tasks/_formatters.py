@@ -114,28 +114,41 @@ def task_summary_payload(
     task: Any, dependencies: dict[str, list[dict[str, Any]]]
 ) -> dict[str, Any]:
     """Return actionable get_task(brief=True) task card."""
-    seq_num = _field(task, "seq_num")
+    task_dict = task.to_dict() if callable(getattr(task, "to_dict", None)) else {}
+    seq_num = task_dict.get("seq_num", _field(task, "seq_num"))
     return {
         "ref": _task_ref_from_seq(task, seq_num),
-        "id": _field(task, "id"),
+        "id": task_dict.get("id", _field(task, "id")),
         "seq_num": seq_num,
-        "title": _field(task, "title"),
-        "task_type": _field(task, "task_type"),
-        "category": _field(task, "category"),
-        "priority": _field(task, "priority"),
-        "path_cache": _field(task, "path_cache"),
-        "description": _field(task, "description"),
-        "validation_criteria": _field(task, "validation_criteria"),
-        "labels": _field(task, "labels"),
-        "parent_task_id": _field(task, "parent_task_id"),
-        "created_at": _field(task, "created_at"),
-        "updated_at": _field(task, "updated_at"),
+        "title": task_dict.get("title", _field(task, "title")),
+        "task_type": task_dict.get("task_type", _field(task, "task_type")),
+        "category": task_dict.get("category", _field(task, "category")),
+        "priority": task_dict.get("priority", _field(task, "priority")),
+        "path_cache": task_dict.get("path_cache", _field(task, "path_cache")),
+        "description": task_dict.get("description", _field(task, "description")),
+        "validation_criteria": task_dict.get(
+            "validation_criteria",
+            _field(task, "validation_criteria"),
+        ),
+        "labels": task_dict.get("labels", _field(task, "labels")),
+        "parent_task_id": task_dict.get("parent_task_id", _field(task, "parent_task_id")),
+        "created_at": task_dict.get("created_at", _field(task, "created_at")),
+        "updated_at": task_dict.get("updated_at", _field(task, "updated_at")),
         "state": task_state_payload(task),
         "dependencies": dependencies,
-        "allow_automation": _field(task, "allow_automation", False),
-        "unattended": _field(task, "unattended", False),
-        "isolation": _plain(_field(task, "isolation")),
-        "assigned_agent": _field(task, "assigned_agent"),
-        "implementation_domain": _field(task, "implementation_domain"),
-        "additional_skills": _field(task, "additional_skills"),
+        "allow_automation": task_dict.get(
+            "allow_automation",
+            _field(task, "allow_automation", False),
+        ),
+        "unattended": task_dict.get("unattended", _field(task, "unattended", False)),
+        "isolation": _plain(task_dict.get("isolation", _field(task, "isolation"))),
+        "assigned_agent": task_dict.get("assigned_agent", _field(task, "assigned_agent")),
+        "implementation_domain": task_dict.get(
+            "implementation_domain",
+            _field(task, "implementation_domain"),
+        ),
+        "additional_skills": task_dict.get(
+            "additional_skills",
+            _field(task, "additional_skills"),
+        ),
     }

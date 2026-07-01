@@ -15,7 +15,10 @@ from gobby.ai.embedding_catalog import (
     lmstudio_ref_for_key,
     ollama_tag_for_key,
     picker_keys,
+    resolve_for_provider,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestCatalogIntegrity:
@@ -101,13 +104,11 @@ class TestCatalogIntegrity:
 
     def test_recommended_entries(self) -> None:
         nomic_recs = [
-            k for k in all_keys()
-            if (s := get_spec(k)) and s.recommended and s.family == "nomic"
+            k for k in all_keys() if (s := get_spec(k)) and s.recommended and s.family == "nomic"
         ]
         assert "nomic-v1.5-f16" in nomic_recs
         qwen3_recs = [
-            k for k in all_keys()
-            if (s := get_spec(k)) and s.recommended and s.family == "qwen3"
+            k for k in all_keys() if (s := get_spec(k)) and s.recommended and s.family == "qwen3"
         ]
         assert "qwen3-8b-q8" in qwen3_recs
 
@@ -155,6 +156,14 @@ class TestCatalogLookup:
         specs = entries_for_provider("lmstudio")
         assert len(specs) == 6
 
+    def test_resolve_for_provider_warns_on_ollama_tag_fallback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        spec = resolve_for_provider("nomic-v1.5-q4", "ollama")
+
+        assert spec.key == "nomic-v1.5-q4"
+        assert "Ollama will use its tag fallback" in caplog.text
+
     def test_catalog_summary_returns_all_entries(self) -> None:
         summary = catalog_summary()
         assert len(summary) == len(all_keys())
@@ -175,4 +184,5 @@ class TestCatalogSerialization:
         assert d["dim"] == 4096
         assert d["family"] == "qwen3"
         assert d["ollama_tag"] == "qwen3-embedding:8b-q8_0"
+        assert d["ollama_quant_real"] is True
         assert d["compatibility"]["lmstudio"] == "experimental"

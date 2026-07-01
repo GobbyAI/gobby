@@ -215,6 +215,25 @@ def _configure_secret_kek_posture(
 ) -> None:
     storage_posture = POSTURE_SCRYPT_PASSPHRASE if posture == "passphrase" else POSTURE_KEY_FILE
     if storage_posture == POSTURE_KEY_FILE:
+        if secret_store is None:
+            return
+        if secret_store.current_kek_posture() == POSTURE_SCRYPT_PASSPHRASE:
+            current_passphrase = os.environ.get(SECRET_KEK_PASSPHRASE_ENV)
+            if not current_passphrase:
+                if no_interactive:
+                    raise click.ClickException(
+                        f"--secret-kek-posture key-file requires current "
+                        f"{SECRET_KEK_PASSPHRASE_ENV} in --no-interactive mode."
+                    )
+                current_passphrase = str(
+                    click.prompt(
+                        "Current secret KEK passphrase",
+                        hide_input=True,
+                    )
+                )
+            secret_store.kek_passphrase = current_passphrase
+        secret_store.set_kek_posture(storage_posture)
+        click.echo("Secret KEK posture: key-file")
         return
     if secret_store is None:
         raise click.ClickException("Cannot configure passphrase KEK posture without hub access.")

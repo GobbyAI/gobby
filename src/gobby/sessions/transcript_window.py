@@ -340,6 +340,7 @@ def render_window(
     window_start_parsed_index = index.boundaries[g_start].parsed_index_start
 
     parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser.hydrate_state(index.parser_state)
     state = RenderState()
     tracker = observation_tracker or ObservationTracker()
     _seed_stubs(state, index, window_start_parsed_index)

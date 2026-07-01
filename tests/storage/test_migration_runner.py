@@ -109,6 +109,7 @@ def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
         (300, "purge_unmodeled_observations_for_hash_v2"),
         (301, "github_issue_source_text"),
         (302, "machines_registry"),
+        (303, "secret_key_material"),
     ]
 
 

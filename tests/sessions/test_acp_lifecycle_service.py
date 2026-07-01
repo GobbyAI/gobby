@@ -519,6 +519,33 @@ async def test_discover_coalesces_concurrent_runs_per_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discover_joiner_cancellation_does_not_cancel_shared_scan() -> None:
+    sm = _FakeSessionManager()
+    backend = _FakeBackend(capabilities={"list": True}, pages=[_page(_info("s1"))], gate=True)
+    rm = _FakeRuntimeManager({"qwen": backend})
+    service = _service(sm, rm)
+
+    owner = asyncio.create_task(service.discover())
+    assert backend.entered is not None and backend.release is not None
+    await asyncio.wait_for(backend.entered.wait(), timeout=1.0)
+    joiner = asyncio.create_task(service.discover())
+    await asyncio.sleep(0)
+
+    joiner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await joiner
+
+    backend.release.set()
+    result = await owner
+
+    assert len(result["sessions"]) == 1
+    assert backend.start_calls == 1
+    assert len(backend.list_calls) == 1
+    assert len(sm.registered) == 1
+    assert service._inflight == {}
+
+
+@pytest.mark.asyncio
 async def test_discover_does_not_coalesce_different_cwd_scans() -> None:
     sm = _FakeSessionManager()
     backend = _FakeBackend(capabilities={"list": True}, pages=[_page(_info("s1"))], gate=True)

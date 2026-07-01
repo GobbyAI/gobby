@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -17,7 +18,7 @@ import pytest
 
 from gobby.ai import AIAdapterStyle, AICapability, CapabilityBinding
 from gobby.ai import _tool_chat_spawn as spawn
-from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolPolicy
+from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolLoopLimits, ToolPolicy
 from gobby.ai._tool_chat_spawn import (
     ACPSpawnToolChatAdapter,
     CodexSpawnToolChatAdapter,
@@ -31,6 +32,8 @@ from gobby.ai._tool_chat_spawn import (
     parse_qwen_stream,
 )
 from gobby.ai._tool_chat_tools import ToolPolicyError
+
+pytestmark = pytest.mark.unit
 
 
 def _binding(
@@ -81,6 +84,15 @@ def test_compose_gcode_direct_prompt_includes_tools_and_project() -> None:
     # Must NOT mention gobby-index or MCP
     assert "gobby-index" not in prompt
     assert "call_tool" not in prompt
+
+
+def test_compose_gcode_direct_prompt_quotes_project_path() -> None:
+    project_path = "/repo with spaces/$(unsafe)"
+    request = _request(project_path=project_path)
+
+    prompt = compose_gcode_direct_prompt(request)
+
+    assert f"--project {shlex.quote(project_path)}" in prompt
 
 
 # --- Codex stream parser ---------------------------------------------------
@@ -347,6 +359,7 @@ def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
     assert all("gcode" not in arg for arg in command)
 
 
+@pytest.mark.asyncio
 async def test_codex_adapter_captures_narrative_and_counts_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -392,6 +405,7 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
     assert result.stop_reason == "completed"
 
 
+@pytest.mark.asyncio
 async def test_codex_adapter_sends_argmax_sized_prompt_through_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -423,6 +437,7 @@ async def test_codex_adapter_sends_argmax_sized_prompt_through_stdin(
     assert result.text == "Large prompt ok."
 
 
+@pytest.mark.asyncio
 async def test_codex_adapter_falls_back_to_stream_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -449,6 +464,7 @@ async def test_codex_adapter_falls_back_to_stream_text(
     assert result.text == "Stream fallback narrative."
 
 
+@pytest.mark.asyncio
 async def test_codex_adapter_rejects_mutation_under_readonly_policy() -> None:
     adapter = CodexSpawnToolChatAdapter(command_path="codex")
     request = _request(tool_policy=ToolPolicy(cli="gcode", tools=("search", "index")))
@@ -457,6 +473,7 @@ async def test_codex_adapter_rejects_mutation_under_readonly_policy() -> None:
         await adapter.chat(request, _binding())
 
 
+@pytest.mark.asyncio
 async def test_codex_adapter_hard_fails_on_empty_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -508,6 +525,7 @@ def test_droid_build_command_enables_execute_and_uses_gcode_prompt() -> None:
     assert "gobby-index" not in command[-1]
 
 
+@pytest.mark.asyncio
 async def test_droid_adapter_captures_narrative_and_counts_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -541,6 +559,7 @@ async def test_droid_adapter_captures_narrative_and_counts_tools(
     assert captured["provider"] == "Droid tool_chat"
 
 
+@pytest.mark.asyncio
 async def test_droid_adapter_rejects_mutation_under_readonly_policy() -> None:
     adapter = DroidSpawnToolChatAdapter(command_path="droid")
     request = _request(tool_policy=ToolPolicy(cli="gcode", tools=("search", "index")))
@@ -549,6 +568,7 @@ async def test_droid_adapter_rejects_mutation_under_readonly_policy() -> None:
         await adapter.chat(request, _droid_binding())
 
 
+@pytest.mark.asyncio
 async def test_droid_adapter_hard_fails_on_empty_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -580,7 +600,11 @@ def _grok_binding() -> CapabilityBinding:
 
 def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     adapter = GrokSpawnToolChatAdapter(command_path="grok")
-    request = _request(reasoning_effort="high")
+    request = _request(
+        reasoning_effort="high",
+        max_turns=99,
+        limits=ToolLoopLimits(max_turns=4),
+    )
 
     command = adapter._build_command(request, model="grok-4")
 
@@ -591,6 +615,7 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "--always-approve" in command
     assert "--no-subagents" in command
     assert command[command.index("--model") + 1] == "grok-4"
+    assert command[command.index("--max-turns") + 1] == "4"
     disabled = command[command.index("--disallowed-tools") + 1]
     for blocked in ("Edit", "Write", "Task"):
         assert blocked in disabled
@@ -601,6 +626,7 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "gobby-index" not in prompt
 
 
+@pytest.mark.asyncio
 async def test_grok_adapter_captures_narrative_from_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -630,6 +656,7 @@ async def test_grok_adapter_captures_narrative_from_json(
     assert result.tools == {}
 
 
+@pytest.mark.asyncio
 async def test_grok_adapter_extracts_tool_counts_from_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -700,6 +727,7 @@ async def test_grok_adapter_extracts_tool_counts_from_session(
     assert result.turns == 2
 
 
+@pytest.mark.asyncio
 async def test_grok_adapter_hard_fails_on_empty_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -744,6 +772,7 @@ def test_qwen_build_command_uses_sandbox_yolo_and_stream_json() -> None:
     assert "gobby-index" not in command[-1]
 
 
+@pytest.mark.asyncio
 async def test_qwen_adapter_captures_narrative_and_counts_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -787,6 +816,7 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
     assert result.tools == {"run_shell_command": 1}
 
 
+@pytest.mark.asyncio
 async def test_qwen_adapter_hard_fails_on_empty_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -825,6 +855,7 @@ def test_prepare_qwen_sandbox_profile_writes_correct_file(tmp_path: Path) -> Non
 # --- ACP composite adapter -------------------------------------------------
 
 
+@pytest.mark.asyncio
 async def test_acp_adapter_dispatches_to_grok(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run(
         provider_name: str,
@@ -853,6 +884,7 @@ async def test_acp_adapter_dispatches_to_grok(monkeypatch: pytest.MonkeyPatch) -
     assert result.provider == "grok"
 
 
+@pytest.mark.asyncio
 async def test_acp_adapter_dispatches_to_qwen(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run(
         provider_name: str,
@@ -881,6 +913,7 @@ async def test_acp_adapter_dispatches_to_qwen(monkeypatch: pytest.MonkeyPatch) -
     assert result.provider == "qwen"
 
 
+@pytest.mark.asyncio
 async def test_acp_adapter_rejects_unknown_provider() -> None:
     class FakeConfig:
         class ai:

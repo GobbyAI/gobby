@@ -419,6 +419,34 @@ class TestGenerateText:
                 await provider._generate_text_sdk("Generate text", reasoning_effort="extreme")
 
 
+class TestGenerateAgentic:
+    """Tests for agentic SDK option plumbing."""
+
+    @pytest.mark.asyncio
+    async def test_generate_agentic_defaults_to_readonly_tools(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        captured_kwargs: list[dict[str, object]] = []
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured_kwargs.append(options.kwargs)
+            yield MockAssistantMessage([MockTextBlock("done")])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider.generate_agentic(
+                system_prompt=None,
+                prompt="Investigate",
+                project_path="/repo",
+            )
+
+        assert result.text == "done"
+        assert captured_kwargs[0]["allowed_tools"] == ["Read", "Grep", "Glob"]
+        assert "Bash" not in captured_kwargs[0]["allowed_tools"]
+
+
 class TestGenerateJson:
     """Tests for generate_json method."""
 

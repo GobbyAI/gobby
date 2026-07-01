@@ -89,8 +89,10 @@ Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
 
 For a daemon and PostgreSQL hub shared across Tailscale, keep `bind_host` as the
-daemon listen address and configure remote clients with `daemon_url` or
-`GOBBY_DAEMON_URL`; see [shared-stack.md](shared-stack.md).
+daemon listen address and configure remote clients with both the daemon endpoint
+(`daemon_url` or `GOBBY_DAEMON_URL`) and the hub `database_url`. Direct-hub
+access requires the database connection details as well; see
+[shared-stack.md](shared-stack.md).
 
 ### Runtime Overrides
 

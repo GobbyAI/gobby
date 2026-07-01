@@ -668,11 +668,15 @@ class TestEnsureDaemonRunning:
     async def test_starts_daemon_on_resolved_gobby_port(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """GOBBY_PORT controls the stdio wrapper's local daemon dial target."""
+        """Loaded config controls the stdio wrapper's local daemon dial target."""
         monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
-        monkeypatch.setenv("GOBBY_PORT", "61999")
+        monkeypatch.setenv("GOBBY_PORT", "60000")
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
-            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            mock_config.return_value = MagicMock(
+                daemon_port=61999,
+                daemon_url=None,
+                websocket=MagicMock(port=60888),
+            )
             with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=False):
                 with patch(
                     "gobby.mcp_proxy.stdio.start_daemon_process",
@@ -690,7 +694,7 @@ class TestEnsureDaemonRunning:
                             ensure_daemon_running,
                         )
 
-                        assert DaemonProxy(60887).base_url == "http://127.0.0.1:61999"
+                        assert DaemonProxy(61999).base_url == "http://127.0.0.1:61999"
                         result = await ensure_daemon_running()
 
         assert result is None
@@ -708,7 +712,11 @@ class TestEnsureDaemonRunning:
         """Remote daemon URLs are reachability checks, not local lifecycle targets."""
         monkeypatch.setenv("GOBBY_DAEMON_URL", "http://daemon.example.test:61999")
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
-            mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
+            mock_config.return_value = MagicMock(
+                daemon_port=60887,
+                daemon_url="http://daemon.example.test:61999",
+                websocket=MagicMock(port=60888),
+            )
             with patch(
                 "gobby.mcp_proxy.stdio.check_daemon_http_health",
                 new_callable=AsyncMock,
@@ -724,7 +732,7 @@ class TestEnsureDaemonRunning:
                         ensure_daemon_running,
                     )
 
-                    assert DaemonProxy(60887).base_url == "http://daemon.example.test:61999"
+                    assert DaemonProxy(60887).base_url == "http://127.0.0.1:60887"
                     result = await ensure_daemon_running()
 
         assert result is None
@@ -863,14 +871,11 @@ class TestDaemonProxy:
         mock_health.assert_awaited_once_with(
             60887,
             timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
-            base_url="http://daemon.example.test:61999",
+            base_url="http://127.0.0.1:60887",
         )
         mock_client.request.assert_awaited_once()
         assert mock_client.request.await_args is not None
-        assert (
-            mock_client.request.await_args.args[1]
-            == "http://daemon.example.test:61999/api/admin/status"
-        )
+        assert mock_client.request.await_args.args[1] == "http://127.0.0.1:60887/api/admin/status"
 
     @pytest.mark.asyncio
     async def test_request_timeout_returns_request_timeout(self) -> None:
@@ -1237,7 +1242,7 @@ class TestDaemonProxyMethods:
             result = await proxy._request("GET", "/api/status")
 
         assert result == {"success": True}
-        mock_bootstrap.assert_awaited_once_with("http://localhost:60887", "project-123")
+        mock_bootstrap.assert_awaited_once_with("http://127.0.0.1:60887", "project-123")
         assert proxy._session_id == "bootstrapped-session"
         _, kwargs = mock_client.request.call_args
         assert kwargs["headers"]["X-Gobby-Session-Id"] == "bootstrapped-session"

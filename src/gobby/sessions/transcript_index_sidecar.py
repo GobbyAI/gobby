@@ -131,6 +131,7 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
         "next_raw_line_no": index.next_raw_line_no,
         "safe_to_start_event": index.safe_to_start_event,
         "logical_size": index.logical_size,
+        "parser_state": index.parser_state,
         "post_pass_adjustments": [
             {
                 "group_index": adjustment.group_index,
@@ -232,6 +233,9 @@ def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
         ),
         logical_size=(
             int(payload["logical_size"]) if payload.get("logical_size") is not None else None
+        ),
+        parser_state=(
+            dict(payload["parser_state"]) if isinstance(payload.get("parser_state"), dict) else {}
         ),
     )
 

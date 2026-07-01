@@ -248,7 +248,16 @@ def _expire_stale_terminal_sessions_for_context(
             ),
         )
     except psycopg.Error as e:
-        handler.logger.warning(f"Failed to scan stale terminal sessions: {e}")
+        handler.logger.warning(
+            "Failed to scan stale terminal sessions",
+            extra={
+                "session_id": session_id,
+                "project_id": project_id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         return
 
     expired_session_ids: list[str] = []
@@ -257,13 +266,37 @@ def _expire_stale_terminal_sessions_for_context(
         if not isinstance(candidate_id, str) or not candidate_id:
             continue
         stored_context = _row_value(row, "terminal_context")
-        if not terminal_contexts_match(terminal_context, stored_context):
+        try:
+            if not terminal_contexts_match(terminal_context, stored_context):
+                continue
+        except Exception as e:  # noqa: BLE001 - stale scan should fail open
+            handler.logger.warning(
+                "Failed to compare stale terminal session context",
+                extra={
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "candidate_session_id": candidate_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
             continue
         try:
             if handler._session_manager.mark_session_expired(candidate_id):
                 expired_session_ids.append(candidate_id)
         except Exception as e:
-            handler.logger.warning(f"Failed to expire stale terminal session {candidate_id}: {e}")
+            handler.logger.warning(
+                "Failed to expire stale terminal session",
+                extra={
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "candidate_session_id": candidate_id,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
 
     if expired_session_ids:
         handler.logger.info(

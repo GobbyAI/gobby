@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import psycopg
+
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
@@ -31,7 +33,7 @@ from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
-from gobby.storage.machines import LocalMachineManager
+from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.telemetry.tracing import create_span
 from gobby.utils.session_refs import try_resolve_session_field
 
@@ -110,9 +112,7 @@ class HookManager:
         # Track sessions that have received full metadata injection
         # Key: "{platform_session_id}:{source}" - cleared on daemon restart
         self._injected_sessions: set[str] = set()
-        self._memory_recall_tasks: dict[
-            tuple[str, int], concurrent.futures.Future[Any] | asyncio.Future[Any]
-        ] = {}
+        self._memory_recall_tasks: dict[tuple[str, int], concurrent.futures.Future[Any]] = {}
         self._memory_recall_lock = threading.Lock()
         self._memory_recall_closing = False
 
@@ -230,12 +230,16 @@ class HookManager:
         return self._health_monitor.get_cached_status()
 
     def _record_machine_ingress(self, event: HookEvent) -> None:
-        db = getattr(self._session_manager, "db", None)
+        db = self._database or getattr(self._session_manager, "db", None)
         if db is None:
             return
 
         data = event.data if isinstance(event.data, dict) else {}
-        machine_id = event.machine_id or _hook_text_field(data, "machine_id", "machineId")
+        machine_id = normalize_machine_id(event.machine_id) or _hook_text_field(
+            data,
+            "machine_id",
+            "machineId",
+        )
         try:
             LocalMachineManager(db).upsert_seen(
                 machine_id,
@@ -244,10 +248,10 @@ class HookManager:
                 label=_hook_text_field(data, "machine_label", "machineLabel"),
                 tailscale_name=_hook_text_field(data, "tailscale_name", "tailscaleName"),
             )
-        except Exception as exc:
+        except psycopg.Error as exc:
             self.logger.debug(
-                "Failed to refresh machine registry from hook ingress: %s",
-                exc,
+                "Failed to refresh machine registry from hook ingress",
+                extra={"error": str(exc), "machine_id": machine_id},
                 exc_info=True,
             )
 
@@ -552,7 +556,7 @@ class HookManager:
 
     def _memory_recall_task_registry(
         self,
-    ) -> dict[tuple[str, int], concurrent.futures.Future[Any] | asyncio.Future[Any]]:
+    ) -> dict[tuple[str, int], concurrent.futures.Future[Any]]:
         registry = getattr(self, "_memory_recall_tasks", None)
         if registry is None:
             registry = {}
@@ -561,7 +565,7 @@ class HookManager:
 
     @staticmethod
     def _prune_memory_recall_tasks(
-        registry: dict[tuple[str, int], concurrent.futures.Future[Any] | asyncio.Future[Any]],
+        registry: dict[tuple[str, int], concurrent.futures.Future[Any]],
         session_id: str,
         parent_turn_seq: int,
     ) -> None:
@@ -574,7 +578,7 @@ class HookManager:
         self,
         key: tuple[str, int],
         coro: Any,
-    ) -> concurrent.futures.Future[Any] | asyncio.Future[Any] | None:
+    ) -> concurrent.futures.Future[Any] | None:
         loop = self._loop
         if loop is None or loop.is_closed() or not loop.is_running():
             close = getattr(coro, "close", None)
@@ -835,7 +839,7 @@ class HookManager:
 
     def _take_memory_recall_tasks_for_shutdown(
         self,
-    ) -> list[tuple[tuple[str, int], concurrent.futures.Future[Any] | asyncio.Future[Any]]]:
+    ) -> list[tuple[tuple[str, int], concurrent.futures.Future[Any]]]:
         with self._memory_recall_lock:
             self._memory_recall_closing = True
             registry = self._memory_recall_task_registry()
@@ -848,21 +852,38 @@ class HookManager:
 
     def _drain_memory_recall_tasks_sync(self) -> None:
         items = self._take_memory_recall_tasks_for_shutdown()
+        if not items:
+            return
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is not None and running_loop.is_running():
+            for key, future in items:
+                wrapped = asyncio.wrap_future(future)
+
+                def log_done(
+                    done: asyncio.Future[Any],
+                    *,
+                    recall_key: tuple[str, int] = key,
+                ) -> None:
+                    self._log_memory_recall_task_result(recall_key, done)
+
+                wrapped.add_done_callback(log_done)
+            return
+
         deadline = time.monotonic() + 5.0
         for key, future in items:
-            if isinstance(future, concurrent.futures.Future):
-                try:
-                    remaining = max(0.0, deadline - time.monotonic())
-                    future.result(timeout=remaining)
-                except concurrent.futures.TimeoutError:
-                    self.logger.warning("Timed out cancelling deferred memory recall: %s", key)
-                except (asyncio.CancelledError, concurrent.futures.CancelledError):
-                    self.logger.debug("Deferred memory recall cancelled: %s", key)
-                except Exception as exc:  # noqa: BLE001 - shutdown should continue
-                    self.logger.warning("Deferred memory recall failed during shutdown: %s", exc)
-                continue
-            if future.done():
-                self._log_memory_recall_task_result(key, future)
+            try:
+                remaining = max(0.0, deadline - time.monotonic())
+                future.result(timeout=remaining)
+            except concurrent.futures.TimeoutError:
+                self.logger.warning("Timed out cancelling deferred memory recall: %s", key)
+            except (asyncio.CancelledError, concurrent.futures.CancelledError):
+                self.logger.debug("Deferred memory recall cancelled: %s", key)
+            except Exception as exc:  # noqa: BLE001 - shutdown should continue
+                self.logger.warning("Deferred memory recall failed during shutdown: %s", exc)
 
     async def _drain_memory_recall_tasks_async(self) -> None:
         items = self._take_memory_recall_tasks_for_shutdown()
@@ -870,10 +891,7 @@ class HookManager:
             return
         futures: list[asyncio.Future[Any]] = []
         for _key, future in items:
-            if isinstance(future, concurrent.futures.Future):
-                futures.append(asyncio.wrap_future(future))
-            else:
-                futures.append(future)
+            futures.append(asyncio.wrap_future(future))
         try:
             results = await asyncio.wait_for(
                 asyncio.gather(*futures, return_exceptions=True),

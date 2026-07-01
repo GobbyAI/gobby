@@ -12,6 +12,8 @@ from gobby.utils.daemon_url import (
     validate_daemon_url,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _write_bootstrap(path: Path, contents: str) -> Path:
     path.write_text(contents, encoding="utf-8")
@@ -111,7 +113,15 @@ def test_bootstrap_daemon_url_beats_bind_host_endpoint(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["", "ftp://remote.invalid:7443", "remote.invalid:7443", "http://remote.invalid:99999"]
+    "url",
+    [
+        "",
+        "ftp://remote.invalid:7443",
+        "remote.invalid:7443",
+        "http://remote.invalid:99999",
+        "http://remote.invalid:7443?token=secret",
+        "http://remote.invalid:7443#fragment",
+    ],
 )
 def test_validate_daemon_url_rejects_invalid_urls(url: str) -> None:
     with pytest.raises(DaemonUrlError):

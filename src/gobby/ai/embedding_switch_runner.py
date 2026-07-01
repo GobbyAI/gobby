@@ -450,8 +450,7 @@ class EmbeddingSwitchRunner:
         )
 
     def _record_phase_error(self, journal: SwitchJournal, exc: Exception) -> SwitchJournal:
-        phase = PHASE_ABORTED if journal.phase == PHASE_STAGING else journal.phase
-        return record_switch_error(self.config_store, journal, str(exc), phase=phase)
+        return record_switch_error(self.config_store, journal, str(exc), phase=journal.phase)
 
 
 def _provider_api_base(provider: str) -> str | None:

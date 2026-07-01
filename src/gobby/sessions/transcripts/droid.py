@@ -349,7 +349,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                 if (
                     isinstance(msg, ParsedMessage)
                     and msg.role == "assistant"
-                    and raw_type == "message"
+                    and raw_type != "todo_state"
                 ):
                     self._last_assistant_index = current_index
                 current_index += 1

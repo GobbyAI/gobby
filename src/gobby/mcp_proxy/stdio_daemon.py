@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from mcp.server.fastmcp import FastMCP
 
 from gobby.config.app import load_config as _load_config
+from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT
 from gobby.mcp_proxy.daemon_control import (
     check_daemon_http_health as _check_daemon_http_health,
 )
@@ -24,7 +25,6 @@ from gobby.mcp_proxy.stdio_results import (
     DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
     DAEMON_HEALTH_RETRY_DELAY_SECONDS,
 )
-from gobby.utils.daemon_url import daemon_url
 
 
 class CheckDaemonHealth(Protocol):
@@ -69,8 +69,16 @@ def default_daemon_startup_dependencies() -> DaemonStartupDependencies:
 _LOCAL_DAEMON_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
-def _resolved_dial_target(default_port: int) -> tuple[str, int, bool]:
-    resolved_url = daemon_url()
+def _coerce_port(value: Any, default: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return default
+
+
+def _resolved_dial_target(
+    default_port: int, resolved_url: str | None = None
+) -> tuple[str, int, bool]:
+    resolved_url = resolved_url or f"http://127.0.0.1:{default_port}"
     parsed = urlsplit(resolved_url)
     host = parsed.hostname or ""
     port = parsed.port or default_port
@@ -84,8 +92,16 @@ async def ensure_daemon_running(
     """Ensure the Gobby daemon is running and healthy."""
     effective_deps = deps or default_daemon_startup_dependencies()
     config = effective_deps.load_config()
-    dial_url, port, is_local_dial_target = _resolved_dial_target(config.daemon_port)
-    ws_port = config.websocket.port
+    daemon_port = _coerce_port(getattr(config, "daemon_port", None), DEFAULT_DAEMON_PORT)
+    configured_daemon_url = getattr(config, "daemon_url", None)
+    dial_url, port, is_local_dial_target = _resolved_dial_target(
+        daemon_port,
+        configured_daemon_url if isinstance(configured_daemon_url, str) else None,
+    )
+    ws_port = _coerce_port(
+        getattr(getattr(config, "websocket", None), "port", None),
+        DEFAULT_WEBSOCKET_PORT,
+    )
 
     if not is_local_dial_target:
         if await effective_deps.check_daemon_http_health(

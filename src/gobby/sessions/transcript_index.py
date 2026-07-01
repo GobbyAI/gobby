@@ -168,6 +168,7 @@ class TranscriptIndex:
     next_raw_line_no: int | None = None
     safe_to_start_event: bool | None = None
     logical_size: int | None = None
+    parser_state: dict[str, Any] = field(default_factory=dict)
 
     def group_index_for_parsed_index(self, parsed_index: int) -> int | None:
         """Return the group_index whose span contains ``parsed_index`` (or None)."""
@@ -475,6 +476,7 @@ class TranscriptIndexAppender:
         self._prev_current_id = current_id
         self._next_start_index, self._next_raw_line_no = next_parser_index, next_raw_line_no
         self._safe_to_start_event = index.safe_to_start_event is not False
+        self._parser.hydrate_state(index.parser_state)
         return self
 
     def snapshot(self, *, mtime_ns: int, size: int) -> TranscriptIndex:
@@ -486,6 +488,7 @@ class TranscriptIndexAppender:
         self.index.next_parser_index = self._next_start_index
         self.index.next_raw_line_no = self._next_raw_line_no
         self.index.safe_to_start_event = self._safe_to_start_event
+        self.index.parser_state = self._parser.snapshot_state()
         self.index.post_pass_adjustments = _resolve_adjustments(self._parser, self.index)
         return self.index
 

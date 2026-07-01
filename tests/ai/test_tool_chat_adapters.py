@@ -16,6 +16,8 @@ from gobby.ai._tool_chat_adapters import (
 )
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolLoopLimits, ToolPolicy
 
+pytestmark = pytest.mark.unit
+
 
 class _FakeFunction:
     def __init__(self, name: str, arguments: str) -> None:
@@ -268,6 +270,7 @@ async def test_claude_adapter_constrains_tools_and_maps_result() -> None:
         project_path="/repo",
         system_prompt="You are a code historian.",
         reasoning_effort="high",
+        limits=ToolLoopLimits(max_turns=3),
     )
 
     result = await adapter.chat(request, _claude_binding())
@@ -285,6 +288,7 @@ async def test_claude_adapter_constrains_tools_and_maps_result() -> None:
     assert kw["system_prompt"] == "You are a code historian."
     assert kw["project_path"] == "/repo"
     assert kw["model"] == "opus"
+    assert kw["max_turns"] == 3
 
     assert result.text == "## Module\n\nGrounded narrative."
     assert result.provider == "claude"

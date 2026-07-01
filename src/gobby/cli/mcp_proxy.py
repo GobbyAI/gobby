@@ -14,6 +14,7 @@ Provides CLI access to MCP proxy functionality:
 import json
 import sys
 import urllib.parse
+from collections.abc import Mapping
 from typing import Any, cast
 
 import click
@@ -24,7 +25,7 @@ from gobby.utils.daemon_client import DaemonClient
 
 def get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get daemon client from context config."""
-    if ctx.obj is None or "config" not in ctx.obj:
+    if not isinstance(ctx.obj, Mapping) or "config" not in ctx.obj:
         raise click.ClickException("Daemon config is unavailable in CLI context")
     return _shared_daemon_client()
 

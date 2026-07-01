@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gobby.ai import _tool_chat_tools as tools
@@ -13,6 +15,8 @@ from gobby.ai._tool_chat_tools import (
     tool_name_for,
     validate_policy,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _readonly_gcode_policy() -> ToolPolicy:
@@ -40,6 +44,11 @@ def test_validate_policy_rejects_mutator_without_allow_mutation() -> None:
 
 def test_validate_policy_allows_mutator_when_opted_in() -> None:
     validate_policy(ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True))
+
+
+def test_validate_policy_rejects_unlisted_tool_even_when_opted_in() -> None:
+    with pytest.raises(ToolPolicyError):
+        validate_policy(ToolPolicy(cli="gwiki", tools=("search", "destroy"), allow_mutation=True))
 
 
 def test_validate_policy_rejects_metacharacter_subcommand() -> None:
@@ -146,6 +155,16 @@ async def test_run_argv_missing_executable(tmp_path: object) -> None:
         ["gobby-no-such-binary-xyz"], cwd=str(tmp_path), timeout=5.0, byte_cap=4096
     )
     assert "not found" in out
+
+
+@pytest.mark.asyncio
+async def test_run_argv_reports_invalid_cwd_before_spawn(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+
+    out = await run_argv(["/bin/echo", "hello"], cwd=str(missing), timeout=5.0, byte_cap=4096)
+
+    assert "working directory not found" in out
+    assert str(missing) in out
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -264,12 +264,22 @@ class SecretStore:
     def find_secret_references(cls, values: Iterable[Any]) -> set[str]:
         """Return normalized explicit ``$secret:NAME`` references from strings."""
         refs: set[str] = set()
-        for value in values:
+
+        def visit(value: Any) -> None:
             if not isinstance(value, str):
-                continue
+                if isinstance(value, Mapping):
+                    for nested in value.values():
+                        visit(nested)
+                elif isinstance(value, Iterable):
+                    for nested in value:
+                        visit(nested)
+                return
             refs.update(
                 cls._normalize_name(match.group(1)) for match in SECRET_REF_PATTERN.finditer(value)
             )
+
+        for value in values:
+            visit(value)
         return refs
 
     def _load_key_material(self) -> Any | None:
@@ -464,9 +474,11 @@ class SecretStore:
         for entry in entries:
             if entry.status == "skipped":
                 logger.warning(
-                    "Skipping legacy secret %s during envelope migration: %s",
-                    _safe_secret_identifier(entry.name),
-                    entry.reason,
+                    "Skipping legacy secret during envelope migration",
+                    extra={
+                        "secret": _safe_secret_identifier(entry.name),
+                        "reason": entry.reason,
+                    },
                 )
 
         self._fernet = Fernet(dek)
@@ -476,6 +488,12 @@ class SecretStore:
         row = self._load_key_material()
         if row is not None:
             return self._unwrap_dek(row)
+        legacy_row = self.db.fetchone("SELECT 1 FROM secrets LIMIT 1")
+        if legacy_row:
+            raise RuntimeError(
+                "Secret envelope key material is missing while legacy secrets exist; "
+                "run ensure_ready() before accessing secrets."
+            )
         dek, _report = self._initialize_envelope(
             required_secret_names=set(),
             dry_run=False,
@@ -610,8 +628,8 @@ class SecretStore:
             return decrypted
         except InvalidToken:
             logger.error(
-                "Failed to decrypt configured secret %s - envelope token is invalid",
-                _safe_secret_identifier(name),
+                "Failed to decrypt configured secret; envelope token is invalid",
+                extra={"secret": _safe_secret_identifier(name), "reason": "invalid_token"},
             )
             return None
 

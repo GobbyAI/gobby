@@ -13,6 +13,7 @@ from gobby.ai.embedding_switch import (
     PHASE_STAGING,
     SwitchAlreadyActiveError,
     SwitchJournal,
+    SwitchJournalStateError,
     abort_switch,
     active_alias_names,
     advance_phase,
@@ -23,6 +24,8 @@ from gobby.ai.embedding_switch import (
     start_switch,
 )
 from gobby.memory.vectorstore import EMBEDDING_COLLECTION_KINDS, CollectionNameResolver
+
+pytestmark = pytest.mark.unit
 
 
 class TestCollectionNameResolver:
@@ -157,6 +160,20 @@ class TestSwitchStateMachine:
         ).to_json()
         with pytest.raises(SwitchAlreadyActiveError):
             start_switch(store, "qwen3-4b-q8", "ollama")
+
+    def test_start_switch_rejects_invalid_journal_type(self) -> None:
+        store = self._mock_store()
+        store.get.return_value = {"run_id": "bad"}
+
+        with pytest.raises(SwitchJournalStateError, match="Invalid embedding switch journal type"):
+            start_switch(store, "qwen3-8b-q8", "ollama")
+
+    def test_get_switch_status_rejects_malformed_journal(self) -> None:
+        store = self._mock_store()
+        store.get.return_value = "{not json"
+
+        with pytest.raises(SwitchJournalStateError, match="Invalid embedding switch journal"):
+            get_switch_status(store)
 
     def test_advance_phase_updates_journal(self) -> None:
         store = self._mock_store()

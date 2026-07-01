@@ -79,7 +79,9 @@ class DaemonClient:
             url: Fully resolved daemon base URL. Overrides host/port when provided.
         """
         self.url = (
-            validate_daemon_url(url, source="daemon client URL") if url else f"http://{host}:{port}"
+            validate_daemon_url(url, source="daemon client URL")
+            if url is not None
+            else f"http://{host}:{port}"
         )
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)

@@ -670,6 +670,7 @@ def test_sidecar_round_trips_stats_and_resume_metadata(tmp_path: Path) -> None:
     path = _write(tmp_path, "codex-resume", lines)
     st = os.stat(path)
     index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    index.parser_state = {"pending_tool_search_use_ids": ["call-search"]}
 
     persist_index_sidecar(path, index)
     loaded = load_index_sidecar(
@@ -699,6 +700,7 @@ def test_sidecar_round_trips_stats_and_resume_metadata(tmp_path: Path) -> None:
     assert loaded.next_parser_index == loaded.parsed_message_count
     assert loaded.next_raw_line_no == index.next_raw_line_no
     assert loaded.safe_to_start_event == index.safe_to_start_event
+    assert loaded.parser_state == {"pending_tool_search_use_ids": ["call-search"]}
 
 
 def test_legacy_sidecar_without_stats_loads_with_resume_fallbacks(tmp_path: Path) -> None:

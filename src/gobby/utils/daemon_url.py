@@ -72,6 +72,8 @@ def validate_daemon_url(url: str, *, source: str = "daemon URL") -> str:
     parsed = urlsplit(normalized)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise DaemonUrlError(f"{source} must be an http or https URL")
+    if parsed.query or parsed.fragment:
+        raise DaemonUrlError(f"{source} must not include a query string or fragment")
     try:
         _port = parsed.port
     except ValueError as exc:

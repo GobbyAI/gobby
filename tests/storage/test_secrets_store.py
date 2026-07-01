@@ -372,7 +372,7 @@ class TestSecretStoreGet:
         with caplog.at_level("ERROR", logger="gobby.storage.secrets"):
             assert SecretStore(temp_db).get("KEY") is None
 
-        assert "sha256:" in caplog.text
+        assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
         assert "KEY" not in caplog.text
 
     def test_get_various_value_types(self, store: SecretStore) -> None:
@@ -447,6 +447,16 @@ class TestSecretStoreEnvelope:
 
         monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
         assert SecretStore(temp_db).get("KEY") == "secret"
+
+    def test_lazy_get_fernet_refuses_to_initialize_with_legacy_rows(
+        self,
+        temp_db: HubDatabase,
+        salt_dir: Path,
+    ) -> None:
+        _insert_legacy_secret(temp_db, "KEY", "secret")
+
+        with pytest.raises(RuntimeError, match="run ensure_ready"):
+            SecretStore(temp_db)._get_fernet()
 
 
 class TestSecretStoreLegacyMigration:
@@ -529,14 +539,19 @@ class TestSecretStoreLegacyMigration:
         assert report.entries[0].status == "skipped"
         assert temp_db.fetchone("SELECT 1 FROM secret_key_material WHERE id = %s", ("default",))
         assert SecretStore(temp_db).get("KEY") is None
-        assert "sha256:" in caplog.text
+        assert any(getattr(record, "secret", "").startswith("sha256:") for record in caplog.records)
         assert "KEY" not in caplog.text
 
     def test_find_secret_references_normalizes_explicit_refs(self) -> None:
         refs = SecretStore.find_secret_references(
-            ["token=$secret:API_KEY", "${NOT_REQUIRED}", "$secret:Other_Key"]
+            [
+                "token=$secret:API_KEY",
+                "${NOT_REQUIRED}",
+                "$secret:Other_Key",
+                {"headers": ["Bearer $secret:Nested_Token"]},
+            ]
         )
-        assert refs == {"api_key", "other_key"}
+        assert refs == {"api_key", "other_key", "nested_token"}
 
 
 # =============================================================================

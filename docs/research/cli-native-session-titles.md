@@ -94,8 +94,8 @@ internal policy around source/provenance, not a user-visible schema change.
 
 ## Follow-Up Tasks
 
-- #17454 Prevent digest synthesis from replacing trusted native session titles
-- #17455 Record ACP session-list titles with native provenance
+- #17454 Completed: digest synthesis preserves trusted native session titles.
+- #17455 Completed: ACP session-list titles are recorded with native provenance.
 
 No parser implementation task is recommended now. Claude and Droid parser
 support already exists; Codex, Qwen typed transcripts, Grok transcripts, and AGY

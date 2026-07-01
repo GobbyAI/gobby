@@ -78,7 +78,14 @@ class DroidAdapter(BaseAdapter):
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
         normalized_data = self._normalize_event_data(input_data)
         session_id = self._resolve_session_id(native_event, input_data)
-        if session_id and not normalized_data.get("session_id"):
+        normalized_session_id = normalized_data.get("session_id")
+        normalized_session_id = (
+            normalized_session_id.strip() if isinstance(normalized_session_id, str) else ""
+        )
+        if normalized_session_id:
+            normalized_data["session_id"] = normalized_session_id
+            session_id = normalized_session_id
+        elif session_id:
             normalized_data["session_id"] = session_id
         if event_type is HookEventType.SESSION_START and not session_id:
             logger.warning(

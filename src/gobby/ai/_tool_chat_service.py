@@ -104,11 +104,6 @@ class ToolChatService:
                 errors.append((label, f"{type(exc).__name__}: {exc}"))
                 logger.info("tool_chat candidate %s unavailable: %s", label, exc)
                 continue
-            except Exception as exc:  # noqa: BLE001 - boundary: try next candidate
-                last_error = exc
-                errors.append((label, f"{type(exc).__name__}: {exc}"))
-                logger.info("tool_chat candidate %s failed: %s", label, exc)
-                continue
 
         if attempted and unavailable_count == len(attempted):
             details = "; ".join(f"{candidate}: {error}" for candidate, error in errors)

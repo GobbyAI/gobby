@@ -115,6 +115,7 @@ def test_record_machine_ingress_upserts_payload_metadata(
     make_event: Callable[..., HookEvent],
     temp_db,
 ) -> None:
+    manager_with_mocks._database = temp_db
     manager_with_mocks._session_manager = SessionManager(temp_db)
     event = make_event(
         data={
@@ -134,6 +135,24 @@ def test_record_machine_ingress_upserts_payload_metadata(
     assert machine.os == "Darwin"
     assert machine.label == "desk"
     assert machine.tailscale_name == "workstation.tailnet"
+
+    payload_event = make_event(
+        data={
+            "machineId": "payload-machine",
+            "hostname": "laptop",
+            "os": "Linux",
+            "machine_label": "travel",
+        }
+    )
+    payload_event.machine_id = "unknown-machine"
+
+    manager_with_mocks._record_machine_ingress(payload_event)
+
+    payload_machine = LocalMachineManager(temp_db).get("payload-machine")
+    assert payload_machine is not None
+    assert payload_machine.hostname == "laptop"
+    assert payload_machine.os == "Linux"
+    assert payload_machine.label == "travel"
 
 
 class TestHandleInternalDaemonNotReady:

@@ -43,6 +43,10 @@ class LocalGenerationEndpointConfig(BaseModel):
         default=False,
         description="Whether this endpoint's model supports daemon vision_extract requests.",
     )
+    tool_chat: bool = Field(
+        default=False,
+        description="Whether this endpoint's model supports daemon tool_chat requests.",
+    )
 
     @model_validator(mode="after")
     def validate_endpoint(self) -> LocalGenerationEndpointConfig:

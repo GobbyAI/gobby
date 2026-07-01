@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
@@ -500,6 +500,13 @@ class BaseTranscriptParser:
     def finalize(self) -> list[ParsedAdjustment]:
         """Post-pass mutations to already-yielded messages (default: none)."""
         return []
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Return parser-private state needed for incremental replay."""
+        return {}
+
+    def hydrate_state(self, state: Mapping[str, Any]) -> None:
+        """Restore parser-private state captured by :meth:`snapshot_state`."""
 
     def parse_lines(
         self, lines: list[str], start_index: int = 0

@@ -79,7 +79,7 @@ def test_get_daemon_client_uses_resolved_daemon_url(monkeypatch: pytest.MonkeyPa
     from gobby.cli.memory import _get_daemon_client
 
     monkeypatch.setenv("GOBBY_PORT", "12345")
-    ctx = click.Context(click.Command("memory"), obj={"config": DaemonConfig(daemon_port=12345)})
+    ctx = click.Context(click.Command("memory"), obj={"config": DaemonConfig(daemon_port=60887)})
 
     with patch("gobby.utils.daemon_client.DaemonClient") as daemon_client:
         client = _get_daemon_client(ctx)

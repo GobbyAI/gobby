@@ -20,6 +20,8 @@ from gobby.ai._tool_chat_service import ToolChatService
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 
+pytestmark = pytest.mark.unit
+
 _POLICY = ToolPolicy(cli="gcode", tools=("search", "outline"))
 
 
@@ -45,6 +47,7 @@ def _registry() -> object:
                             "lm-studio": {
                                 "api_base": "http://localhost:1234/v1",
                                 "model": "gemma",
+                                "tool_chat": True,
                             },
                         }
                     )
@@ -136,6 +139,11 @@ class _SlowAdapter:
         return ToolChatResult(text=f"narrative::{self.label}", tool_use_count=0, turns=1)
 
 
+class _FailingAdapter:
+    async def chat(self, _request: ToolChatRequest, _binding: CapabilityBinding) -> ToolChatResult:
+        raise RuntimeError("adapter broke")
+
+
 def test_tool_chat_candidate_timeout_selection_by_adapter_style() -> None:
     # Mirror TextGenerationService: spawn-cold lanes get the larger CLI timeout,
     # fast API lanes (and no binding) keep the tight candidate timeout.
@@ -167,9 +175,7 @@ def test_tool_chat_candidate_timeout_selection_by_adapter_style() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_chat_times_out_slow_candidate_then_tries_next() -> None:
-    # A spawn-cold candidate that blocks past cli_candidate_timeout_seconds fails;
-    # selection moves to the next candidate instead of wedging the caller.
+async def test_tool_chat_timeout_propagates_without_trying_next_candidate() -> None:
     slow = _SlowAdapter("llm_provider")
     fast = _RecordingAdapter("openai_compatible")
     service = ToolChatService(
@@ -181,13 +187,27 @@ async def test_tool_chat_times_out_slow_candidate_then_tries_next() -> None:
         candidate_timeout_seconds=0.05,
         cli_candidate_timeout_seconds=0.05,
     )
-    result = await service.chat_result(
-        _request(candidates=("claude/haiku", "local:lm-studio/gemma"))
-    )
+    with pytest.raises(_CandidateTimeoutError, match="timed out after"):
+        await service.chat_result(_request(candidates=("claude/haiku", "local:lm-studio/gemma")))
     assert slow.calls == 1
-    assert result.adapter_style == "openai_compatible"
-    assert result.text == "narrative::openai_compatible"
-    assert [b.provider for b in fast.bindings] == ["local:lm-studio"]
+    assert fast.bindings == []
+
+
+@pytest.mark.asyncio
+async def test_tool_chat_runtime_error_propagates_without_trying_next_candidate() -> None:
+    fast = _RecordingAdapter("openai_compatible")
+    service = ToolChatService(
+        _registry(),
+        adapters={
+            AIAdapterStyle.LLM_PROVIDER: _FailingAdapter(),
+            AIAdapterStyle.OPENAI_COMPATIBLE: fast,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="adapter broke"):
+        await service.chat_result(_request(candidates=("claude/haiku", "local:lm-studio/gemma")))
+
+    assert fast.bindings == []
 
 
 @pytest.mark.asyncio

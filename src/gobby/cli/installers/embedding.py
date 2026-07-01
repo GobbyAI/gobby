@@ -130,7 +130,7 @@ def install_embedding(
                 model_id=catalog_spec.lmstudio_ref,
                 gguf_repo=catalog_spec.gguf_repo,
                 gguf_filename=catalog_spec.gguf_filename,
-                search_keyword=catalog_spec.family,
+                search_keyword=catalog_spec.gguf_filename,
             )
         else:
             setup_result = _setup_lmstudio()
@@ -156,7 +156,21 @@ def install_embedding(
             catalog_model = catalog_spec.key
         model = model_override if model_override is not None else catalog_model
         api_base = api_base_override if api_base_override is not None else cfg["api_base"]
-        dim = dim_override if dim_override is not None else catalog_spec.dim
+        if dim_override is not None:
+            dim = dim_override
+        elif model_override is not None or api_base_override is not None:
+            probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=embedding_api_key)
+            if probed is None:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Could not probe embedding dim from {api_base or 'default endpoint'} "
+                        f"for model {model}. Pass --embedding-dim explicitly."
+                    ),
+                }
+            dim = probed
+        else:
+            dim = catalog_spec.dim
     else:
         model = model_override if model_override is not None else cfg["model"]
         api_base = api_base_override if api_base_override is not None else cfg["api_base"]
@@ -264,9 +278,9 @@ def _setup_lmstudio(
             the legacy hardcoded model key.
         gguf_filename: GGUF filename within the repo (e.g.
             ``nomic-embed-text-v1.5.f16.gguf``). Used with ``lms get --gguf``.
-        search_keyword: Keyword to match in ``lms ls`` output for on-disk
-            check (e.g. ``"nomic"`` or ``"qwen3-embedding"``). When None,
-            derives from the model_id.
+        search_keyword: Exact requested model identifier or filename to match
+            in ``lms ls`` output for the on-disk check. When None, derives from
+            the model_id.
 
     Steps:
     1. Check `lms` is on PATH
@@ -314,8 +328,8 @@ def _setup_lmstudio(
     # 4. Check if on disk
     try:
         ls_result = subprocess.run(["lms", "ls"], capture_output=True, text=True, timeout=15)
-        # Match by a keyword in the model identifier. LM Studio's `lms ls`
-        # may display models with different naming conventions.
+        # Match by the requested model identifier or filename. Family-level
+        # matches can skip downloading the specific catalog artifact.
         if search_keyword is not None:
             keyword = search_keyword.lower()
         else:

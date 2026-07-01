@@ -7,6 +7,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
 
+import psycopg
+
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionRecoveryByProject,
@@ -119,7 +121,14 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         now = datetime.now(UTC).isoformat()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
-        LocalMachineManager(self.db).upsert_seen(machine_id, seen_at=now)
+        try:
+            LocalMachineManager(self.db).upsert_seen(machine_id, seen_at=now)
+        except psycopg.Error as exc:
+            get_logger().warning(
+                "Failed to refresh machine registry during session registration",
+                extra={"machine_id": machine_id, "error": str(exc)},
+                exc_info=True,
+            )
 
         if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
             sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))

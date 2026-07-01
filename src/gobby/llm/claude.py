@@ -589,7 +589,7 @@ class ClaudeLLMProvider:
         model: str | None = None,
         max_turns: int = 60,
         reasoning_effort: str | None = None,
-        allowed_tools: Sequence[str] = ("Read", "Grep", "Glob", "Bash"),
+        allowed_tools: Sequence[str] = ("Read", "Grep", "Glob"),
         disallowed_tools: Sequence[str] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         caller: str | None = None,
@@ -597,10 +597,11 @@ class ClaudeLLMProvider:
         """Run a tool-enabled agentic investigation and return a grounded narrative.
 
         Unlike :meth:`generate_text` (single-turn, tools disabled, neutral cwd),
-        this enables investigation tools (including ``Bash`` so the agent can
-        drive the project's ``gcode`` code index), points ``cwd`` at the project
-        repository, and grants a high ``max_turns`` so the model can explore the
-        code before producing a grounded Markdown page with file citations.
+        this enables caller-selected investigation tools, points ``cwd`` at the
+        project repository, and grants a high ``max_turns`` so the model can
+        explore the code before producing a grounded Markdown page with file
+        citations. Shell access is opt-in by passing ``Bash`` in
+        ``allowed_tools`` and keeping it out of ``disallowed_tools``.
 
         The SDK *raises* (rather than returns) when it exhausts ``max_turns``;
         that case is caught inside the query loop and the accumulated assistant

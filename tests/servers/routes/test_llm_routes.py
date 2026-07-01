@@ -1175,6 +1175,8 @@ def test_chat_completions_returns_openai_shape_with_investigation(
             "messages": [
                 {"role": "system", "content": "You write grounded code docs."},
                 {"role": "user", "content": "Document the auth module."},
+                {"role": "assistant", "content": "Which auth surface?"},
+                {"role": "user", "content": "The login handler."},
             ],
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
@@ -1206,7 +1208,11 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     assert len(service.requests) == 1
     request = service.requests[0]
     assert request.system_prompt == "You write grounded code docs."
-    assert request.prompt == "Document the auth module."
+    assert request.prompt == (
+        "User:\nDocument the auth module.\n\n"
+        "Assistant:\nWhich auth surface?\n\n"
+        "User:\nThe login handler."
+    )
     assert request.project_path == "/repo"
     assert request.tool_policy.cli == "gcode"
     assert request.tool_policy.tools == ("search", "outline")
@@ -1234,7 +1240,14 @@ def test_chat_completions_clamps_max_turns_and_omits_empty_fields(
     server_with_llm: MagicMock,
 ) -> None:
     service = _FakeToolChatService(
-        _chat_result(tool_use_count=0, turns=1, tools={}, usage=None, applied_reasoning_effort=None)
+        _chat_result(
+            tool_use_count=0,
+            turns=1,
+            tools={},
+            usage=None,
+            applied_reasoning_effort=None,
+            stop_reason="max_turns",
+        )
     )
     server_with_llm.services.tool_chat_service = service
 
@@ -1252,6 +1265,7 @@ def test_chat_completions_clamps_max_turns_and_omits_empty_fields(
     body = response.json()
     assert "usage" not in body
     assert "applied_reasoning_effort" not in body
+    assert body["choices"][0]["finish_reason"] == "length"
     assert service.requests[0].max_turns == llm_module._MAX_AGENTIC_TURNS
 
 

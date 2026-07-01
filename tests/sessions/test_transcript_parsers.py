@@ -1524,6 +1524,25 @@ class TestCodexTranscriptParser:
         assert first_result.tool_use_id == "call-first"
         assert second_result.tool_use_id == "call-second"
 
+    def test_tool_search_pending_queue_survives_parser_hydration(
+        self, parser: CodexTranscriptParser
+    ) -> None:
+        parser.parse_line(
+            self._tool_search_call({"query": "first"}, call_id="call-first", response_id="tsc-1"),
+            1,
+        )
+        state = parser.snapshot_state()
+        resumed = CodexTranscriptParser()
+        resumed.hydrate_state(state)
+
+        result = resumed.parse_line(
+            self._tool_search_output({"tools_count": 1}, call_id=None),
+            2,
+        )
+
+        assert isinstance(result, ParsedMessage)
+        assert result.tool_use_id == "call-first"
+
     def test_tool_search_explicit_out_of_order_output_removes_pending_id(
         self, parser: CodexTranscriptParser
     ) -> None:

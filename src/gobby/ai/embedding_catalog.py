@@ -15,8 +15,11 @@ one pinned GGUF, so they can't drift.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +77,7 @@ class EmbeddingModelSpec:
             "family": self.family,
             "query_prefix": self.query_prefix,
             "ollama_tag": self.ollama_tag,
+            "ollama_quant_real": self.ollama_quant_real,
             "lmstudio_ref": self.lmstudio_ref,
             "gguf_repo": self.gguf_repo,
             "gguf_filename": self.gguf_filename,
@@ -377,16 +381,7 @@ def entries_for_provider(provider: str) -> list[EmbeddingModelSpec]:
     ``ollama_quant_real=False`` — the picker should label them
     "GGUF/LM Studio only" when the daemon provider is Ollama.
     """
-    specs: list[EmbeddingModelSpec] = []
-    for key in PICKER_ENTRIES:
-        spec = _CATALOG[key]
-        if provider == "ollama":
-            specs.append(spec)
-        elif provider == "lmstudio":
-            specs.append(spec)
-        else:
-            specs.append(spec)
-    return specs
+    return [_CATALOG[key] for key in PICKER_ENTRIES]
 
 
 def resolve_for_provider(key: str, provider: str) -> EmbeddingModelSpec:
@@ -396,9 +391,14 @@ def resolve_for_provider(key: str, provider: str) -> EmbeddingModelSpec:
     """
     spec = get_spec_or_raise(key)
     if provider == "ollama" and not spec.ollama_quant_real:
-        # Nomic Q4/Q8 on Ollama → falls back to F16 blob.
-        # The caller should warn the user that the quant choice is not real on Ollama.
-        pass
+        logger.warning(
+            "Embedding catalog quant is not real on Ollama; Ollama will use its tag fallback",
+            extra={
+                "catalog_key": spec.key,
+                "ollama_tag": spec.ollama_tag,
+                "quant": spec.quant,
+            },
+        )
     return spec
 
 

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -50,6 +51,48 @@ def test_droid_unknown_blocks_keep_source_order() -> None:
     assert [msg.content_type for msg in messages] == ["text", "mystery", "tool_use"]
     assert [msg.content for msg in messages] == ["before", "middle", ""]
     assert messages[1].raw_json == {"type": "mystery", "content": "middle"}
+
+
+def test_droid_unknown_assistant_block_receives_sidecar_usage(tmp_path: Path) -> None:
+    transcript_path = tmp_path / "droid.jsonl"
+    transcript_path.with_suffix(".settings.json").write_text(
+        json.dumps(
+            {
+                "model": "droid-model",
+                "tokenUsage": {
+                    "inputTokens": 11,
+                    "outputTokens": 7,
+                    "cacheCreationTokens": 3,
+                    "cacheReadTokens": 5,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw = {
+        "type": "message",
+        "id": "msg-unknown",
+        "timestamp": "2026-06-27T15:00:00Z",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "mystery", "content": "only unknown"}],
+        },
+    }
+
+    messages = DroidTranscriptParser(
+        session_id="session-1",
+        transcript_path=transcript_path,
+    ).parse_lines([_line(raw)])
+
+    assert len(messages) == 1
+    msg = messages[0]
+    assert msg.content_type == "mystery"
+    assert msg.model == "droid-model"
+    assert msg.usage is not None
+    assert msg.usage.input_tokens == 11
+    assert msg.usage.output_tokens == 7
+    assert msg.usage.cache_creation_tokens == 3
+    assert msg.usage.cache_read_tokens == 5
 
 
 def test_unknown_records_are_preserved_but_protocol_records_stay_skipped() -> None:
@@ -132,7 +175,7 @@ def test_grok_unknown_session_update_is_preserved() -> None:
     assert msg.raw_json == raw["update"]
 
 
-def test_claude_unknown_block_keeps_source_order():
+def test_claude_unknown_block_keeps_source_order() -> None:
     raw = {
         "type": "assistant",
         "timestamp": "2026-06-27T15:00:00Z",
@@ -152,7 +195,7 @@ def test_claude_unknown_block_keeps_source_order():
     assert messages[1].raw_json == {"type": "mystery", "content": "middle"}
 
 
-def test_claude_unknown_block_flushes_text_before_thinking():
+def test_claude_unknown_block_flushes_text_before_thinking() -> None:
     raw = {
         "type": "assistant",
         "timestamp": "2026-06-27T15:00:00Z",

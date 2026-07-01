@@ -186,16 +186,21 @@ class ACPSessionLifecycleService:
         key = (provider, cwd)
         existing = self._inflight.get(key)
         if existing is not None and not existing.done():
-            return await existing
+            return await asyncio.shield(existing)
         task: asyncio.Task[dict[str, Any]] = asyncio.create_task(
             self._scan_provider_inner(provider, backend, cwd)
         )
         self._inflight[key] = task
-        try:
-            return await task
-        finally:
-            if self._inflight.get(key) is task:
-                del self._inflight[key]
+        task.add_done_callback(lambda done_task: self._clear_inflight_task(key, done_task))
+        return await asyncio.shield(task)
+
+    def _clear_inflight_task(
+        self,
+        key: tuple[str, str | None],
+        task: asyncio.Task[dict[str, Any]],
+    ) -> None:
+        if self._inflight.get(key) is task:
+            del self._inflight[key]
 
     async def _scan_provider_inner(
         self, provider: str, backend: Any, cwd: str | None

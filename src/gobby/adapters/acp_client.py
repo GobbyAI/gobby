@@ -336,6 +336,7 @@ class ACPClient:
                     session_result,
                     fallback_session_id=session_id,
                 )
+                self._track_additional_directories()
                 logger.debug(f"ACP session ID: {self._session_state.session_id}")
             else:
                 self._session_state.clear_session()

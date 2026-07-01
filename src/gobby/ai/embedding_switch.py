@@ -17,7 +17,7 @@ import json
 import logging
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
 from gobby.memory.vectorstore import CollectionNameResolver
@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 # ConfigStore key for the switch journal (singleton — one active run at a time).
 _SWITCH_JOURNAL_KEY = "ai.embeddings.switch_run"
+
+
+@dataclass(frozen=True)
+class EmbeddingSwitchJournalMutation:
+    """Serializes embedding switch journal acquisition."""
+
+    PRIORITY: ClassVar[int] = 850
+    key: str
+
 
 # Phase names in order.
 PHASE_STAGING = "staging"
@@ -77,8 +86,12 @@ class SwitchJournal:
         return SwitchJournal(**d)
 
 
-class SwitchError(Exception):
+class SwitchError(RuntimeError):
     """Raised when a switch operation fails."""
+
+
+class SwitchJournalStateError(SwitchError):
+    """Raised when the persisted switch journal cannot be trusted."""
 
 
 class SwitchAlreadyActiveError(SwitchError):
@@ -95,13 +108,17 @@ class SwitchAlreadyActiveError(SwitchError):
 def _read_journal(config_store: Any) -> SwitchJournal | None:
     """Read the current switch journal from ConfigStore."""
     raw = config_store.get(_SWITCH_JOURNAL_KEY)
-    if raw is None or not isinstance(raw, str):
+    if raw is None:
         return None
+    if not isinstance(raw, str):
+        raise SwitchJournalStateError(
+            f"Invalid embedding switch journal type: {type(raw).__name__}"
+        )
     try:
         return SwitchJournal.from_json(raw)
     except Exception as exc:
-        logger.warning("Failed to parse switch journal: %s", exc)
-        return None
+        logger.warning("Failed to parse switch journal", exc_info=True)
+        raise SwitchJournalStateError("Invalid embedding switch journal") from exc
 
 
 def _write_journal(config_store: Any, journal: SwitchJournal) -> None:
@@ -111,7 +128,7 @@ def _write_journal(config_store: Any, journal: SwitchJournal) -> None:
 
 def _delete_journal(config_store: Any) -> None:
     """Delete the switch journal from ConfigStore."""
-    config_store.delete(_SWITCH_JOURNAL_KEY, source="embedding_switch")
+    config_store.delete(_SWITCH_JOURNAL_KEY)
 
 
 def get_switch_status(config_store: Any) -> SwitchJournal | None:
@@ -158,6 +175,40 @@ def start_switch(
     Raises SwitchAlreadyActiveError if a switch is already in progress.
     Raises ValueError if the catalog key is unknown.
     """
+    db = getattr(config_store, "db", None)
+    transaction_immediate = getattr(db, "transaction_immediate", None)
+    if callable(transaction_immediate):
+        with transaction_immediate(EmbeddingSwitchJournalMutation(_SWITCH_JOURNAL_KEY)):
+            return _start_switch_unlocked(
+                config_store,
+                catalog_key,
+                provider,
+                current_dim=current_dim,
+                current_catalog_id=current_catalog_id,
+                current_api_base=current_api_base,
+                target_api_base=target_api_base,
+            )
+    return _start_switch_unlocked(
+        config_store,
+        catalog_key,
+        provider,
+        current_dim=current_dim,
+        current_catalog_id=current_catalog_id,
+        current_api_base=current_api_base,
+        target_api_base=target_api_base,
+    )
+
+
+def _start_switch_unlocked(
+    config_store: Any,
+    catalog_key: str,
+    provider: str,
+    *,
+    current_dim: int | None,
+    current_catalog_id: str | None,
+    current_api_base: str | None,
+    target_api_base: str | None | object,
+) -> tuple[SwitchJournal, EmbeddingModelSpec]:
     existing = _read_journal(config_store)
     if existing is not None and existing.phase not in (PHASE_ABORTED, PHASE_GC):
         raise SwitchAlreadyActiveError(existing)

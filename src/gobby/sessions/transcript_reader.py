@@ -652,6 +652,7 @@ def _collect_flat_from_file_windowed(
         return _collect_flat_from_file(path, source, session_id, cap, role)[offset : offset + limit]
 
     parser = _get_parser(source, session_id=session_id, transcript_path=path)
+    parser.hydrate_state(index.parser_state)
     raws = _iter_jsonl_raw_lines_from(
         path, boundary.byte_start, boundary.raw_line_start, index.size
     )

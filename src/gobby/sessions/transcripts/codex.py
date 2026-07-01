@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -144,6 +144,18 @@ class CodexTranscriptParser(BaseTranscriptParser):
     ):
         super().__init__(cli_name="codex", session_id=session_id, logger_instance=logger_instance)
         self._pending_tool_search_use_ids: deque[str] = deque()
+
+    def snapshot_state(self) -> dict[str, Any]:
+        return {"pending_tool_search_use_ids": list(self._pending_tool_search_use_ids)}
+
+    def hydrate_state(self, state: Mapping[str, Any]) -> None:
+        raw_queue = state.get("pending_tool_search_use_ids")
+        if not isinstance(raw_queue, list):
+            self._pending_tool_search_use_ids.clear()
+            return
+        self._pending_tool_search_use_ids = deque(
+            item for item in raw_queue if isinstance(item, str) and item
+        )
 
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2

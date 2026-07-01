@@ -4,9 +4,10 @@ Provider-agnostic and caller-parameterized. A :class:`ToolPolicy` declares the
 executable family (``gcode``/``gwiki``), the exposed subcommands, and whether
 mutation is permitted. This module:
 
-* validates a policy against the per-CLI read whitelist — every subcommand that
-  is not on the read whitelist is treated as mutating (default-deny) and is
-  rejected unless the policy sets ``allow_mutation``;
+* validates a policy against the per-CLI command allowlist and read whitelist —
+  every allowed subcommand that is not on the read whitelist is treated as
+  mutating (default-deny) and is rejected unless the policy sets
+  ``allow_mutation``;
 * renders the policy as OpenAI function-tool schemas (Family A loop) and exposes
   a stable tool-name <-> subcommand mapping reusable by other adapter families;
 * executes a validated tool call as an ``argv`` subprocess in
@@ -22,14 +23,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+from pathlib import Path
 from typing import Any
 
 from gobby.ai._tool_chat_contracts import ToolLoopLimits, ToolPolicy
 
 logger = logging.getLogger(__name__)
 
-# Read-only subcommands per CLI. Anything not listed here is treated as a
-# mutating subcommand (default-deny) and requires ``ToolPolicy.allow_mutation``.
+# Read-only subcommands per CLI. Allowed commands outside this set are treated
+# as mutating (default-deny) and require ``ToolPolicy.allow_mutation``.
 GCODE_READONLY_TOOLS: frozenset[str] = frozenset(
     {
         "search",
@@ -66,6 +68,24 @@ GWIKI_READONLY_TOOLS: frozenset[str] = frozenset(
 _READONLY_BY_CLI: dict[str, frozenset[str]] = {
     "gcode": GCODE_READONLY_TOOLS,
     "gwiki": GWIKI_READONLY_TOOLS,
+}
+GCODE_ALLOWED_TOOLS: frozenset[str] = GCODE_READONLY_TOOLS | frozenset(
+    {
+        "init",
+        "setup",
+        "index",
+        "invalidate",
+        "graph",
+        "vector",
+        "embeddings",
+        "codewiki",
+        "prune",
+    }
+)
+GWIKI_ALLOWED_TOOLS: frozenset[str] = GWIKI_READONLY_TOOLS | frozenset({"compile"})
+_ALLOWED_BY_CLI: dict[str, frozenset[str]] = {
+    "gcode": GCODE_ALLOWED_TOOLS,
+    "gwiki": GWIKI_ALLOWED_TOOLS,
 }
 
 # Characters that must never reach an argument. Execution is ``argv``-based
@@ -136,8 +156,9 @@ def validate_policy(policy: ToolPolicy) -> None:
     """Validate ``policy`` against the registry whitelist.
 
     Raises :class:`ToolPolicyError` for an unknown CLI, an empty tool set, a
-    malformed subcommand token, or — when ``allow_mutation`` is False — any
-    subcommand that is not on the read whitelist.
+    malformed subcommand token, any subcommand outside the CLI allowlist, or
+    — when ``allow_mutation`` is False — any subcommand that is not on the read
+    whitelist.
     """
     if policy.cli not in _READONLY_BY_CLI:
         raise ToolPolicyError(
@@ -148,6 +169,10 @@ def validate_policy(policy: ToolPolicy) -> None:
     for subcommand in policy.tools:
         if not subcommand or any(ch in subcommand for ch in _SHELL_METACHARACTERS):
             raise ToolPolicyError(f"Malformed subcommand token {subcommand!r}.")
+        if subcommand not in _ALLOWED_BY_CLI[policy.cli]:
+            raise ToolPolicyError(
+                f"Subcommand {policy.cli} {subcommand!r} is not allowed by policy."
+            )
         if not policy.allow_mutation and not _is_readonly(policy.cli, subcommand):
             raise ToolPolicyError(
                 f"Subcommand {policy.cli} {subcommand!r} is not read-only; "
@@ -179,6 +204,9 @@ async def run_argv(
     missing executable returns an explanatory note rather than raising, so the
     tool loop can continue.
     """
+    cwd_path = Path(cwd)
+    if not cwd_path.is_dir():
+        return f"[error: working directory not found or not a directory: {cwd!r}]"
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -307,7 +335,15 @@ class ToolRuntime:
         subcommand = self.resolve(tool_name)
         args = self._args_from(arguments)
         argv = [self._policy.cli, subcommand, *args]
-        logger.debug("tool_chat executing: %s (cwd=%s)", argv, self._project_path)
+        logger.debug(
+            "tool_chat executing",
+            extra={
+                "cli": self._policy.cli,
+                "subcommand": subcommand,
+                "cwd": self._project_path,
+                "arg_count": len(args),
+            },
+        )
         return await run_argv(
             argv,
             cwd=self._project_path,

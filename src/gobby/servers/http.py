@@ -85,25 +85,32 @@ class HTTPServer:
         self._start_time: float = time.time()
 
         # Create LLM/text-generation services if not provided in container (fallback)
-        if not services.llm_service and services.config:
+        if services.config and (
+            services.text_generation_service is None or not services.llm_service
+        ):
             try:
                 if services.text_generation_service is None:
                     services.text_generation_service = build_daemon_text_generation_service(
                         services.config,
                     )
-                if services.tool_chat_service is None:
-                    services.tool_chat_service = build_daemon_tool_chat_service(
+                if not services.llm_service:
+                    services.llm_service = create_llm_service(
                         services.config,
+                        text_generation=services.text_generation_service,
                     )
-                services.llm_service = create_llm_service(
-                    services.config,
-                    text_generation=services.text_generation_service,
-                )
-                logger.debug(
-                    f"LLM service initialized with providers: {services.llm_service.enabled_providers}"
-                )
+                    logger.debug(
+                        "LLM service initialized with providers: %s",
+                        services.llm_service.enabled_providers,
+                    )
             except Exception as e:
                 logger.error(f"Failed to initialize LLM service: {e}")
+        if services.config and services.tool_chat_service is None:
+            try:
+                services.tool_chat_service = build_daemon_tool_chat_service(
+                    services.config,
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize tool chat service: {e}")
 
         # Create MCP server instance
         self._mcp_server: Any | None = None

@@ -559,6 +559,8 @@ def _local_tool_chat_endpoint_bindings(
     endpoints = config.ai.generation.local.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
+        if not endpoint.tool_chat:
+            continue
         provider = local_endpoint_provider(name)
         models = _local_endpoint_models(provider, endpoint.model, feature_models_by_provider)
         bindings.append(

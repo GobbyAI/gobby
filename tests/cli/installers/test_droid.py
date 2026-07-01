@@ -11,6 +11,7 @@ import pytest
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.cli.installers.droid import (
     _MIN_GHOOK_VERSION_FOR_DROID,
+    _cleanup_legacy_droid_hooks_file,
     install_droid,
     uninstall_droid,
 )
@@ -158,6 +159,41 @@ def test_install_droid_creates_backup_when_rewriting_existing_hooks(
     assert "Other" in flat  # preserved non-Gobby entry
     assert "hooks" not in flat  # unwrapped to flat format
     assert "PreToolUse" in flat  # Gobby hooks added at top level
+
+
+def test_cleanup_legacy_droid_hooks_file_removes_nested_file(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: temp_dir)
+    legacy = temp_dir / ".factory" / "hooks" / "hooks.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("{}", encoding="utf-8")
+
+    _cleanup_legacy_droid_hooks_file()
+
+    assert not legacy.exists()
+
+
+@pytest.mark.parametrize("env_name", ["GOBBY_DROID_HOOKS_FILE", "GOBBY_HOOKS_DIR"])
+def test_cleanup_legacy_droid_hooks_file_honors_overrides(
+    env_name: str,
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_DROID_HOOKS_FILE", raising=False)
+    monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
+    monkeypatch.setenv(env_name, str(temp_dir / "custom"))
+    monkeypatch.setattr(Path, "home", lambda: temp_dir)
+    legacy = temp_dir / ".factory" / "hooks" / "hooks.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("{}", encoding="utf-8")
+
+    _cleanup_legacy_droid_hooks_file()
+
+    assert legacy.exists()
 
 
 def test_uninstall_droid_removes_only_gobby_entries(

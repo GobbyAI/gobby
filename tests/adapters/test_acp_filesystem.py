@@ -21,6 +21,15 @@ def test_resolve_file_path_rejects_nested_git_path(tmp_path: Path) -> None:
         resolve_file_path(str(target), (tmp_path,))
 
 
+def test_resolve_file_path_rejects_root_inside_git_dir(tmp_path: Path) -> None:
+    root = tmp_path / ".git" / "worktree"
+    root.mkdir(parents=True)
+    target = root / "config"
+
+    with pytest.raises(ACPFileSystemError, match="access to .git paths is not allowed"):
+        resolve_file_path(str(target), (root,))
+
+
 def test_write_text_file_preserves_existing_mode(tmp_path: Path) -> None:
     target = tmp_path / "notes.txt"
     target.write_text("old", encoding="utf-8")

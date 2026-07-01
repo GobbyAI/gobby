@@ -77,3 +77,21 @@ def test_rekey_passphrase_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:
         passphrase="correct horse",
     )
     assert "key-file -> scrypt-passphrase" in result.output
+
+
+def test_rekey_key_file_uses_current_passphrase(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MagicMock()
+    store.current_kek_posture.side_effect = [POSTURE_SCRYPT_PASSPHRASE, POSTURE_KEY_FILE]
+    monkeypatch.setattr(secrets_module, "_SecretStoreContext", lambda: _StoreContext(store))
+    monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "current horse")
+
+    result = CliRunner().invoke(
+        secrets_module.secrets,
+        ["rekey", "--posture", "key-file"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert store.kek_passphrase == "current horse"
+    store.set_kek_posture.assert_called_once_with(POSTURE_KEY_FILE, passphrase=None)
+    assert "scrypt-passphrase -> key-file" in result.output

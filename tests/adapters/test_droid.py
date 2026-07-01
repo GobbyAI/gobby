@@ -114,6 +114,19 @@ class TestDroidTranslateToHookEvent:
         assert event.machine_id == "machine-1"
         assert event.data["session_id"] == "top-level-session"
 
+    def test_blank_input_data_session_id_falls_back_to_top_level_id(self) -> None:
+        adapter = DroidAdapter()
+        event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "SessionStart",
+                "sessionId": "top-level-session",
+                "input_data": {"session_id": "   ", "cwd": "/repo"},
+            }
+        )
+
+        assert event.session_id == "top-level-session"
+        assert event.data["session_id"] == "top-level-session"
+
     def test_unknown_hook_type_falls_back_to_notification(self) -> None:
         adapter = DroidAdapter()
         event = adapter.translate_to_hook_event(

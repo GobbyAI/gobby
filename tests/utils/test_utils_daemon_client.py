@@ -42,6 +42,11 @@ class TestDaemonClientInit:
         with pytest.raises(DaemonUrlError):
             DaemonClient.from_url("ftp://daemon.example.test:61999")
 
+    def test_url_constructor_rejects_empty_url(self) -> None:
+        """Test explicit empty URL does not fall back to localhost."""
+        with pytest.raises(DaemonUrlError):
+            DaemonClient.from_url("")
+
     def test_custom_logger(self) -> None:
         """Test with custom logger."""
         mock_logger = MagicMock()

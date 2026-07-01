@@ -25,6 +25,7 @@ from gobby.cli.pipelines_runs import (
     search_executions,
     show_pipeline_run,
 )
+from gobby.utils.daemon_url import DaemonUrlError
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipelines_import
     LobsterImporter,
@@ -130,6 +131,9 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
             err=True,
         )
         raise SystemExit(1)
+    except (click.ClickException, DaemonUrlError, ValueError) as e:
+        logger.debug("Daemon run unavailable for %s: %s", name, e, exc_info=True)
+        return None
     except (httpx.RequestError, ConnectionError, OSError) as e:
         logger.debug(f"Daemon run failed for {name}: {e}", exc_info=True)
         return None
@@ -163,6 +167,9 @@ def _try_daemon_approval(action: str, token: str) -> dict[str, Any] | None:
             err=True,
         )
         raise SystemExit(1)
+    except (click.ClickException, DaemonUrlError, ValueError) as e:
+        logger.debug("Daemon %s unavailable: %s", action, e, exc_info=True)
+        return None
     except (httpx.RequestError, ConnectionError, OSError) as e:
         logger.debug("Daemon %s failed: %s", action, e, exc_info=True)
         return None

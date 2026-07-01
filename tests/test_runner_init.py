@@ -60,10 +60,10 @@ class TestGobbyRunnerInit:
 
     def test_required_secret_migration_failure_aborts_startup(self) -> None:
         """Required legacy secret migration errors must not be swallowed by config load."""
-        mock_config = DaemonConfig()
+        mock_config = DaemonConfig(database_url="$secret:DB_URL")
         mock_db = MagicMock()
         mock_store = MagicMock()
-        mock_store.find_secret_references.return_value = {"api_key"}
+        mock_store.find_secret_references.return_value = {"api_key", "db_url"}
         mock_store.ensure_ready.side_effect = RuntimeError("required secret migration failed")
         mock_config_store = MagicMock()
         mock_config_store.get_all.return_value = {"mcp.servers.x.header": "$secret:API_KEY"}
@@ -80,8 +80,10 @@ class TestGobbyRunnerInit:
             GobbyRunner()
 
         mock_store.find_secret_references.assert_called_once()
-        assert list(mock_store.find_secret_references.call_args.args[0]) == ["$secret:API_KEY"]
-        mock_store.ensure_ready.assert_called_once_with(required_secret_names={"api_key"})
+        secret_inputs = list(mock_store.find_secret_references.call_args.args[0])
+        assert "$secret:API_KEY" in secret_inputs
+        assert "$secret:DB_URL" in secret_inputs
+        mock_store.ensure_ready.assert_called_once_with(required_secret_names={"api_key", "db_url"})
 
     def test_memory_stack_uses_embedding_secret_when_runtime_config_has_no_key(self) -> None:
         from gobby.runner_init import services

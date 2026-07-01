@@ -131,8 +131,11 @@ class LocalMachineManager:
 
     def get(self, machine_id: str) -> Machine | None:
         """Return a machine by id."""
+        normalized_id = normalize_machine_id(machine_id)
+        if normalized_id is None:
+            return None
         row = self.db.fetchone(
             "SELECT * FROM machines WHERE machine_id = %s",
-            (machine_id,),
+            (normalized_id,),
         )
         return Machine.from_row(row) if row else None

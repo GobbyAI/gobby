@@ -377,6 +377,35 @@ class TestInstallEmbeddingOverrides:
         # Setup IS called when running on the bundled defaults.
         mock_setup.assert_called_once()
 
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1024)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_catalog_model_override_probes_effective_model_dim(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            catalog_key="nomic-v1.5-f16",
+            model_override="custom-embedding-model",
+        )
+
+        assert result["success"] is True
+        assert result["model"] == "custom-embedding-model"
+        assert result["dim"] == 1024
+        mock_setup.assert_not_called()
+        mock_probe.assert_called_once_with(
+            model="custom-embedding-model",
+            api_base="http://localhost:1234/v1",
+            api_key=None,
+        )
+        assert mock_health.call_args.kwargs["expected_dim"] == 1024
+        assert mock_persist.call_args.kwargs["dim"] == 1024
+
 
 class TestProbeEmbeddingDim:
     """Dim probe error boundaries."""
@@ -475,6 +504,37 @@ class TestSetupLMStudio:
         result = _setup_lmstudio()
         assert result["success"] is True
         assert mock_run.call_count == 5
+
+    @patch("gobby.cli.installers.embedding.subprocess.run")
+    @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")
+    def test_catalog_setup_requires_exact_gguf_on_disk(
+        self, mock_which: MagicMock, mock_run: MagicMock
+    ) -> None:
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stderr="", stdout="running"),
+            MagicMock(returncode=0, stderr="", stdout="(empty)"),
+            MagicMock(returncode=0, stderr="", stdout="nomic-embed-text-v1.5  Local"),
+            MagicMock(returncode=0, stderr="", stdout="Downloaded"),
+            MagicMock(returncode=0, stderr="", stdout="Loaded"),
+        ]
+
+        result = _setup_lmstudio(
+            model_id="text-embedding-nomic-embed-text-v1.5@q8",
+            gguf_repo="nomic-ai/nomic-embed-text-v1.5-GGUF",
+            gguf_filename="nomic-embed-text-v1.5.q8_0.gguf",
+            search_keyword="nomic-embed-text-v1.5.q8_0.gguf",
+        )
+
+        assert result["success"] is True
+        assert mock_run.call_count == 5
+        assert mock_run.call_args_list[3].args[0] == [
+            "lms",
+            "get",
+            "nomic-ai/nomic-embed-text-v1.5-GGUF",
+            "--gguf",
+            "nomic-embed-text-v1.5.q8_0.gguf",
+            "-y",
+        ]
 
     @patch("gobby.cli.installers.embedding.subprocess.run")
     @patch("gobby.cli.installers.embedding.shutil.which", return_value="/usr/bin/lms")

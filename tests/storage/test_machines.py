@@ -67,6 +67,14 @@ class TestLocalMachineManager:
 
         assert _count_machines(temp_db) == 0
 
+    def test_get_normalizes_and_rejects_placeholder_ids(self, temp_db) -> None:
+        manager = LocalMachineManager(temp_db)
+        manager.upsert_seen("machine-a")
+
+        assert manager.get(" machine-a ") is not None
+        assert manager.get("unknown-machine") is None
+        assert manager.get("legacy-missing:00000000-0000-0000-0000-000000000000") is None
+
 
 def test_session_registration_upserts_machine(
     session_manager: SessionManager, sample_project

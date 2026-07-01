@@ -36,6 +36,7 @@ from gobby.ai.text_generation import (
     build_daemon_text_generation_service,
 )
 from gobby.ai.tool_chat import (
+    ToolChatAdapter,
     ToolChatRequest,
     ToolChatResult,
     ToolChatService,
@@ -81,6 +82,7 @@ __all__ = [
     "TextGenerateAdapter",
     "TextGenerationRequest",
     "TextGenerationService",
+    "ToolChatAdapter",
     "ToolChatRequest",
     "ToolChatResult",
     "ToolChatService",

@@ -84,6 +84,8 @@ def switch(
                 raise click.exceptions.Exit(1)
             _switch_start(store, db, catalog_key, provider)
 
+    except click.exceptions.Exit:
+        raise
     except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
         logger.error("Failed to run embeddings switch: %s", exc, exc_info=True)
         click.echo(f"Error: {exc}", err=True)

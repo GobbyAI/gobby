@@ -22,26 +22,41 @@ from gobby.cli.install import (
     _is_qwen_cli_installed,
     uninstall,
 )
-from gobby.storage.secrets import POSTURE_SCRYPT_PASSPHRASE, SECRET_KEK_PASSPHRASE_ENV
+from gobby.storage.secrets import (
+    POSTURE_KEY_FILE,
+    POSTURE_SCRYPT_PASSPHRASE,
+    SECRET_KEK_PASSPHRASE_ENV,
+)
 
 pytestmark = pytest.mark.unit
 
 
 class _SecretKekStore:
-    def __init__(self) -> None:
+    def __init__(self, posture: str = POSTURE_KEY_FILE) -> None:
         self.calls: list[tuple[str, str | None]] = []
+        self.posture = posture
+        self.kek_passphrase: str | None = None
+
+    def current_kek_posture(self) -> str:
+        return self.posture
 
     def set_kek_posture(self, posture: str, *, passphrase: str | None = None) -> None:
         self.calls.append((posture, passphrase))
+        self.posture = posture
 
 
 class TestSecretKekPostureInstall:
-    def test_key_file_posture_is_noop(self) -> None:
-        store = _SecretKekStore()
+    def test_key_file_posture_rewraps_existing_passphrase_store(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = _SecretKekStore(POSTURE_SCRYPT_PASSPHRASE)
+        monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "current horse")
 
         _configure_secret_kek_posture(store, "key-file", no_interactive=True)
 
-        assert store.calls == []
+        assert store.kek_passphrase == "current horse"
+        assert store.calls == [(POSTURE_KEY_FILE, None)]
 
     def test_passphrase_posture_uses_env_in_non_interactive(
         self,

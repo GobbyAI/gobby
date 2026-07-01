@@ -121,7 +121,11 @@ def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
     ``ValueError`` when no non-empty user/assistant content is present.
     """
     system_parts = [m.content for m in messages if m.role == "system" and m.content.strip()]
-    prompt_parts = [m.content for m in messages if m.role != "system" and m.content.strip()]
+    prompt_parts = [
+        f"{m.role.capitalize()}:\n{m.content}"
+        for m in messages
+        if m.role != "system" and m.content.strip()
+    ]
     user_prompt = "\n\n".join(prompt_parts)
     if not user_prompt.strip():
         raise ValueError(
@@ -129,6 +133,15 @@ def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
         )
     system_prompt = "\n\n".join(system_parts) or None
     return system_prompt, user_prompt
+
+
+def _finish_reason_from_stop_reason(stop_reason: str | None) -> str:
+    if stop_reason in (None, "", "completed", "stop"):
+        return "stop"
+    if stop_reason in {"max_turns", "max_tool_calls"}:
+        return "length"
+    assert stop_reason is not None
+    return stop_reason
 
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
@@ -229,7 +242,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": result.text},
-                        "finish_reason": "stop",
+                        "finish_reason": _finish_reason_from_stop_reason(result.stop_reason),
                     }
                 ],
                 "model": result.model,

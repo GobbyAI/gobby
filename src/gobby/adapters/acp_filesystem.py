@@ -159,8 +159,7 @@ def _root_path_from_value(value: str) -> Path | None:
 
 
 def _reject_git_path(resolved: ACPResolvedPath) -> None:
-    relative_parts = resolved.path.relative_to(resolved.root).parts
-    if ".git" in relative_parts:
+    if ".git" in resolved.path.parts:
         raise ACPFileSystemError("access to .git paths is not allowed")
 
 
