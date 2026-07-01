@@ -41,6 +41,10 @@ Daemon logs are in `~/.gobby/logs/`.
 
 Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning includes organizing work, not just designing it.
 
+## Design Context
+
+All design / UI / color / typography work — across every Gobby surface (product UI in `./web/`, the gobby.ai marketing site, Gobby Pro, installer, CLI/TUI) — must read `.impeccable.md` at the project root before producing output. It defines the design system, deutan-safe color constraints, WCAG 2.2 AA target, aesthetic references, and per-surface variation rules. Update via the `impeccable` skill's `teach` mode rather than freehand edits.
+
 ## Project Overview
 
 A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Gemini, and QwenCode. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
@@ -54,10 +58,23 @@ A local-first daemon to unify your AI coding tools. Session tracking and handoff
 - **Agent spawning** with P2P messaging, command coordination, and worktree isolation
 - **Memory system** for persistent facts across sessions
 
+## Rust Workspace
+
+The former `~/Projects/gobby-cli` Rust workspace now lives in this repo under `crates/`, with the root Cargo workspace in `Cargo.toml`.
+
+- `crates/gcode` provides the `gcode` binary and `gobby-code` package.
+- `crates/gcore` provides the shared `gobby-core` library.
+- `crates/ghook` provides the `ghook` binary and `gobby-hooks` package.
+- `crates/gwiki` provides the `gwiki` binary and `gobby-wiki` package.
+
+Treat `~/Projects/gobby-cli`, `deps/gobby-cli`, and `GobbyAI/gobby-cli` as historical references only. New Rust helper work, schema mirrors, code-index/wiki changes, and release freshness checks belong in `~/Projects/gobby` and should prefer `GobbyAI/gobby` releases. Use the old repository only as a temporary fallback for pre-migration release assets until the retirement checklist is complete.
+
+Python remains the authoritative daemon implementation until a boundary explicitly passes Rust migration parity, observability, and rollback gates. Rust changes in `crates/` must preserve existing `gcode`, `ghook`, and `gwiki` behavior while shared foundations move into `gobby-core`.
+
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Core code lives in `src/gobby/`. Key areas include `cli/` for Click commands, `servers/` for HTTP/WebSocket endpoints, `mcp_proxy/` and `tools/` for tool execution, `sessions/`, `tasks/`, `workflows/`, `agents/`, `worktrees/`, `memory/`, and `storage/`. Tests live under `tests/`, usually grouped by module (`tests/tasks/`, `tests/workflows/`, `tests/memory/`). Project metadata and synced task state live in `.gobby/`.
+Core Python code lives in `src/gobby/`. Key areas include `cli/` for Click commands, `servers/` for HTTP/WebSocket endpoints, `mcp_proxy/` and `tools/` for tool execution, `sessions/`, `tasks/`, `workflows/`, `agents/`, `worktrees/`, `memory/`, and `storage/`. Rust helper crates live in `crates/` and are part of the root Cargo workspace. Tests live under `tests/`, usually grouped by module (`tests/tasks/`, `tests/workflows/`, `tests/memory/`). Project metadata and synced task state live in `.gobby/`.
 
 ## Build, Test, and Development Commands
 Use `uv` for local development.
@@ -70,6 +87,8 @@ Use `uv` for local development.
 - `uv run mypy src/`: run strict type checking.
 - `uv run pytest tests/tasks/test_validation.py -v`: run a focused test file.
 - `uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing`: run a module with coverage.
+- `cargo test --workspace`: run Rust workspace tests from the repo root.
+- `cargo clippy --workspace --all-targets`: lint Rust workspace crates.
 
 ## Coding Style & Naming Conventions
 Follow Python 3.13 conventions with full type hints and `async`/`await` for I/O-heavy paths. Use 4-space indentation and keep lines within Ruff’s 100-character limit. Modules and functions use `snake_case`; classes use `PascalCase`; test files follow `test_*.py`. Prefer small, focused modules in existing package boundaries rather than new top-level directories.
