@@ -290,6 +290,22 @@ class TestNormalizeNativeTitle:
     def test_accepts_clean_title(self) -> None:
         assert normalize_native_title("Fix authentication bug") == "Fix authentication bug"
 
+    def test_claude_native_title_replaces_slug_dashes(self) -> None:
+        assert (
+            normalize_native_title(
+                "check-gobby-logs-for-tmux-warnings",
+                source="claude",
+            )
+            == "check gobby logs for tmux warnings"
+        )
+        assert (
+            normalize_native_title(
+                "check-gobby-logs-for-tmux-warnings",
+                source="droid",
+            )
+            == "check-gobby-logs-for-tmux-warnings"
+        )
+
     def test_rejects_new_session_placeholder(self) -> None:
         assert normalize_native_title("New Session") is None
         assert normalize_native_title("new session") is None

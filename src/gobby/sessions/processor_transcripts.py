@@ -44,8 +44,14 @@ class ProcessorTranscriptMixin:
                 session = self.session_manager.get(session_id)
                 if session is not None and _can_replace_with_native_title(session):
                     # Use the last title message (latest ai-title update wins).
-                    raw_title = title_msgs[-1].content
-                    title = normalize_native_title(raw_title)
+                    title_msg = title_msgs[-1]
+                    raw_title = title_msg.content
+                    source = title_msg.source
+                    if source is None:
+                        parser = self._parsers.get(session_id)
+                        parser_source = getattr(parser, "cli_name", None)
+                        source = parser_source if isinstance(parser_source, str) else None
+                    title = normalize_native_title(raw_title, source=source)
                     if title:
                         self.session_manager.update_title(
                             session_id,

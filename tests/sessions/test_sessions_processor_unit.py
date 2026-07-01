@@ -1647,7 +1647,13 @@ class TestExtractNativeTitles:
     """Tests for _extract_native_titles — intercepts session_title messages
     before stats/render, updates the session title, and returns non-title msgs."""
 
-    def _make_title_msg(self, content: str, index: int = 0) -> ParsedMessage:
+    def _make_title_msg(
+        self,
+        content: str,
+        index: int = 0,
+        *,
+        source: str | None = None,
+    ) -> ParsedMessage:
         return ParsedMessage(
             index=index,
             role="system",
@@ -1658,6 +1664,7 @@ class TestExtractNativeTitles:
             tool_result=None,
             timestamp=datetime.now(),
             raw_json={},
+            source=source,
         )
 
     def _make_text_msg(self, content: str, index: int = 1) -> ParsedMessage:
@@ -1692,6 +1699,28 @@ class TestExtractNativeTitles:
         assert result[0].content_type == "text"
         session_manager.update_title.assert_called_once_with(
             "sid", "Fix auth bug", title_source="native"
+        )
+
+    def test_claude_title_slug_dashes_become_spaces(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = ""
+        session.title_source = ""
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+
+        messages = [
+            self._make_title_msg(
+                "check-gobby-logs-for-tmux-warnings",
+                source="claude",
+            )
+        ]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert result == []
+        session_manager.update_title.assert_called_once_with(
+            "sid", "check gobby logs for tmux warnings", title_source="native"
         )
 
     def test_skips_when_session_manager_is_none(self, mock_db) -> None:

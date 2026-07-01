@@ -306,7 +306,12 @@ def normalize_title_candidate(value: Any) -> str | None:
     return title
 
 
-def normalize_native_title(value: Any) -> str | None:
+def _normalize_claude_native_title(title: str) -> str:
+    """Normalize Claude ai-title slugs into readable titles."""
+    return re.sub(r"\s+", " ", title.replace("-", " ")).strip()
+
+
+def normalize_native_title(value: Any, *, source: str | None = None) -> str | None:
     """Validate and normalize a CLI-native session title (Claude ai-title, Droid sessionTitle).
 
     Native titles are AI-synthesized by the CLI itself, but quality varies:
@@ -330,6 +335,10 @@ def normalize_native_title(value: Any) -> str | None:
         return None
     if is_template_placeholder(title):
         return None
+    if source == "claude":
+        title = _normalize_claude_native_title(title)
+        if not title:
+            return None
     return _truncate_title(title)
 
 
