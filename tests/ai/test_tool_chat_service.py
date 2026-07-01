@@ -209,9 +209,10 @@ def test_builder_threads_generation_timeouts_into_tool_chat_service() -> None:
             generation=GenerationConfig(
                 candidate_timeout_seconds=33.0,
                 cli_candidate_timeout_seconds=99.0,
+                timeout_seconds=600.0,
             )
         ),
     )
     service = build_daemon_tool_chat_service(config)
     assert service._candidate_timeout_seconds == 33.0
-    assert service._cli_candidate_timeout_seconds == 99.0
+    assert service._cli_candidate_timeout_seconds == 600.0

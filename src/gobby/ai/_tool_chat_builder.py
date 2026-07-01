@@ -46,7 +46,7 @@ def build_daemon_tool_chat_service(
         adapter_factories=_daemon_tool_chat_adapter_factories(config),
         profile_defaults=config.ai.generation.profile_defaults,
         candidate_timeout_seconds=config.ai.generation.candidate_timeout_seconds,
-        cli_candidate_timeout_seconds=config.ai.generation.cli_candidate_timeout_seconds,
+        cli_candidate_timeout_seconds=config.ai.generation.timeout_seconds,
     )
 
 
@@ -63,8 +63,12 @@ def _daemon_tool_chat_adapter_factories(
         AIAdapterStyle.LOCAL: lambda: OpenAICompatibleToolChatAdapter(
             client_factory=_local_client_factory(config)
         ),
-        AIAdapterStyle.DAEMON: lambda: CodexSpawnToolChatAdapter(),
-        AIAdapterStyle.CLI: lambda: DroidSpawnToolChatAdapter(),
+        AIAdapterStyle.DAEMON: lambda: CodexSpawnToolChatAdapter(
+            timeout_seconds=config.ai.generation.timeout_seconds,
+        ),
+        AIAdapterStyle.CLI: lambda: DroidSpawnToolChatAdapter(
+            timeout_seconds=config.ai.generation.timeout_seconds,
+        ),
         AIAdapterStyle.ACP: lambda: ACPSpawnToolChatAdapter(config),
     }
 
