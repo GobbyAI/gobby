@@ -29,7 +29,7 @@ def resolve_daemon_url(
 ) -> str:
     """Resolve the daemon dial URL from env overrides and bootstrap.yaml.
 
-    Resolution order mirrors gobby-cli's daemon_url.rs contract, with the
+    Resolution order mirrors the Rust daemon_url.rs contract, with the
     Python-only bootstrap daemon_url field inserted before bind_host/port.
     """
     environ = os.environ if env is None else env

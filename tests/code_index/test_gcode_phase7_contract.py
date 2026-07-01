@@ -21,6 +21,7 @@ def _gobby_cli_repo() -> Path:
         candidates.append(Path(env_path))
     candidates.extend(
         [
+            ROOT,
             ROOT.parent / "gobby-cli",
             Path.home() / "Projects" / "gobby-cli",
         ]
@@ -31,7 +32,7 @@ def _gobby_cli_repo() -> Path:
             return candidate
 
     pytest.skip(
-        "Phase 7 contract tests require a gobby-cli checkout. Set GOBBY_CLI_REPO to the repo root."
+        "Phase 7 contract tests require the Rust workspace. Set GOBBY_CLI_REPO to a fallback repo root."
     )
 
 

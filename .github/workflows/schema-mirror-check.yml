@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/schema-mirror-check.yml"
       - "schemas/**"
+      - "crates/ghook/schemas/**"
   workflow_dispatch:
 
 permissions:
@@ -17,37 +18,18 @@ jobs:
       - name: Check Out Repo
         uses: actions/checkout@v4
 
-      - name: Validate SOURCE_COMMIT
-        run: |
-          set -euo pipefail
-          source_commit="$(tr -d '\n' < schemas/SOURCE_COMMIT)"
-          if ! printf '%s' "$source_commit" | grep -Eq '^[0-9a-fA-F]{40}$'; then
-            echo "schemas/SOURCE_COMMIT must contain a bare 40-character hex SHA"
-            exit 1
-          fi
-          echo "SOURCE_COMMIT=$source_commit" >> "$GITHUB_ENV"
-
       - name: Compare Mirrored Schemas
         run: |
           set -euo pipefail
-          base_url="https://raw.githubusercontent.com/GobbyAI/gobby-cli/${SOURCE_COMMIT}/crates/ghook/schemas"
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
 
-          for file in inbox-envelope.v1.schema.json diagnose-output.v1.schema.json diagnose-output.v2.schema.json; do
-            url="${base_url}/${file}"
-            if ! curl_error="$(curl -fSL --show-error "$url" -o "${tmp_dir}/${file}" 2>&1)"; then
-              echo "Failed to fetch ${url}: ${curl_error}"
-              exit 1
-            fi
-
+          for file in inbox-envelope.v1.schema.json diagnose-output.v2.schema.json; do
             local_sha="$(sha256sum "schemas/${file}" | awk '{print $1}')"
-            remote_sha="$(sha256sum "${tmp_dir}/${file}" | awk '{print $1}')"
+            source_sha="$(sha256sum "crates/ghook/schemas/${file}" | awk '{print $1}')"
 
-            if [[ "$local_sha" != "$remote_sha" ]]; then
+            if [[ "$local_sha" != "$source_sha" ]]; then
               echo "Schema mirror drift detected for ${file}"
               echo "  local:  ${local_sha}"
-              echo "  remote: ${remote_sha}"
+              echo "  source: ${source_sha}"
               exit 1
             fi
           done

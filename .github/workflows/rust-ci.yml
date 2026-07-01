@@ -1,10 +1,33 @@
-name: CI
+name: Rust CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "0.5.0"]
+    paths:
+      - ".config/nextest.toml"
+      - ".github/workflows/rust-ci.yml"
+      - ".github/workflows/release-gcode.yml"
+      - ".github/workflows/release-gcore.yml"
+      - ".github/workflows/release-ghook.yml"
+      - ".github/workflows/release-gwiki.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
   pull_request:
     branches: [main]
+    paths:
+      - ".config/nextest.toml"
+      - ".github/workflows/rust-ci.yml"
+      - ".github/workflows/release-gcode.yml"
+      - ".github/workflows/release-gcore.yml"
+      - ".github/workflows/release-ghook.yml"
+      - ".github/workflows/release-gwiki.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

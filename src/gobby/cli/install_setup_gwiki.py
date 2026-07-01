@@ -81,26 +81,27 @@ def install_gwiki_from_github(
 
 
 def install_gwiki_from_submodule(module: Any, bin_dir: Path) -> bool:
-    """Build gwiki from deps/gobby-cli submodule when available."""
+    """Build gwiki from the local Rust workspace when available."""
     if not module.shutil.which("cargo"):
         return False
 
     search = Path(__file__).resolve().parent
     for _ in range(10):
-        manifest = search / "deps" / "gobby-cli" / "Cargo.toml"
-        if manifest.exists():
+        manifest = search / "Cargo.toml"
+        crate_manifest = search / "crates" / "gwiki" / "Cargo.toml"
+        if manifest.exists() and crate_manifest.exists():
             break
         search = search.parent
     else:
         module.logger.debug(
-            "gwiki submodule not found after searching %d parents from %s",
+            "gwiki workspace not found after searching %d parents from %s",
             10,
             Path(__file__).resolve().parent,
         )
         return False
 
     try:
-        module.click.echo("  Building gwiki from submodule (this may take 30-60 seconds)...")
+        module.click.echo("  Building gwiki from local workspace (this may take 30-60 seconds)...")
         result = module.subprocess.run(
             [
                 "cargo",
@@ -129,7 +130,7 @@ def install_gwiki_from_submodule(module: Any, bin_dir: Path) -> bool:
         dest.chmod(0o755)
         return True
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
-        module.logger.warning("gwiki: submodule build failed: %s", e)
+        module.logger.warning("gwiki: local workspace build failed: %s", e)
         return False
 
 
@@ -153,7 +154,7 @@ def install_gwiki_from_cargo_git(module: Any, bin_dir: Path, version: str | None
                 "cargo",
                 "install",
                 "--git",
-                "https://github.com/GobbyAI/gobby-cli",
+                "https://github.com/GobbyAI/gobby",
                 "--tag",
                 tag,
                 "-p",
@@ -255,7 +256,7 @@ def install_gwiki(module: Any, force: bool = False) -> dict[str, Any]:
     method = None
 
     if module._install_gwiki_from_submodule(bin_dir):
-        method = "submodule"
+        method = "workspace"
     elif module._install_gwiki_from_github(bin_dir, target, target_version):
         method = "github"
     elif module._install_gwiki_from_cargo_binstall(bin_dir, target_version):

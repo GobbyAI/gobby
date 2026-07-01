@@ -141,7 +141,7 @@ jobs:
                 tag: $tag,
                 version: $version,
                 gobby_repo: "GobbyAI/gobby",
-                helper_repo: "GobbyAI/gobby-cli"
+                helper_repo: "GobbyAI/gobby"
               }
             }')
           api_response=$(printf '%s' "$payload" | gh api repos/GobbyAI/homebrew-tap/dispatches \

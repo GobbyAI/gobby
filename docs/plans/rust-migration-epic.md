@@ -9,7 +9,7 @@ phases, gates, and backlog-ready atomic work items.
 This is not a monolithic rewrite. It is an incremental strangler migration for
 a live Python daemon:
 
-- Rust migration code lives in `~/Projects/gobby-cli`
+- Rust migration code lives in `~/Projects/gobby/crates`
 - Python in `~/Projects/gobby` remains the behavioral reference until explicit
   cutover
 - Traffic shifts by route family or boundary, not by big-bang daemon swap
@@ -20,19 +20,21 @@ a live Python daemon:
 ## Current State
 
 - `~/Projects/gobby` is the product repo and current source of truth
-- `~/Projects/gobby-cli` is the long-lived Rust workspace and already contains
-  `gcode`, `retired-compressor`, and `retired-local-launcher`
+- `~/Projects/gobby/crates` is the long-lived Rust workspace and contains
+  `gcode`, `ghook`, `gwiki`, and `gobby-core`
+- `~/Projects/gobby-cli` is historical after the Rust workspace merge and
+  remains available only as a temporary release-history fallback until
+  explicitly retired
 - Python owns the live daemon, schema policy, fixtures, and rollout control
-- Rust does not yet have a shared `gobby-core` crate or a `gobby-daemon` crate
+- Rust does not yet have a `gobby-daemon` crate
 
 ## Non-Negotiable Decisions
 
 ### Repo Ownership
 
 - `~/Projects/gobby` owns current behavior, compatibility fixtures, rollout
-  gates, and the authoritative Python implementation
-- `~/Projects/gobby-cli` owns Rust crates, binaries, shared extractions, and
-  replacement implementations
+  gates, the authoritative Python implementation, Rust crates, helper
+  binaries, shared extractions, and replacement implementations
 
 ### Migration Shape
 
@@ -45,8 +47,8 @@ a live Python daemon:
 ### Branching
 
 - No long-lived Rust migration branch in `gobby`
-- Migration work lands continuously in the mainline of each repo
-- Cross-repo behavior is stabilized with fixtures and parity checks, not with a
+- Migration work lands continuously in the `gobby` mainline
+- Python/Rust behavior is stabilized with fixtures and parity checks, not with a
   giant integration branch
 
 ### Authority and Cutover
@@ -112,7 +114,7 @@ The following boundaries are explicitly deferred until later phases:
 
 ## Repository Contracts
 
-### Python Repo Responsibilities
+### Python Responsibilities
 
 - Define the behavioral contract for each migrated boundary
 - Own the canonical schema and migration policy until final cutover
@@ -123,8 +125,9 @@ The following boundaries are explicitly deferred until later phases:
 
 ### Rust Workspace Responsibilities
 
-- Add shared crates and replacement binaries in `gobby-cli`
-- Preserve `gcode`, `retired-compressor`, and `retired-local-launcher` behavior while foundations are extracted
+- Add shared crates and replacement binaries in `crates/`
+- Preserve `gcode`, `ghook`, and `gwiki` behavior while foundations are
+  extracted
 - Implement Rust replacements against Python-owned fixtures
 - Run side-by-side with Python on alternate ports and processes
 
@@ -160,7 +163,7 @@ The following boundaries are explicitly deferred until later phases:
 
 - Phase 0 freezes contracts and builds the fixture corpus
 - Phase 1 adds Python-side compare and delegation plumbing
-- Phase 2 extracts shared Rust foundations in `gobby-cli`
+- Phase 2 extracts shared Rust foundations in `crates/`
 - Phase 3 migrates low-risk read-only boundaries
 - Phase 4 migrates the first DB-backed task read boundary
 - Phase 5 migrates reduced session reads
@@ -243,17 +246,17 @@ families to a Rust sidecar without surrendering authority.
 - Mismatches are observable
 - Route-scoped rollback is immediate and tested
 
-## Phase 2: `gobby-cli` Foundation Extraction
+## Phase 2: `crates/` Foundation Extraction
 
 **Goal:** Turn the existing Rust utilities into a reusable foundation for the
 daemon migration without destabilizing them.
 
 ### Scope
 
-- Add `gobby-core` to `gobby-cli`
+- Continue extracting shared foundations into `gobby-core`
 - Extract only the shared seams required by current crates or near-term daemon
   work
-- Keep `gcode`, `retired-compressor`, and `retired-local-launcher` healthy while extractions land
+- Keep `gcode`, `ghook`, and `gwiki` healthy while extractions land
 
 ### Non-goals
 
@@ -263,7 +266,7 @@ daemon migration without destabilizing them.
 
 ### Backlog-Ready Atomic Items
 
-- `R2-01` Scaffold the `gobby-core` crate
+- `R2-01` Confirm the `gobby-core` crate scaffold and ownership metadata
 - `R2-02` Extract bootstrap resolution into `gobby-core`
 - `R2-03` Extract daemon URL resolution into `gobby-core`
 - `R2-04` Extract project root helpers into `gobby-core`
@@ -271,12 +274,15 @@ daemon migration without destabilizing them.
 - `R2-06` Extract daemon HTTP client utilities into `gobby-core`
 - `R2-07` Extract PostgreSQL connection helpers into `gobby-core`
 - `R2-08` Migrate `gcode` to the extracted `gobby-core` helpers
-- `R2-09` Migrate `retired-compressor` to the extracted `gobby-core` helpers
-- `R2-10` Verify `gcode` and `retired-compressor` test coverage stays green after extraction
+- `R2-09` Migrate `ghook` and `gwiki` to extracted `gobby-core` helpers where
+  they duplicate shared behavior
+- `R2-10` Verify `gcode`, `ghook`, and `gwiki` test coverage stays green after
+  extraction
 
 ### Exit Criteria
 
-- `gcode` and `retired-compressor` use `gobby-core` for shared concerns
+- `gcode`, `ghook`, and `gwiki` use `gobby-core` for shared concerns where
+  appropriate
 - Existing Rust utility behavior is preserved
 - The extracted APIs are sufficient to bootstrap `gobby-daemon`
 
@@ -287,7 +293,7 @@ read-only boundaries first.
 
 ### Scope
 
-- Add `gobby-daemon` to `gobby-cli`
+- Add `gobby-daemon` to `crates/`
 - Run it on an alternate internal port
 - Implement the first low-risk read-only surfaces
 - Wire compare mode and opt-in delegation per route
@@ -467,7 +473,7 @@ migrated surface while preserving a real fallback window.
 ## First-Wave Non-Goals
 
 - No long-lived Rust branch in `gobby`
-- No monolithic rewrite in a new repo unrelated to `gobby-cli`
+- No monolithic rewrite outside this repo's `crates/` workspace
 - No storage-first replacement of the Python daemon
 - No simultaneous rewrite of all CLI commands
 - No large workflow, agent, or pipeline redesign before parity
@@ -482,7 +488,8 @@ Every migrated boundary must satisfy all of the following before cutover:
 - Side-by-side execution on separate ports and processes
 - Route-scoped rollback without a release rollback
 - Observability strong enough to detect mismatches quickly
-- Regression protection for `gcode` and `retired-compressor` after shared extraction
+- Regression protection for `gcode`, `ghook`, and `gwiki` after shared
+  extraction
 
 At minimum, the migration test corpus must cover:
 
@@ -496,7 +503,10 @@ At minimum, the migration test corpus must cover:
 ## Assumptions
 
 - `0.4.0` is a launch hardening phase, not a new feature wave
-- `gobby-cli` is the long-lived Rust home for migration work
+- `gobby/crates` is the long-lived Rust home for migration work
+- `gobby-cli` is retained only until the repo-retirement checklist confirms no
+  release, index, memory, review-learning, or documentation dependency still
+  points at it
 - The old `rust-port` docs remain historical notes, not active plans
 - Shared Rust extraction should be driven by current code in `gcode` and
-  `retired-compressor`, not by stale estimates
+  the helper crates, not by stale estimates

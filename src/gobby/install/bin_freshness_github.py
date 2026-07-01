@@ -17,7 +17,7 @@ from gobby.install.bin_freshness_models import (
     parse_version_tuple,
 )
 
-_RELEASES_URL = "https://api.github.com/repos/GobbyAI/gobby-cli/releases?per_page=100"
+_HELPER_RELEASE_REPOSITORIES = ("GobbyAI/gobby", "GobbyAI/gobby-cli")
 _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
     ("darwin", "arm64"): "aarch64-apple-darwin",
     ("darwin", "aarch64"): "aarch64-apple-darwin",
@@ -74,8 +74,12 @@ class GithubReleaseClient:
 
     def fetch_releases(self) -> list[dict[str, Any]]:
         """Fetch release metadata from GitHub."""
+        return self._fetch_releases(_HELPER_RELEASE_REPOSITORIES[0])
+
+    def _fetch_releases(self, repository: str) -> list[dict[str, Any]]:
+        """Fetch release metadata from a helper release repository."""
         req = Request(
-            _RELEASES_URL,
+            f"https://api.github.com/repos/{repository}/releases?per_page=100",
             headers={
                 "User-Agent": "gobby-daemon-bin-updater/1.0",
                 "Accept": "application/vnd.github+json",
@@ -92,7 +96,33 @@ class GithubReleaseClient:
 
     def resolve_latest_asset(self, spec: ManagedBinSpec, *, target: str) -> ReleaseAsset:
         """Resolve the newest stable release asset matching ``spec`` and ``target``."""
-        release = self._resolve_latest_release(spec)
+        errors: list[str] = []
+        for repository in _HELPER_RELEASE_REPOSITORIES:
+            try:
+                release = self._resolve_latest_release_from(
+                    spec,
+                    self._fetch_releases(repository),
+                )
+                if release is None:
+                    continue
+                return self._release_asset_from_release(spec, target=target, release=release)
+            except (GithubAPIError, SourceUnavailableError) as exc:
+                errors.append(f"{repository}: {exc}")
+                continue
+
+        detail = f" ({'; '.join(errors)})" if errors else ""
+        raise SourceUnavailableError(
+            f"no stable release asset found for tag prefix {spec.tag_prefix!r}{detail}"
+        )
+
+    def _release_asset_from_release(
+        self,
+        spec: ManagedBinSpec,
+        *,
+        target: str,
+        release: dict[str, Any],
+    ) -> ReleaseAsset:
+        """Extract the expected platform asset from one GitHub release."""
         tag_name = release.get("tag_name")
         if not isinstance(tag_name, str):
             raise SourceUnavailableError(f"{spec.name}: release is missing tag_name")
@@ -127,9 +157,13 @@ class GithubReleaseClient:
             raise GithubAPIError("GitHub asset download returned an unexpected payload")
         return payload
 
-    def _resolve_latest_release(self, spec: ManagedBinSpec) -> dict[str, Any]:
+    def _resolve_latest_release_from(
+        self,
+        spec: ManagedBinSpec,
+        releases: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
         stable_matches: list[tuple[tuple[int, ...] | None, str, dict[str, Any]]] = []
-        for release in self.fetch_releases():
+        for release in releases:
             if release.get("draft") or release.get("prerelease"):
                 continue
             tag_name = release.get("tag_name")
@@ -141,9 +175,7 @@ class GithubReleaseClient:
                 (parse_version_tuple(tag_name[len(spec.tag_prefix) :]), published_sort, release)
             )
         if not stable_matches:
-            raise SourceUnavailableError(
-                f"no stable release found for tag prefix {spec.tag_prefix!r}"
-            )
+            return None
         semver_matches = [match for match in stable_matches if match[0] is not None]
         if semver_matches:
             return max(semver_matches, key=lambda item: (item[0] or (), item[1]))[2]

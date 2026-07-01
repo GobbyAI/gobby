@@ -7,7 +7,7 @@ import tarfile
 from http.client import IncompleteRead
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 import pytest
 
@@ -102,6 +102,25 @@ class _IncompleteReadResponse:
 
     def read(self) -> bytes:
         raise IncompleteRead(b"partial", 1)
+
+
+class _JsonResponse:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
 
 
 def _asset(spec: ManagedBinSpec, version: str = "0.4.1") -> ReleaseAsset:
@@ -502,3 +521,58 @@ class TestGithubReleaseClient:
             client.download_asset(_asset(_spec()))
 
         assert isinstance(exc_info.value.__cause__, IncompleteRead)
+
+    def test_resolve_latest_asset_falls_back_when_primary_asset_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = _spec()
+        target = "aarch64-apple-darwin"
+        expected_asset = f"{spec.name}-{target}.tar.gz"
+        calls: list[str] = []
+
+        def fake_urlopen(req: Any, **_kwargs: Any) -> _JsonResponse:
+            calls.append(req.full_url)
+            if "/repos/GobbyAI/gobby/" in req.full_url:
+                return _JsonResponse(
+                    [
+                        {
+                            "tag_name": "ghook-v0.4.3",
+                            "draft": False,
+                            "prerelease": False,
+                            "published_at": "2026-07-01T00:00:00Z",
+                            "assets": [],
+                        }
+                    ]
+                )
+            return _JsonResponse(
+                [
+                    {
+                        "tag_name": "ghook-v0.4.2",
+                        "draft": False,
+                        "prerelease": False,
+                        "published_at": "2026-06-30T00:00:00Z",
+                        "assets": [
+                            {
+                                "name": expected_asset,
+                                "browser_download_url": (
+                                    "https://github.com/GobbyAI/gobby-cli/releases/download/"
+                                    f"ghook-v0.4.2/{expected_asset}"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            )
+
+        monkeypatch.setattr("gobby.install.bin_freshness_github._urlopen_https", fake_urlopen)
+        client = GithubReleaseClient(timeout_seconds=1)
+
+        asset = client.resolve_latest_asset(spec, target=target)
+
+        assert asset.tag_name == "ghook-v0.4.2"
+        assert asset.asset_name == expected_asset
+        assert asset.asset_url.startswith("https://github.com/GobbyAI/gobby-cli/")
+        assert calls == [
+            "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
+            "https://api.github.com/repos/GobbyAI/gobby-cli/releases?per_page=100",
+        ]

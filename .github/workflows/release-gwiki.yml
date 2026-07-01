@@ -343,7 +343,7 @@ jobs:
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "gobby-wiki") | .version')"
           set +e
-          code="$(curl --fail --silent --show-error -A 'gobby-cli release workflow' -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/gobby-wiki/${version}")"
+          code="$(curl --fail --silent --show-error -A 'gobby release workflow' -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/gobby-wiki/${version}")"
           curl_status=$?
           set -e
           if [ "$code" = "200" ]; then
@@ -408,4 +408,4 @@ jobs:
             echo "::error::No gwiki release assets found." >&2
             exit 1
           fi
-          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag --latest=false

@@ -31,7 +31,10 @@ def _gobby_cli_repo() -> Path:
     configured = os.environ.get("GOBBY_CLI_REPO")
     if configured:
         return Path(configured)
-    return Path(__file__).resolve().parents[2] / "gobby-cli"
+    root = Path(__file__).resolve().parents[1]
+    if (root / "crates/gcode/Cargo.toml").exists():
+        return root
+    return root.parent / "gobby-cli"
 
 
 def _command(contract: dict[str, Any], name: str) -> dict[str, Any]:
@@ -411,7 +414,9 @@ def _real_cli_contract_sources(tool: str) -> list[tuple[str, dict[str, Any]]]:
 
     source_path = _gobby_cli_repo() / f"crates/{tool}/contract/{tool}.contract.json"
     if source_path.exists():
-        sources.append((f"gobby-cli source {source_path}", json.loads(source_path.read_text())))
+        sources.append(
+            (f"Rust workspace source {source_path}", json.loads(source_path.read_text()))
+        )
 
     binary = _installed_cli_binary(tool)
     if binary is not None:
@@ -420,7 +425,7 @@ def _real_cli_contract_sources(tool: str) -> list[tuple[str, dict[str, Any]]]:
     return sources
 
 
-def _has_gobby_cli_contract_checkout() -> bool:
+def _has_rust_workspace_contracts() -> bool:
     repo = _gobby_cli_repo()
     return all(
         (repo / f"crates/{tool}/contract/{tool}.contract.json").exists()
@@ -433,14 +438,14 @@ def _has_all_cli_binaries() -> bool:
 
 
 def _missing_external_cli_contract_sources() -> bool:
-    return not (_has_gobby_cli_contract_checkout() or _has_all_cli_binaries())
+    return not (_has_rust_workspace_contracts() or _has_all_cli_binaries())
 
 
 @pytest.mark.unit
 def test_real_cli_contract_sources_include_binary_when_source_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A sibling gobby-cli checkout must not skip installed binary verification."""
+    """A source contract must not skip installed binary verification."""
     tool = "gwiki"
     source_contract = {"tool": tool, "origin": "source"}
     binary_contract = {"tool": tool, "origin": "binary"}
@@ -469,7 +474,7 @@ def test_real_cli_contract_sources_include_binary_when_source_exists(
     sources = _real_cli_contract_sources(tool)
 
     assert sources == [
-        (f"gobby-cli source {source_path}", source_contract),
+        (f"Rust workspace source {source_path}", source_contract),
         (f"installed `{tool}` binary {binary}", binary_contract),
     ]
     assert calls == [(tool, binary)]
@@ -478,11 +483,11 @@ def test_real_cli_contract_sources_include_binary_when_source_exists(
 @pytest.mark.integration
 @pytest.mark.skipif(
     _missing_external_cli_contract_sources(),
-    reason="requires sibling gobby-cli checkout or installed gcode and gwiki binaries",
+    reason="requires Rust workspace contracts or installed gcode and gwiki binaries",
 )
 @pytest.mark.parametrize("tool", ["gcode", "gwiki"])
 def test_vendored_cli_contract_matches_real_cli(tool: str) -> None:
-    """The vendored contract must match the real gobby-cli contract.
+    """The vendored contract must match the real Rust CLI contract.
 
     Every available source is checked. A sibling checkout and an installed
     binary can catch different drift modes, so source presence must not skip

@@ -63,12 +63,14 @@ jobs:
               else
                 while IFS= read -r file; do
                   case "$file" in
-                    schemas/*)
+                    schemas/*|crates/ghook/schemas/*)
                       schemas_changed=true
                       ;;
                   esac
 
                   case "$file" in
+                    crates/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.config/nextest.toml|.github/workflows/rust-ci.yml|.github/workflows/release-gcode.yml|.github/workflows/release-ghook.yml|.github/workflows/release-gwiki.yml|.github/workflows/release-gcore.yml)
+                      ;;
                     *.md|docs/*|LICENSE*|.gobby/*|.github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/coderabbit.yaml)
                       ;;
                     *)
@@ -536,22 +538,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate SOURCE_COMMIT
-        run: |
-          set -euo pipefail
-          source_commit="$(tr -d '\n' < schemas/SOURCE_COMMIT)"
-          if ! printf '%s' "$source_commit" | grep -Eq '^[0-9a-fA-F]{40}$'; then
-            echo "schemas/SOURCE_COMMIT must contain a bare 40-character hex SHA"
-            exit 1
-          fi
-          echo "SOURCE_COMMIT=$source_commit" >> "$GITHUB_ENV"
-
       - name: Compare Mirrored Schemas
         run: |
           set -euo pipefail
-          base_url="https://raw.githubusercontent.com/GobbyAI/gobby-cli/${SOURCE_COMMIT}/crates/ghook/schemas"
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "$tmp_dir"' EXIT
 
           shopt -s nullglob
           schema_files=(schemas/*.schema.json)
@@ -562,19 +551,19 @@ jobs:
 
           for local_file in "${schema_files[@]}"; do
             file="$(basename "$local_file")"
-            url="${base_url}/${file}"
-            if ! curl_error="$(curl -fSL --show-error "$url" -o "${tmp_dir}/${file}" 2>&1)"; then
-              echo "Failed to fetch ${url}: ${curl_error}"
+            source_file="crates/ghook/schemas/${file}"
+            if [[ ! -f "$source_file" ]]; then
+              echo "Schema source missing for ${file}: ${source_file}"
               exit 1
             fi
 
             local_sha="$(sha256sum "$local_file" | awk '{print $1}')"
-            remote_sha="$(sha256sum "${tmp_dir}/${file}" | awk '{print $1}')"
+            source_sha="$(sha256sum "$source_file" | awk '{print $1}')"
 
-            if [[ "$local_sha" != "$remote_sha" ]]; then
+            if [[ "$local_sha" != "$source_sha" ]]; then
               echo "Schema mirror drift detected for ${file}"
               echo "  local:  ${local_sha}"
-              echo "  remote: ${remote_sha}"
+              echo "  source: ${source_sha}"
               exit 1
             fi
           done

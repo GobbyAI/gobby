@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 MANAGED_BIN_VERSION_PINS: dict[str, str] = {
-    # Floors track published GobbyAI/gobby-cli release tags.
-    "ghook": "0.6.2",
-    "gcode": "1.3.4",
-    "gwiki": "0.6.6",
+    # Floors track published helper release tags.
+    "ghook": "0.7.0",
+    "gcode": "1.4.0",
+    "gwiki": "0.7.0",
 }
 
 __all__ = ["MANAGED_BIN_VERSION_PINS"]

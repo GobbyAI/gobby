@@ -1266,6 +1266,17 @@
           "repeatable": false
         },
         {
+          "name": "--ai-verify-scope",
+          "takes_value": true,
+          "value_name": "aggregates|all",
+          "allowed_values": [
+            "aggregates",
+            "all"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--ai-prose-depth",
           "takes_value": true,
           "value_name": "brief|standard|deep",

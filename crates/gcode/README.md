@@ -1,8 +1,4 @@
 <!-- markdownlint-disable MD033 MD041 -->
-<p align="center">
-  <img src="logo.png" alt="Gobby" width="160" />
-</p>
-
 <h1 align="center">gcode</h1>
 
 <p align="center">
@@ -11,9 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml"><img src="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/GobbyAI/gobby-cli/releases/latest"><img src="https://img.shields.io/github/v/release/GobbyAI/gobby-cli" alt="Release"></a>
-  <a href="https://github.com/GobbyAI/gobby-cli"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
+  <a href="https://github.com/GobbyAI/gobby/actions/workflows/rust-ci.yml"><img src="https://github.com/GobbyAI/gobby/actions/workflows/rust-ci.yml/badge.svg" alt="Rust CI"></a>
+  <a href="https://crates.io/crates/gobby-code"><img src="https://img.shields.io/crates/v/gobby-code" alt="crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
 </p>
 
@@ -62,27 +57,29 @@ codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / 
 
 ### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/GobbyAI/gobby-cli/releases/latest):
+Download versioned assets from [GitHub Releases](https://github.com/GobbyAI/gobby/releases):
 
 ```bash
+VERSION=1.4.0
+
 # macOS (Apple Silicon)
-curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-aarch64-apple-darwin.tar.gz | tar xz
+curl -L "https://github.com/GobbyAI/gobby/releases/download/gcode-v${VERSION}/gcode-aarch64-apple-darwin.tar.gz" | tar xz
 sudo mv gcode /usr/local/bin/
 
 # macOS (Intel)
-curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-apple-darwin.tar.gz | tar xz
+curl -L "https://github.com/GobbyAI/gobby/releases/download/gcode-v${VERSION}/gcode-x86_64-apple-darwin.tar.gz" | tar xz
 sudo mv gcode /usr/local/bin/
 
 # Linux (x86_64)
-curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L "https://github.com/GobbyAI/gobby/releases/download/gcode-v${VERSION}/gcode-x86_64-unknown-linux-gnu.tar.gz" | tar xz
 sudo mv gcode /usr/local/bin/
 
 # Linux (ARM64)
-curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-aarch64-unknown-linux-gnu.tar.gz | tar xz
+curl -L "https://github.com/GobbyAI/gobby/releases/download/gcode-v${VERSION}/gcode-aarch64-unknown-linux-gnu.tar.gz" | tar xz
 sudo mv gcode /usr/local/bin/
 
 # Windows (x86_64) — PowerShell
-Invoke-WebRequest -Uri https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-pc-windows-msvc.zip -OutFile gcode.zip
+Invoke-WebRequest -Uri "https://github.com/GobbyAI/gobby/releases/download/gcode-v1.4.0/gcode-x86_64-pc-windows-msvc.zip" -OutFile gcode.zip
 Expand-Archive gcode.zip -DestinationPath .
 ```
 

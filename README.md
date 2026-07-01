@@ -159,17 +159,16 @@ Keeping that line clean is what makes the whole thing trustable.
 
 ---
 
-## The toolchain (sister repo)
+## The toolchain
 
-Gobby ships with a set of Rust binaries in
-[GobbyAI/gobby-cli](https://github.com/GobbyAI/gobby-cli) that solve the
+Gobby ships with a set of Rust binaries under `crates/` that solve the
 non-glamorous problems agents run into in practice. They install separately,
 but Gobby wires them in for you.
 
 | Tool | What it does | Why it matters |
 | --- | --- | --- |
-| [`gcode`](https://github.com/GobbyAI/gobby-cli) | AST symbol search over 18 languages via tree-sitter and PostgreSQL hub full-text search; with vector and graph backends it adds semantic + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
-| [`ghook`](https://github.com/GobbyAI/gobby-cli) | Sandbox-tolerant hook dispatcher that spools events to `~/.gobby/hooks/inbox/` *before* posting to the daemon | Hook events survive sandbox FS denials, network blips, and daemon restarts. The drain worker replays them. |
+| [`gcode`](crates/gcode) | AST symbol search over 18 languages via tree-sitter and PostgreSQL hub full-text search; with vector and graph backends it adds semantic + graph search and Reciprocal Rank Fusion ranking | Agents stop reading whole files. They retrieve by symbol. Cuts 90%+ off file-level loads on large repos. |
+| [`ghook`](crates/ghook) | Sandbox-tolerant hook dispatcher that spools events to `~/.gobby/hooks/inbox/` *before* posting to the daemon | Hook events survive sandbox FS denials, network blips, and daemon restarts. The drain worker replays them. |
 
 Plus the progressive MCP proxy itself, which only fetches schemas when a tool
 is actually called instead of on every list. That's another 30–40K tokens the
@@ -238,7 +237,7 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - stdio MCP server for coding assistants
 - Hook adapters for Claude Code, Codex, Qwen CLI, Factory Droid, and AGY
 - Optional Qdrant + FalkorDB for vector and graph-backed search
-- Companion Rust toolchain via [gobby-cli](https://github.com/GobbyAI/gobby-cli)
+- Companion Rust toolchain under `crates/`
 
 The PostgreSQL hub is the source of truth for task state. `.gobby/tasks.jsonl`
 is the git-native sync projection — checked in, diffable in PRs, and reconciled
@@ -365,8 +364,7 @@ plane.
 - **Attached-session parity** — close remaining gaps in context usage,
   mode/model sync, attachments, persona switching, and voice surfaces.
 - **Rust port preparation** — freeze route contracts, add compare/delegation
-  plumbing, and keep extracting shared primitives in
-  [gobby-cli](https://github.com/GobbyAI/gobby-cli).
+  plumbing, and keep extracting shared primitives under `crates/`.
 
 ### 0.6.0: Rust port release
 

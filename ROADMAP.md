@@ -37,8 +37,7 @@ Rust port.
   runtime-vs-app log separation, normalized handlers, automation logs for cron
   and dispatch, and quieter routine logging.
 - Prepare the Rust port by freezing route contracts, adding compare/delegation
-  plumbing, and extracting shared primitives in
-  [gobby-cli](https://github.com/GobbyAI/gobby-cli).
+  plumbing, and extracting shared primitives under `crates/`.
 
 ## 0.6.0 - Rust Port Release
 
@@ -51,8 +50,8 @@ rewrite.
   families behind explicit flags.
 - Compare mode calls both implementations and returns the Python response until
   parity is proven.
-- The bridgehead stays in [gobby-cli](https://github.com/GobbyAI/gobby-cli):
-  `gcode`, `ghook`, and `gobby-core` shared primitives.
+- The bridgehead lives under `crates/`: `gcode`, `ghook`, and
+  `gobby-core` shared primitives.
 
 ## 0.6.0+ - Gobby Pro Sync
 

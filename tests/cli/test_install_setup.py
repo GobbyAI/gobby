@@ -314,6 +314,78 @@ class TestReleaseTagHelpers:
 
         assert _resolve_latest_release_tag(tag_prefix="gcode-v") == "gcode-v1.2.3"
 
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_resolve_latest_release_tag_falls_back_to_legacy_repo(self, mock_urlopen):
+        def response(payload: list[dict[str, object]]) -> MagicMock:
+            fake_resp = MagicMock()
+            fake_resp.read.return_value = json.dumps(payload).encode()
+            fake_resp.__enter__.return_value = fake_resp
+            return fake_resp
+
+        mock_urlopen.side_effect = [
+            response(
+                [
+                    {
+                        "tag_name": "ghook-v0.7.0",
+                        "draft": False,
+                        "prerelease": False,
+                        "published_at": "2026-06-30T00:00:00Z",
+                    }
+                ]
+            ),
+            response(
+                [
+                    {
+                        "tag_name": "gcode-v1.4.0",
+                        "draft": False,
+                        "prerelease": False,
+                        "published_at": "2026-07-01T00:00:00Z",
+                    }
+                ]
+            ),
+        ]
+
+        assert _resolve_latest_release_tag(tag_prefix="gcode-v") == "gcode-v1.4.0"
+
+        requested_urls = [call.args[0].full_url for call in mock_urlopen.call_args_list]
+        assert requested_urls == [
+            "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
+            "https://api.github.com/repos/GobbyAI/gobby-cli/releases?per_page=100",
+        ]
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_download_release_binary_falls_back_to_legacy_repo(self, mock_urlopen, tmp_path):
+        buf = BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="gcode")
+            info.size = 5
+            tar.addfile(info, BytesIO(b"fake!"))
+
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = buf.getvalue()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_urlopen.side_effect = [URLError("not found"), fake_resp]
+
+        with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
+            assert _download_release_binary(
+                tmp_path,
+                binary_name="gcode",
+                artifact_name="gcode",
+                target="aarch64-apple-darwin",
+                version="1.4.0",
+                tag_prefix="gcode-v",
+                label="gcode",
+            )
+
+        requested_urls = [call.args[0].full_url for call in mock_urlopen.call_args_list]
+        assert requested_urls == [
+            "https://github.com/GobbyAI/gobby/releases/download/"
+            "gcode-v1.4.0/gcode-aarch64-apple-darwin.tar.gz",
+            "https://github.com/GobbyAI/gobby-cli/releases/download/"
+            "gcode-v1.4.0/gcode-aarch64-apple-darwin.tar.gz",
+        ]
+        assert (tmp_path / "gcode").read_bytes() == b"fake!"
+
 
 class TestGcodeHelpers:
     def test_get_installed_gcode_version(self, tmp_path):
@@ -357,7 +429,7 @@ class TestGcodeHelpers:
 
             res = _install_gcode()
             assert res["installed"] is True
-            assert res["method"] == "submodule"
+            assert res["method"] == "workspace"
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
@@ -420,7 +492,7 @@ class TestGcodeHelpers:
             res = _install_gcode()
 
         assert res["installed"] is True
-        assert res["method"] == "submodule"
+        assert res["method"] == "workspace"
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
@@ -975,7 +1047,12 @@ class TestDownloadReleaseBinaryChecksum:
         archive = _release_tarball("gcode")
         with patch(
             "gobby.cli.install_setup.urlopen",
-            side_effect=[_archive_resp(archive), _checksum_resp(("0" * 64) + "\n")],
+            side_effect=[
+                _archive_resp(archive),
+                _checksum_resp(("0" * 64) + "\n"),
+                _archive_resp(archive),
+                _checksum_resp(("0" * 64) + "\n"),
+            ],
         ):
             result = self._download(tmp_path)
         assert result is False
@@ -985,7 +1062,12 @@ class TestDownloadReleaseBinaryChecksum:
         archive = _release_tarball("gcode")
         with patch(
             "gobby.cli.install_setup.urlopen",
-            side_effect=[_archive_resp(archive), URLError("no checksum published")],
+            side_effect=[
+                _archive_resp(archive),
+                URLError("no checksum published"),
+                _archive_resp(archive),
+                URLError("no checksum published"),
+            ],
         ):
             result = self._download(tmp_path)
         assert result is False
