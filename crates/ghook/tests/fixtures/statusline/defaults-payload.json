@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-123",
+  "model_id": "",
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "cache_creation_tokens": 0,
+  "cache_read_tokens": 0,
+  "context_window_size": 0
+}

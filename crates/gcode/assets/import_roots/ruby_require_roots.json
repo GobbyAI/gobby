@@ -1,0 +1,12 @@
+{
+  "json": "JSON",
+  "fileutils": "FileUtils",
+  "net/http": "Net",
+  "net/https": "Net",
+  "faraday": "Faraday",
+  "nokogiri": "Nokogiri",
+  "rspec": "RSpec",
+  "rspec/expectations": "RSpec",
+  "rspec/core": "RSpec",
+  "rspec/mocks": "RSpec"
+}

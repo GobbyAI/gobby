@@ -1,0 +1,411 @@
+name: Release gwiki
+
+on:
+  push:
+    tags:
+      - "gwiki-v*"
+  # Manual dry-run: runs `test` + `build` (incl. the windows-msvc legs) on a branch
+  # without cutting a tag. `publish` + `release` stay tag-only (see their `if:`).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PDFIUM_VERSION: "7690"
+
+concurrency:
+  group: release-gwiki-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Verify tag matches Cargo.toml version
+        # Tag-only: on a workflow_dispatch run GITHUB_REF is refs/heads/<branch>,
+        # which has no gwiki-v version to check against Cargo.toml.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#gwiki-v}"
+          if [ "$tag" = "$tag_version" ]; then
+            echo "::error::Tag '$tag' does not start with 'gwiki-v'." >&2
+            exit 1
+          fi
+          cargo_version="$(cargo pkgid -p gobby-wiki | sed 's/.*@//')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match crates/gwiki/Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          fi
+          echo "Tag '$tag' aligns with crates/gwiki/Cargo.toml version '$cargo_version'."
+
+      - name: Verify published gobby-core supports ai
+        run: |
+          set -euo pipefail
+          core_version="$(
+            cargo metadata --no-deps --format-version=1 |
+              jq -er '
+                def fail($message): "::error::\($message)" | halt_error(1);
+                def has_feature($features; $name): (($features // []) | index($name)) != null;
+
+                (.packages[] | select(.name == "gobby-wiki")) as $wiki
+                | ([ $wiki.dependencies[]? | select(.name == "gobby-core" and (.kind == null)) ] | first) as $core
+                | if $core == null then
+                    fail("gobby-wiki must depend on gobby-core.")
+                  else
+                    .
+                  end
+                | if $core.source == null and (($core.path | type) == "string") and (($core.path | length) > 0) then
+                    .
+                  else
+                    fail("gobby-wiki must depend on gobby-core as a local path dependency.")
+                  end
+                | if (($core.req // "") | test("^\\^?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")) then
+                    .
+                  else
+                    fail("gobby-wiki gobby-core dependency must use a bare semver version requirement.")
+                  end
+                | if has_feature($wiki.features.default; "ai") then
+                    .
+                  else
+                    fail("gobby-wiki default features must include ai for release builds.")
+                  end
+                | if has_feature($wiki.features.ai; "gobby-core/ai") then
+                    .
+                  else
+                    fail("gobby-wiki ai feature must enable gobby-core/ai.")
+                  end
+                | $core.req | ltrimstr("^")
+              '
+          )"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/src"
+          cat > "$tmp/Cargo.toml" <<EOF
+          [package]
+          name = "gwiki-core-precondition"
+          version = "0.0.0"
+          edition = "2021"
+
+          [dependencies]
+          gobby-core = { version = "=${core_version}", features = ["ai"] }
+          EOF
+          echo 'fn main() {}' > "$tmp/src/main.rs"
+          cargo metadata --manifest-path "$tmp/Cargo.toml" --format-version 1 > /dev/null
+          echo "gobby-core ${core_version} is published on crates.io with the ai feature."
+
+      - name: Clippy
+        run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
+
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
+
+      - name: Run tests
+        run: cargo nextest run --profile ci -p gobby-wiki
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-wiki
+
+      - name: Run tests without default features
+        run: cargo nextest run --profile ci -p gobby-wiki --no-default-features
+
+      - name: Run doctests without default features
+        run: cargo test --doc -p gobby-wiki --no-default-features
+
+      - name: Verify pdfium-auto version pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_path="$(
+            cargo metadata --format-version=1 |
+              jq -er 'first(.packages[] | select(.name == "pdfium-auto") | .manifest_path)'
+          )"
+          build_rs="${manifest_path%/Cargo.toml}/build.rs"
+          pdfium_auto_version="$(
+            grep -E 'PDFIUM_VERSION: &str = "[0-9]+"' "$build_rs" |
+              sed -E 's/.*"([0-9]+)".*/\1/'
+          )"
+          if [ "$pdfium_auto_version" != "$PDFIUM_VERSION" ]; then
+            echo "::error::release-gwiki PDFIUM_VERSION=${PDFIUM_VERSION} but pdfium-auto build.rs pins ${pdfium_auto_version}." >&2
+            exit 1
+          fi
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            pdfium_archive: pdfium-win-x64.tgz
+            pdfium_sha: 06ef95ac4f9b8897731224639ddf0f185693cb48bc9ee650f1e92f71e0d2a94e
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: true
+            pdfium_archive: pdfium-win-arm64.tgz
+            pdfium_sha: e01a0df46347d40c591a11f2060a371004ef5c423cf890c6cb431594ccbd2b9b
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.cross && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Configure MSVC for Windows ARM64
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64_arm64
+
+      - name: Provision pdfium (Windows)
+        # gwiki's `documents` feature embeds pdfium via pdfium-auto's `bundled`
+        # build script, which by default curl-downloads a pinned chromium archive
+        # at build time. On the windows-msvc runners we provision it deterministically:
+        # download the pinned bblanchon archive, verify its SHA-256 (fail-closed), and
+        # point pdfium-auto at it via PDFIUM_BUNDLE_LIB — its priority-1 source — so the
+        # build never depends on the build script's own network fetch. macOS/Linux keep
+        # using pdfium-auto's auto-download (already proven in CI).
+        # Keep env.PDFIUM_VERSION in sync with pdfium-auto's PDFIUM_VERSION constant.
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PDFIUM_VERSION: ${{ env.PDFIUM_VERSION }}
+          PDFIUM_ARCHIVE: ${{ matrix.pdfium_archive }}
+          PDFIUM_SHA: ${{ matrix.pdfium_sha }}
+        run: |
+          set -euo pipefail
+          version="$PDFIUM_VERSION"
+          case "$TARGET" in
+            x86_64-pc-windows-msvc | aarch64-pc-windows-msvc)
+              ;;
+            *)
+              echo "::error::Provision pdfium: unexpected Windows target '$TARGET'." >&2
+              exit 1
+              ;;
+          esac
+          if [ -z "$PDFIUM_VERSION" ] || [ -z "$PDFIUM_ARCHIVE" ] || [ -z "$PDFIUM_SHA" ]; then
+            echo "::error::Provision pdfium: missing archive metadata for '$TARGET'." >&2
+            exit 1
+          fi
+          archive="$PDFIUM_ARCHIVE"
+          sha="$PDFIUM_SHA"
+          runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+          github_env="$(cygpath -u "$GITHUB_ENV")"
+          dest="${runner_temp%/}/pdfium"
+          archive_path="$dest/$archive"
+          dll="$dest/bin/pdfium.dll"
+          mkdir -p "$dest"
+          url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${version}/${archive}"
+          echo "Downloading $url"
+          curl -fsSL --retry 3 -o "$archive_path" "$url"
+          echo "${sha}  ${archive_path}" | sha256sum -c -
+          tar --force-local -xzf "$archive_path" -C "$dest" bin/pdfium.dll
+          if [ ! -f "$dll" ]; then
+            echo "::error::Provision pdfium: expected DLL was not extracted at '$dll'." >&2
+            exit 1
+          fi
+          lib="$(cygpath -w "$dll")"
+          echo "PDFIUM_BUNDLE_LIB=${lib}" >> "$github_env"
+          echo "Provisioned pdfium for $TARGET at ${lib}"
+
+      - name: Build gwiki
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            openssl_src_perl="C:\\Strawberry\\perl\\bin\\perl.exe"
+            if [ ! -x "$(cygpath -u "$openssl_src_perl")" ]; then
+              echo "::error::Build gwiki: Strawberry Perl not found at '$openssl_src_perl'." >&2
+              exit 1
+            fi
+            export OPENSSL_SRC_PERL="$openssl_src_perl"
+            if [ "$TARGET" = "aarch64-pc-windows-msvc" ]; then
+              if [ -z "${VCToolsInstallDir:-}" ]; then
+                echo "::error::Build gwiki: VCToolsInstallDir was not set by MSVC setup." >&2
+                exit 1
+              fi
+              msvc_link="${VCToolsInstallDir}bin\\Hostx64\\arm64\\link.exe"
+              if [ ! -x "$(cygpath -u "$msvc_link")" ]; then
+                echo "::error::Build gwiki: MSVC ARM64 linker not found at '$msvc_link'." >&2
+                exit 1
+              fi
+              export CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER="$msvc_link"
+            fi
+          fi
+          cargo build --release --target "$TARGET" -p gobby-wiki
+
+      - name: Package (Unix)
+        if: "!startsWith(matrix.os, 'windows')"
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd "target/$TARGET/release"
+          tar czf "../../../gwiki-$TARGET.tar.gz" gwiki
+          cd ../../..
+
+      - name: Package (Windows)
+        if: startsWith(matrix.os, 'windows')
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd "target/$env:TARGET/release"
+          Compress-Archive -Path gwiki.exe -DestinationPath "../../../gwiki-$env:TARGET.zip"
+          cd ../../..
+
+      - name: Upload Unix artifact
+        if: "!startsWith(matrix.os, 'windows')"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gwiki-${{ matrix.target }}
+          path: gwiki-${{ matrix.target }}.tar.gz
+
+      - name: Upload Windows artifact
+        if: startsWith(matrix.os, 'windows')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gwiki-${{ matrix.target }}
+          path: gwiki-${{ matrix.target }}.zip
+
+  publish:
+    name: Publish gobby-wiki to crates.io
+    # Decoupled from `build`: crates.io publishing is platform-independent, so a
+    # single flaky binary target must never block the crate publish again (#461).
+    # Tag-only — never runs on a workflow_dispatch dry-run.
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Check whether this version is already on crates.io
+        id: published
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "gobby-wiki") | .version')"
+          set +e
+          code="$(curl --fail --silent --show-error -A 'gobby-cli release workflow' -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/gobby-wiki/${version}")"
+          curl_status=$?
+          set -e
+          if [ "$code" = "200" ]; then
+            echo "gobby-wiki ${version} is already on crates.io; skipping publish (binaries still attach)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = "404" ]; then
+            echo "gobby-wiki ${version} not on crates.io (HTTP 404); will publish."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = "403" ]; then
+            echo "::error::crates.io denied version check for gobby-wiki ${version}: HTTP 403 (curl exit ${curl_status}). Verify registry access." >&2
+            exit 1
+          elif [ "$curl_status" -ne 0 ]; then
+            echo "::error::crates.io version check failed (curl exit ${curl_status}, HTTP ${code:-unknown})." >&2
+            exit "$curl_status"
+          else
+            echo "::error::Unexpected crates.io response while checking gobby-wiki ${version}: HTTP ${code}." >&2
+            exit 1
+          fi
+
+      - name: Publish gobby-wiki to crates.io
+        if: steps.published.outputs.skip != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p gobby-wiki --locked
+
+  release:
+    needs: [build, publish]
+    # Tag-only — a workflow_dispatch dry-run builds + uploads artifacts but never
+    # creates a GitHub Release.
+    if: startsWith(github.ref, 'refs/tags/')
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Release creation is the only job that needs repository write access.
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        # Installers fetch <asset>.sha256 and verify the archive before
+        # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in gwiki-*.tar.gz gwiki-*.zip; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag="${GITHUB_REF#refs/tags/}"
+          assets=(gwiki-*.tar.gz gwiki-*.zip gwiki-*.tar.gz.sha256 gwiki-*.zip.sha256)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No gwiki release assets found." >&2
+            exit 1
+          fi
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag

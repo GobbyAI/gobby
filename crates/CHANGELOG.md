@@ -1,0 +1,2199 @@
+<!-- markdownlint-disable MD024 MD013 -->
+
+# Changelog
+
+All notable changes to gobby-cli are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.4.0] — gcode — 2026-07-01
+
+### Added
+
+#### gcode
+
+- **Agentic CodeWiki aggregate generation** — aggregate CodeWiki pages can route
+  through gcore's daemon-side agentic/tool-backed generation path, using
+  read-only gcode investigation tools and recording lane/tool-call observability
+  in page frontmatter.
+- **CodeWiki purge** — `gcode codewiki --purge --out <DIR> --force` removes
+  generated CodeWiki Markdown and metadata under the selected output directory
+  without running generation or AI calls.
+- **Richer handbook output** — CodeWiki now emits a broader handbook/navigation
+  layer with generalized taxonomy, semantic clusters, reference tables,
+  per-category render versions, and bounded dependency diagrams on repo
+  overviews.
+- **Verification scope control** — `--ai-verify-scope aggregates|all` keeps the
+  default verifier pass on aggregate/curated pages while allowing slower
+  per-file verification when explicitly requested.
+
+### Fixed
+
+#### gcode
+
+- **Strict generated Markdown normalization** — CodeWiki output is normalized
+  before write/reuse so generated pages remain stable, markdownlint-friendly,
+  and idempotent across reruns.
+- **CodeWiki filtering and recovery** — `docs/` and temporary directories are
+  excluded from core-file generation; Lane B curated generation now investigates
+  reliably, bounds seed prompts, exposes AI HTTP error bodies, and hard-fails
+  ungroundable aggregate output instead of silently emitting skeleton prose.
+- **AI metadata and timeout hardening** — nested AI frontmatter is preserved,
+  daemon profile/routing metadata is aligned, non-retryable timeouts are handled
+  correctly, and text generation timeout is raised for long aggregate pages.
+- **Index maintenance fixes** — retry timestamp columns, UTF-8 signature
+  truncation, and prune discovery-row preservation are corrected.
+
+## [0.7.0] — gobby-core — 2026-07-01
+
+### Added
+
+#### gobby-core
+
+- **Lane A/B generation foundation** — shared tier profiles, direct chat
+  transport, provider-neutral tool-loop generation, daemon chat transport, and
+  `tool_chat` capability support now live in `gobby-core` for gcode and gwiki
+  consumers.
+- **Daemon-side agentic chat** — `daemon_agentic_chat` posts messages,
+  project context, reasoning settings, max turns, and a serialized
+  `ToolPolicy` to the daemon route for agentic narrative generation.
+- **Config secret decryption support** — datastore-backed AI/config sources can
+  resolve `$secret:` values through gcore's envelope secret handling while
+  env-only sources continue to reject secret references explicitly.
+
+### Fixed
+
+#### gobby-core
+
+- **Tool-loop resilience** — generation parsing and stop-reason handling are
+  hardened so malformed or incomplete tool-loop output returns typed failures
+  instead of ambiguous empty content.
+
+## [0.7.0] — ghook — 2026-07-01
+
+### Added
+
+#### ghook
+
+- **Shared daemon URL resolution** — live dispatch, planned-shutdown preflight,
+  statusline POSTs, and diagnose output now use `gobby_core::daemon_url`, so
+  `GOBBY_DAEMON_URL`, `GOBBY_PORT`, and bootstrap `daemon_url` overrides are
+  honored consistently.
+- **Machine identity stamping** — hook envelopes now include local
+  `machine_id` and `os` when available, or a `machine_id_error` code when the
+  local machine identity file is missing or empty.
+
+### Removed
+
+#### ghook
+
+- **Gemini CLI active hook support** — `ghook` no longer recognizes Gemini CLI
+  in its live CLI registry or diagnose output. Stale Gobby-owned
+  `--cli=gemini` hook invocations now no-op with `{}` and exit 0 before enqueue
+  or POST, so old hook configs fail quiet instead of falling through to the
+  unknown-CLI Claude fallback.
+
+## [0.7.0] — gwiki — 2026-07-01
+
+### Added
+
+#### gwiki
+
+- **Scoped purge command** — `gwiki --project <ROOT> purge --yes` and
+  `gwiki --topic <NAME> purge --yes` delete generated/indexed wiki state for
+  the explicit scope across PostgreSQL, Qdrant, and FalkorDB. Global purge is
+  rejected.
+- **Shared generation tiers** — `gwiki ask --llm` and `gwiki compile` now route
+  generation through gcore tier profiles and the shared Lane B tool-loop
+  utilities.
+
+### Fixed
+
+#### gwiki
+
+- **AI routing metadata** — generation output preserves aligned AI routing and
+  frontmatter metadata across direct and daemon-backed paths.
+
+### Removed
+
+#### gwiki
+
+- **Raw Gemini transcript fallback** — `gwiki --raw` no longer parses Gemini
+  `--output-format stream-json` JSONL archives. Daemon-normalized
+  `gobby.session` pages still ingest through the generic session path.
+
+## [1.3.3] — gcode — 2026-06-26
+
+### Fixed
+
+#### gcode
+
+- **Windows release binaries restored** — the `gcode` release build no longer
+  fails on `x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`. gcode's
+  build-dependency on `gobby-core` dragged a non-vendored `openssl-sys` into the
+  build-script dependency graph, which has no system OpenSSL on the Windows
+  runners, so the `release` job was skipped. Fixed upstream in `gobby-core`
+  0.6.1 (vendored OpenSSL is now unconditional); gcode pins `gobby-core = 0.6.1`.
+  Supersedes 1.3.2, which published to crates.io but shipped no GitHub binaries.
+
+## [0.6.1] — gobby-core — 2026-06-26
+
+### Fixed
+
+#### gobby-core
+
+- **Vendored OpenSSL is now unconditional** — `openssl` is a non-optional
+  dependency built with the `vendored` feature instead of being gated behind the
+  `postgres` feature. The always-compiled `fernet`/`secrets` path pulls
+  `openssl-sys` into every dependency graph, including graphs that omit
+  `postgres` (ghook's whole graph, gcode's build-dependency graph). Cargo's
+  resolver keeps build-dependency and no-`postgres` feature sets separate, so the
+  previous `postgres`-gated vendored flag never reached them and they fell back
+  to a missing system OpenSSL on the Windows release runners. Forcing `vendored`
+  here links OpenSSL statically across every consumer and target.
+
+## [1.3.2] — gcode — 2026-06-26
+
+### Fixed
+
+#### gcode
+
+- **Late-NUL files skipped** — files that read clean on the first pass but turn
+  out to contain NUL bytes are now skipped during indexing instead of producing
+  corrupt symbol/content rows (#17356).
+- **Orphan project-row reconciliation** — `gcode` reconciles orphaned
+  code-index project rows so stale project records no longer block re-indexing
+  (#928, Gobby #17344).
+- Assorted CodeRabbit triage fixes (#927, #951, #956).
+
+## [0.6.5] — gwiki — 2026-06-26
+
+Covers the `0.6.0` → `0.6.5` gap: session knowledge-synthesis (epic #920) plus
+follow-up indexing fixes.
+
+### Added
+
+#### gwiki
+
+- **`sync-sessions --summarize`** — standalone session-summary generation: when
+  a raw transcript archive has no daemon-synthesized page, `gwiki` renders the
+  shared `handoff/session_end` prompt directly from the transcript and wraps it
+  in the daemon `.md` format so it flows through the normal wiki-file ingest
+  path. Falls back to a skeleton page when text generation is routed off (#950).
+- **`sync-sessions --wiki-dir <PATH>`** — point `sync-sessions` at the
+  daemon-synthesized session-wiki directory (defaults to `~/.gobby/session_wiki/`)
+  (#924).
+
+### Changed
+
+#### gwiki
+
+- **Synthesis-first session sourcing** — `sync-sessions` now sources
+  daemon-synthesized session wiki pages first and treats raw `*.jsonl.gz`
+  archives as fallback, keyed on the canonical `session:{external_id}` so a
+  session is one logical source across synthesis and raw, with latest-wins
+  replacement (#925, #926).
+- **Raw transcript fallback is opt-in** — raw archives are used only for
+  presence reconciliation unless `--raw` is passed (#936).
+- **Machine-global default scope** — a `sync-sessions` run with no `--topic` /
+  `--project` now defaults to the machine-global `sessions` scope, since session
+  pages are machine-wide rather than project-scoped (#941).
+- **Hardened session-sync & graph-sync** — vanished session sources are
+  reconciled, the FalkorDB wiki projection is incremental (scoped edge/node
+  cleanup instead of whole-scope DETACH DELETE + rebuild), and session-page
+  removal is crash-consistent (#933).
+
+### Fixed
+
+#### gwiki
+
+- **btree-limit link clipping** — `link_text` / `target_path` are clipped on a
+  UTF-8 char boundary before the scoped link id is computed, so transcript links
+  longer than the 8191-byte Postgres btree row limit no longer fail indexing
+  atomically and strand orphan vault files (#939).
+- **Windows build** — `gwiki` now compiles on `x86_64-pc-windows-msvc` /
+  `aarch64-pc-windows-msvc`. The log de-duplication path read a file's
+  volume-serial + file-index identity through the unstable `windows_by_handle`
+  std accessors (nightly-only); it now reads the same fields via the stable
+  `GetFileInformationByHandle` Win32 API, so the windows-msvc release legs build
+  and `gwiki` ships Windows binaries for the first time (#961).
+
+## [0.6.2] — ghook — 2026-06-26
+
+### Added
+
+#### ghook
+
+- **Failure diagnostics** — `ghook` records hook-dispatch failures and surfaces
+  them through `--diagnose` (v2 `diagnose-output` schema), so lost or failed
+  envelopes are observable instead of silent (#929).
+- **Antigravity CLI (`agy`) support** — `agy` joins the recognized host CLIs for
+  hook dispatch, config, and diagnostics (#931).
+
+### Fixed
+
+#### ghook
+
+- Assorted CodeRabbit triage fixes (#951, #956).
+
+## [1.3.0] — gcode — 2026-06-23
+
+Covers the `1.1.0` → `1.3.0` gap: the intermediate `1.2.0` was never logged, so
+this section folds in all undocumented gcode work since `1.1.0`.
+
+### Added
+
+#### gcode
+
+- **Codewiki suite** — a major expansion of `gcode codewiki`:
+  - **Deep-wiki narrative pages** — long-form, source-grounded narrative pages
+    rendered alongside the structural module/file docs (#897, #874).
+  - **Curated navigation layer** — promoted table of contents, a guided-tour
+    spine (the "explain my codebase" entry point), a demoted reference
+    appendix, and navigation roots exempt from missing-backlink lint (#762,
+    #853).
+  - **Deterministic SystemModel + Mermaid** — a deterministic SystemModel feeds
+    architectural Mermaid diagrams and conceptual-flow diagrams on curated
+    pages, independent of LLM output (#887, #891, #911).
+  - **Deterministic infra-stack page** (#892).
+  - **Contract-derived feature catalog** (#888).
+  - **Deprecation markers** for documented symbols (#889).
+  - **Prose-depth dial + audience register** — `--ai-prose-depth
+    brief|standard|deep` tunes verbosity and `--ai-register
+    newcomer|maintainer|agent` selects the audience voice; grounding holds in
+    all combinations (#890).
+  - **Trustworthy incremental** — per-page-type invalidation plus a `--since
+    <git-ref>` driver that regenerates only pages whose sources or cross-file
+    neighbors changed, preserving out-of-scope pages and `_meta` (#893).
+  - **Grounded verification pass** — a verification pass over generated prose
+    with a configurable `--ai-verify-profile` (#873, #882).
+  - **Citation repair** — `--repair-citations` re-anchors existing pages'
+    `[file:line]` citations against the current index with no LLM calls (#875).
+  - **Truth digest** — an emitted digest of grounded/verified codewiki facts
+    (#915).
+  - **Two-pass curated content engine** with structural fallback (#853).
+- **New AST languages** — Scala (#818), Objective-C (#820), Lua (#819), and
+  Bash (#817). gcode now indexes **21 languages**.
+- **`gcode path`** — shortest CALLS path between two symbol queries (#767).
+- **Projection lifecycle commands** — `gcode prune` reconciles stale projects
+  and orphaned graph + vector projection state across all indexed projects;
+  `gcode graph cleanup-orphans` and `gcode vector cleanup-orphans` remove
+  project-wide orphans; cross-project projection pruning is supported (#774,
+  #802, #772).
+- **`--token-budget`** — approximate token-budget trimming on high-volume reads
+  (`search`, `usages`, `blast-radius`) (#769).
+- **gcode contract v2** — the published CLI contract was bumped to v2 (#876).
+- **Weighted Leiden community detection** — graph communities now use the
+  weighted Leiden implementation in gobby-core `graph_analytics` (#736).
+
+### Changed
+
+#### gcode
+
+- **DB-backed post-write local call resolution** — local call resolution was
+  reworked into a DB-backed post-write pass that resolves cross-file and
+  cross-package call targets across all tier-1/2 languages (Python, JS/TS,
+  Rust, Go, Java, C#, Kotlin, Ruby, PHP, Swift, C/C++, Dart, Elixir), including
+  bare-module resolution and blast-radius external targets (#790, #786, #787,
+  #776, #792–#801, #829–#835).
+- **Collapsed Rust impl symbols** so impl blocks fold into their type (#838).
+- **Oversized-module decomposition** — gcode index, graph reads/writer,
+  codewiki, and CLI test modules were split into focused sub-modules.
+
+### Fixed
+
+#### gcode
+
+- **SIGPIPE reset** — gcode (and gwiki) reset SIGPIPE to its default
+  disposition so closed pipes no longer panic stdout writes (#852).
+- **JSON/YAML AST symbol caps** plus batched FalkorDB graph sync for
+  data-format files (#678).
+- Assorted call/import resolution fixes — C-family header disambiguation,
+  Elixir module functions, and parameterized Elixir function symbols (#830,
+  #829, #822).
+
+## [0.6.0] — gobby-core — 2026-06-23
+
+### Added
+
+#### gobby-core
+
+- **Token-budget accounting helpers** — shared token-budget trimming primitives
+  were extracted into the foundation crate for gcode and gwiki consumers (#909).
+- **Weighted Leiden community detection** — a weighted Leiden community
+  detection module landed in `graph_analytics`, with modularity and
+  local-optimality validation (#736, #760).
+- **Standalone text-generation config provisioning** (#778).
+
+### Changed
+
+#### gobby-core
+
+- **AI daemon module split** — the AI daemon transport module was decomposed
+  into focused sub-modules (#757).
+- **Preserved text-generation defaults** during the AI refactor (#827).
+
+### Removed
+
+#### gobby-core
+
+- **Retired local-tool support APIs** — removed `layered_config`,
+  `local_backend`, and the `local-backend` feature after retiring the only
+  active consumers.
+
+#### Workspace
+
+- **`gloc` / `gsqz` retired** — `gobby-local`/`gloc` and `gobby-squeeze`/`gsqz`
+  source, release workflows, CI jobs, and live guides were removed from the
+  active workspace mainline. Archive tags preserve the last live source
+  snapshots (#842).
+
+## [0.6.0] — gwiki — 2026-06-23
+
+Covers the `0.4.0` → `0.6.0` gap: the intermediate `0.5.0` was never logged, so
+this section folds in all undocumented gwiki work since `0.4.0`.
+
+### Added
+
+#### gwiki
+
+- **Session-transcript ingest** — `gwiki sync-sessions` ingests archived Gobby
+  session transcripts into the vault, with adapters for Claude Code, Codex,
+  Gemini, Grok, Qwen, and Droid, deterministic session frontmatter metadata,
+  and secret redaction on ingest (#804, #805–#812, #813).
+- **`gwiki normalize`** — repairs already-written vault markdown for
+  markdownlint; `--check` is a real exit-code gate that fails when normalization
+  would change content (#850, #851).
+- **Static agent exports** — `gwiki graph` emits `llms.txt`, `llms-full.txt`,
+  and `graph.jsonld` alongside `graph.json`/`GRAPH_REPORT.md` (#910).
+- **`--token-budget`** on `gwiki search` and `gwiki ask` (#912).
+- **Cited LLM explainer synthesis** for `gwiki compile` (#724).
+- **Mermaid validity + grounding checks** in `gwiki lint` (#913).
+
+### Changed
+
+#### gwiki
+
+- **`search` is the agent retrieval primitive** — `gwiki search` is now the
+  bounded retrieval primitive and `gwiki ask` is a thin bounded-evidence RAG
+  layer over it; the standalone reason-act research loop was removed (#722).
+- **De-dotted control dir** — the gwiki control directory is now `_gwiki` and
+  `gwiki init` is Obsidian-aware (#848).
+- **Vault relocated and untracked** — the working vault was moved out of the
+  tracked tree and is published to a `wiki` branch via a pre-push hook (#907).
+
+### Fixed
+
+#### gwiki
+
+- **`ask` narration stripping hardened** (#720, follow-up to #702) — the
+  first-person detector now handles discourse markers ("First I'll…",
+  "Next I'm…"), more openers ("I found…", "I still need…"), and a broader
+  investigation vocabulary; the stripper also cuts a narration preamble with
+  interleaved declarative asides when narration dominates the leading region
+  (≥2/3 sentence density, bounded window, anchored on a narration opener).
+  A content opener still disables stripping entirely.
+
+## [1.1.0] — gcode
+
+### Added
+
+#### gcode
+
+- **Codewiki knowledge pages** — architecture overview, onboarding, ownership
+  (git-blame attribution), hotspots, and change-history pages are generated
+  alongside the module/file docs.
+- **Mid-tier AI profile for aggregate docs** — module/repo/architecture pages
+  request the heavier `feature_mid` daemon text-generation profile; file and
+  symbol docs stay on the default profile.
+- **Incremental codewiki with resume** — unchanged docs are reused with zero
+  LLM calls, every doc persists as it is written, and interrupted runs resume
+  from disk instead of regenerating completed pages.
+- **stderr diagnostics** — a minimal `RUST_LOG`-aware logger (silenced by
+  `--quiet`) surfaces operator-facing degradations such as an unreachable
+  Qdrant during semantic search, without touching stdout/JSON output.
+- **Postgres-backed SQL tests** — code-fact upsert semantics are covered by
+  hub-gated tests that report skipped (not passed) when no test DSN is set.
+
+### Changed
+
+#### gcode
+
+- **Pre-release embedding provider names are canonical** — setup accepts
+  `lmstudio`, `ollama`, `openai-compatible`, or `none`; older aliases are
+  invalid.
+- **Batched codewiki symbol loading** — one query for the whole run instead of
+  one query per file.
+- **Bounded module Components** — high-level module pages list only their
+  direct components; leaf modules keep full listings.
+- **Cancellable blame** — ownership attribution runs `git blame` as a child
+  process that is killed on timeout, replacing leaked worker threads.
+
+### Fixed
+
+#### gcode
+
+- **Degradation recorded on every codewiki fallback** — failed generations
+  never displace healthy prose, degraded docs repair themselves on re-run, and
+  structural fallbacks carry bounded citations.
+- **Unchanged symbol summaries survive reindex** — per-file reindexing upserts
+  first and deletes only genuinely stale rows.
+- **Scoped codewiki runs preserve out-of-scope docs** on disk and in
+  `_meta/codewiki.json`.
+- **Stale facts reconciled** when discovered files fail AST indexing.
+- **Embedding/AI config read errors propagate** with key context instead of
+  silently degrading to BM25-only defaults.
+- **Compact repo.md provenance** — coalesced line ranges and file-only repo
+  entries shrink the landing page frontmatter from ~637KB to ~17KB.
+- **Accurate relation row counts** reported from import/call upserts.
+
+## [0.5.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Text-generation profile binding** — `ai.text_generate.profile` (default
+  `feature_low`) plus a per-call override for heavyweight callers.
+- **Layered YAML config loader** — the built-in → global → project → CLI
+  config stack used by gsqz/gloc now lives in the foundation crate.
+- **Expanded AI config env fallback**, with warnings for previously swallowed
+  config resolution errors.
+
+### Changed
+
+#### gobby-core
+
+- **Breaking: slimmer public API** — removed the unused `CoreContext`,
+  `probe_local_backend`, and `default_backends` family; the dead local-backend
+  test shim is gone.
+- **Breaking: HTTP fully behind the `ai` feature** — `ureq` and the direct
+  OpenAI-compatible embeddings client are gated under `ai`, so tiny binaries
+  never compile an HTTP stack they do not use.
+- **Consolidated shared plumbing** — daemon URL resolution, `GOBBY_HOME`
+  handling, the libpq keyword tokenizer, the degradation vocabulary, and the
+  codewiki→gwiki frontmatter contract are single-sourced in gcore.
+
+### Fixed
+
+#### gobby-core
+
+- **Aligned invalid-value handling** between `resolve_port` and
+  `resolve_config_bool`; postgres TLS connector construction is now covered by
+  tests.
+
+## [0.4.0] — gwiki
+
+### Added
+
+#### gwiki
+
+- **Research trust layer** — librarian proposals, citation-quality and review
+  reports, benchmark reporting, and change-triggered refresh mapping.
+- **Shared code graph** — `ask` and `research` consume gcode's code graph with
+  citation endpoints, graph context packs, and graph analytics export.
+- **AI-assisted contradiction detection** in the citation-quality report.
+- **Per-section compile provenance** — compiled sections link back to their
+  source documents.
+- **Minimal stderr logger** honoring `RUST_LOG`.
+
+### Changed
+
+#### gwiki
+
+- **Canonical wiki layout** — `gwiki` uses `knowledge/**` for compiled content
+  and does not read deprecated `wiki/**` content paths.
+- **Pre-release embedding provider names are canonical** — setup accepts
+  `lmstudio`, `ollama`, `openai-compatible`, or `none`; older aliases are
+  invalid.
+- **Unified degradation reporting** on the gobby-core vocabulary — index sync
+  degradations are surfaced in command output, and unimplemented global
+  semantic fan-out reports partial data instead of a misleading kind.
+
+### Fixed
+
+#### gwiki
+
+- **`ask` synthesis hardening** — model planning narration is stripped and
+  answers are citation-checked against retrieved evidence.
+- **Secret resolution through the hub** — `$secret:` API keys resolve for
+  `ask`, `research`, and `citation-quality`.
+- **FalkorDB graph fixes** — auth, parameter quoting, source-link Cypher, and
+  jsonb parameter passing.
+- **Audit attribution** — generated code-doc claims are no longer attributed
+  to unrelated raw sources.
+- **CLI fixes** — wikilink page names keep their `.md` suffix during
+  resolution, and a positional `compile` TOPIC no longer hijacks scope
+  selection.
+
+## [0.6.0] — ghook
+
+### Added
+
+#### ghook
+
+- **Grok Build support** — `--cli=grok` now maps to source `grok`, preserves
+  Grok's snake_case hook names, treats `session_start`, `session_end`,
+  `pre_compact`, and `stop` as critical hooks, and hard-blocks Grok `stop`
+  responses with exit code 2.
+
+### Fixed
+
+#### ghook
+
+- **Early stdout is EPIPE-tolerant** — early `ghook` stdout writes no longer
+  panic when the host CLI has already closed the pipe; broken-pipe errors on the
+  initial output path are swallowed instead of aborting the dispatch (#716).
+
+## [0.5.0] — ghook
+
+### Added
+
+#### ghook
+
+- **Envelope ID header** — live POSTs carry `X-Gobby-Envelope-Id` so the
+  daemon can deduplicate inbox drains.
+- **Binary-level contract tests** — hermetic suites pin the per-CLI hook
+  contract and the inbox fallback behavior.
+
+### Changed
+
+#### ghook
+
+- **Source detection isolated** into its own module; HTTP test helper and the
+  Python-truthiness predicate are deduplicated.
+
+### Fixed
+
+#### ghook
+
+- **Direct POST fallback** — when the inbox enqueue fails, ghook detaches
+  first (on `--detach`) and POSTs straight to the daemon instead of dropping
+  the hook.
+- **Statusline pipe handling** — stdout/stdin are pumped concurrently and
+  timeouts kill the downstream process group, eliminating deadlocks with
+  pipeline survivors holding the pipe open.
+- **EPIPE-tolerant action emission** for detached survivors; **inbox directory
+  fsync** after envelope rename; **`GOBBY_HOME` honored** across inbox, marker,
+  and runtime-stamp paths.
+
+## [0.4.7] — gsqz
+
+### Changed
+
+#### gsqz
+
+- **Foundation-crate plumbing** — layered config loading and daemon URL
+  resolution now come from gobby-core (new dependency, no default features).
+  No behavior change.
+
+## [0.1.5] — gloc
+
+### Fixed
+
+#### gloc
+
+- **`--url` override applies before backend validation/detection** — a
+  reachable override URL no longer requires the configured backend URL to be
+  probeable first.
+
+### Changed
+
+#### gloc
+
+- **Foundation-crate plumbing** — layered config loading and daemon URL
+  resolution now come from gobby-core.
+
+## [1.0.0] — gcode
+
+First stable release of `gcode`. The CLI surface, JSON envelopes, and PostgreSQL
+hub contract are now considered stable under Semantic Versioning.
+
+### Added
+
+#### gcode
+
+- **`gcode symbol-at` lookup** — resolve the symbol enclosing a given
+  `FILE:LINE[:COL]` position, so editors and agents can map a cursor location
+  straight to its owning symbol id.
+- **`gcode grep -w/--word`** — ASCII identifier whole-word matching over the
+  indexed content corpus while still preserving Rust regex patterns such as
+  `\bidentifier\b` and clear invalid-regex errors.
+- **UUID graph lookup** — `gcode callers` and `gcode usages` now treat valid
+  UUID input as an exact symbol id for the active project before falling back to
+  name resolution.
+
+### Changed
+
+#### gcode
+
+- **Breaking:** `gcode grep -w` now maps to `--word` for indexed ASCII
+  identifier matching. The hidden `--word-regexp` compatibility flag remains
+  unsupported and no longer owns the `-w` short flag.
+- **BM25 score primitives** — symbol and content search share a single set of
+  BM25 score primitives, removing duplicated ranking math across the search
+  paths.
+- **Refreshed agent contract** — the gcode CLI contract, README, and bundled
+  `code-index` skill docs now steer agents toward `gcode grep -w <identifier>`
+  for identifier text search and `gcode usages/callers <symbol-id>` for
+  reference mapping.
+- **Large-module decomposition** — codewiki generation, import-resolution
+  parsing, and the PostgreSQL `db` layer were split into focused sub-modules
+  (each under ~1,000 lines) with expanded snapshot and property test coverage.
+
+### Fixed
+
+#### gcode
+
+- **ParadeDB BM25 scoring** — indexed BM25 search now uses the ParadeDB
+  (`pdb`) relevance score instead of an approximate local score, improving
+  ranking fidelity.
+- **Skip unused service resolution** — gcode no longer resolves graph/vector
+  services for commands that do not need them, avoiding spurious connectivity
+  work and warnings.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+#### CI/CD
+
+- **Nextest test foundation** — workspace test runs migrated to `cargo
+  nextest`, with release-workflow tests aligned to the same runner.
+- **Workflow supply-chain guardrails** — added a guardrail test that fails when
+  GitHub Action references are not pinned, and pinned release-workflow asset
+  checksums.
+
+## [0.4.0] — gobby-core
+
+### Changed
+
+#### gobby-core
+
+- **Shared BM25 score primitives** — the BM25 scoring primitives consumed by
+  gcode and gwiki now live in the foundation crate so every consumer ranks
+  content the same way.
+- **Module decomposition** — `config` and `provisioning` were split into
+  focused sub-modules (each under ~1,000 lines) to keep the shared foundation
+  maintainable as it grows.
+
+### Fixed
+
+#### gobby-core
+
+- **Datastore adapter hardening** — PostgreSQL, FalkorDB, and Qdrant helpers
+  gained additional review-driven robustness and clearer degradation behavior.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.3.0] — gwiki
+
+### Added
+
+#### gwiki
+
+- **Full research budget reporting** — `gwiki research --format json` now echoes
+  all five budget limits (max steps, max tokens, wall-time, and the remaining
+  controls) so callers can display and enforce the complete budget envelope.
+
+### Changed
+
+#### gwiki
+
+- **Datastore contract enforcement** — `gwiki` now enforces its datastore
+  contract up front, failing clearly when the configured hub/search stores do
+  not satisfy the required schema rather than degrading silently mid-run.
+- **Compile contract alignment** — compile JSON keys and the research/compile
+  contract docs were aligned for budget/write-conflict fields, `TOPIC` /
+  `--outline` / `--kind` inputs, and daemon JSON parsing; added a dedicated
+  `gwiki` user guide.
+- **Large-module decomposition** — the research loop, PDF/document/video
+  ingest, sources, compile, refresh, and research command modules were split
+  into focused sub-modules (each under ~1,000 lines), and the CLI test fixtures
+  were modernized.
+
+### Fixed
+
+#### gwiki
+
+- **Genuine write-conflict stop** — the research loop now stops on a genuine
+  vault write conflict instead of looping, reporting it as an explicit stop
+  reason.
+- **Default-feature build** — restored the `gwiki` build under default features
+  after the feature-gated ingest split.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+#### CI/CD
+
+- **Windows release builds** — re-enabled Windows targets for the `gwiki`
+  release matrix with deterministic pdfium provisioning.
+- **Idempotent publish** — the `gwiki` release publish step now checks
+  crates.io before publishing, so re-running a release is a safe no-op.
+- **Per-asset checksums** — helper releases now publish per-asset SHA-256
+  checksums, and release tags are pushed individually to avoid GitHub's
+  >3-tags-per-push event suppression.
+
+## [0.4.6] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **aarch64 Windows binaries** — the `ghook` release matrix now builds
+  `aarch64-pc-windows-msvc` artifacts alongside the existing targets.
+
+### Changed
+
+#### gobby-hooks
+
+- **Shared foundation floor** — `gobby-hooks` now requires `gobby-core 0.4.0`.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Review hardening** — removed legacy compatibility surfaces and applied
+  review and cleanup findings across the crate.
+
+## [0.4.6] — gobby-squeeze
+
+### Fixed
+
+#### gobby-squeeze
+
+- **Review hardening** — removed legacy compatibility surfaces and applied
+  review and cleanup findings across the crate.
+
+## [0.1.4] — gobby-local
+
+### Changed
+
+#### gobby-local
+
+- **Shared foundation floor** — `gobby-local` now requires `gobby-core 0.4.0`.
+
+### Fixed
+
+#### gobby-local
+
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.2.0] — gwiki
+
+### Added
+
+#### gwiki
+
+- **Initial release** — first public release of `gwiki`, the Gobby
+  research/knowledge-vault CLI. It ingests multimodal sources into a Markdown
+  vault, then indexes, searches, and compiles them into wiki articles and
+  reports.
+- **Multimodal ingest** — `gwiki ingest-file` routes a source by type and
+  derives Markdown into the vault: text documents, PDFs, URLs, MediaWiki pages,
+  git repositories, and Wayback captures for text-bearing sources; audio
+  transcription/translation, image vision description, and video frame +
+  transcript extraction for media. Per-run AI overrides
+  (`--transcription-routing`, `--vision-routing`, `--text-routing`, `--no-ai`)
+  control or bypass media AI for a single ingest.
+- **Markdown vault model** — sources land in a Markdown vault with frontmatter,
+  source provenance, and citation/credibility tracking, so every derived
+  document records where it came from and how trustworthy the source is.
+- **Hybrid search** — `gwiki search` and `gwiki ask` merge BM25 (ParadeDB
+  `pg_search`), semantic (Qdrant), and graph (FalkorDB) signals via Reciprocal
+  Rank Fusion, the same hybrid stack used by gcode.
+- **Reason-act research loop** — `gwiki research` runs an iterative reason-act
+  loop with budget controls (max steps, max tokens, and a wall-time budget),
+  reporting explicit stop reasons (budget exhausted, no progress, duplicate
+  frontier, source blocked, AI unavailable, or finished) and emitting accepted
+  note drafts and recorded gaps.
+- **Command set** — `init`, `setup`, `collect`, `index`, `compile`, `export`,
+  `search`, `read`, `ask`, `research`, `refresh`, `audit`, `lint`, `sources`,
+  `backlinks`, `status`, `health`, and `remove-source` cover vault setup,
+  ingestion, indexing/refresh, search/read/ask, research and compilation,
+  export, and vault health/audit/lint.
+- **Graceful degradation** — multimodal endpoints (transcription, vision) and
+  the AI transport degrade independently, falling back to skeleton/derived
+  output with explicit degradation markers when a capability is routed off or
+  unavailable; search degrades like gcode (BM25 standalone, with semantic and
+  graph optional).
+
+## [0.9.9] — gcode
+
+### Added
+
+#### gcode
+
+- **Codewiki generator** — new `gcode codewiki [--out DIR] [--scope PATH...]`
+  command generates per-module Markdown documentation from the indexed code
+  graph, optionally limited to indexed files under one or more paths.
+- **Graph-clustered codewiki modules** — codewiki groups documented files into
+  modules derived from the FalkorDB code graph so generated docs follow the
+  project's real structure instead of flat directory listings.
+- **Bounded mermaid graph diagrams** — generated codewiki pages embed mermaid
+  dependency diagrams that are capped in size so large modules render readable,
+  truncated graphs instead of unbounded blobs.
+- **Codewiki citation provenance** — generated docs carry citations back to the
+  indexed symbols and files they were derived from, so every section is
+  traceable to its source.
+- **Incremental codewiki regeneration** — re-running `gcode codewiki` only
+  regenerates docs for modules whose underlying code changed, leaving unchanged
+  pages in place.
+- **LLM-backed outlines** — `gcode outline --summarize FILE` produces a
+  natural-language outline of a file via text generation when AI routing is
+  configured, alongside the existing structural symbol tree.
+- **Embeddings doctor** — new diagnostics surface for the `ai.embeddings.*`
+  configuration namespace, including API base, model, query prefix, timeout,
+  and legacy-key migration checks.
+- **Isolated worktree overlay indexing** — linked worktrees and isolated roots
+  now get filesystem-derived code-index identity and overlay-aware visibility
+  counts instead of inheriting parent project state.
+- **Text-content indexing for Markdown** — Markdown files are now indexed as
+  searchable repo text content (reachable through content search) rather than
+  being dropped, even though they are not parsed for AST symbols.
+- **Hidden repo metadata indexing** — gcode now indexes an allowlisted set of
+  hidden repository metadata as text content (e.g. `.gobby/plans/**/*.md` and
+  `.github/workflows/**`), extendable per project via a `hidden_allowlist` in
+  `.gobby/gcode.json`.
+- **Text-only file-type reporting** — `gcode index` now reports the file types
+  it indexed as text-only (with file counts and examples) so it is clear which
+  inputs were content-indexed rather than parsed for symbols.
+
+### Changed
+
+#### gcode
+
+- **Search ergonomics** — `gcode search` now detects literal-looking queries
+  (quoted strings, call-site syntax, dotted config keys, path separators) and
+  hints toward `gcode grep`/`gcode search-content`, with refreshed help text and
+  examples steering exact-literal lookups to the right command.
+- **CLI contract surface** — gcode now ships a published CLI contract
+  describing its command surface for tooling and daemon integration.
+- **Codewiki AI routing contract** — `gcode codewiki --ai <auto|daemon|direct|off>`
+  lets you override AI routing for generated summaries per invocation, matching
+  the shared routing vocabulary.
+- **Daemon-first embeddings** — code-symbol embeddings for indexing and semantic
+  search now route through the Gobby daemon when available and fall back to a
+  direct embedding API, instead of always calling the embedding endpoint
+  directly.
+- **Shared hub provisioning** — standalone `gcode setup` now provisions the
+  PostgreSQL hub through shared `gobby-core` provisioning logic that is also used
+  by `gwiki setup`.
+- **Embeddings namespace contract** — embedding configuration now resolves from
+  `ai.embeddings.*` keys only; legacy `embeddings.*` keys are reported by
+  diagnostics instead of silently winning configuration resolution.
+- **Indexing policy** — Markdown and `.mjs` files are no longer parsed as
+  source-language symbol inputs; safe repo text remains available through
+  content search where supported.
+- **Large-module decomposition** — CLI dispatch, config resolution, setup,
+  parser call extraction, import resolution, indexing, graph reads/reports,
+  FTS, and vector code-symbol lifecycle were split into focused modules with
+  expanded tests.
+
+### Fixed
+
+#### gcode
+
+- **Single hub resolution enforced** — gcode now resolves exactly one
+  PostgreSQL hub for a given run, preventing conflicting hub sources from being
+  mixed during indexing and search.
+- **Serialized freshness indexing** — read-time freshness re-indexing is now
+  serialized per project so concurrent agent sessions no longer race the index
+  refresh against each other.
+- **Lock-free read-time freshness pre-gate** — project-scoped reads now use a
+  lock-free, hash-free pre-gate that checks file mtimes against the last index
+  time and only takes the refresh lock when something actually changed,
+  eliminating spurious "index refresh already running" messages under
+  concurrent sessions.
+- **Skip generated JS bundles** — indexing now skips generated/minified
+  JavaScript bundles so search and graph results are not polluted by build
+  artifacts.
+- **Search and graph hardening** — graph payloads, graph read rows, projection
+  sync reporting, semantic search limits, indexed grep output, and Qdrant
+  vector lifecycle paths were tightened across review follow-up fixes.
+- **Setup preflights** — standalone setup and embedding provisioning now
+  report namespace and datastore compatibility problems more explicitly before
+  mutating gcode-owned projection state.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.3.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Shared AI context and capability routing** — `gobby-core` now owns AI
+  config types, `AiContext` resolution, and a per-capability routing decision
+  (daemon / direct / off) so every Gobby CLI resolves AI behavior the same way.
+- **Daemon and direct AI clients** — added daemon-backed AI clients plus direct
+  transcription, vision, and text-generation clients, giving consumers a shared
+  transport for transcribe/vision/text capabilities behind the `ai` feature.
+- **Shared AI capability probe** — a shared probe reports which AI capabilities
+  are reachable (via daemon or direct) so consumers can degrade predictably when
+  a capability is routed off or unavailable.
+- **Shared local-backend discovery** — local-LLM backend descriptors and
+  discovery now live in `gobby-core::local_backend`, shared across the CLIs
+  instead of being reimplemented per binary.
+- **Shared hub provisioning** — added provisioning helpers that let `gcode
+  setup` and `gwiki setup` provision the PostgreSQL hub through one shared code
+  path.
+- **Embedding config contract** — shared `ai.embeddings.*` key constants,
+  namespace-aware resolution, `query_prefix`, and `timeout_seconds` now live in
+  `gobby-core` for consumers that need consistent embedding service behavior.
+- **Search primitives** — shared search/fusion result types moved into the
+  foundation crate for Rust consumers.
+
+### Changed
+
+#### gobby-core
+
+- **Daemon-first embedding routing** — embedding requests now prefer the Gobby
+  daemon when available and fall back to a direct embedding API, with shared
+  routing applied consistently across consumers.
+- **Explicit AI routing modes** — AI routing now requires an explicit mode
+  (auto / daemon / direct / off) rather than relying on implicit defaults, so
+  capability behavior is unambiguous across CLIs.
+- **Legacy embedding keys retired** — `resolve_embedding_config` no longer
+  honors `embeddings.*` keys; callers get the new namespace or no embedding
+  config.
+- **Provisioning contracts** — setup/provisioning types now carry the
+  embedding namespace migration state used by `gcode setup` and diagnostics.
+
+### Fixed
+
+#### gobby-core
+
+- **Datastore adapter hardening** — PostgreSQL, FalkorDB, and Qdrant helpers
+  gained stricter diagnostics and degradation behavior for release consumers.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.4.5] — gobby-hooks
+
+### Changed
+
+#### gobby-hooks
+
+- **Shared foundation floor** — `gobby-hooks` now requires `gobby-core 0.3.0`.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Planned-shutdown diagnostics** — daemon health-probe transport errors are
+  logged at debug level during planned Stop handling instead of disappearing.
+- **Test isolation** — tmux environment tests now use scoped environment
+  mutation through `temp-env`.
+- **Review hardening** — applied review and cleanup findings across the crate.
+
+## [0.4.5] — gobby-squeeze
+
+### Changed
+
+#### gobby-squeeze
+
+- **YAML dependency refresh** — the manifest now uses the maintained
+  `yaml_serde 0.10.4` package while keeping the public `serde_yaml` dependency
+  name and config-file format unchanged.
+
+## [0.1.3] — gobby-local
+
+### Changed
+
+#### gobby-local
+
+- **Shared local-backend discovery** — backend descriptors and discovery now
+  come from `gobby-core::local_backend` instead of a gloc-local copy, keeping
+  backend detection consistent across the Gobby CLIs.
+- **YAML dependency refresh** — the manifest now uses the maintained
+  `yaml_serde 0.10.4` package while keeping the public `serde_yaml` dependency
+  name and config-file format unchanged.
+
+### Fixed
+
+#### gobby-local
+
+- **Publishable to crates.io** — the `gobby-core` dependency now carries an
+  explicit `version = "0.3.0"` alongside its workspace path, so `cargo publish`
+  no longer fails on a path dependency that has no version requirement.
+
+## [0.9.8] — gcode
+
+### Changed
+
+#### gcode
+
+- **Grouped text output** — `gcode grep` and high-volume navigation outputs now
+  reduce repeated file path prefixes by grouping text results under file or
+  directory headers, while JSON output remains unchanged.
+- **Quiet symbol retrieval** — `gcode outline`, `gcode symbol`, and
+  `gcode symbols` no longer print savings banners to stderr.
+
+## [0.9.7] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Indexed grep unsupported flags** — Unsupported grep/rg flags such as
+  `--files-with-matches` now preserve the indexed-search error message while
+  still allowing supported options like `-m/--max-count` after positional path
+  filters.
+
+## [0.9.6] — gcode
+
+### Changed
+
+#### gcode
+
+- **Indexed grep default output** — `gcode grep` now defaults to text output
+  when `--format` is omitted, while explicit `--format json` still returns the
+  JSON envelope. Other `gcode` commands keep their JSON default.
+
+### Fixed
+
+#### gcode
+
+- **Indexed grep option ordering** — `gcode grep <pattern> PATH -m N` and
+  `gcode grep <pattern> PATH --max-count N` now parse `-m/--max-count`
+  correctly after positional path filters instead of treating the flag as an
+  unsupported path value.
+
+## [0.9.5] — gcode
+
+### Added
+
+#### gcode
+
+- **Indexed grep** — `gcode grep <pattern> [PATH ...]` now provides exact
+  line-oriented search over the indexed `code_content_chunks` corpus. It
+  supports `-i`, `-F`, `-C/-A/-B`, `-g/--glob`, and `-m/--max-count`, with text
+  output shaped like grep and JSON output that includes match spans, context,
+  scan counts, and truncation state.
+
+### Changed
+
+#### gcode
+
+- **Graph sync-file contract** — `gcode graph sync-file` now classifies missing
+  indexed projects and files from PostgreSQL before FalkorDB access. Human
+  defaults stay strict with typed JSON errors and exit code `2`, while daemon
+  and background-worker callers can use `--allow-missing-indexed-file` to turn
+  stale missing-file work into a skipped payload.
+
+## [0.4.4] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Tmux pane terminal context** — `ghook` now injects
+  `input_data.terminal_context.tmux_pane` for any dispatch path when `TMUX` is
+  set and `TMUX_PANE` matches the daemon's `^%\d+$` contract. Missing, empty,
+  or invalid pane IDs leave `terminal_context` absent, so the daemon only sees
+  pane metadata it can validate and use for tmux window titles.
+
+## [0.9.4] — gcode
+
+### Changed
+
+#### gcode
+
+- **Shared foundation floor** — `gobby-code` now requires `gobby-core 0.2.2`
+  so published installs pick up the FalkorDB and Qdrant adapter behavior used
+  by this release.
+- **FalkorDB client boundary** — graph query execution now routes through
+  `gobby-core::falkor::GraphClient`, keeping direct FalkorDB connection and
+  result parsing logic inside the shared foundation crate while preserving the
+  existing `gcode` graph facade.
+
+### Fixed
+
+#### gcode
+
+- **Graph empty-result fallback** — callers, usages, and blast-radius share the
+  same unresolved-symbol empty response path after graph-read availability
+  checks, avoiding duplicated fallback behavior across graph commands.
+
+## [0.2.2] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **FalkorDB graph escape hatch** — `GraphClient::with_sync_graph` exposes the
+  underlying synchronous FalkorDB graph to consumers that need operations not
+  yet covered by the shared adapter API, while keeping graph selection and
+  connection setup centralized.
+
+### Fixed
+
+#### gobby-core
+
+- **Qdrant HTTP classification** — Qdrant server errors now degrade as
+  `ServiceState::Unreachable`, while client-side HTTP errors remain typed hard
+  failures with response bodies preserved for diagnostics.
+
+## [0.4.3] — gobby-hooks
+
+### Changed
+
+#### gobby-hooks
+
+- **Planned-shutdown Stop documentation** — ghook docs now spell out Stop
+  preflight behavior, post-enqueue suppression, marker lookup, and the
+  `GOBBY_DAEMON_URL` / `GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS` controls used during
+  intentional daemon stop and restart windows.
+- **Stop preflight naming** — the internal planned-shutdown preflight helper now
+  uses explicit skip-dispatch naming, matching the behavior that returns
+  `{"continue":true}` before stdin reads or enqueue side effects.
+
+## [0.4.2] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Native planned-shutdown Stop handling** — `ghook` now recognizes fresh
+  daemon shutdown markers for intentional `stop`/`restart` windows. If a Stop
+  hook fires after the daemon is already unreachable, it returns
+  `{"continue":true}` without reading stdin or enqueueing a duplicate Stop
+  envelope.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Stop daemon-death race cleanup** — when the live Stop POST fails with a
+  connection or timeout error during a fresh planned shutdown, `ghook` removes
+  the just-enqueued Stop envelope and lets the host CLI continue. HTTP errors,
+  non-Stop hooks, stale or invalid markers, and envelope delete failures keep
+  the existing fail-closed behavior.
+
+## [0.9.3] — gcode
+
+### Changed
+
+#### gcode
+
+- **Shared foundation floor** — `gobby-code` now requires `gobby-core 0.2.1`
+  so published installs pick up the context, PostgreSQL, and Qdrant behavior
+  used by this release.
+
+### Fixed
+
+#### gcode
+
+- **Graph read degradation** — callers, usages, imports, and blast-radius
+  graph commands now return empty paged results when FalkorDB is unavailable
+  instead of failing before a readable response can be produced.
+- **Graph payload completeness** — file and symbol graph payloads now include
+  their center nodes, and file-target blast-radius queries dedupe merged
+  call/import rows before applying the requested limit.
+- **Graph report scalability** — graph reports now load aggregate FalkorDB
+  summaries instead of materializing every node and edge for production
+  snapshots.
+- **Index write throughput** — symbol upserts now batch rows in PostgreSQL
+  instead of issuing one statement per symbol.
+- **Vector sync lifecycle** — code-symbol vector rebuilds now upsert fresh
+  points before deleting stale vectors, and clear operations avoid unnecessary
+  embedding schema probes.
+- **Standalone setup atomicity** — standalone setup wraps reset/create work in
+  an explicit PostgreSQL transaction and reports failed creation entries.
+- **Short project ids** — short-id rendering now uses Unicode-safe character
+  boundaries.
+- **Typed graph query literals** — Cypher string literal rendering now escapes
+  control characters instead of rejecting otherwise valid strings.
+
+## [0.2.1] — gobby-core
+
+### Changed
+
+#### gobby-core
+
+- **Context API boundary** — `CoreContext` now exposes accessor methods rather
+  than public fields, and stores `daemon_url` as a concrete string.
+- **PostgreSQL TLS handling** — PostgreSQL connections now honor `sslmode` and
+  use native TLS for `prefer` and `require` modes.
+
+### Fixed
+
+#### gobby-core
+
+- **Qdrant degradation** — Qdrant HTTP and transport failures now return
+  `ServiceState::Unreachable` from `with_qdrant` instead of surfacing as hard
+  command errors.
+- **Provisioning tests** — environment-variable mutation in provisioning tests
+  now uses a scoped lock/restore guard.
+
+## [0.9.2] — gcode
+
+### Added
+
+#### gcode
+
+- **Project-id graph clear** — `gcode graph clear --project-id <PROJECT_ID>`
+  now clears a code graph projection by explicit project id before normal
+  project-root resolution. This is the daemon stale-project cleanup path and can
+  run from any cwd without `.gobby/project.json`.
+
+### Fixed
+
+#### gcode
+
+- **Deleted-file projection cleanup** — `gcode index` now removes FalkorDB code
+  graph nodes/edges and Qdrant code-symbol vectors for deleted files before
+  deleting PostgreSQL hub facts. This covers missing explicit
+  `--files <deleted-file>` inputs and whole-project stale/orphan cleanup without
+  relying on daemon reconciliation.
+- **Projection ownership boundary** — code graph clears remain scoped to
+  code-index FalkorDB labels, and code vector clears remain scoped to
+  `code_symbols_{project_id}`. Memory graph nodes and memory vector collections
+  are not targeted by these lifecycle paths.
+
+## [0.9.1] — gcode
+
+### Added
+
+#### gcode
+
+- **Overview graph limit** — `gcode graph overview` now accepts `--limit N`
+  to cap the number of files included in the overview graph, matching the
+  daemon's graph overview limit contract.
+
+### Fixed
+
+#### gcode
+
+- **File graph read aliases** — `gcode graph file` now keeps node file paths
+  and edge metadata file paths under distinct FalkorDB result aliases, fixing
+  duplicate-column failures when returning JSON graph payloads.
+
+## [0.9.0] — gcode
+
+### Added
+
+#### gcode
+
+- **Standalone setup reset boundary** — `gcode setup --standalone` now fails
+  safely when it detects incompatible existing code-index PostgreSQL state and
+  prints guidance to rerun with `--overwrite-code-index` only when a full
+  code-index reset is intended.
+- **Advanced full code-index overwrite** —
+  `gcode setup --standalone --overwrite-code-index` drops/recreates only
+  allowlisted gcode code-index PostgreSQL relations and BM25 indexes, clears
+  code-index graph nodes in FalkorDB, and deletes Qdrant collections with the
+  `code_symbols_` prefix. Gobby project files, config, secrets, tasks,
+  sessions, memory, and daemon-owned data stay untouched.
+- **Rust graph/vector projection lifecycle** — graph reads, graph reports,
+  vector projection sync, and graph/vector lifecycle operations now route
+  through the Rust `gobby-code` library boundary for daemon adoption.
+
+### Changed
+
+#### gcode
+
+- **Project-scoped invalidation** — `gcode invalidate` remains the normal
+  project reset. PostgreSQL deletes stay filtered to the current project, and
+  configured standalone FalkorDB/Qdrant projections are cleaned only for that
+  project.
+- **Shared foundation dependency** — `gobby-code` now consumes
+  `gobby-core 0.2`.
+
+## [0.2.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Expanded shared foundation** — added reusable context/config contracts,
+  attached/standalone setup contracts, PostgreSQL hub helpers, FalkorDB and
+  Qdrant adapters, standalone service provisioning helpers, indexing
+  primitives, search-fusion primitives, and degradation vocabulary for Rust
+  Gobby CLI consumers.
+
+### Changed
+
+#### gobby-core
+
+- **Consumer dependency line** — workspace consumers now target the
+  `gobby-core 0.2` minor line.
+
+## [0.8.7] — gcode
+
+### Fixed
+
+#### gcode
+
+- **Project identity resolution** — self-referential
+  `parent_project_path` / `parent_project_id` markers now keep the owning
+  `.gobby/project.json` ID, while linked worktrees and isolated roots keep
+  filesystem-scoped code index IDs.
+- **Source `build` package indexing** — root generated `build` / `dist`
+  directories stay excluded, while source directories such as
+  `src/gobby/build/` are indexed.
+- **Duplicate-root pruning** — `gcode prune` now marks stale duplicate project
+  entries for an existing root when they differ from that root's resolved
+  project ID.
+
+## [0.4.4] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Raw passthrough for inspection CLIs** — `gh`, `rg`, and `sed` now join the
+  built-in exclusion list so GitHub CLI output, ripgrep search results, and
+  exact file slices surface verbatim with no compression header or daemon
+  savings report.
+
+## [0.8.6] — gcode
+
+### Added
+
+#### gcode
+
+- **Graph-aware symbol lookup** — `gcode search-symbol --with-graph` keeps
+  exact-first ranking and adds FalkorDB graph neighbors when graph config is
+  available.
+
+### Changed
+
+#### gcode
+
+- **Search scoring metadata** — hybrid JSON output now uses `score` for the
+  final displayed rank score, exposes raw RRF as `rrf_score`, and sorts
+  `sources` deterministically.
+
+- **Path-filter fallback visibility** — path globs that cannot be pushed into
+  SQL now log a warning and surface a user-facing hint while still enforcing
+  exact glob semantics through post-filtering.
+
+### Fixed
+
+#### gcode
+
+- **External call extraction** — scoped Swift imports like
+  `import struct Foundation.Date` bind the module root correctly; parameter and
+  local variable shadowing prevents false external call targets; Dart textual
+  call extraction now tracks raw and triple-quoted multiline strings; C/C++
+  macro detection accepts both `#define` and `# define`.
+
+- **clangd cleanup errors** — C/C++ semantic resolution now returns the original
+  resolution error first and only closes open clangd files after successful
+  resolution.
+
+## [0.1.2] — gloc
+
+### Changed
+
+#### gloc
+
+- **MSRV metadata** — raised the crate `rust-version` to 1.88 to match the
+  workspace policy.
+
+## [0.8.5] — gcode
+
+### Changed
+
+#### gcode
+
+- **Positional search paths** — `gcode search`, `gcode search-symbol`,
+  `gcode search-text`, and `gcode search-content` now accept one or more
+  positional path filters after the query. Bare paths match exact files and
+  descendants; glob paths stay verbatim; multiple paths use OR semantics.
+
+- **Broker-first PostgreSQL DSN resolution** — `gcode` now asks the local
+  daemon broker for the PostgreSQL hub DSN before consulting any daemonless
+  fallback. If the broker is unavailable, explicit fallback sources resolve in
+  this order: `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
+  `~/.gobby/gcode.yaml` `database_url`, then bootstrap inline `database_url`.
+
+- **Bootstrap `database_url_ref` rejected** — `~/.gobby/bootstrap.yaml`
+  `database_url_ref` values are no longer accepted by `gcode`. Daemonless
+  setups must provide an inline `database_url` or one of the explicit fallback
+  sources above; broker-managed secrets stay behind the daemon broker.
+
+### Fixed
+
+#### gcode
+
+- **Directory path indexing root** — `gcode index <path>` now indexes from the
+  resolved project root when `<path>` is inside the current project, keeping
+  relative file paths stable instead of treating the passed directory as a new
+  root.
+
+### Removed
+
+#### gcode
+
+- **`--path` search filters** — breaking CLI cleanup: `gcode search`,
+  `gcode search-symbol`, `gcode search-text`, and `gcode search-content` no
+  longer accept `--path <glob>`. Pass paths and globs positionally after the
+  query instead.
+
+
+## [0.8.4] — gcode
+
+### Changed
+
+#### gcode
+
+- **FalkorDB graph backend transition** — `gcode` now reads graph service
+  settings from the Gobby 0.4.x FalkorDB config path (`databases.falkordb.*`)
+  and uses FalkorDB for graph reads such as `callers`, `usages`, `imports`,
+  `blast-radius`, and graph-boosted search. `gcode 0.8.4+` requires
+  `gobby 0.4.0+`; running new `gcode` against an older daemon without
+  `databases.falkordb.*` config silently degrades to "graph unavailable".
+  Upgrade the daemon and CLI together.
+
+- **Broker-only PostgreSQL DSN refs** — `database_url_ref:
+  keyring:gobby:postgres_database_url` and broker-only generated refs now resolve
+  only through the local Gobby daemon broker. `gcode` no longer falls back to
+  native OS Keychain/credential-store reads from short-lived processes; broker
+  failures return a clear daemon connectivity/auth error. Inline `database_url`
+  remains supported for explicit daemonless setups.
+
+### Removed
+
+#### gcode
+
+- **Native keyring runtime path** — removed direct `keyring-core` and
+  platform-keyring-store dependencies from `gobby-code`.
+
+## [0.8.3] — gcode
+
+### Changed
+
+#### gcode
+
+- **AI CLI skill target refresh** — `gcode init` now installs the bundled `gcode` skill for every supported project-local AI CLI target: Claude Code, Codex, Droid, Grok, Qwen, Gemini CLI (deprecated compatibility), and Antigravity CLI. Gobby-managed projects keep skipping project-local skill installation because Gobby owns CLI wiring there.
+- **Gemini compatibility label** — Gemini CLI skill installation remains available for existing users, but code comments, command output labels, and docs now mark it deprecated.
+
+## [0.8.2] — gcode
+
+### Changed
+
+#### gcode
+
+- **More tolerant daemon-brokered DSN lookup** — `gcode` now gives the local daemon broker 3 seconds to return the PostgreSQL DSN, preventing cold daemon responses around 1 second from falling through to macOS Keychain prompts.
+- **Install guidance for stale binaries** — docs now call out older `gcode` binaries on `PATH`, since pre-0.8.1 installs bypass the daemon broker and can still trigger native Keychain authorization dialogs.
+
+## [0.8.1] — gcode
+
+### Changed
+
+#### gcode
+
+- **Daemon-brokered PostgreSQL DSN resolution** — `gcode` now resolves `database_url_ref: keyring:gobby:postgres_database_url` through the local Gobby daemon broker first, using `POST /api/local/runtime/database-url` with the runtime `local_cli_token`. If the daemon path is unavailable, unauthorized, malformed, or returns an empty DSN, `gcode` silently falls back to the native OS keyring. Inline `database_url` bootstrap files keep their existing behavior, and unsupported `database_url_ref` values still fail clearly before any broker lookup.
+- **No SQLite-backed keyring dependency** — `gcode` now wires platform keyring stores directly through `keyring-core` instead of depending on the `keyring` meta crate, avoiding the SQLite-backed `db-keystore`/`turso` stack in the release binary.
+
+## [0.8.0] — gcode
+
+### Changed
+
+#### gcode
+
+- **PostgreSQL hub runtime cutover** — `gcode` now uses the migrated Gobby PostgreSQL hub as its source of truth instead of a local SQLite/FTS index. It reads `~/.gobby/bootstrap.yaml`, requires `hub_backend: postgres`, and resolves the hub DSN from `database_url_ref` or inline `database_url`. Normal index/search commands still do not require the Gobby daemon process, but they do require the migrated hub schema and `pg_search` BM25 indexes. (#158)
+- **Externally managed schema contract** — `gcode` now validates the Gobby-owned hub tables, `pg_search` extension, and required BM25 indexes at runtime rather than creating or migrating schema. This keeps the CLI non-destructive to daemon-managed PostgreSQL state. (#158)
+- **Keyring v4 credential lookup** — `database_url_ref` resolution now uses `keyring` 4 with `keyring-core` store-backed entry construction for OS keyring reads. This bumps the `gobby-code` Rust floor to 1.88, matching the upstream keyring v4 requirement. (#159)
+- **Bundled code-index skill refresh** — the packaged `gcode` skill copy now tracks the installed Gobby code-index instructions, including exact symbol lookup and freshness guidance. (#156, #157)
+
+## [0.7.0] — gcode
+
+### Added
+
+#### gcode
+
+- **`gcode search-symbol` command** — Exact-first symbol/name lookup with deterministic ranking. Resolves precise names ahead of fuzzy matches before falling back to FTS5, and accepts the same `--kind`, `--language`, and `--path` filters as `gcode search`. Use it when you already know (most of) the name and want the canonical hit at rank 0 instead of letting RRF rerank it. (#151)
+- **`--language` filter on search commands** — `search`, `search-symbol`, `search-text`, and `search-content` accept `--language <lang>` to narrow results to a tree-sitter language (e.g. `rust`, `python`, `css`). Composes with `--kind` and `--path`. (#151)
+- **`search-content` covers comments, config, and CSS** — content search now indexes and matches the same comment/config/CSS chunks the indexer already wrote, so doc strings, `*.toml`/`*.yaml`/`*.json` config, and stylesheets are reachable from `gcode search-content`. (#151)
+- **Isolated index roots** — `Context::resolve` now distinguishes five project-identity sources, written up as `ProjectIdentitySource` (`ProjectJson`, `GcodeJson`, `IsolatedRoot`, `LinkedWorktree`, `Generated`):
+  - **Isolation marker** — when `.gobby/project.json` carries `parent_project_path` and/or `parent_project_id`, the directory gets its own filesystem-derived code-index id (UUID5 of the canonical path, namespace `c0de1de0-…`) and is no longer conflated with the parent project. Reading the marker is via the new `project::read_isolation_marker` helper.
+  - **Linked git worktrees** — runs from inside a `git worktree add` directory now resolve to the worktree's own top-level (via `git rev-parse --show-toplevel` + `git worktree list --porcelain` parsing in the new `git` module), and the code-index id is derived from that path rather than from any inherited `.gobby/project.json`. A warning is printed when an inherited id would have been used.
+  - **Generated** — directories without any identity file get a deterministic UUID5 from the canonical path; `.gobby/gcode.json` is only written when `gcode init` runs (via `MissingIdentity::Generate`). Other commands fall back to `MissingIdentity::Error` and ask the user to run `gcode init`.
+- **Read-time freshness checks** — search, symbol, outline, and graph read commands now verify that on-disk source still matches the index before returning results, and incrementally re-index the affected file(s) transparently when they don't. Backed by the new `freshness` module (`FreshnessScope::Project` for project-wide commands, `FreshnessScope::Files` for file-scoped commands like `outline`, plus `ensure_symbol_fresh` for `gcode symbol`). Disable per-call with the new global `--no-freshness` flag, or via `GCODE_FRESHNESS_INFLIGHT=1` for nested processes (a re-entrancy guard so the indexer doesn't recurse into itself). Not a substitute for `gcode index` on bulk changes — intended to keep individual reads honest. (#153)
+- **Project-root walk-up consults git worktree top-level** — `Context::resolve`'s walk-up now prefers `git rev-parse --show-toplevel` (treating linked worktrees as their own top-level) before falling back to generic `.git`/`.hg` markers, so commands invoked deep inside a worktree resolve to the right project root. (#153)
+
+### Changed
+
+#### gcode
+
+- **Project-scoped search and graph commands tightened** — search, symbol, outline, and graph commands now validate that resolved file paths still belong to the current project context before returning results. Stale entries from other projects sharing the same `gobby-hub.db` no longer leak across project boundaries. The new `commands::scope` module owns the path-validation helpers (`normalize_file_arg`, `path_exists_in_current_project`, `indexed_file_exists`, `content_chunks_exist`, `current_indexed_path_is_valid`). (#151)
+- **`gcode init` reports identity source** — init output now distinguishes `initialized`, `existing`, `gobby`, `isolated`, and `linked-worktree` cases when announcing the project context, so it's obvious which identity source resolved.
+
+## [0.4.1] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Factory droid hook route** — `ghook --gobby-owned --cli=droid --type=<PascalCaseHook>` now treats Factory's droid CLI as a first-class source. Droid hook stdin is passed through unchanged to the unified daemon endpoint as `{"hook_type": "<type>", "input_data": <stdin>, "source": "droid"}`, so the Gobby-side `DroidAdapter` owns the protocol translation.
+- **Droid diagnose support** — `ghook --diagnose --cli=droid --type=SessionStart` now reports `cli_recognized: true` and `source: "droid"` so installers can probe for droid-capable ghook binaries.
+
+### Changed
+
+#### gobby-hooks
+
+- **Droid blocking semantics** — droid daemon responses with `continue:false` now exit 2 with the daemon reason while preserving the response JSON on stdout. Other droid block JSON is forwarded on stdout with exit 0 for droid's hook protocol, and daemon transport failures surface as exit 1 stderr diagnostics.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Stop double-emitting Claude PreToolUse denies** — for `--cli=claude`, ghook now narrows the legacy `stderr+exit(2)` channel to daemon responses that explicitly set top-level `continue:false` with a non-empty `stopReason` (the HARD_STOP shape). All other responses — including PreToolUse denies that arrive via `hookSpecificOutput.permissionDecision:"deny"` — are emitted as JSON on stdout with exit 0, matching the structured-channel contract the Python `ClaudeCodeAdapter` already targets. Previously, ghook synthesized a second deny channel on top of the structured one, causing Claude Code to render every PreToolUse deny twice (once as a permission denial, once as a "hook blocking error"). Codex/Gemini/Qwen/Droid paths are unchanged.
+
+## [0.3.1] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Claude statusline handler** — `ghook --gobby-owned --cli=claude --type=statusline` now handles Claude Code statusline ticks directly in Rust. The handler bypasses the normal enqueue-first hook dispatch path, extracts the same token-usage payload as the legacy Python statusline middleware, posts it to `/api/sessions/statusline`, and preserves downstream statusline stdout bytes without adding a newline.
+- **Statusline parity fixtures** — Added golden JSON fixtures under `crates/ghook/tests/fixtures/statusline/` so Claude statusline input-to-daemon-payload parity is machine-checkable and survives removal of the Python reference in a later Gobby-side phase.
+
+### Changed
+
+#### gobby-hooks
+
+- **Statusline failure semantics** — Malformed statusline JSON, missing `session_id`, daemon POST failures, and downstream command failures all exit successfully so Claude's statusline display is not broken by telemetry issues. Daemon POSTs use a short background worker wait, and downstream forwarding has a bounded timeout.
+
+## [0.3.0] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Diagnose schema v2 with install provenance** — `ghook --diagnose` now emits two new fields, `install_method` and `install_source_url`, and stamps the output with `schema_version: 2`. Both fields are sourced from an optional sidecar file, `.ghook-install.json`, written by the installer next to the `ghook` binary. When no sidecar is present (e.g. plain `cargo install gobby-hooks`), both fields are `null` — so consumers can identify which install path produced a given binary in bug reports. The new schema lives at `crates/ghook/schemas/diagnose-output.v2.schema.json`; the v1 schema file is preserved unchanged as a frozen historical schema for tools that pinned to v1. The Gobby installer is the canonical sidecar writer; see `docs/guides/ghook-development-guide.md` for the full contract. (#4)
+
+### Changed
+
+#### CI/CD
+
+- **Release-time tag/version alignment guard** — the `release-ghook` workflow now fails fast if the pushed `ghook-v{X}` tag's version suffix doesn't match the version in `crates/ghook/Cargo.toml`. This closes the drift mode that produced [GobbyAI/gobby-cli#4](https://github.com/GobbyAI/gobby-cli/issues/4), where the public installer's `ghook-v{version}` GitHub-asset lookup could silently miss because the tag, crate version, and release name had diverged. The guard runs before clippy/tests so a misaligned tag never reaches crates.io or the GitHub release. (#4)
+
+### Fixed
+
+#### gobby-hooks
+
+- **Preserve non-stop block JSON** — folded forward from the unreleased 0.2.2 prep: `ghook` no longer collapses non-Stop block responses to a bare `Blocked by hook` message; the original block JSON is preserved for downstream consumers. (#141)
+
+## [0.2.1] — gobby-hooks
+
+### Fixed
+
+#### gobby-hooks
+
+- **Drop phantom ACP session registrations** — `ghook` now short-circuits when `GOBBY_HOOKS_DISABLED=1` is set in the process environment, returning `{}` with exit 0 before any side effect (no enqueue, no POST, no terminal-context capture). Daemon-spawned `gemini --acp` / `qwen --acp` subprocesses inherit the host CLI's SessionStart hook; this env flag lets the daemon mark them so they don't register phantom sessions.
+- **`gobby_acp_child` in terminal_context** — `terminal_context.capture()` now includes `gobby_acp_child` (read from `GOBBY_ACP_CHILD`). The daemon's SESSION_START handler uses it as a second line of defense to recognize and drop registrations from ACP subprocesses even if the env short-circuit didn't fire.
+- **Surface nested `permissionDecisionReason` in block messages** — `extract_reason` now also checks `hookSpecificOutput.permissionDecisionReason` (and `.reason` inside that object) after the top-level fallback keys. Modern Claude Code PreToolUse deny responses carry the reason inside `hookSpecificOutput`; `is_blocked` already recognized the nested shape, but `extract_reason` didn't — so denies surfaced as the bare "Blocked by hook" fallback instead of the daemon's actual message.
+
+## [0.4.3] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Built-in exclusion passthrough** — Gobby-owned CLIs (`gobby`,
+  `gobby-cli`, `gcode`, `ghook`, `gloc`, `gsqz`) and `git` are now excluded
+  from squeezing. Their output is surfaced raw and skips compression headers
+  and daemon savings reports.
+
+## [0.4.2] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Floor `savings_pct` at 0%** — when compressed output ends up larger than the original, `CompressionResult::savings_pct()` now returns `0.0` instead of a negative percentage. Prevents negative savings values from being reported to the daemon.
+
+## [0.6.2] — gcode
+
+### Added
+
+#### gcode
+
+- **Graph lifecycle commands** — Added `gcode graph clear` and `gcode graph rebuild` as daemon-backed code-index graph lifecycle commands. Both commands use the current resolved project context, POST to the existing `/api/code-index/graph/{clear,rebuild}` endpoints, and keep existing read-side graph commands (`callers`, `usages`, `imports`, `blast-radius`) unchanged and top-level.
+
+### Changed
+
+#### gcode
+
+- **Strict daemon response contract** — `gcode graph clear` and `gcode graph rebuild` now fail hard when project context cannot be resolved, when no daemon URL is configured or reachable, when the daemon returns a non-2xx status, or when a 2xx response body is not valid JSON. Successful `--format json` output prints the daemon payload directly; `--format text` renders a concise summary from the parsed JSON response.
+
+## [0.6.1] — gcode
+
+### Fixed
+
+#### gcode
+
+- **FTS fallback query sanitization** — Escaped `%`, `_`, and `\` correctly in the LIKE-based fallback search path so literal user queries stay literal. Prevents malformed matches and closes a SQL-injection footgun in symbol resolution and name search.
+- **FalkorDB correctness cutover** — Completed import-aware call-target classification for Python, JavaScript, and TypeScript. `gcode index` now distinguishes local symbols, unresolved callees, and external modules when writing call data, which reduces bogus graph edges and improves `callers`, `usages`, `blast-radius`, and graph-boosted search relevance. (#137)
+
+## [0.6.0] — gcode
+
+### Changed
+
+#### gcode
+
+- **gobby-core integration** — Migrated to consume the new `gobby-core` crate for project-root walk-up, bootstrap-config resolution, and daemon-URL construction. Inline implementations in `src/project.rs` removed (-109 lines); `src/config.rs` and `src/commands/index.rs` now use the shared helpers. No user-visible behavior change. (#115)
+
+### Fixed
+
+#### gcode
+
+- **FTS LIKE escape** — Hardened FTS5 LIKE-clause escape in `src/search/fts.rs` against patterns containing `%`, `_`, or `\`. Prevents pathological queries from matching unintended rows. (#118)
+- **graph.rs dedup** — Deduplicated unresolved-symbol response building in `src/commands/graph.rs` (-63 lines net). No behavior change. (#118)
+
+#### CI/CD
+
+- **Binary-specific tag prefixes** — Release workflows now trigger on `gcode-v*`, `gsqz-v*`, `gloc-v*`, `gcore-v*`, and `ghook-v*` tags so each crate releases independently. (#110)
+- **Release gating** — Added `release-gobby-core` workflow; GitHub releases for binary crates are gated on successful crates.io publish. (#116)
+
+## [0.4.1] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Low-savings marker** — Suppress `[gsqz:low-savings]` marker when prepending it would grow the output beyond the original. The marker now only annotates when the annotation itself doesn't make things worse. (#111)
+- **Outer compression header for `/no-op` strategy** — When the low-savings marker is suppressed (above), the resulting `{pipeline}/no-op` strategy now also skips the outer `[Output compressed by gsqz — …, 0% reduction]` header and the daemon savings report. The user sees the original output verbatim. `CompressionResult::is_passthrough()` classifies `passthrough`, `excluded`, and `*/no-op` together so both call sites stay in sync. (#121)
+
+## [0.2.0] — gobby-hooks
+
+### Changed
+
+#### gobby-hooks
+
+- **Dispatcher parity** — `ghook` now mirrors the Python `hook_dispatcher.py` contract for live hook requests, per-CLI critical-hook handling, SessionStart response forwarding, and host-visible stdout/stderr/exit behavior. This restores startup session-context injection for supported CLIs while keeping the Rust spool/replay internals. (#126)
+
+### Fixed
+
+#### CI/CD
+
+- **ghook release tags** — The `release-ghook` workflow now triggers on `ghook-v*` tags, matching the documented binary-specific release tag format used by this repo. (#126)
+
+## [0.1.1] — gobby-hooks
+
+### Fixed
+
+#### gobby-hooks
+
+- **Windows build** — `crates/ghook/src/detach.rs` declared `extern "system" { fn FreeConsole() -> i32; }` for the Windows-only `FreeConsole()` call. Edition 2024 requires extern blocks to be marked `unsafe`, so the Windows build target failed under Rust 1.95. Mac/Linux unaffected (their `#[cfg(unix)]` path uses `setsid(2)` instead). 0.1.0 published to crates.io but Windows users could not `cargo install gobby-hooks`. (#124)
+
+## [0.1.0] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Initial release** — Sandbox-tolerant hook dispatcher binary `ghook`. Spools envelopes to `~/.gobby/hooks/inbox/` *before* POSTing to the local Gobby daemon, so the daemon's drain worker can replay deliveries lost to sandbox FS-read denials, network blips, or daemon restarts. (#114)
+- **Dispatch mode** — `ghook --gobby-owned --cli=<c> --type=<t> [--critical] [--detach]` reads stdin, enriches with terminal context where applicable, atomically writes the envelope, then attempts the daemon POST.
+- **Diagnose mode** — `ghook --diagnose --cli=<c> --type=<t>` prints a JSON snapshot of what would happen — daemon URL, project root/id, recognized CLI, critical flag, terminal-context preview. No network, no envelope write. Output validated against `schemas/diagnose-output.v1.schema.json`.
+- **Version mode** — `ghook --version` prints the version and writes `~/.gobby/bin/.ghook-compatibility` so the daemon can detect schema-version mismatches.
+- **Exit codes** — `0` for delivered or non-critical failure (envelope still enqueued); `2` for critical failure (envelope enqueued; signals the host CLI to abort).
+- **Schemas** — `inbox-envelope.v1.schema.json` and `diagnose-output.v1.schema.json`, both validated against the Rust types in unit tests.
+- **Host CLI registry** — Out-of-the-box support for `claude`, `codex`, `gemini`, `qwen` (per-CLI critical-hooks set + terminal-context-hooks set). Unknown CLIs are tolerated — envelope still spools, just without enrichment.
+- **Quarantine** — Malformed stdin lands in `~/.gobby/hooks/inbox/quarantine/` as a body+meta pair. The drain never replays quarantined envelopes; they surface via `gobby status` and daemon logs.
+- **Atomic spool writes** — Envelopes use write-temp + `fsync` + rename, so the drain only ever sees fully-written files.
+- **Renamed for consistency** — Crate renamed from `gobby-hook` to `gobby-hooks`; binary stays `ghook`. (#117)
+
+## [0.1.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Initial release** — Shared-primitives crate consumed by `gcode`, `gsqz`, `gloc`, and `ghook`. Three modules:
+  - `project` — walk up from cwd to find `.gobby/project.json` (or legacy `.gobby/gcode.json`), read `id`/`project_id`.
+  - `bootstrap` — resolve `~/.gobby/bootstrap.yaml` into a `DaemonEndpoint` (host + port). Falls back to `127.0.0.1:60887` on any failure.
+  - `daemon_url` — compose a dial URL from a `DaemonEndpoint`, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1`.
+- **Extracted from inline implementations** in the binary crates so behavior changes propagate with one PR instead of four. (#112, #113, #117)
+
+## [0.4.0] — gsqz
+
+### Added
+
+#### gsqz
+
+- **`replace` step** — line-by-line regex substitution with backreference support (`$1`, `$2`). Rules chain sequentially. Useful for normalizing paths, version strings, timestamps before other steps run (#97)
+- **`match_output` step** — short-circuit step that checks the full output blob against regex rules. If a pattern matches (and optional `unless` doesn't), returns a short message immediately, skipping remaining steps. Used in test pipelines to return "All tests passed." when no failures detected (#98)
+- **`on_empty` fallback** — per-pipeline and global `on_empty` message when steps produce empty output. Pipeline-level overrides global. Prevents confusing empty responses (#100)
+- **Degradation markers** — `[gsqz:passthrough]` prepended when no pipeline matched (fallback used), `[gsqz:low-savings]` when a named pipeline achieves less than 5% savings. Tells the LLM about output quality (#99)
+- **Compound command splitting** — splits `&&`, `||`, `;` while respecting quotes and parentheses. Tries segments in reverse (last command's output is most relevant) for pipeline matching. Pipes (`|`) are not split (#101)
+- **`gsqz input` subcommand** — prose compression from stdin with `--level lite|standard|aggressive`. Strips filler phrases (24 rules) and filler words while preserving code blocks, YAML frontmatter, inline code, URLs, XML tags, file paths, and headings (#108)
+- **`gsqz output` subcommand** — explicit form of existing `gsqz -- <command>` behavior. Bare `gsqz -- <command>` preserved for backward compatibility (#108)
+- **`compress_prose` pipeline step** — use prose compression as a pipeline step in YAML config (`compress_prose: { level: standard }`)
+- **`Config::builtin()`** — test helper for deterministic config loading (avoids `~/.gobby/gsqz.yaml` override)
+
+## [0.5.3]
+
+### Fixed
+
+#### gcode
+
+- **Release workflow** — remove stale `--features embeddings` and `--no-default-features` flags from release-gcode.yml. Embeddings feature was removed in 0.5.2 but the workflow wasn't updated (#106)
+
+#### CI/CD
+
+- **gcode release** — remove cmake install step and per-platform feature matrix, now builds identically on all targets
+
+## [0.1.1] — gloc
+
+### Fixed
+
+#### gloc
+
+- **Windows build** — add `#[cfg(unix)]` / `#[cfg(not(unix))]` gate on `exec_client()`. Unix uses `exec()` (replaces process), Windows falls back to `Command::status()` (spawns child, exits with its code) (#106)
+
+## [0.1.0] — gloc
+
+### Added
+
+#### gloc
+
+- **Initial release** — local LLM launcher for AI CLI tools (#102)
+- **Backend auto-detection** — probes LM Studio (`localhost:1234`) and Ollama (`localhost:11434`) in config order, first responding wins
+- **Ollama model management** — checks downloaded models via `/api/tags`, pulls missing models via `/api/pull` (when `auto_pull: true`), warms up models via `/api/generate` (when `auto_load: true`)
+- **LM Studio JIT support** — no explicit model loading needed, LM Studio loads on first request
+- **Multi-client support** — Claude Code and Codex CLI out of the box, extensible via config
+- **Template env vars** — `{backend.url}`, `{backend.auth_token}`, `{backend.name}`, `{model}` resolved per client
+- **Model aliases** — shorthand names mapped to full model identifiers (e.g. `qwen` -> `qwen3-coder`)
+- **Layered YAML config** — `--config` > `.gobby/gloc.yaml` > `~/.gobby/gloc.yaml` > built-in default (same pattern as gsqz)
+- **`--init` flag** — writes default config to `.gobby/gloc.yaml` with backup of existing
+- **`--status` mode** — displays detected backend, client, model, env vars, and resolved binary path without launching
+- **`--dump-config`** — prints resolved config summary
+- **`exec()` semantics** — replaces the gloc process with the client binary (no wrapper overhead)
+- CLI flags: `--client`, `--backend`, `--model`, `--url`, `--config`
+
+## [0.3.2]
+
+### Fixed
+
+#### gsqz
+
+- **Config resolution order** — fixed config search to check project (`.gobby/gsqz.yaml`) then global (`~/.gobby/gsqz.yaml`) correctly (#93)
+- **Auto-export location** — auto-export writes to `~/.gobby/gsqz.yaml` (global), `--init` writes to `.gobby/gsqz.yaml` (project) (#94)
+
+## [0.5.2]
+
+### Fixed
+
+#### gcode
+
+- **Suppress llama.cpp stderr noise** — redirect fd 2 to `/dev/null` during embedding model init to suppress "embeddings required but some input tokens were not marked as outputs" warnings from llama.cpp's C layer (#87)
+- **Empty search feedback** — `search`, `search-text`, and `search-content` now print "No results." to stderr in text format when the result set is empty. Previously text format produced no output, making it impossible to distinguish zero results from a failure (#88)
+
+## [0.3.1]
+
+### Changed
+
+#### gsqz
+
+- **Simplified config loading** — replaced 4-layer merge system (built-in → global → project → CLI) with simple priority: `--config` flag → `./gsqz.yaml` → compiled-in default. First found wins, no merging (#89)
+- **Auto-export config** — on first run, if no `./gsqz.yaml` exists, gsqz creates one from the built-in default so users can edit immediately (#90)
+- **`--init` flag** — writes the default config to `./gsqz.yaml`. If the file already exists, renames it to `gsqz.yaml.bak` first (#90)
+- **Config error handling** — malformed YAML now prints a parse error and suggests `gsqz --init` instead of silently falling back (#90)
+- **Removed git truncation** — `git-diff`, `git-log`, `git-transfer`, and `git-mutation` pipelines no longer truncate output. Filter and group steps remain (#86)
+
+## [0.5.1]
+
+### Added
+
+#### gcode
+
+- **Symbol name resolution for graph commands** — `callers`, `usages`, and `blast-radius` now resolve fuzzy input before querying FalkorDB. Resolution tries exact match → LIKE substring match → FTS5 search (names, signatures, docstrings). When multiple matches are found, the best is used and alternatives are shown. When no match is found, a clear "No symbol matching" message is printed (#80)
+- **`line_start` on FalkorDB CodeSymbol nodes** — `write_defines` now stores `line_start` on CodeSymbol nodes. `blast-radius` Cypher returns `affected.line_start AS line` for non-zero line numbers in output (requires re-index to populate) (#80)
+
+### Changed
+
+#### gcode
+
+- **Progress bar redesign** — static-width layout with bar on left, counter and filename on right: `[████░░░░░░░░] 21/42 : path/to/file.rs`. No more jumping as path lengths change (#83)
+
+## [0.5.0]
+
+### Changed
+
+#### gcode
+
+- **Defer external writes to daemon** — when the Gobby daemon is available (`daemon_url` resolved and `graph_synced` column detected), `gcode index` now performs SQLite writes only and skips all FalkorDB/Qdrant operations. Sync flags (`graph_synced`, `vectors_synced`) stay at `0` for the daemon's background worker to process. FTS search works immediately; graph/semantic search follows once the daemon syncs. Standalone mode is unchanged (#78)
+- `GraphSyncPending` files are skipped during incremental indexing when daemon is available — the daemon worker handles retries instead of gcode (#78)
+- Orphan file cleanup defers FalkorDB/Qdrant deletion to the daemon's `reconcile_stores` when daemon is available (#78)
+- Qdrant collection creation skipped when daemon handles external sync (#78)
+
+### Added
+
+#### gcode
+
+- **Import/call relation SQLite storage** — `gcode index` now writes parsed import relations (`code_imports` table) and call relations (`code_calls` table) to SQLite when the tables exist (daemon migration v183). Enables the daemon to rebuild FalkorDB graph edges without re-parsing files. Table detection via PRAGMA means no deployment ordering required (#78)
+- `vectors_synced` column support — detected at runtime alongside `graph_synced`, set to `0` on file upsert. Allows independent tracking of Qdrant vector sync status vs FalkorDB graph sync (#78)
+- `gcode kinds` command — lists all distinct symbol kinds in the current project index (#76)
+- Context-aware CLI help — graph commands (`callers`, `usages`, `imports`, `blast-radius`) marked `[requires Gobby]` in help text. `search` describes optional semantic/graph sources. `index` notes SQLite-only behavior when daemon is running. Commands grouped by mode requirements (#77)
+- Generic `has_column()` and `has_table()` helpers replacing the single-purpose `has_graph_synced_column()` (#78)
+
+### Fixed
+
+#### gcode
+
+- Fix cross-project symbol contamination when `gcode index <path>` targets a different project than CWD — re-resolves project ID and DB path from the target path instead of using CWD-derived context. Prints a warning when context is re-resolved (#75)
+- Fix bogus "saved 100%" output when outline/symbol returns empty results — skip savings reporting when actual bytes is zero (#74)
+
+## [0.4.5]
+
+### Fixed
+
+#### gcode
+
+- Fix cross-project symbol contamination when `gcode index <path>` targets a different project than CWD — re-resolves project ID and DB path from the target path instead of using CWD-derived context. Prints a warning when context is re-resolved (#75)
+
+## [0.4.4]
+
+### Fixed
+
+#### gcode
+
+- Fix bogus "saved 100%" output when outline/symbol returns empty results — skip savings reporting when actual bytes is zero (#74)
+
+## [0.4.3]
+
+### Changed
+
+#### gcode
+
+- Replace direct-SQLite savings tracking with HTTP POST to the Gobby daemon — `record_savings(conn, ...)` replaced by `report_savings(base_url, ...)` hitting `/api/admin/savings/record`, matching the gsqz pattern. Adds `ureq` dependency; daemon handles token conversion (#71)
+
+## [0.4.2]
+
+### Added
+
+#### gcode
+
+- `--path <glob>` filter for `search`, `search-text`, and `search-content` — scopes results to files matching a glob pattern (e.g. `--path "src/**/*.rs"`). Uses SQL LIKE prefix pre-filter for index-assisted narrowing with Rust `glob::Pattern` post-filter for exact semantics (#67)
+- Restore `summary` field to `Symbol` and `SearchResult` models — the daemon writes summaries to `code_symbols` in `gobby-hub.db`; gcode now reads and surfaces them in search results. Upsert SQL deliberately omits summary to preserve daemon-written values (#68)
+
+### Fixed
+
+#### gcode
+
+- Fix UTF-8 boundary panic in `symbol_embed_text_with_source` — byte-level truncation at 300/500 could land inside multi-byte characters (e.g. box-drawing chars). Uses `floor_char_boundary` polyfill for MSRV 1.85 compatibility (#66)
+
+### Changed
+
+#### gcode
+
+- Refactored FTS search functions to use dynamic parameter builders instead of branch-per-filter pattern, enabling clean composition of optional `--kind` and `--path` filters (#67)
+
+## [0.4.1]
+
+### Added
+
+#### gcode
+
+- Two-pass graph expansion for hybrid search — after FTS+semantic return results, top symbol names are used to batch-query FalkorDB for callers and callees, feeding a 4th RRF source (`graph_expand`) that surfaces structurally related symbols (#62)
+- `find_callers_batch` and `find_callees_batch` FalkorDB functions with `IN $names` Cypher for efficient batch graph queries (#62)
+- Body snippet enrichment for symbol embeddings — `symbol_embed_text_with_source` appends first 300 chars of function body to embedding text, improving semantic search for conceptual queries (#64)
+- Source bytes carried through `ParseResult`, eliminating double file read during indexing (#64)
+
+### Changed
+
+#### gcode
+
+- `graph_expand` takes `&[String]` slice reference instead of owned `Vec<String>` (#64)
+- `find_callees_batch` uses correct `callee_id`/`callee_name` Cypher aliases; `row_to_graph_result` updated with callee fallback chain (#64)
+
+## [0.4.0]
+
+### Added
+
+#### gcode
+
+- Per-file SQLite transactions for crash-safe indexing — prevents half-indexed files if the process is killed mid-index (#57)
+- `graph_synced` column support — detects column in `gobby-hub.db` at runtime, sets to `0` on file upsert, flips to `1` after successful FalkorDB/Qdrant writes. Incremental index auto-detects unsynced files and retries external writes only (#57)
+- `StaleReason` enum (`ContentChanged` / `GraphSyncPending`) for smarter incremental detection (#57)
+
+#### gsqz
+
+- `SKILL.md` — standalone skill file that teaches AI agents to wrap verbose Bash commands with `gsqz --` for token-optimized output compression (#51)
+
+### Changed
+
+#### gcode
+
+- **Breaking:** Remove `gcode summary` command — the Gobby SymbolSummarizer is being removed; summaries were never generated by gcode (#58)
+- Remove `summary` field from `Symbol` and `SearchResult` models (#58)
+- Remove `summary` from `upsert_symbols` SQL (#58)
+- Remove `verbose` parameter from `search` command (only controlled summary display) (#58)
+- Move `repo_outline` from `commands/summary.rs` to `commands/status.rs` (#58)
+- FalkorDB write functions (`write_defines`, `write_calls`, `write_imports`, `delete_file_graph`) now return `Result<()>` instead of silently discarding errors (#56)
+- FalkorDB writes in `index_file` are invoked independently instead of short-circuiting — all three are attempted even if one fails (#60)
+
+### Fixed
+
+#### gcode
+
+- Fix `gcode invalidate` returning 404 from daemon — notify daemon before clearing SQLite so it can still read project stats (#52)
+- Fix FalkorDB short-circuit write chain preventing `write_calls`/`write_imports` from running after `write_defines` failure (#60)
+
+## [0.3.3]
+
+### Fixed
+
+#### gcode
+
+- Fix `gcode invalidate` returning 404 from daemon — notify daemon to clean FalkorDB/Qdrant **before** deleting from SQLite, so the daemon can still read project stats from the shared `gobby-hub.db` (#52)
+
+## [0.3.2]
+
+### Added
+
+#### gcode
+
+- `--offset` flag on `search`, `search-text`, `search-content`, `callers`, `usages` for stateless pagination (#43)
+- `--full` flag on `index` to force non-incremental reindex, cleaning up stale external indices (#43)
+- `PagedResponse` envelope on all paginated JSON commands: `{ project_id, total, offset, limit, results, hint }` (#43, #45)
+- Text mode pagination footer: `-- 10 of 47 results (use --offset 10 for more)` (#43)
+- Accurate `total` counts via FTS5 COUNT queries for `search-text` and `search-content` (#44)
+- FalkorDB server-side COUNT queries (`count_callers`, `count_usages`) for accurate graph pagination totals (#45)
+- FalkorDB server-side SKIP/LIMIT for `find_callers` and `find_usages` — no more over-fetch and skip in Rust (#48)
+- Empty-offset messaging across all search and graph commands (#48)
+
+#### Documentation
+
+- Development guides for gcode and gsqz — architecture, data flow, internals, design decisions (#46)
+
+### Changed
+
+#### gcode
+
+- Default `--limit` reduced from 20 → 10 on search/callers/usages commands (#43)
+- `outline` JSON output uses slim `OutlineSymbol` struct (6 fields vs 18) — full output via `--verbose` (#43)
+- `search` JSON output drops `summary` by default — include via `--verbose` (#43)
+- `project_id` hoisted to response envelope instead of repeating on every result (#43)
+- Graph commands (`callers`, `usages`, `imports`, `blast-radius`) all use `PagedResponse` consistently — removed ad-hoc JSON hint wrapper (#45)
+- `:CodeSymbol` label added to `find_usages` and `count_usages` target node for consistent FalkorDB query planning (#48)
+
+## [0.3.1]
+
+### Fixed
+
+#### gcode
+
+- Fix stale Qdrant vectors causing "failed to look up symbol" warnings during search — `delete_file_data` now cleans up Qdrant vectors alongside SQLite and FalkorDB when re-indexing files (#38)
+- Suppress noisy stderr warnings for stale external index entries — silently skipped instead (#38)
+
+## [0.3.0]
+
+### Changed
+
+#### gcode
+
+- **Breaking (build):** Metal GPU acceleration is now platform-conditional — automatically enabled on macOS, absent on other platforms. Previously, `embeddings` always pulled in Metal, which failed to build on Linux/Windows (#30)
+- Split release workflow into per-crate workflows (`release-gcode.yml`, `release-gsqz.yml`) — both still trigger on `v*` tags (#31)
+
+### Added
+
+#### gcode
+
+- `cuda` feature flag — opt-in NVIDIA GPU acceleration for embeddings on Linux/Windows (requires CUDA toolkit) (#32)
+- `vulkan` feature flag — opt-in cross-vendor GPU acceleration for embeddings on Linux/Windows (requires Vulkan SDK) (#32)
+- `rocm` feature flag — opt-in AMD GPU acceleration for embeddings on Linux (requires ROCm stack) (#32)
+
+#### Platform Support
+
+- Linux and Windows can now build with embeddings enabled (CPU inference by default)
+- GPU acceleration available via `--features cuda`, `--features vulkan`, or `--features rocm`
+
+## [0.2.8]
+
+### Added
+
+#### gcode
+
+- Index coverage tracking: `gcode status` and `gcode projects` now show file coverage percentage (e.g. `39/58 (67%)`) to help agents decide whether to use the index or grep (#27)
+- `total_eligible_files` cached during `gcode index` runs — no extra disk I/O on status queries
+- Schema migration (v1→v2) for standalone `gobby-code-index.db`
+
+## [0.2.7]
+
+### Added
+
+#### gcode
+
+- `gcode prune` command to detect and remove stale project entries (dead paths, relative paths, sentinel UUIDs) with daemon FalkorDB/Qdrant cleanup notification (#25)
+
+### Improved
+
+#### gcode
+
+- `gcode projects` and `gcode status` text output now shows friendly project names (basename + short UUID) and human-readable timestamps (#25)
+- Timestamps normalized across epoch seconds and ISO 8601 formats to consistent `YYYY-MM-DD HH:MM:SS UTC` display (#25)
+
+## [0.2.6]
+
+### Fixed
+
+#### gcode
+
+- Fix empty `GOBBY_PORT` env var blocking daemon URL fallback — treat empty string same as unset (#22)
+- Move `GGML_METAL_TENSOR_ENABLE` env var to top of `main()` before any threads spawn — setting env vars during lazy init was undefined behavior on macOS due to concurrent reads
+
+## [0.2.5]
+
+### Fixed
+
+#### gcode
+
+- Fix Metal GPU crash on pre-M5 Apple Silicon (M1-M4) caused by GGML residency set cleanup bug in non-tensor codepath — force-enable tensor API via `GGML_METAL_TENSOR_ENABLE` env var (#18)
+- Fix Metal residency set assertion crash on process exit — explicitly drop embedding model before static destructor teardown (#18)
+- Fix daemon URL fallback returning `None` when bootstrap.yaml has no `bind_host`, and normalize trailing slashes (#16)
+- Fix Qdrant collection not created during `gcode index` — add `ensure_collection` to auto-create with correct vector config when Gobby is installed (#20)
+
+### Added
+
+#### gcode
+
+- `--verbose` global flag to enable GGML/llama.cpp debug output (suppressed by default to save agent tokens) (#19)
+- `--version` flag for gsqz CLI (#17)
+
+## [0.2.4]
+
+### Fixed
+
+#### gcode
+
+- Fix `root_path` not updated on re-index — `upsert_project_stats` was missing `root_path` in the `ON CONFLICT DO UPDATE` clause (#10)
+
+### Added
+
+#### gcode
+
+- `gcode invalidate` now notifies the Gobby daemon to clean FalkorDB graph nodes and Qdrant vectors via `POST /api/code-index/invalidate` (#11)
+- Daemon URL resolved from `~/.gobby/bootstrap.yaml` (`daemon_port` + `bind_host`) instead of hardcoded default (#12)
+- Migrate config_store keys from `memory.*` to `databases.falkordb.*` and `databases.qdrant.*` namespace (#15)
+
+## [0.2.3]
+
+### Fixed
+
+#### gcode
+
+- Fix startup hang caused by llama-cpp-2 v0.1.140 C++ static constructors blocking before main() on macOS Metal — update to v0.1.141 (#9)
+- Wire up batch `embed_texts` in indexing pipeline instead of one-at-a-time `embed_text` calls (#9)
+- Remove unused `embed_texts` export warning (#9)
+
+## [0.2.2]
+
+### Fixes
+
+#### gsqz
+
+- Fix dedup group transition losing representative line before repeat marker (#6)
+- Fix truncate omission marker having extra leading newline (#6)
+- Update README badge and download URLs from old GobbyAI/gsqz repo (#6, #7)
+- Fix cargo install command to target `gobby-squeeze` crate (#7)
+
+#### gcode
+
+- Fix `symbols` command panic when stale index has byte_start beyond file length (#6)
+- Replace `process::exit(1)` with proper error returns in `summary` and `symbol` commands (#6)
+- Return `Result` from `symbol_content_hash` instead of panicking on invalid ranges (#6)
+- Use safe `try_into()` for i64→usize casts in symbol deserialization (#6)
+- Log database lookup errors in search instead of silently swallowing (#6)
+- Use bounded 8KB read in `is_binary` instead of reading entire file (#6)
+- Fix UTF-8 multi-byte panic in progress bar path truncation (#6)
+- Add missing Swift `LanguageSpec` to match existing tree-sitter parser (#6)
+
+### Improvements
+
+#### gcode
+
+- Rename misleading `iso_now` to `epoch_secs_str` in chunker and indexer (#6)
+- Add `#[serial_test::serial]` to config tests that read environment variables (#6, #7)
+- Fix `test_config_defaults` to actually test `resolve_falkordb_config` defaults (#6)
+- Set `rust-version = "1.85"` in both crate manifests (#6)
+
+#### Documentation
+
+- Add `text` language specifier to fenced code blocks in user guides (#6)
+
+## [0.2.1]
+
+### Fixes
+
+#### gsqz
+
+- Fix ripgrep output compression mangling results and making them unreadable (#2)
+- Fix pytest warnings being hidden in compressed output (#3)
+- Fix git-diff compression losing meaningful context (#4)
+
+### CI/CD
+
+- Add `cargo publish` step to release workflow for crates.io publishing
+
+## [0.2.0]
+
+### Features
+
+#### Cargo Workspace
+
+- Consolidated `gcode` and `gsqz` into a single Cargo workspace under `gobby-cli` (#28)
+- Unified CI pipeline: single `ci.yml` tests both crates, single `release.yml` builds and publishes both binaries
+- Unified release: one git tag produces 12 artifacts (2 binaries x 6 platform targets)
+
+#### Documentation
+
+- Added gsqz user guide to `docs/guides/`
+- Updated README with workspace overview, documentation links, and expanded tool descriptions
+- Added CHANGELOG
+
+### Fixes
+
+#### CI/CD
+
+- Fix macOS-13 runner deprecation in release workflow (#27)
+- Fix cross-compilation with vendored OpenSSL + rustls for reqwest (#26)
+
+## [0.1.0]
+
+### Features
+
+#### gcode — AST-Aware Code Search
+
+- Tree-sitter AST parsing for 18 languages across 3 tiers (Python, JS, TS, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Dart, Elixir, JSON, YAML, Markdown)
+- SQLite FTS5 full-text search on symbols and file content
+- Semantic vector search via Qdrant with GGUF embeddings (macOS Metal GPU)
+- Reciprocal Rank Fusion to merge FTS5 + semantic + graph results
+- FalkorDB dependency graph: callers, usages, imports, blast-radius analysis
+- Standalone mode with self-initializing schema and `.gobby/gcode.json` identity
+- Gobby mode with `project.json` detection and shared `gobby-hub.db`
+- Incremental indexing with SHA-256 content hashing
+- `gcode init` with progress bar, auto-indexing, and AI CLI skill installation (#16, #18, #19)
+- Confirmation prompt on `gcode invalidate` (#20)
+- Graceful degradation when FalkorDB/Qdrant/GGUF model unavailable
+- Cross-project queries by name or path
+- JSON and text output formats
+
+#### gsqz — Output Compression
+
+- YAML-configurable output compressor for LLM token optimization
+- 28 built-in compression pipelines (git, cargo, pytest, npm, eslint, ruff, and more)
+- 4 composable step types: `filter_lines`, `group_lines`, `truncate`, `dedup`
+- 8 grouping modes: `git_status`, `pytest_failures`, `test_failures`, `lint_by_rule`, `by_extension`, `by_directory`, `by_file`, `errors_warnings`
+- Layered config: built-in → global (`~/.gobby/gsqz.yaml`) → project (`.gobby/gsqz.yaml`) → CLI override
+- Per-section truncation with configurable section markers
+- ANSI escape code stripping
+- Optional Gobby daemon integration for runtime config and savings reporting
+- Claude Code shell wrapper integration
+- Always exits code 0 — LLM reads pass/fail from content
+
+#### Platform Support
+
+- macOS (aarch64, x86_64) — with local embeddings via Metal GPU
+- Linux (x86_64, aarch64) — without embeddings (embeddings added in 0.3.0)
+- Windows (x86_64, aarch64) — without embeddings (embeddings added in 0.3.0)
+
+### Fixes
+
+- Fix standalone config isolation and invalidate cleanup (#12)
+- Fix `delete_file_graph` to preserve incoming CALLS edges (#15)
+- Add `scoped_identifier` to Rust call query for cross-module calls (#13)
+- Fix clippy warnings, remove dead code, feature-gate embeddings (#10)
+- Add Gobby hint to empty graph command responses (#25)

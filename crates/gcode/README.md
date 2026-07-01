@@ -1,0 +1,334 @@
+<!-- markdownlint-disable MD033 MD041 -->
+<p align="center">
+  <img src="logo.png" alt="Gobby" width="160" />
+</p>
+
+<h1 align="center">gcode</h1>
+
+<p align="center">
+  <strong>AST-aware code search and navigation for AI agents.</strong><br>
+  Fast symbol lookup, dependency graphs, and semantic search — all from the CLI.
+</p>
+
+<p align="center">
+  <a href="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml"><img src="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli/releases/latest"><img src="https://img.shields.io/github/v/release/GobbyAI/gobby-cli" alt="Release"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+</p>
+
+---
+
+## The Problem
+
+AI coding agents read entire files to find a single function. A 2000-line module gets dumped into the context window when all the agent needed was a 15-line method. Multiply that across a session and you're burning thousands of tokens on code that isn't relevant.
+
+## The Fix
+
+gcode indexes your codebase using tree-sitter AST parsing plus safe repo text
+chunking, where content chunks stay within file boundaries and skip binary,
+large, and excluded files, then gives agents (and humans) precise,
+token-efficient access to symbols, docs, configs, content chunks, and dependency
+graphs.
+
+```
+$ gcode search "handleAuth"
+[
+  {"name": "handleAuth", "kind": "function", "file_path": "src/auth/middleware.ts",
+   "line_start": 42, "signature": "async function handleAuth(req, res, next)", ...}
+]
+```
+
+One search call instead of reading 50 files. 90%+ token savings.
+
+## How It Works
+
+```text
+codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / retrieve / navigate
+                │                              │
+     ┌──────────┼──────────┐                   │
+     │          │          │                 ┌──┴──┐
+  symbols    chunks     files               │     │
+  (BM25)    (BM25)   (hashes)             FalkorDB Qdrant
+                                          (calls) (vectors)
+```
+
+1. **Index** — Walk files, parse ASTs with tree-sitter, and chunk safe repo text
+2. **Store** — PostgreSQL hub tables for symbols/content, FalkorDB for call/import graphs, Qdrant for semantic vectors
+3. **Search** — Hybrid ranking: pg_search BM25 + required semantic/graph sources that can degrade → exact-tiered RRF results with raw `rrf_score` metadata
+4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
+
+## Installation
+
+### Pre-built binaries
+
+Download from [GitHub Releases](https://github.com/GobbyAI/gobby-cli/releases/latest):
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv gcode /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv gcode /usr/local/bin/
+
+# Linux (x86_64)
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv gcode /usr/local/bin/
+
+# Linux (ARM64)
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-aarch64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv gcode /usr/local/bin/
+
+# Windows (x86_64) — PowerShell
+Invoke-WebRequest -Uri https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-pc-windows-msvc.zip -OutFile gcode.zip
+Expand-Archive gcode.zip -DestinationPath .
+```
+
+### Build from source
+
+```bash
+cargo install gobby-code
+```
+
+Graph and semantic features are configured at runtime. You do not need Cargo
+feature flags to enable FalkorDB, Qdrant, or embeddings support. Gobby-managed
+projects read FalkorDB settings from `databases.falkordb.*`; daemon-independent
+setups can use `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
+`GOBBY_FALKORDB_PASSWORD`.
+
+Runtime indexing/search requires a migrated Gobby PostgreSQL hub. gcode
+asks the local daemon broker for the hub DSN first. If the daemon is
+unavailable, resolution checks `GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`,
+`~/.gobby/gcore.yaml` `databases.postgres.dsn`, then bootstrap
+`database_url`. Bootstrap config requires `hub_backend: postgres`.
+
+Standalone setup is tested against PostgreSQL 18 with `pg_search` BM25 indexes.
+The schema preflight reads PostgreSQL catalogs such as `pg_class` and
+`pg_namespace` to validate only gcode-owned code-index tables and indexes.
+
+### With Gobby
+
+gcode is installed automatically as part of the [Gobby](https://github.com/GobbyAI/gobby) platform. If you're using Gobby, you already have it.
+
+## Usage
+
+```bash
+# Initialize and index a project (one step)
+gcode init
+
+# Search
+gcode search "query"                      # Hybrid: BM25 + semantic + graph boost
+gcode search "query" --kind function      # Filter by symbol kind
+gcode search "query" --language rust      # Filter by source language
+gcode search "query" src/**/*.rs          # Filter by path or glob
+gcode search-symbol "outline"             # Exact-first symbol/command lookup
+gcode search-symbol "outline" --with-graph # Exact-first lookup plus graph neighbors
+gcode search-symbol "outline" --kind function --language rust
+gcode search-symbol "Context" crates/gcode/src
+gcode search-text "query"                 # BM25 on symbol names/signatures
+gcode search-text "query" crates/gcode/src
+gcode grep "pattern"                      # Exact indexed content grep
+gcode grep -w note_path [PATH...]         # ASCII identifier whole-word grep
+gcode grep '\bnote_path\b' src -m 50      # Rust regex word boundaries are supported
+gcode search-content "query"              # BM25 on source, comments, skill files, docs/Markdown, configs, CSS, SQL, and extensionless text
+gcode search-content "query" docs/**/*.md crates/gcode/src
+
+# Symbol retrieval
+gcode outline src/auth.ts                 # Hierarchical symbol tree
+gcode symbol-at src/auth.ts:42            # Symbol containing or nearest to a line
+gcode symbol <id>                         # Source code by symbol ID
+gcode symbols <id1> <id2> ...             # Batch retrieve
+gcode tree                                # File tree with symbol counts
+
+# Dependency graph reads (requires FalkorDB)
+gcode graph overview --limit 100          # Project overview graph
+gcode callers <symbol-id>                 # Who calls this symbol?
+gcode usages <symbol-id>                  # Incoming call sites for this symbol
+gcode usages <symbol-id> --token-budget 120 # Trim rows to an approximate token budget
+gcode imports src/auth.ts                 # Import graph for a file
+gcode path "handleAuth" "writeDb"         # Shortest CALLS path between two symbols
+gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
+gcode blast-radius "handleAuth" --depth 3 --token-budget 160
+
+# Code documentation
+gcode codewiki --out docs/codewiki        # Vault-ready hierarchical code docs
+
+# Graph lifecycle (requires FalkorDB)
+gcode graph clear                         # Clear current project's graph projection
+gcode graph clear --project-id <id>       # Clear graph projection by explicit project id
+gcode graph sync-file --file src/lib.rs   # Sync one indexed file into the graph projection
+gcode graph rebuild                       # Rebuild current project's graph projection
+gcode graph cleanup-orphans               # Remove project-wide orphaned graph nodes
+gcode vector cleanup-orphans              # Remove code-symbol vectors for unindexed files
+
+# Project management
+gcode status                              # Index stats
+gcode projects                            # List all indexed projects
+gcode setup --standalone                  # Provision daemon-independent services
+gcode index                               # Re-index (incremental)
+gcode invalidate                          # Clear index, force full re-index
+gcode prune                               # Remove stale projects + reconcile orphaned projections
+
+# Cross-project queries
+gcode search --project myapp "query"      # By project name
+gcode search --project /path/to/app "q"   # By path
+
+# Global flags
+--format text|json                        # Output format (default: json)
+--quiet                                   # Suppress warnings and progress
+--no-freshness                            # Skip read-time index/source freshness checks
+```
+
+`gcode grep` defaults to grouped text output: each matched file is printed once,
+followed by line-numbered matches and context. Other high-volume text outputs,
+including `tree`, `callers`, `usages`, and `blast-radius`, also group repeated
+paths for compact agent-readable output. `--token-budget N` trims returned rows
+to an approximate `ceil(chars/4)` token ceiling on `search`, `usages`, and
+`blast-radius` only. `gcode grep --format json` returns structured matches with
+spans and context. Regex patterns use Rust regex syntax,
+including `\b` word boundaries; use `-w/--word` for ASCII identifier whole-word
+search. For reference mapping, resolve a symbol ID first and prefer
+`gcode usages <symbol-id>` or `gcode callers <symbol-id>` over text grep when
+the graph projection is synced.
+
+## AI CLI Skill Installation
+
+For non-Gobby-managed projects, `gcode init` installs the bundled `gcode` skill
+for every supported project-local AI CLI target:
+
+| CLI | Project-local files |
+|-----|---------------------|
+| Claude Code | `.claude-plugin/plugin.json`, `skills/gcode/SKILL.md` |
+| Codex | `.codex/skills/gcode/SKILL.md` |
+| Droid | `.factory/skills/gcode/SKILL.md` |
+| Grok | `.grok/skills/gcode/SKILL.md` |
+| Qwen | `.qwen/skills/gcode/SKILL.md` |
+| Antigravity CLI | `.agents/skills/gcode/SKILL.md` |
+
+Gobby-managed projects skip these project-local writes because Gobby owns CLI
+wiring.
+
+## Daemon-Independent Runtime
+
+gcode is standalone in the important CLI sense: `gcode index`, `gcode search`,
+`gcode status`, and symbol retrieval do not require the Gobby daemon process.
+They do require the migrated PostgreSQL hub schema because that hub is the
+source of truth for code-index rows.
+
+### With Gobby
+
+```text
+codebase → tree-sitter → PostgreSQL hub + pg_search BM25
+FalkorDB              → call graphs, blast radius, imports
+Qdrant + embeddings   → semantic vector search
+gcode projection sync → code graph/vector projection writes
+Gobby daemon          → auto-indexing triggers, config/secrets, sessions, agents
+```
+
+Gobby adds scheduling, shared runtime config, semantic services, and infrastructure that makes gcode better at its core job. Rust still owns code graph/vector projection writes; daemon and UI callers delegate that work to gcode APIs or commands.
+
+**Search quality improves.** With FalkorDB, `gcode search` blends BM25 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
+
+**Config and secrets are managed.** FalkorDB connection settings, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
+
+**PostgreSQL DSNs can stay out of plaintext files.** Isolated gcode runtimes
+ask the daemon broker first. Operators who need daemonless access can opt into
+`GCODE_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `~/.gobby/gcore.yaml`, or inline
+bootstrap `database_url`.
+
+**Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Without the daemon, run `gcode index` manually.
+
+| Capability | gcode CLI | With Gobby daemon/services |
+|-----------|-----------|-----------|
+| AST indexing + BM25 search | Yes, via PostgreSQL hub | Yes |
+| Graph-boosted search ranking | When FalkorDB is configured | Yes |
+| Semantic vector search | When Qdrant + embeddings are configured | Yes |
+| Call graph / blast radius | When FalkorDB is configured | Yes |
+| Import graph | When FalkorDB is configured | Yes |
+| Graph clear / rebuild lifecycle | When FalkorDB is configured | Yes |
+| Auto-indexing on file change | Manual `gcode index` | Yes (daemon file watcher) |
+| Centralized config + secrets | Reads PostgreSQL `config_store` + secrets | Yes |
+| Shared index (daemon + CLI) | PostgreSQL hub | PostgreSQL hub |
+| AI agent orchestration | — | Yes |
+| Persistent sessions + memory | — | Yes |
+| Task tracking + pipelines | — | Yes |
+
+Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/gobby).
+
+## Graceful Degradation
+
+| Service unavailable | Behavior |
+|---------------------|----------|
+| FalkorDB down | Graph commands return `[]`. Search loses graph boost. |
+| Qdrant down | Search loses semantic boost. BM25 + graph still work. |
+| Embeddings API unavailable | Semantic embeddings disabled. BM25 + graph still work. |
+| PostgreSQL hub unavailable | Runtime index/search commands fail with a bootstrap or connection error. |
+| No index yet | Commands error with `Run gcode init to initialize`. |
+
+Read-side graph commands and graph lifecycle depend on FalkorDB. Vector
+lifecycle depends on Qdrant plus embeddings for sync/rebuild. All code-index
+projection lifecycle paths are Rust-owned and scoped to code projection state:
+graph clears target code-index FalkorDB labels only, and vector clears target
+only `code_symbols_{project_id}` rather than memory vector collections.
+`gcode graph sync-file --allow-missing-indexed-file` is reserved for daemon and
+background-worker stale work; humans should let the default strict missing-file
+error surface stale or incorrect sync requests.
+
+## Language Support
+
+gcode parses ASTs using tree-sitter with support for 21 languages. Files that
+pass the same safety checks but do not match a tree-sitter language are indexed
+as content-only text for `search-content`.
+
+| Tier | Languages |
+|------|-----------|
+| **Tier 1** | Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Objective-C |
+| **Tier 2** | Dart, Elixir, Lua, Bash |
+| **Tier 3** | JSON, YAML |
+
+Content-only indexing covers repo text files such as source comments, skill
+files, docs/Markdown, configs, scripts, CSS, SQL, `Dockerfile`/`Makefile`, and
+other extensionless text files. Markdown is content-only and does not go through
+tree-sitter AST symbol detection. Binary, excluded, empty, and >10MB files are
+skipped. Secret-like skips are filename/path checks from `src/index/security.rs`:
+extensions such as `.env`, `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`,
+and `.secret`; prefixes such as `credentials`, `.env`, `id_rsa`, `id_ed25519`,
+and `token`; and substrings such as `api_key`, `apikey`, `_secret.`, and
+`_token.`. No content secret scanner or external detector is currently used.
+
+## Build
+
+`gcode` uses runtime-configured services rather than Cargo feature flags.
+
+```bash
+cargo build --release
+cargo test --no-default-features
+cargo clippy --no-default-features -- -D warnings
+```
+
+## Platform Support
+
+| Platform | Architecture | Status |
+|----------|-------------|--------|
+| macOS | Apple Silicon (aarch64) | Supported |
+| macOS | Intel (x86_64) | Supported |
+| Linux | x86_64 | Supported |
+| Linux | ARM64 (aarch64) | Supported |
+| Windows | x86_64 | Supported |
+| Windows | ARM64 (aarch64) | Supported |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License
+
+[Apache 2.0](LICENSE) — Use it, fork it, build on it.
+
+---
+
+<p align="center">
+  <sub>Part of the <a href="https://github.com/GobbyAI/gobby">Gobby</a> suite.</sub>
+</p>

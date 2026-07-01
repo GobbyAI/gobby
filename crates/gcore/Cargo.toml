@@ -1,0 +1,64 @@
+[package]
+name = "gobby-core"
+version = "0.7.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Josh Wilhelmi <hello@gobby.ai>"]
+description = "Shared foundation primitives for Gobby CLI tools"
+license = "Apache-2.0"
+repository = "https://github.com/GobbyAI/gobby-cli"
+homepage = "https://gobby.ai"
+keywords = ["gobby", "cli"]
+categories = ["development-tools"]
+
+[features]
+default = []
+postgres = ["dep:postgres", "dep:postgres-types", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]
+falkor = ["dep:falkordb", "dep:urlencoding"]
+qdrant = ["dep:reqwest", "dep:urlencoding"]
+indexing = ["dep:ignore", "dep:sha2"]
+search = []
+# Enables the in-memory graph analytics module; no optional dependency is needed.
+graph-analytics = []
+ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "reqwest/multipart"]
+full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]
+
+[dependencies]
+anyhow = "1"
+dirs = "6"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = { package = "yaml_serde", version = "0.10.4" }
+thiserror = "2"
+
+postgres = { version = "0.19", optional = true }
+postgres-types = { version = "0.2", optional = true }
+# PostgreSQL TLS still uses postgres-openssl/native-tls connectors.
+postgres-openssl = { version = "0.5", optional = true }
+# Non-optional + vendored on purpose: `fernet` (always-compiled, used by
+# `secrets`) pulls `openssl`/`openssl-sys` into *every* dependency graph,
+# including graphs that omit the `postgres` feature (ghook's whole graph,
+# gcode's build-dependency graph). Cargo's resolver v2 keeps build-dep and
+# no-postgres feature sets separate, so a `postgres`-gated vendored flag never
+# reaches those graphs and they fall back to a system OpenSSL that does not
+# exist on the Windows release runners (gobby-cli Windows-binary regression).
+# Forcing `vendored` here unifies openssl-sys to a static build everywhere.
+# Do not make this optional again.
+openssl = { version = "0.10", features = ["vendored"] }
+falkordb = { version = "0.2", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+base64 = { version = "0.22", optional = true }
+fernet = "0.2.2"
+scrypt = { version = "0.11", optional = true }
+bytes = { version = "1", optional = true }
+httpdate = { version = "1", optional = true }
+rand = { version = "0.8", optional = true }
+ureq = { version = "2", optional = true }
+ignore = { version = "0.4", optional = true }
+sha2 = { version = "0.11", optional = true }
+urlencoding = { version = "2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"

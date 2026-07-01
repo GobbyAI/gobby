@@ -1,0 +1,203 @@
+name: Release gcode
+
+on:
+  push:
+    tags:
+      - "gcode-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Verify tag matches Cargo.toml version
+        # Guards against tag/crate/release drift: installers resolve a version
+        # from crates.io and then look for a matching gcode-v{version} GitHub
+        # asset, so the tag, crate version, and release name must align.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#gcode-v}"
+          if [ "$tag" = "$tag_version" ]; then
+            echo "::error::Tag '$tag' does not start with 'gcode-v'." >&2
+            exit 1
+          fi
+          cargo_version="$(cargo pkgid -p gobby-code | sed 's/.*@//')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match crates/gcode/Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          fi
+          echo "Tag '$tag' aligns with crates/gcode/Cargo.toml version '$cargo_version'."
+
+      - name: Clippy
+        run: cargo clippy -p gobby-code -- -D warnings
+
+      - name: Clippy without default features
+        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
+
+      - name: Run tests
+        run: cargo nextest run --profile ci -p gobby-code
+
+      - name: Run doctests
+        run: cargo test --doc -p gobby-code
+
+      - name: Run tests without default features
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features
+
+      - name: Run doctests without default features
+        run: cargo test --doc -p gobby-code --no-default-features
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            cross: true
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.cross && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Configure MSVC for Windows ARM64
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64_arm64
+
+      - name: Build gcode
+        run: cargo build --release --target ${{ matrix.target }} -p gobby-code
+
+      - name: Package (Unix)
+        if: "!startsWith(matrix.os, 'windows')"
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../gcode-${{ matrix.target }}.tar.gz gcode
+          cd ../../..
+
+      - name: Package (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path gcode.exe -DestinationPath ../../../gcode-${{ matrix.target }}.zip
+          cd ../../..
+
+      - name: Upload Unix artifact
+        if: "!startsWith(matrix.os, 'windows')"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gcode-${{ matrix.target }}
+          path: gcode-${{ matrix.target }}.tar.gz
+
+      - name: Upload Windows artifact
+        if: startsWith(matrix.os, 'windows')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gcode-${{ matrix.target }}
+          path: gcode-${{ matrix.target }}.zip
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Publish gobby-code to crates.io
+        run: cargo publish -p gobby-code
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        # Installers fetch <asset>.sha256 and verify the archive before
+        # chmod/PATH placement (fail-closed on missing/mismatched checksum).
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for asset in gcode-*.tar.gz gcode-*.zip; do
+            sha256sum "$asset" > "$asset.sha256"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag="${GITHUB_REF#refs/tags/}"
+          assets=(gcode-*.tar.gz gcode-*.zip gcode-*.tar.gz.sha256 gcode-*.zip.sha256)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::No gcode release assets found." >&2
+            exit 1
+          fi
+          gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag

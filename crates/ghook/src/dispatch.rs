@@ -1,0 +1,535 @@
+use crate::action::{
+    HookAction, action_from_failure, action_from_success_response, continue_action, emit_action,
+    emit_empty_json,
+};
+use crate::args::Args;
+use crate::cli_config::CliConfig;
+use crate::envelope::Envelope;
+use crate::source::detect_source;
+use crate::{
+    detach, diagnostics, output, planned_shutdown, statusline, terminal_context, transport,
+};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
+    let (Some(cli), Some(hook_type)) = (args.cli.as_deref(), args.hook_type.as_deref()) else {
+        emit_empty_json();
+        return ExitCode::from(2);
+    };
+
+    if is_removed_cli(cli) {
+        emit_empty_json();
+        return ExitCode::SUCCESS;
+    }
+
+    // Daemon-spawned ACP subprocesses (for example qwen --acp) set
+    // GOBBY_HOOKS_DISABLED=1 to stop their inherited SessionStart hook from
+    // registering phantom sessions. Short-circuit before any side effects: no
+    // enqueue, no POST, no terminal-context enrichment.
+    if hooks_disabled_by_env() {
+        if statusline::is_statusline_hook(cli, hook_type) {
+            return ExitCode::SUCCESS;
+        }
+        emit_empty_json();
+        return ExitCode::SUCCESS;
+    }
+
+    if planned_shutdown::should_skip_dispatch(hook_type) {
+        return emit_action(continue_action());
+    }
+
+    if statusline::is_statusline_hook(cli, hook_type) {
+        let mut stdin_raw = Vec::with_capacity(4096);
+        if let Err(e) = std::io::stdin().read_to_end(&mut stdin_raw) {
+            eprintln!("ghook statusline: failed to read stdin: {e}");
+            return ExitCode::SUCCESS;
+        }
+        return statusline::handle(&stdin_raw);
+    }
+
+    let cfg = CliConfig::for_dispatch(cli);
+    let is_critical = cfg.is_critical_hook(hook_type);
+
+    // IMPORTANT: walk up for project context BEFORE any detach.
+    // Sandbox FS-read denials or a detached process's cwd semantics on
+    // macOS would otherwise surprise us (plan :76).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project_root = gobby_core::project::find_project_root(&cwd);
+    let project_id = project_root
+        .as_ref()
+        .and_then(|r| gobby_core::project::read_project_id(r).ok());
+
+    // Read stdin before detach too — detach closes the controlling TTY but
+    // stdin pipes from the host CLI should still be intact; read now to
+    // avoid late-read surprises if the host closes the pipe on exit.
+    let mut stdin_raw = Vec::with_capacity(4096);
+    let read_ok = std::io::stdin().read_to_end(&mut stdin_raw).is_ok();
+
+    // Parse. Empty stdin is a parse error in the Python dispatcher too.
+    let parsed: Result<Value, serde_json::Error> = if read_ok {
+        serde_json::from_slice(&stdin_raw)
+    } else {
+        Err(serde_json::Error::io(std::io::Error::other(
+            "failed to read stdin",
+        )))
+    };
+
+    let input_data = match parsed {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
+            emit_empty_json();
+            return ExitCode::from(cfg.json_error_exit_code);
+        }
+    };
+
+    let env = build_dispatch_envelope(&cfg, hook_type, input_data, project_id.as_deref());
+
+    let direct_post_after_enqueue_failure =
+        |failure_detail: String| -> Result<HookAction, ExitCode> {
+            // Mirror the normal enqueue→detach→POST ordering: a --detach run must
+            // escape the host's process group before the bounded fallback POST,
+            // or a host group-kill can reap us mid-delivery with no action emitted.
+            if args.detach {
+                detach::detach();
+            }
+            let daemon_url = gobby_core::daemon_url::daemon_url();
+            // No inbox file exists here; post_and_cleanup ignores remove errors after 2xx.
+            let missing_enqueued_path = PathBuf::new();
+            let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
+            match report.outcome {
+                transport::DeliveryOutcome::Delivered => {
+                    delivered_action(&cfg, hook_type, &env, &report, None, &daemon_url)
+                }
+                transport::DeliveryOutcome::Enqueued => {
+                    let direct_detail = report
+                        .response_body
+                        .as_deref()
+                        .or(report.transport_error.as_deref())
+                        .unwrap_or_default();
+                    let diagnostic_error = format!(
+                        "enqueue failed: {failure_detail}; direct post failed: {direct_detail}"
+                    );
+                    record_delivery_failure(
+                        &env,
+                        &report,
+                        None,
+                        &daemon_url,
+                        diagnostics::FailureKind::DirectPostAfterEnqueueFailure,
+                        Some(&diagnostic_error),
+                    );
+                    Ok(action_from_failure(
+                        hook_type,
+                        &cfg,
+                        transport::DeliveryFailureKind::Other,
+                        &failure_detail,
+                    ))
+                }
+            }
+        };
+
+    // Enqueue first (atomic write to ~/.gobby/hooks/inbox/).
+    let inbox = match transport::inbox_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            return match direct_post_after_enqueue_failure(e.to_string()) {
+                Ok(action) => emit_action(action),
+                Err(exit_code) => exit_code,
+            };
+        }
+    };
+    let enqueued_path = match transport::enqueue_to(&env, &inbox) {
+        Ok(p) => p,
+        Err(e) => {
+            return match direct_post_after_enqueue_failure(e.to_string()) {
+                Ok(action) => emit_action(action),
+                Err(exit_code) => exit_code,
+            };
+        }
+    };
+
+    // Detach *after* project walk-up and enqueue — the file on disk is
+    // now the source of truth even if we die mid-POST.
+    if args.detach {
+        detach::detach();
+    }
+
+    // Best-effort POST. Enqueue file is deleted on 2xx; otherwise kept.
+    let daemon_url = gobby_core::daemon_url::daemon_url();
+    let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
+    let action = match report.outcome {
+        transport::DeliveryOutcome::Delivered => {
+            match delivered_action(
+                &cfg,
+                hook_type,
+                &env,
+                &report,
+                Some(&enqueued_path),
+                &daemon_url,
+            ) {
+                Ok(action) => action,
+                Err(exit_code) => return exit_code,
+            }
+        }
+        transport::DeliveryOutcome::Enqueued => {
+            if planned_shutdown::suppress_after_failed_post(
+                hook_type,
+                report.failure_kind,
+                &enqueued_path,
+            ) {
+                return emit_action(continue_action());
+            }
+
+            let failure_kind = report
+                .failure_kind
+                .map(diagnostics::FailureKind::from)
+                .unwrap_or(diagnostics::FailureKind::Other);
+            record_delivery_failure(
+                &env,
+                &report,
+                Some(&enqueued_path),
+                &daemon_url,
+                failure_kind,
+                report.transport_error.as_deref(),
+            );
+
+            let detail = report
+                .response_body
+                .or(report.transport_error)
+                .unwrap_or_default();
+            action_from_failure(
+                hook_type,
+                &cfg,
+                report
+                    .failure_kind
+                    .unwrap_or(transport::DeliveryFailureKind::Other),
+                &detail,
+            )
+        }
+    };
+
+    emit_action(action)
+}
+
+fn hooks_disabled_by_env() -> bool {
+    std::env::var_os("GOBBY_HOOKS_DISABLED").is_some_and(|v| v == "1")
+}
+
+fn is_removed_cli(cli: &str) -> bool {
+    cli.eq_ignore_ascii_case("gemini")
+}
+
+fn build_dispatch_envelope(
+    cfg: &CliConfig,
+    hook_type: &str,
+    mut input_data: Value,
+    project_id: Option<&str>,
+) -> Envelope {
+    inject_machine_identity(&mut input_data);
+
+    if terminal_context::enabled_for_hook(hook_type) {
+        terminal_context::inject(&mut input_data);
+    }
+
+    // Headers: omit on missing (never empty string).
+    let mut headers: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(pid) = project_id {
+        headers.insert("X-Gobby-Project-Id".into(), pid.to_string());
+    }
+    if let Some(sid) = input_data.get("session_id").and_then(|v| v.as_str())
+        && !sid.is_empty()
+    {
+        headers.insert("X-Gobby-Session-Id".into(), sid.to_string());
+    }
+
+    Envelope::new(
+        cfg.is_critical_hook(hook_type),
+        hook_type.to_string(),
+        input_data,
+        detect_source(cfg),
+        headers,
+    )
+}
+
+fn inject_machine_identity(input_data: &mut Value) {
+    let Some(obj) = input_data.as_object_mut() else {
+        return;
+    };
+
+    match gobby_core::machine::read_local_machine_id() {
+        Ok(machine_id) => {
+            obj.insert("machine_id".into(), Value::String(machine_id));
+            obj.insert(
+                "os".into(),
+                Value::String(gobby_core::machine::local_os_name().to_string()),
+            );
+            obj.remove("machine_id_error");
+        }
+        Err(error) => {
+            obj.remove("machine_id");
+            obj.remove("os");
+            obj.insert(
+                "machine_id_error".into(),
+                Value::String(error.code().to_string()),
+            );
+        }
+    }
+}
+
+fn delivered_action(
+    cfg: &CliConfig,
+    hook_type: &str,
+    envelope: &Envelope,
+    report: &transport::DeliveryReport,
+    enqueued_path: Option<&Path>,
+    daemon_url: &str,
+) -> Result<HookAction, ExitCode> {
+    let body = report.response_body.as_deref().unwrap_or_default();
+    match action_from_success_response(cfg.source, hook_type, body) {
+        Ok(action) => {
+            if let Some(path) = enqueued_path {
+                let _ = fs::remove_file(path);
+            }
+            Ok(action)
+        }
+        Err(error) => {
+            let _ = record_delivery_failure(
+                envelope,
+                report,
+                enqueued_path,
+                daemon_url,
+                success_failure_kind(body),
+                Some(&error),
+            );
+            if let Some(path) = enqueued_path {
+                let _ = fs::remove_file(path);
+            }
+            output::stderr(format_args!(
+                "ghook: daemon 2xx response could not be mapped for hook '{hook_type}': {error}\n"
+            ));
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
+fn record_delivery_failure(
+    envelope: &Envelope,
+    report: &transport::DeliveryReport,
+    enqueued_path: Option<&Path>,
+    daemon_url: &str,
+    failure_kind: diagnostics::FailureKind,
+    error: Option<&str>,
+) -> bool {
+    let envelope_id = enqueued_path.and_then(transport::envelope_id_from_path);
+    diagnostics::record_failure(diagnostics::FailureContext {
+        envelope,
+        envelope_id,
+        failure_kind,
+        status_code: report.status_code,
+        error,
+        response_body: report.response_body.as_deref(),
+        transport_error: report.transport_error.as_deref(),
+        daemon_url,
+    })
+    .is_ok()
+}
+
+fn success_failure_kind(response_body: &str) -> diagnostics::FailureKind {
+    let trimmed = response_body.trim();
+    if !trimmed.is_empty() && serde_json::from_str::<Value>(trimmed).is_err() {
+        diagnostics::FailureKind::InvalidSuccessJson
+    } else {
+        diagnostics::FailureKind::SuccessResponseMapping
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::ffi::OsStr;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_tmux_env<T>(tmux: Option<&str>, tmux_pane: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let gobby_home = tempfile::tempdir().unwrap();
+        let vars: [(&str, Option<&OsStr>); 3] = [
+            ("TMUX", tmux.map(OsStr::new)),
+            ("TMUX_PANE", tmux_pane.map(OsStr::new)),
+            ("GOBBY_HOME", Some(gobby_home.path().as_os_str())),
+        ];
+        temp_env::with_vars(vars, f)
+    }
+
+    fn with_gobby_home<T>(gobby_home: &Path, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        temp_env::with_var("GOBBY_HOME", Some(gobby_home), f)
+    }
+
+    #[test]
+    fn dispatch_envelope_injects_local_machine_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("machine_id"), "machine-client\n").unwrap();
+
+        with_gobby_home(dir.path(), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope =
+                build_dispatch_envelope(&cfg, "PreToolUse", json!({"machine_id": "stale"}), None);
+
+            assert_eq!(envelope.input_data["machine_id"], "machine-client");
+            assert_eq!(
+                envelope.input_data["os"],
+                gobby_core::machine::local_os_name()
+            );
+            assert!(envelope.input_data.get("machine_id_error").is_none());
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_reports_missing_machine_id_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        with_gobby_home(dir.path(), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope = build_dispatch_envelope(
+                &cfg,
+                "PreToolUse",
+                json!({"machine_id": "stale", "os": "stale-os"}),
+                None,
+            );
+
+            assert!(envelope.input_data.get("machine_id").is_none());
+            assert!(envelope.input_data.get("os").is_none());
+            assert_eq!(
+                envelope.input_data["machine_id_error"],
+                "machine_id_missing"
+            );
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_reports_empty_machine_id_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("machine_id"), " \n").unwrap();
+
+        with_gobby_home(dir.path(), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope =
+                build_dispatch_envelope(&cfg, "PreToolUse", json!({"session_id": "sess-1"}), None);
+
+            assert!(envelope.input_data.get("machine_id").is_none());
+            assert_eq!(envelope.input_data["machine_id_error"], "machine_id_empty");
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_injects_valid_tmux_pane_for_session_start() {
+        with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
+            let cfg = CliConfig::for_dispatch("grok");
+            let envelope = build_dispatch_envelope(
+                &cfg,
+                "SessionStart",
+                json!({"session_id": "sess-1"}),
+                None,
+            );
+
+            assert_eq!(envelope.input_data["terminal_context"]["tmux_pane"], "%17");
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_omits_terminal_context_for_tool_hooks() {
+        with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
+            let cfg = CliConfig::for_dispatch("codex");
+            let envelope =
+                build_dispatch_envelope(&cfg, "PreToolUse", json!({"session_id": "sess-1"}), None);
+
+            assert!(envelope.input_data.get("terminal_context").is_none());
+        });
+    }
+
+    #[test]
+    fn dispatch_envelope_nulls_tmux_fields_for_missing_or_invalid_tmux_pane() {
+        for pane in [None, Some(""), Some("17"), Some("%"), Some("%x")] {
+            with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), pane, || {
+                let cfg = CliConfig::for_dispatch("qwen");
+                let envelope = build_dispatch_envelope(
+                    &cfg,
+                    "SessionStart",
+                    json!({"session_id": "sess-1"}),
+                    None,
+                );
+
+                assert_eq!(
+                    envelope.input_data["terminal_context"]["tmux_pane"],
+                    json!(null)
+                );
+                assert_eq!(
+                    envelope.input_data["terminal_context"]["tmux_socket_path"],
+                    json!(null)
+                );
+            });
+        }
+
+        with_tmux_env(None, Some("%17"), || {
+            let cfg = CliConfig::for_dispatch("qwen");
+            let envelope = build_dispatch_envelope(
+                &cfg,
+                "SessionStart",
+                json!({"session_id": "sess-1"}),
+                None,
+            );
+
+            assert_eq!(
+                envelope.input_data["terminal_context"]["tmux_pane"],
+                json!(null)
+            );
+            assert_eq!(
+                envelope.input_data["terminal_context"]["tmux_socket_path"],
+                json!(null)
+            );
+        });
+    }
+
+    #[test]
+    fn hooks_disabled_by_env_reads_env_var() {
+        // Avoid racing other tests that read GOBBY_* env vars — touching the
+        // process env from tests is inherently global, but the key we use is
+        // unique to this check.
+        // SAFETY: single-threaded Rust tests within this module; no other test
+        // reads or writes GOBBY_HOOKS_DISABLED.
+        unsafe {
+            std::env::remove_var("GOBBY_HOOKS_DISABLED");
+        }
+        assert!(!hooks_disabled_by_env());
+
+        unsafe {
+            std::env::set_var("GOBBY_HOOKS_DISABLED", "1");
+        }
+        assert!(hooks_disabled_by_env());
+
+        unsafe {
+            std::env::set_var("GOBBY_HOOKS_DISABLED", "0");
+        }
+        assert!(!hooks_disabled_by_env(), "only '1' should short-circuit");
+
+        unsafe {
+            std::env::set_var("GOBBY_HOOKS_DISABLED", "");
+        }
+        assert!(
+            !hooks_disabled_by_env(),
+            "empty string should not short-circuit"
+        );
+
+        unsafe {
+            std::env::remove_var("GOBBY_HOOKS_DISABLED");
+        }
+    }
+}

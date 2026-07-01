@@ -1,0 +1,250 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      # gobby-core: full clippy + tests
+      - name: Clippy (gobby-core)
+        run: cargo clippy -p gobby-core --all-targets -- -D warnings
+
+      - name: Test (gobby-core)
+        run: cargo nextest run --profile ci -p gobby-core
+
+      - name: Clippy (gobby-core, ai)
+        run: cargo clippy -p gobby-core --features ai --all-targets -- -D warnings
+
+      - name: Test (gobby-core, ai)
+        run: cargo nextest run --profile ci -p gobby-core --features ai
+
+      # ghook: full clippy + tests
+      - name: Clippy (ghook)
+        run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
+
+      - name: Test (ghook)
+        run: cargo nextest run --profile ci -p gobby-hooks
+
+      - name: Test (ghook, no default features)
+        run: cargo nextest run --profile ci -p gobby-hooks --no-default-features
+
+      - name: Clippy (ghook, no default features)
+        run: cargo clippy -p gobby-hooks --all-targets --no-default-features -- -D warnings
+
+      # gwiki: default checks include documents/pdfium; no-default-features covers degraded storage path
+      - name: Clippy (gwiki)
+        run: cargo clippy -p gobby-wiki --all-targets -- -D warnings
+
+      - name: Test (gwiki)
+        run: cargo nextest run --profile ci -p gobby-wiki
+
+      - name: Clippy (gwiki, no default features)
+        run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
+
+      - name: Test (gwiki, no default features)
+        run: cargo nextest run --profile ci -p gobby-wiki --no-default-features
+
+      # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
+      - name: Clippy (gcode, no embeddings)
+        run: cargo clippy -p gobby-code --all-targets --no-default-features -- -D warnings
+
+      - name: Test (gcode, no embeddings)
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features
+
+      - name: Test codewiki (gcode, no embeddings)
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features -E 'test(codewiki)'
+
+      - name: Test workspace (no default features)
+        run: cargo nextest run --profile ci --workspace --no-default-features
+
+      - name: Test doctests (workspace, no default features)
+        run: cargo test --doc --workspace --no-default-features
+
+      - name: Build workspace (without embeddings)
+        run: cargo build --workspace --no-default-features
+
+  gcode-graph-standalone:
+    name: gcode graph_standalone
+    runs-on: ubuntu-latest
+    env:
+      GCODE_GRAPH_STANDALONE_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
+      GCODE_GRAPH_STANDALONE_FALKOR_HOST: 127.0.0.1
+      GCODE_GRAPH_STANDALONE_FALKOR_PORT: "16379"
+      GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD: gobbyfalkor
+    services:
+      falkordb:
+        image: falkordb/falkordb:latest
+        env:
+          REDIS_ARGS: "--requirepass gobbyfalkor"
+          GOBBY_FALKORDB_PASSWORD: gobbyfalkor
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli -a gobbyfalkor PING | grep -q PONG"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-gcode-graph-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build PostgreSQL pg_search image
+        run: |
+          docker build \
+            --build-arg PG_SEARCH_VERSION=0.23.4 \
+            --build-arg PG_SEARCH_SHA256=6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676 \
+            -t gobby-postgres-ci:18-pgsearch \
+            crates/gcore/assets/postgres-pgsearch
+
+      - name: Start PostgreSQL pg_search service
+        run: |
+          docker run --detach \
+            --name gobby-postgres-ci \
+            --publish 15432:5432 \
+            --env POSTGRES_DB=gobby \
+            --env POSTGRES_USER=gobby \
+            --env POSTGRES_PASSWORD=gobby_dev \
+            --health-cmd "pg_isready -U gobby -d gobby && psql -U gobby -d gobby -tAc \"SELECT 1 FROM pg_extension WHERE extname='pg_search'\" | grep -q 1" \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 20 \
+            gobby-postgres-ci:18-pgsearch \
+            postgres \
+            -c shared_preload_libraries=pg_search,pgaudit \
+            -c pgaudit.log=write
+
+      - name: Wait for PostgreSQL pg_search
+        run: |
+          for _ in {1..60}; do
+            health_status="$(docker inspect --format '{{.State.Health.Status}}' gobby-postgres-ci)"
+            if [ "$health_status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker inspect gobby-postgres-ci
+          docker logs gobby-postgres-ci
+          exit 1
+
+      - name: Set up standalone gcode schema
+        env:
+          GOBBY_HOME: ${{ runner.temp }}/gcode-graph-home
+        run: |
+          cargo run -p gobby-code -- setup \
+            --standalone \
+            --database-url "$GCODE_GRAPH_STANDALONE_DATABASE_URL" \
+            --no-services \
+            --falkordb-host "$GCODE_GRAPH_STANDALONE_FALKOR_HOST" \
+            --falkordb-port "$GCODE_GRAPH_STANDALONE_FALKOR_PORT" \
+            --falkordb-password "$GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD" \
+            --quiet
+
+      - name: Test graph_standalone (gcode)
+        run: cargo nextest run --profile ci -p gobby-code --test graph_standalone
+
+  coverage:
+    name: Coverage (report only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-coverage-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-coverage-cargo-
+
+      - name: Generate LCOV report
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --no-report nextest --workspace --no-default-features --profile ci
+          cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload LCOV artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: ignore

@@ -1,0 +1,74 @@
+[package]
+name = "gobby-wiki"
+version = "0.7.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Josh Wilhelmi <hello@gobby.ai>"]
+description = "Gobby wiki CLI shell"
+license = "Apache-2.0"
+repository = "https://github.com/GobbyAI/gobby-cli"
+homepage = "https://gobby.ai"
+keywords = ["gobby", "wiki", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[features]
+default = ["embeddings-http", "documents", "ai"]
+ai = ["gobby-core/ai"]
+documents = ["dep:calamine", "dep:pdf-extract", "dep:pdfium-auto", "dep:pdfium-render", "dep:png", "dep:quick-xml", "dep:zip"]
+embeddings-http = ["gobby-core/ai"]
+
+[lib]
+name = "gobby_wiki"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gwiki"
+path = "src/main.rs"
+
+[dependencies]
+gobby-core = { path = "../gcore", version = "0.7.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+# ureq handles daemon/research calls; direct embedding requests go through gobby-core's ai feature.
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+serde_yaml = { package = "yaml_serde", version = "0.10.4" }
+toml = "1"
+ureq = "2"
+html-escape = "0.2"
+encoding_rs = "0.8"
+dirs = "6"
+flate2 = "1"
+fs4 = "1.1"
+linked-hash-map = "0.5"
+uuid = { version = "1", features = ["v4", "v5"] }
+regex = "1"
+scraper = "0.27"
+log = "0.4"
+# Renders the vendored shared session-summary prompt for standalone --summarize.
+minijinja = "2"
+percent-encoding = "2"
+url = "2"
+tempfile = "3"
+calamine = { version = "0.35", optional = true }
+pdf-extract = { version = "0.10", optional = true }
+pdfium-auto = { version = "0.3", default-features = false, features = ["bundled"], optional = true }
+pdfium-render = { version = "0.8.37", default-features = false, features = ["pdfium_latest", "thread_safe"], optional = true }
+png = { version = "0.17", optional = true }
+quick-xml = { version = "0.38", optional = true }
+zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
+
+# Reset SIGPIPE to its default disposition so closed pipes don't panic stdout writes.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Win32 file-identity in log.rs (GetFileInformationByHandle) plus symlink handling
+# in compile::tests::compile_rejects_target_page_through_symlinked_parent.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+gobby-core = { path = "../gcore", version = "0.7.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+serial_test = "3"

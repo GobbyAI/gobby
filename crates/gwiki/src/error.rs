@@ -1,0 +1,295 @@
+use std::fmt;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use gobby_core::setup::SetupError;
+
+use crate::{indexer, search};
+
+#[derive(Debug)]
+pub enum WikiError {
+    NotImplemented {
+        command: &'static str,
+        detail: &'static str,
+    },
+    InvalidScope {
+        detail: String,
+    },
+    Config {
+        detail: String,
+    },
+    Io {
+        action: &'static str,
+        path: Option<PathBuf>,
+        source: std::io::Error,
+    },
+    Json {
+        action: &'static str,
+        path: Option<PathBuf>,
+        source: serde_json::Error,
+    },
+    Yaml {
+        action: &'static str,
+        path: Option<PathBuf>,
+        source: serde_yaml::Error,
+    },
+    Registry {
+        detail: String,
+    },
+    Daemon {
+        endpoint: &'static str,
+        message: String,
+    },
+    InvalidInput {
+        field: &'static str,
+        message: String,
+    },
+    NotFound {
+        resource: &'static str,
+        id: String,
+    },
+    Timeout {
+        action: &'static str,
+        path: Option<PathBuf>,
+        duration: Duration,
+        detail: String,
+    },
+    Index {
+        source: indexer::IndexError,
+    },
+    Search {
+        source: search::SearchError,
+    },
+    Setup {
+        source: SetupError,
+    },
+    Generation {
+        detail: String,
+    },
+}
+
+impl WikiError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotImplemented { .. } => "not_implemented",
+            Self::InvalidScope { .. } => "invalid_scope",
+            Self::Config { .. } => "config_error",
+            Self::Io { .. } => "io_error",
+            Self::Json { .. } => "json_error",
+            Self::Yaml { .. } => "yaml_error",
+            Self::Registry { .. } => "registry_error",
+            Self::Daemon { .. } => "daemon_error",
+            Self::InvalidInput { .. } => "invalid_input",
+            Self::NotFound { .. } => "not_found",
+            Self::Timeout { .. } => "timeout",
+            Self::Index { .. } => "index_error",
+            Self::Search { .. } => "search_error",
+            Self::Setup { .. } => "setup_error",
+            Self::Generation { .. } => "generation_error",
+        }
+    }
+
+    pub(crate) fn is_ffmpeg_unavailable(&self) -> bool {
+        match self {
+            Self::Config { detail } => {
+                detail.eq_ignore_ascii_case("ffmpeg executable not found on PATH")
+            }
+            Self::Io { action, source, .. } => {
+                action.eq_ignore_ascii_case("run ffmpeg")
+                    && source.kind() == std::io::ErrorKind::NotFound
+            }
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for WikiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotImplemented { command, detail } => {
+                write!(f, "{command}: {detail} ({})", self.code())
+            }
+            Self::InvalidScope { detail }
+            | Self::Config { detail }
+            | Self::Registry { detail }
+            | Self::Generation { detail } => {
+                write!(f, "{detail} ({})", self.code())
+            }
+            Self::Io {
+                action,
+                path,
+                source,
+            } => format_action_error(f, action, path.as_ref(), source, self.code()),
+            Self::Json {
+                action,
+                path,
+                source,
+            } => format_action_error(f, action, path.as_ref(), source, self.code()),
+            Self::Yaml {
+                action,
+                path,
+                source,
+            } => format_action_error(f, action, path.as_ref(), source, self.code()),
+            Self::Daemon { endpoint, message } => {
+                write!(f, "{endpoint}: {message} ({})", self.code())
+            }
+            Self::InvalidInput { field, message } => {
+                write!(f, "{field}: {message} ({})", self.code())
+            }
+            Self::NotFound { resource, id } => {
+                write!(f, "{resource} `{id}` was not found ({})", self.code())
+            }
+            Self::Timeout {
+                action,
+                path,
+                duration,
+                detail,
+            } => {
+                let source = format!("timed out after {}ms: {detail}", duration.as_millis());
+                match path {
+                    Some(path) => {
+                        write!(
+                            f,
+                            "{action} {} failed: {source} ({})",
+                            path.display(),
+                            self.code()
+                        )
+                    }
+                    None => write!(f, "{action} failed: {source} ({})", self.code()),
+                }
+            }
+            Self::Index { source } => write!(f, "index: {source} ({})", self.code()),
+            Self::Search { source } => write!(f, "query: {source} ({})", self.code()),
+            Self::Setup { source } => write!(f, "gwiki setup failed: {source} ({})", self.code()),
+        }
+    }
+}
+
+fn format_action_error(
+    f: &mut fmt::Formatter<'_>,
+    action: &str,
+    path: Option<&PathBuf>,
+    source: &dyn std::error::Error,
+    code: &str,
+) -> fmt::Result {
+    match path {
+        Some(path) => write!(
+            f,
+            "{action} failed for {}: {source} ({code})",
+            path.display()
+        ),
+        None => write!(f, "{action} failed: {source} ({code})"),
+    }
+}
+
+impl std::error::Error for WikiError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Json { source, .. } => Some(source),
+            Self::Yaml { source, .. } => Some(source),
+            Self::Index { source } => Some(source),
+            Self::Search { source } => Some(source),
+            Self::Setup { source } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+impl From<indexer::IndexError> for WikiError {
+    fn from(error: indexer::IndexError) -> Self {
+        Self::Index { source: error }
+    }
+}
+
+impl From<search::SearchError> for WikiError {
+    fn from(error: search::SearchError) -> Self {
+        Self::Search { source: error }
+    }
+}
+
+impl From<SetupError> for WikiError {
+    fn from(error: SetupError) -> Self {
+        Self::Setup { source: error }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn typed_error_sources_are_preserved() {
+        let source =
+            serde_json::from_str::<serde_json::Value>("{").expect_err("invalid JSON should fail");
+        let error = WikiError::Json {
+            action: "parse fixture",
+            path: None,
+            source,
+        };
+
+        assert!(error.source().is_some());
+        assert!(error.to_string().contains("parse fixture failed"));
+    }
+
+    #[test]
+    fn wrapped_error_codes_are_specific() {
+        let index = WikiError::Index {
+            source: indexer::IndexError::Walk("walk failed".to_string()),
+        };
+        let search = WikiError::Search {
+            source: search::SearchError::Backend("backend failed".to_string()),
+        };
+
+        assert_eq!(index.code(), "index_error");
+        assert_eq!(search.code(), "search_error");
+    }
+
+    #[test]
+    fn timeout_errors_are_typed() {
+        let error = WikiError::Timeout {
+            action: "wait for fixture",
+            path: Some(PathBuf::from("note.md")),
+            duration: Duration::from_millis(250),
+            detail: "still materializing".to_string(),
+        };
+
+        assert_eq!(error.code(), "timeout");
+        assert!(error.to_string().contains("timed out after 250ms"));
+        assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn ffmpeg_unavailable_detection_matches_config_and_io_errors() {
+        let config = WikiError::Config {
+            detail: "ffmpeg executable not found on PATH".to_string(),
+        };
+        let io = WikiError::Io {
+            action: "run ffmpeg",
+            path: None,
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+        let other_io = WikiError::Io {
+            action: "read ffmpeg output",
+            path: None,
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+
+        assert!(config.is_ffmpeg_unavailable());
+        assert!(io.is_ffmpeg_unavailable());
+        assert!(!other_io.is_ffmpeg_unavailable());
+    }
+
+    #[test]
+    fn setup_error_source_is_preserved() {
+        let error = WikiError::from(SetupError::CreationFailed {
+            object: "gwiki_documents".to_string(),
+            message: "permission denied".to_string(),
+        });
+
+        assert_eq!(error.code(), "setup_error");
+        assert!(error.source().is_some());
+        assert!(error.to_string().contains("gwiki setup failed"));
+    }
+}
