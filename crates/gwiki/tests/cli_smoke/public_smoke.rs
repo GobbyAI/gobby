@@ -170,6 +170,8 @@ fn public_cli_smoke_uses_gwiki_modules() {
             "--topic",
             "rust",
             "compile",
+            "--ai",
+            "off",
             "--outline",
             "Overview",
             "--target",
@@ -244,7 +246,9 @@ fn public_cli_smoke_compiles_accepted_notes_and_audits_in_topic_scope() {
     let compile = gwiki(
         &fixture,
         fixture.root(),
-        &["--format", "json", "--topic", "rust", "compile"],
+        &[
+            "--format", "json", "--topic", "rust", "compile", "--ai", "off",
+        ],
     );
     common::assert_success(&compile, "compile");
     let compile_payload = common::json_stdout(&compile);

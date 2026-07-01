@@ -128,6 +128,7 @@ mod ownership;
 mod paths;
 mod progress;
 mod prompts;
+mod purge;
 mod relationship_facts;
 mod render;
 mod repair;
@@ -197,6 +198,9 @@ pub(crate) use render::{
     render_infrastructure_doc, render_module_doc, render_onboarding_doc,
 };
 // Reuse of unchanged docs without regeneration.
+#[cfg(test)]
+pub(crate) use purge::purge_generated_output;
+pub use purge::{CodewikiPurgeSummary, run_purge};
 pub(crate) use reuse::{ReusePlan, span_files};
 #[cfg(test)]
 pub(crate) use run::{

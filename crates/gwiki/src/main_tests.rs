@@ -77,6 +77,30 @@ fn search_flag_surface_supports_limit_and_semantic_toggle() {
 }
 
 #[test]
+fn purge_flag_surface_requires_explicit_confirmation() {
+    use clap::Parser;
+
+    let cli =
+        Cli::try_parse_from(["gwiki", "purge", "--project", "--yes"]).expect("purge flags parse");
+    assert_eq!(
+        cli.scope.project.as_deref(),
+        Some(std::path::Path::new("."))
+    );
+    let CliCommand::Purge(args) = cli.command else {
+        panic!("expected purge command");
+    };
+    assert!(args.yes);
+
+    let command = command_from_cli(CliCommand::Purge(PurgeArgs { yes: true }), cli.scope.into())
+        .expect("map purge command");
+    let Command::Purge { scope, yes } = command else {
+        panic!("expected purge command");
+    };
+    assert_eq!(scope, ScopeSelection::project(PathBuf::from(".")));
+    assert!(yes);
+}
+
+#[test]
 fn project_flag_normalization_handles_every_subcommand() {
     for subcommand in CLI_SUBCOMMANDS {
         let normalized = normalize_project_flag_args(["gwiki", "--project", subcommand]);

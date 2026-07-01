@@ -376,6 +376,28 @@ pub(crate) enum Command {
         /// Output directory for generated Markdown docs
         #[arg(long)]
         out: Option<String>,
+        /// Remove generated CodeWiki output/cache under --out and exit.
+        #[arg(
+            long,
+            conflicts_with_all = [
+                "scope",
+                "ai",
+                "ai_depth",
+                "ai_aggregate_profile",
+                "ai_verify_profile",
+                "ai_verify_scope",
+                "ai_prose_depth",
+                "ai_register",
+                "edge_limit",
+                "include_docs",
+                "since",
+                "repair_citations",
+            ]
+        )]
+        purge: bool,
+        /// Confirm destructive CodeWiki output purge.
+        #[arg(long, requires = "purge")]
+        force: bool,
         /// Limit docs to indexed files under one or more paths
         #[arg(long, num_args = 1.., value_name = "PATH")]
         scope: Vec<String>,

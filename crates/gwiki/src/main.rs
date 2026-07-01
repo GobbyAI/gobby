@@ -22,6 +22,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "refresh",
     "sources",
     "remove-source",
+    "purge",
     "search",
     "ask",
     "read",
@@ -113,6 +114,8 @@ enum CliCommand {
     Sources,
     /// Remove a raw source, its manifest entry, and its raw asset.
     RemoveSource(RemoveSourceArgs),
+    /// Purge generated/indexed wiki state in the selected scope.
+    Purge(PurgeArgs),
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
     /// Ask a question about wiki documents in the selected scope.
@@ -220,6 +223,13 @@ struct SetupArgs {
 
     #[arg(long, value_name = "KEY")]
     embedding_api_key: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PurgeArgs {
+    /// Confirm destructive purge of generated/indexed wiki state for the selected scope.
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -669,6 +679,10 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 keep_asset: args.keep_asset,
             })
         }
+        CliCommand::Purge(args) => Ok(Command::Purge {
+            scope,
+            yes: args.yes,
+        }),
         CliCommand::Search(args) => Ok(Command::Search {
             query: args.query,
             scope,

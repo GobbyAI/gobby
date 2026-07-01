@@ -300,6 +300,33 @@ fn wiki_graph_edge_cleanup_uses_owned_relationships_and_scope() {
 }
 
 #[test]
+fn wiki_graph_purge_detaches_only_scoped_wiki_nodes() {
+    let scope = SearchScope::project("demo");
+    let statements = super::sync::scope_purge_statements(&scope);
+    assert_eq!(statements.len(), 4);
+    let joined = statements
+        .iter()
+        .map(|statement| statement.cypher.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for rel in [WIKI_LINKS_TO_REL, MENTIONS_TARGET_REL, SUPPORTS_REL] {
+        assert!(
+            joined.contains(rel),
+            "purge must first clean owned edge type {rel}"
+        );
+    }
+    assert!(joined.contains("MATCH (node"));
+    assert!(joined.contains("scope_kind"));
+    assert!(joined.contains("'project'"));
+    assert!(joined.contains("scope_id"));
+    assert!(joined.contains("'demo'"));
+    assert!(joined.contains("DETACH DELETE node"));
+    assert!(!joined.contains("CodeSymbol"));
+    assert!(!joined.contains("gobby_code"));
+}
+
+#[test]
 fn stale_doc_delete_detaches_scoped_wikidoc_by_path() {
     let scope = SearchScope::project("demo");
     let statement = super::sync::stale_doc_delete_statement(&scope, "knowledge/sources/src-abc.md");

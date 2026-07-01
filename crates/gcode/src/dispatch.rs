@@ -83,6 +83,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
     match command {
         Command::Index { .. } => ServiceConfigSelection::all(),
         Command::Status => ServiceConfigSelection::projection_cleanup(),
+        Command::Codewiki { purge: true, .. } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
         | Command::Codewiki { .. }
         | Command::Callers { .. }
@@ -544,6 +545,8 @@ fn run() -> anyhow::Result<()> {
         }
         Command::Codewiki {
             out,
+            purge,
+            force,
             scope,
             ai,
             ai_depth,
@@ -557,10 +560,13 @@ fn run() -> anyhow::Result<()> {
             since,
             repair_citations,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            if purge {
+                return commands::codewiki::run_purge(&ctx, out, force, format);
+            }
             if repair_citations {
                 return commands::codewiki::run_repair(&ctx, out, format);
             }
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::codewiki::run(
                 &ctx,
                 out,

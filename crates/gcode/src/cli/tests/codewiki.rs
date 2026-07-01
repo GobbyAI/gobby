@@ -133,6 +133,43 @@ fn parse_codewiki_repair_citations_flag() {
 }
 
 #[test]
+fn parse_codewiki_purge_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki { purge, force, .. } => {
+            assert!(!purge, "purge defaults off");
+            assert!(!force, "force defaults off");
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "codewiki",
+        "--purge",
+        "--out",
+        "gobby-wiki",
+        "--force",
+    ])
+    .expect("codewiki --purge parses");
+    match cli.command {
+        Command::Codewiki {
+            out, purge, force, ..
+        } => {
+            assert_eq!(out.as_deref(), Some("gobby-wiki"));
+            assert!(purge);
+            assert!(force);
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    assert!(Cli::try_parse_from(["gcode", "codewiki", "--force"]).is_err());
+    assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--scope", "src"]).is_err());
+    assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--ai", "off"]).is_err());
+    assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--repair-citations"]).is_err());
+}
+
+#[test]
 fn parse_setup_standalone() {
     let cli = Cli::try_parse_from([
         "gcode",

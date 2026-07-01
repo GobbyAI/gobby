@@ -305,6 +305,26 @@ pub fn delete_points_by_filter(
     Ok(())
 }
 
+/// Delete a whole Qdrant collection. Missing collections are already purged.
+pub fn delete_collection(config: &QdrantConfig, collection: &str) -> anyhow::Result<()> {
+    let request_path = collection_request_path(collection);
+    let resp = qdrant_request(config, reqwest::Method::DELETE, &request_path)?.send()?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error(
+            "delete collection",
+            status,
+            resp,
+            collection,
+            request_path,
+        ));
+    }
+    Ok(())
+}
+
 fn create_collection(
     config: &QdrantConfig,
     collection: &str,
@@ -575,6 +595,7 @@ fn operation_method(operation: &str) -> &'static str {
     match operation {
         "get collection" => "GET",
         "create collection" => "PUT",
+        "delete collection" => "DELETE",
         "delete points" => "POST",
         "search" => "POST",
         "upsert" => "PUT",

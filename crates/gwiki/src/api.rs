@@ -49,6 +49,10 @@ pub enum Command {
         dry_run: bool,
         keep_asset: bool,
     },
+    Purge {
+        scope: ScopeSelection,
+        yes: bool,
+    },
     Search {
         query: String,
         scope: ScopeSelection,

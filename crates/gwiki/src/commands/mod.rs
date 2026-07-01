@@ -14,6 +14,7 @@ pub(crate) mod init;
 pub(crate) mod librarian;
 pub(crate) mod lint;
 pub(crate) mod normalize;
+pub(crate) mod purge;
 pub(crate) mod read;
 pub(crate) mod refresh;
 pub(crate) mod review_report;
@@ -55,6 +56,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             dry_run,
             keep_asset,
         } => sources::execute_remove(id, scope, dry_run, keep_asset),
+        Command::Purge { scope, yes } => purge::execute(scope, yes),
         Command::Search {
             query,
             scope,

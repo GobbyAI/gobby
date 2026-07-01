@@ -59,6 +59,20 @@ pub(crate) fn sync_scope_from_postgres(
     Ok(())
 }
 
+pub(crate) fn purge_scope(scope: &SearchScope, config: &FalkorConfig) -> Result<(), WikiError> {
+    require_scoped(scope).map_err(graph_sync_error)?;
+    let mut client = GraphClient::from_config(config, FALKORDB_GRAPH_NAME).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to FalkorDB for gwiki purge: {error}"),
+        }
+    })?;
+
+    for statement in scope_purge_statements(scope) {
+        execute_statement(&mut client, statement).map_err(graph_sync_error)?;
+    }
+    Ok(())
+}
+
 /// Latest-deleted document paths in the scope, mirroring the Qdrant stale-path
 /// query shape: the most recent ingestion per path whose status is `deleted`.
 fn load_deleted_paths(conn: &mut Client, scope: &SearchScope) -> Result<Vec<String>, WikiError> {
@@ -101,6 +115,15 @@ pub(super) fn scope_edge_cleanup_statements(scope: &SearchScope) -> Vec<GraphSta
             ),
         })
         .collect()
+}
+
+pub(super) fn scope_purge_statements(scope: &SearchScope) -> Vec<GraphStatement> {
+    let scope_props = scope_property_map(scope);
+    let mut statements = scope_edge_cleanup_statements(scope);
+    statements.push(GraphStatement {
+        cypher: format!("MATCH (node {{{scope_props}}}) DETACH DELETE node"),
+    });
+    statements
 }
 
 /// Detaches and deletes the scope's `WikiDoc` node for a deleted path. One

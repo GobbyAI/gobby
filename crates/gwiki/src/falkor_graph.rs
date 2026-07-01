@@ -8,7 +8,7 @@ mod wiki_facts;
 
 pub(crate) use boost::load_graph_boost_data;
 pub(crate) use code_edges::load_code_graph_edges;
-pub(crate) use sync::sync_scope_from_postgres;
+pub(crate) use sync::{purge_scope, sync_scope_from_postgres};
 pub(crate) use wiki_facts::load_wiki_graph_facts;
 
 use std::collections::BTreeSet;

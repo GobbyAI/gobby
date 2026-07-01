@@ -590,7 +590,7 @@ fn ai_body_note(outcome: CodewikiAiOutcome) -> Option<&'static str> {
 /// `code/` so the rest of the vault — the gwiki research notes, `.obsidian/`,
 /// `_meta/` — is never walked. Symlinks are not followed and never returned,
 /// matching `reject_symlinked_doc_path`.
-fn collect_generated_doc_pages(out_dir: &Path) -> anyhow::Result<Vec<String>> {
+pub(crate) fn collect_generated_doc_pages(out_dir: &Path) -> anyhow::Result<Vec<String>> {
     let code_root = out_dir.join("code");
     if !code_root.is_dir() {
         return Ok(Vec::new());

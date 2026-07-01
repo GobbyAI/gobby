@@ -161,6 +161,38 @@ mod serial_db {
             "search did not return indexed wiki page\nstdout:\n{}",
             String::from_utf8_lossy(&search.stdout)
         );
+
+        let purge = fixture.output_with_database_url_in(
+            fixture.root(),
+            &database_url,
+            &["--format", "json", "purge", "--topic", &topic, "--yes"],
+        );
+        common::assert_success(&purge, "purge");
+
+        let after_purge = fixture.output_with_database_url_in(
+            fixture.root(),
+            &database_url,
+            &[
+                "--format",
+                "json",
+                "search",
+                "--topic",
+                &topic,
+                &unique_term,
+            ],
+        );
+        common::assert_success(&after_purge, "search after purge");
+
+        let payload: serde_json::Value =
+            serde_json::from_slice(&after_purge.stdout).expect("search JSON");
+        let results = payload["results"].as_array().expect("results array");
+        assert!(
+            !results
+                .iter()
+                .any(|result| result["wiki_page"].as_str() == Some("knowledge/topics/ownership.md")),
+            "purged wiki page still appeared in search\nstdout:\n{}",
+            String::from_utf8_lossy(&after_purge.stdout)
+        );
     }
 
     fn assert_json_error(output: &std::process::Output, code: &str, message_contains: &str) {

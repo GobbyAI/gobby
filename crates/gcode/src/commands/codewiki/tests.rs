@@ -23,6 +23,7 @@ mod modules;
 mod onboarding;
 mod progress;
 mod provenance;
+mod purge;
 mod repair;
 mod reuse;
 mod truth_digest;
