@@ -21,7 +21,7 @@ pub mod vision;
 // Local reasoning models decode long, large-prompt generations at tens of
 // tokens per second; a shared 60s budget timed out the biggest codewiki
 // prompts (repo overview, top-level subsystems) while vision stays snappy.
-const TEXT_GENERATE_TIMEOUT: Duration = Duration::from_secs(300);
+const TEXT_GENERATE_TIMEOUT: Duration = Duration::from_secs(1200);
 const VISION_TIMEOUT: Duration = Duration::from_secs(60);
 const EMBEDDINGS_TIMEOUT: Duration = Duration::from_secs(10);
 const STT_CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
