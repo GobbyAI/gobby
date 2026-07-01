@@ -81,21 +81,21 @@ fn clusters_modules_from_graph() {
     let container = docs_by_path
         .get("code/modules/src.md")
         .expect("container module is documented");
-    assert!(container.contains("[[code/modules/src/api\\|src/api]]"));
-    assert!(container.contains("[[code/modules/src/domain\\|src/domain]]"));
-    assert!(!container.contains("[[code/files/src/api/handler.rs\\|src/api/handler.rs]]"));
+    assert!(container.contains("[[code/modules/src/api|src/api]]"));
+    assert!(container.contains("[[code/modules/src/domain|src/domain]]"));
+    assert!(!container.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
 
     // Same-root call-connected files cluster to their common module.
     let api = docs_by_path
         .get("code/modules/src/api.md")
         .expect("same-root cluster module is documented");
-    assert!(api.contains("[[code/files/src/api/handler.rs\\|src/api/handler.rs]]"));
-    assert!(api.contains("[[code/files/src/api/inner/router.rs\\|src/api/inner/router.rs]]"));
+    assert!(api.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
+    assert!(api.contains("[[code/files/src/api/inner/router.rs|src/api/inner/router.rs]]"));
 
     let domain = docs_by_path
         .get("code/modules/src/domain.md")
         .expect("cross-root file keeps its own module");
-    assert!(domain.contains("[[code/files/src/domain/service.rs\\|src/domain/service.rs]]"));
+    assert!(domain.contains("[[code/files/src/domain/service.rs|src/domain/service.rs]]"));
 
     assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
     assert!(!docs_by_path.contains_key("code/files/vendor/generated/client.rs.md"));
@@ -322,19 +322,19 @@ fn clusters_without_falkordb() {
         docs_by_path
             .get("code/files/src/api/handler.rs.md")
             .expect("handler file doc")
-            .contains("| `handle` | function |")
+            .contains("- Symbol: `handle`")
     );
     assert!(
         docs_by_path
             .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
-            .contains("| `Service` | class |")
+            .contains("- Symbol: `Service`")
     );
     assert!(
         docs_by_path
             .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
-            .contains("| `Service::new` | function |")
+            .contains("- Symbol: `Service::new`")
     );
     assert!(
         !docs_by_path
@@ -449,7 +449,8 @@ fn module_page_does_not_degrade_without_falkordb() {
     // File pages render a human Reference table keyed by symbol name, not a
     // UUID component-id dump (#871).
     assert!(file.contains("## Reference"));
-    assert!(file.contains("| `handle` | function |"));
+    assert!(file.contains("- Symbol: `handle`"));
+    assert!(file.contains("  Kind: function"));
     assert!(!file.contains(&test_component_id(
         "src/api/handler.rs",
         "handle",

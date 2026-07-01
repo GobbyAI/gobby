@@ -124,16 +124,17 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
     // Content pass: a multi-section body with a table row and a real citation.
     assert!(concept.contains("## Purpose"), "{concept}");
     assert!(
-        concept.contains("| query | Runs a hybrid search"),
+        concept.contains("- Symbol: query\n  Role: Runs a hybrid search"),
         "{concept}"
     );
     assert!(concept.contains("src/search.rs:4"), "{concept}");
-    // Sparse linking rendered as an enumerable reference table: module roots
-    // only (no exhaustive `## Source Files` dump). The wikilink alias pipe is
-    // table-escaped to `\|` (#980).
+    // Sparse linking rendered as an enumerable reference list: module roots
+    // only (no exhaustive `## Source Files` dump).
     assert!(concept.contains("## Explore"), "{concept}");
-    assert!(concept.contains("| Reference | Summary |"), "{concept}");
-    assert!(concept.contains("[[code/modules/src\\|src]]"), "{concept}");
+    assert!(
+        concept.contains("- Reference: [[code/modules/src|src]]"),
+        "{concept}"
+    );
     assert!(!concept.contains("[[code/files/"), "{concept}");
     assert!(concept.contains("provenance:"));
     // Curated frontmatter is range-free (bounded provenance, commit 5).
@@ -144,10 +145,9 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
     assert!(narrative.contains("## Why this matters"), "{narrative}");
     // The Concepts list keeps plain bullet wikilinks (not a table).
     assert!(narrative.contains("[[code/concepts/src|Query Engine]]"));
-    // The Explore reference table escapes the wikilink alias pipe (#980).
-    assert!(narrative.contains("| Reference | Summary |"), "{narrative}");
+    // The Explore references are rendered as a wrapped list.
     assert!(
-        narrative.contains("[[code/modules/src\\|src]]"),
+        narrative.contains("- Reference: [[code/modules/src|src]]"),
         "{narrative}"
     );
 }
@@ -267,10 +267,13 @@ fn repo_leads_with_start_here_and_demotes_reference_appendix() {
         "{repo}"
     );
 
-    // Module/file tables stay reachable, but under the appendix (level-3).
-    let modules = repo.find("### Modules").expect("modules table heading");
+    // Module/file references stay reachable, but under the appendix (level-3).
+    let modules = repo.find("### Modules").expect("modules heading");
     assert!(appendix < modules, "{repo}");
-    assert!(repo.contains("| Module | Summary |"), "{repo}");
+    assert!(
+        repo.contains("- Module: [[code/modules/src|src]]"),
+        "{repo}"
+    );
 
     // Concept tree lists the guided tour above the concept catalog.
     let index = rendered_doc(&docs, "code/concepts/index.md");

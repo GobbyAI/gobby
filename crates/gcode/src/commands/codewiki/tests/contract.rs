@@ -31,10 +31,10 @@ fn generates_hierarchical_docs() {
     let file =
         std::fs::read_to_string(out_dir.path().join("code/files/src/lib.rs.md")).expect("file doc");
 
-    assert!(repo.contains("[[code/modules/src\\|src]]"));
+    assert!(repo.contains("[[code/modules/src|src]]"));
     assert!(repo.contains("Repository Overview"));
     assert!(!repo.contains("## Module Dependencies"));
-    assert!(module.contains("[[code/files/src/lib.rs\\|src/lib.rs]]"));
+    assert!(module.contains("[[code/files/src/lib.rs|src/lib.rs]]"));
     assert!(file.contains("## Overview"));
     assert!(file.contains("## Reference"));
     assert!(!file.contains("## API Symbols"));
@@ -84,19 +84,18 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
         .expect("frontmatter block");
     let frontmatter: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse frontmatter");
 
-    assert!(repo.contains("[[code/modules/src\\|src]]"));
-    assert!(repo.contains("| Module | Summary |\n| --- | --- |\n"));
-    assert!(repo.contains("| [[code/modules/src\\|src]] |"));
+    assert!(repo.contains("[[code/modules/src|src]]"));
+    assert!(repo.contains("- Module: [[code/modules/src|src]]"));
     assert!(file.contains("[[code/modules/src|src]]"));
     // Human Key components table: name + kind + hub purpose, no Signature /
     // Component / Component ID / Lines columns (#871).
-    assert!(file.contains("| Symbol | Kind | Purpose |"));
-    assert!(file.contains("| `Client` | class |"));
+    assert!(file.contains("- Symbol: `Client`"));
+    assert!(file.contains("  Kind: class"));
     assert!(!file.contains("Component ID"));
     // The full-range `<details>` provenance wall is dropped from file pages; the
     // repo overview still carries it.
     assert!(!file.contains("<details>"));
-    assert!(repo.contains("- [src/lib.rs:1](src/lib.rs#L1)"));
+    assert!(repo.contains("- [1] [src/lib.rs:1]"));
     assert_eq!(
         frontmatter
             .get("generated_by")
@@ -227,10 +226,10 @@ fn file_doc_purpose_neutralizes_summary_link_tokens() {
     let docs = generate_hierarchical_docs(&input, None);
     let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
 
-    assert!(file.contains("| `wiki_link` | function |"));
-    assert!(file.contains(
-        "Quotes `[[relative_path\\|title]]` and `[exact](knowledge/topics/exact)`. [src/lib.rs:1]"
-    ));
+    assert!(file.contains("- Symbol: `wiki_link`"));
+    assert!(file.contains("  Kind: function"));
+    assert!(file.contains("Quotes `[[relative_path|title]]` and"));
+    assert!(file.contains("`[exact](knowledge/topics/exact)`. [src/lib.rs:1]"));
 }
 
 #[test]
@@ -261,7 +260,8 @@ fn file_page_structural_fallback_is_multi_section_without_symbol_dump() {
     assert!(file.contains("## Overview"));
     assert!(file.contains("## How it fits"));
     assert!(file.contains("## Reference"));
-    assert!(file.contains("| Symbol | Kind | Purpose |"));
+    assert!(file.contains("- Symbol: `Client`"));
+    assert!(file.contains("  Kind: class"));
     // None of the old machine surface: no UUID component IDs, no symbol-table
     // header, no full-range `<details>` provenance wall.
     assert!(!file.contains("Component ID"));

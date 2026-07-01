@@ -651,7 +651,7 @@ impl BuiltDoc {
 
     pub(crate) fn with_normalized_markdown(mut self) -> Self {
         if self.path.ends_with(".md") {
-            self.content = gobby_core::markdown::normalize_markdown(&self.content);
+            self.content = super::strict_markdown::normalize_codewiki_markdown(&self.content);
         }
         self
     }

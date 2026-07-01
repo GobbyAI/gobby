@@ -144,8 +144,8 @@ fn repo_front_page_drops_no_symbol_filler_for_root_files() {
 
     assert!(
         repo.lines()
-            .any(|line| line.trim() == "| [[code/files/README.md\\|README.md]] |  |"),
-        "filler-only root files keep an empty summary cell: {repo}"
+            .any(|line| line.trim() == "- File: [[code/files/README.md|README.md]]"),
+        "filler-only root files omit filler summary text: {repo}"
     );
     assert!(!repo.contains("has no indexed API symbols"), "{repo}");
 }

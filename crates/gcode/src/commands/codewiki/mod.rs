@@ -133,6 +133,7 @@ mod render;
 mod repair;
 mod reuse;
 mod run;
+mod strict_markdown;
 mod system_model;
 mod text;
 mod tool_executor;

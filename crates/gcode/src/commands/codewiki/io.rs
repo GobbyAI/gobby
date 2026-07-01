@@ -186,6 +186,11 @@ impl<'a> DocSink<'a> {
         let target = safe_doc_path(self.out_dir, &doc.path)?;
         let write_outcome = ai_outcome.for_doc(doc.degraded);
         let content = apply_ai_outcome_to_markdown(&doc.content, write_outcome);
+        let content = if doc.path.ends_with(".md") {
+            strict_markdown::normalize_codewiki_markdown(&content)
+        } else {
+            content
+        };
         let previous_meta = self.previous_docs.get(&doc.path);
         if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
             && doc.invalidation_key.is_none()
@@ -204,10 +209,14 @@ impl<'a> DocSink<'a> {
                 .chain(meta.neighbor_hashes.keys())
                 .all(|file| !since.contains(file))
         {
+            let refreshed = refresh_doc_if_needed(self.out_dir, &doc.path, &content)?;
+            if refreshed {
+                self.generated_docs.push(doc.path.clone());
+            }
             self.next_docs.insert(doc.path.clone(), meta.clone());
             self.seen.insert(doc.path.clone());
             self.flush()?;
-            return Ok(false);
+            return Ok(refreshed);
         }
 
         let source_hashes = source_hashes_for_doc(self.project_root, &content)?;
@@ -280,7 +289,15 @@ impl<'a> DocSink<'a> {
             });
         let unchanged = unchanged || since_unchanged;
 
+        let refreshed = if unchanged {
+            refresh_doc_if_needed(self.out_dir, &doc.path, &content)?
+        } else {
+            false
+        };
         let entry = if unchanged {
+            if refreshed {
+                self.generated_docs.push(doc.path.clone());
+            }
             // A skip keeps the previous healthy content on disk, so the meta
             // entry keeps the previous summary and stays healthy even when
             // this run's generation failed — degraded fallback never displaces
@@ -321,7 +338,7 @@ impl<'a> DocSink<'a> {
         self.next_docs.insert(doc.path.clone(), entry);
         self.seen.insert(doc.path.clone());
         self.flush()?;
-        Ok(!unchanged)
+        Ok(!unchanged || refreshed)
     }
 
     /// Pages written with a degraded structural fallback this run (#900), in
@@ -627,12 +644,35 @@ pub(crate) fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> a
         .and_then(|extension| extension.to_str())
         == Some("md")
     {
-        gobby_core::markdown::normalize_markdown(content)
+        strict_markdown::normalize_codewiki_markdown(content)
     } else {
         content.to_string()
     };
     std::fs::write(target, content)?;
     Ok(())
+}
+
+fn refresh_doc_if_needed(
+    out_dir: &Path,
+    relative_path: &str,
+    content: &str,
+) -> anyhow::Result<bool> {
+    let target = safe_doc_path(out_dir, relative_path)?;
+    let existing = match std::fs::read_to_string(&target) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if existing == content {
+        return Ok(false);
+    }
+    if !relative_path.ends_with(".md")
+        || strict_markdown::normalize_codewiki_markdown(&existing) != content
+    {
+        return Ok(false);
+    }
+    write_doc(out_dir, relative_path, content)?;
+    Ok(true)
 }
 
 pub(crate) fn reject_symlinked_doc_path(out_dir: &Path, target: &Path) -> anyhow::Result<()> {

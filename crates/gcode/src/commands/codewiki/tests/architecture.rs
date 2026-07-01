@@ -75,21 +75,14 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     assert!(rendered.contains("degraded_sources:"));
     assert!(rendered.contains("- model-unavailable"));
     assert!(!rendered.contains("graph-truncated"));
-    assert!(rendered.contains("| Subsystem | Responsibility | Child modules |"));
-    assert!(rendered.contains("[[code/modules/src/api\\|src/api]]"));
-    assert!(rendered.contains("[[code/modules/src/domain\\|src/domain]]"));
-    assert!(rendered.contains("[[code/modules/src/storage\\|src/storage]]"));
+    assert!(rendered.contains("- Subsystem: [[code/modules/src/api|src/api]]"));
+    assert!(rendered.contains("- Subsystem: [[code/modules/src/domain|src/domain]]"));
+    assert!(rendered.contains("- Subsystem: [[code/modules/src/storage|src/storage]]"));
     assert!(rendered.contains("`src/api` contains 2 direct files and 0 child modules."));
-    assert!(rendered.contains("- [src/api/handler.rs:1](src/api/handler.rs#L1)"));
-    let body = rendered
-        .split_once("</details>\n\n")
-        .map(|(_, body)| body)
-        .expect("relevant source files details block");
-    assert!(!body.contains("src/api/handler.rs:1"));
-    assert!(!body.contains("src/api/router.rs:1"));
+    assert!(!rendered.contains("<details>"));
     for line in rendered
         .lines()
-        .filter(|line| line.starts_with("| [[code/modules/"))
+        .filter(|line| line.starts_with("- Subsystem: [[code/modules/"))
     {
         assert_eq!(inline_marker_count(line), 0);
     }
@@ -236,7 +229,7 @@ fn architecture_page_renders_layered_narrative_and_child_module_levels() {
     assert!(!rendered.contains("```mermaid"), "{rendered}");
     // One module level is enumerated in the subsystem table.
     assert!(
-        rendered.contains("[[code/modules/src/storage/backend\\|src/storage/backend]]"),
+        rendered.contains("[[code/modules/src/storage/backend|src/storage/backend]]"),
         "{rendered}"
     );
 

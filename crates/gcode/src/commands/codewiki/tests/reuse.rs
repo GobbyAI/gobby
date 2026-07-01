@@ -444,6 +444,104 @@ fn degraded_docs_are_never_reused() {
 }
 
 #[test]
+fn reusable_pages_are_rewritten_after_strict_normalization_without_regeneration() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut generate = Some::<&mut TextGenerator<'_>>(&mut first_generator);
+    let mut progress = CodewikiProgress::silent();
+    let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
+    let doc_scope = DocPruneScope::unscoped();
+    let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
+        sink.persist(&doc)?;
+        Ok(())
+    };
+    generate_hierarchical_docs_core(
+        &input,
+        None,
+        None,
+        None,
+        None,
+        &mut generate,
+        &mut None,
+        &mut None,
+        AiDepth::Symbols,
+        VerifyScope::All,
+        CodewikiAiOutcome::default(),
+        &mut None,
+        &mut progress,
+        &doc_scope,
+        &mut emit,
+    )
+    .expect("first run");
+    sink.finish(None).expect("first run completes");
+
+    let page_path = out_dir.join("code/files/src/lib.rs.md");
+    let original = std::fs::read_to_string(&page_path).expect("read normalized page");
+    let stale = format!("{original}\n<details>\n<summary>Source</summary>\n\nold\n</details>\n");
+    std::fs::write(&page_path, stale).expect("plant old-format reusable page");
+
+    let mut systems = Vec::new();
+    let mut second_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        systems.push(system.to_string());
+        Some("Unexpected fresh generation.".to_string())
+    };
+    let mut generate = Some::<&mut TextGenerator<'_>>(&mut second_generator);
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink reopens");
+    let doc_scope = DocPruneScope::unscoped();
+    let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
+        sink.persist(&doc)?;
+        Ok(())
+    };
+    generate_hierarchical_docs_core(
+        &input,
+        None,
+        None,
+        None,
+        None,
+        &mut generate,
+        &mut None,
+        &mut None,
+        AiDepth::Symbols,
+        VerifyScope::All,
+        CodewikiAiOutcome::default(),
+        &mut reuse,
+        &mut progress,
+        &doc_scope,
+        &mut emit,
+    )
+    .expect("second run");
+    let changed = sink.finish(None).expect("second run completes");
+
+    assert!(changed.contains(&"code/files/src/lib.rs.md".to_string()));
+    assert_eq!(
+        std::fs::read_to_string(&page_path).expect("read refreshed page"),
+        original
+    );
+    assert!(
+        !systems
+            .iter()
+            .any(|system| system == prompts::SYMBOL_SYSTEM),
+        "normalization refresh must not regenerate symbols: {systems:#?}"
+    );
+    assert!(!systems.iter().any(|system| system == prompts::FILE_SYSTEM));
+}
+
+#[test]
 fn interrupted_run_resumes_from_persisted_docs() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
