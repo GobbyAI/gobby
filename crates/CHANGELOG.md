@@ -9,6 +9,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — gcode — 2026-07-01
+
+### Added
+
+#### gcode
+
+- **Agentic CodeWiki aggregate generation** — aggregate CodeWiki pages can route
+  through gcore's daemon-side agentic/tool-backed generation path, using
+  read-only gcode investigation tools and recording lane/tool-call observability
+  in page frontmatter.
+- **CodeWiki purge** — `gcode codewiki --purge --out <DIR> --force` removes
+  generated CodeWiki Markdown and metadata under the selected output directory
+  without running generation or AI calls.
+- **Richer handbook output** — CodeWiki now emits a broader handbook/navigation
+  layer with generalized taxonomy, semantic clusters, reference tables,
+  per-category render versions, and bounded dependency diagrams on repo
+  overviews.
+- **Verification scope control** — `--ai-verify-scope aggregates|all` keeps the
+  default verifier pass on aggregate/curated pages while allowing slower
+  per-file verification when explicitly requested.
+
+### Fixed
+
+#### gcode
+
+- **Strict generated Markdown normalization** — CodeWiki output is normalized
+  before write/reuse so generated pages remain stable, markdownlint-friendly,
+  and idempotent across reruns.
+- **CodeWiki filtering and recovery** — `docs/` and temporary directories are
+  excluded from core-file generation; Lane B curated generation now investigates
+  reliably, bounds seed prompts, exposes AI HTTP error bodies, and hard-fails
+  ungroundable aggregate output instead of silently emitting skeleton prose.
+- **AI metadata and timeout hardening** — nested AI frontmatter is preserved,
+  daemon profile/routing metadata is aligned, non-retryable timeouts are handled
+  correctly, and text generation timeout is raised for long aggregate pages.
+- **Index maintenance fixes** — retry timestamp columns, UTF-8 signature
+  truncation, and prune discovery-row preservation are corrected.
+
+## [0.7.0] — gobby-core — 2026-07-01
+
+### Added
+
+#### gobby-core
+
+- **Lane A/B generation foundation** — shared tier profiles, direct chat
+  transport, provider-neutral tool-loop generation, daemon chat transport, and
+  `tool_chat` capability support now live in `gobby-core` for gcode and gwiki
+  consumers.
+- **Daemon-side agentic chat** — `daemon_agentic_chat` posts messages,
+  project context, reasoning settings, max turns, and a serialized
+  `ToolPolicy` to the daemon route for agentic narrative generation.
+- **Config secret decryption support** — datastore-backed AI/config sources can
+  resolve `$secret:` values through gcore's envelope secret handling while
+  env-only sources continue to reject secret references explicitly.
+
+### Fixed
+
+#### gobby-core
+
+- **Tool-loop resilience** — generation parsing and stop-reason handling are
+  hardened so malformed or incomplete tool-loop output returns typed failures
+  instead of ambiguous empty content.
+
+## [0.7.0] — ghook — 2026-07-01
+
+### Added
+
+#### ghook
+
+- **Shared daemon URL resolution** — live dispatch, planned-shutdown preflight,
+  statusline POSTs, and diagnose output now use `gobby_core::daemon_url`, so
+  `GOBBY_DAEMON_URL`, `GOBBY_PORT`, and bootstrap `daemon_url` overrides are
+  honored consistently.
+- **Machine identity stamping** — hook envelopes now include local
+  `machine_id` and `os` when available, or a `machine_id_error` code when the
+  local machine identity file is missing or empty.
+
 ### Removed
 
 #### ghook
@@ -18,6 +95,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--cli=gemini` hook invocations now no-op with `{}` and exit 0 before enqueue
   or POST, so old hook configs fail quiet instead of falling through to the
   unknown-CLI Claude fallback.
+
+## [0.7.0] — gwiki — 2026-07-01
+
+### Added
+
+#### gwiki
+
+- **Scoped purge command** — `gwiki --project <ROOT> purge --yes` and
+  `gwiki --topic <NAME> purge --yes` delete generated/indexed wiki state for
+  the explicit scope across PostgreSQL, Qdrant, and FalkorDB. Global purge is
+  rejected.
+- **Shared generation tiers** — `gwiki ask --llm` and `gwiki compile` now route
+  generation through gcore tier profiles and the shared Lane B tool-loop
+  utilities.
+
+### Fixed
+
+#### gwiki
+
+- **AI routing metadata** — generation output preserves aligned AI routing and
+  frontmatter metadata across direct and daemon-backed paths.
+
+### Removed
 
 #### gwiki
 
