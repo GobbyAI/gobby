@@ -161,6 +161,19 @@ fn core_file_filter_excludes_hidden_metadata_paths() {
 }
 
 #[test]
+fn core_file_filter_excludes_tmp_directories() {
+    for file in [
+        "tmp/codewiki-laneb-claude-mid/_meta/contract.json",
+        "tmp/cw-leaf/src/main.rs",
+        "tmp/cw-probe1/config.yaml",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("crates/gcode/src/main.rs"));
+}
+
+#[test]
 fn import_targets_match_exact_path_or_module_components() {
     let files = vec![
         "src/domain/service.rs".to_string(),
