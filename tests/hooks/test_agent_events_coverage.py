@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from importlib.resources import files
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import yaml
@@ -166,6 +166,7 @@ class TestHandleBeforeAgent:
                     "_agent_type": "default",
                     "_active_skill_names": ["brevity"],
                     "_agent_context_injected": False,
+                    "_agent_context_rehydrate_pending": True,
                 },
             ),
             patch(
@@ -199,6 +200,7 @@ class TestHandleBeforeAgent:
             {
                 "_agent_context_injected": True,
                 "_agent_identity_reinject": False,
+                "_agent_context_rehydrate_pending": False,
             },
         )
 
@@ -224,10 +226,12 @@ class TestHandleBeforeAgent:
                     {
                         "_agent_type": "default",
                         "_agent_context_injected": False,
+                        "_agent_context_rehydrate_pending": True,
                     },
                     {
                         "_agent_type": "default",
                         "_agent_context_injected": True,
+                        "_agent_context_rehydrate_pending": False,
                     },
                 ],
             ),
@@ -250,8 +254,169 @@ class TestHandleBeforeAgent:
             {
                 "_agent_context_injected": True,
                 "_agent_identity_reinject": False,
+                "_agent_context_rehydrate_pending": False,
             },
         )
+
+    def test_stale_agent_context_false_with_prior_activity_repairs_without_preamble(
+        self,
+    ) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        handler._session_manager.get.return_value = MagicMock(
+            project_id="proj-1",
+            message_count=186,
+            turn_count=74,
+        )
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                return_value={
+                    "_agent_type": "default",
+                    "_agent_context_injected": False,
+                    "_agent_context_rehydrate_pending": False,
+                },
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
+        ):
+            result = handler.handle_before_agent(event)
+
+        assert result.decision == "allow"
+        assert result.context is None
+        assert "## Role" not in (result.context or "")
+        handler._session_manager.update_session_status.assert_called_once_with("sess-1", "active")
+        handler._session_manager.reset_transcript_processed.assert_called_once_with("sess-1")
+        handler._session_manager.get.assert_called_once_with("sess-1")
+        mock_resolve_agent.assert_not_called()
+        mock_merge.assert_called_once_with("sess-1", {"_agent_context_injected": True})
+
+    def test_persona_switch_reinjects_agent_preamble_once(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        handler._session_manager.get.return_value = MagicMock(
+            project_id="proj-1",
+            message_count=12,
+            turn_count=5,
+        )
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+        agent = AgentDefinitionBody(
+            name="operator",
+            role="Act as the operator.",
+            goal="Keep the persona current.",
+            personality="Precise.",
+            instructions="Use the active persona.",
+        )
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                side_effect=[
+                    {
+                        "_agent_type": "operator",
+                        "_agent_context_injected": True,
+                        "_agent_identity_reinject": True,
+                        "_agent_context_rehydrate_pending": False,
+                    },
+                    {
+                        "_agent_type": "operator",
+                        "_agent_context_injected": True,
+                        "_agent_identity_reinject": False,
+                        "_agent_context_rehydrate_pending": False,
+                    },
+                ],
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
+        ):
+            first = handler.handle_before_agent(event)
+            second = handler.handle_before_agent(event)
+
+        assert first.context is not None
+        assert first.context.count("## Role") == 1
+        assert "## Role\nAct as the operator." in first.context
+        assert second.context is None
+        assert mock_merge.call_args_list == [
+            call(
+                "sess-1",
+                {
+                    "_agent_context_injected": True,
+                    "_agent_identity_reinject": False,
+                    "_agent_context_rehydrate_pending": False,
+                },
+            )
+        ]
+
+    def test_explicit_rehydrate_reinjects_agent_preamble_once(self) -> None:
+        handler = _TestHandler()
+        handler._skill_manager = None
+        handler._session_manager.get.return_value = MagicMock(
+            project_id="proj-1",
+            message_count=20,
+            turn_count=9,
+        )
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+        agent = AgentDefinitionBody(
+            name="default",
+            role="Act as the daemon.",
+            goal="Restore prompt context.",
+            personality="Direct.",
+            instructions="Rehydrate after context loss.",
+        )
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                side_effect=[
+                    {
+                        "_agent_type": "default",
+                        "_agent_context_injected": False,
+                        "_agent_context_rehydrate_pending": True,
+                    },
+                    {
+                        "_agent_type": "default",
+                        "_agent_context_injected": True,
+                        "_agent_context_rehydrate_pending": False,
+                    },
+                ],
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent),
+        ):
+            first = handler.handle_before_agent(event)
+            second = handler.handle_before_agent(event)
+
+        assert first.context is not None
+        assert first.context.count("## Role") == 1
+        assert "## Goal\nRestore prompt context." in first.context
+        assert second.context is None
+        assert mock_merge.call_args_list == [
+            call(
+                "sess-1",
+                {
+                    "_agent_context_injected": True,
+                    "_agent_identity_reinject": False,
+                    "_agent_context_rehydrate_pending": False,
+                },
+            )
+        ]
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,24 @@ _GOBBY_CMD_PATTERN = re.compile(
 _HELP_SKILL_LIST_LIMIT = 50
 
 
+def _has_positive_count(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    if isinstance(value, str) and value.isdigit():
+        return int(value) > 0
+    return False
+
+
+def _has_prior_session_activity(session: Any | None) -> bool:
+    if session is None:
+        return False
+    return _has_positive_count(getattr(session, "message_count", 0)) or _has_positive_count(
+        getattr(session, "turn_count", 0)
+    )
+
+
 def _load_agent_prompt(
     name: str,
     context: dict[str, Any] | None = None,
@@ -164,13 +182,18 @@ class AgentEventHandlerMixin(EventHandlersBase):
         variables = sv_mgr.get_variables(session_id)
 
         identity_reinject = bool(variables.get("_agent_identity_reinject"))
-        if variables.get("_agent_context_injected") and not identity_reinject:
-            return
+        rehydrate_pending = bool(variables.get("_agent_context_rehydrate_pending"))
 
-        agent_name = variables.get("_agent_type", "default")
+        if (
+            variables.get("_agent_context_injected")
+            and not identity_reinject
+            and not rehydrate_pending
+        ):
+            return
 
         # Get project_id for project-specific agent resolution
         project_id = None
+        session_row = None
         try:
             session_row = self._session_manager.get(session_id)
             if session_row:
@@ -182,6 +205,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 e,
                 exc_info=True,
             )
+
+        if (
+            not identity_reinject
+            and not rehydrate_pending
+            and _has_prior_session_activity(session_row)
+        ):
+            sv_mgr.merge_variables(session_id, {"_agent_context_injected": True})
+            return
+
+        agent_name = variables.get("_agent_type", "default")
 
         from gobby.workflows.agent_resolver import resolve_agent
 
@@ -201,6 +234,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             {
                 "_agent_context_injected": True,
                 "_agent_identity_reinject": False,
+                "_agent_context_rehydrate_pending": False,
             },
         )
 

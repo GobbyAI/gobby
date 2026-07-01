@@ -687,7 +687,10 @@ class TestSessionStartPreCreatedSession:
         assert (
             call(
                 "sess-first-123",
-                {"_agent_context_injected": False},
+                {
+                    "_agent_context_injected": False,
+                    "_agent_context_rehydrate_pending": True,
+                },
             )
             in mock_svm.merge_variables.call_args_list
         )
@@ -759,7 +762,10 @@ class TestSessionStartPreCreatedSession:
         assert (
             call(
                 mock_session.id,
-                {"_agent_context_injected": False},
+                {
+                    "_agent_context_injected": False,
+                    "_agent_context_rehydrate_pending": True,
+                },
             )
             in mock_svm.merge_variables.call_args_list
         )

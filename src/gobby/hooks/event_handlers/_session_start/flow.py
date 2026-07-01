@@ -148,7 +148,10 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
 
         SessionVariableManager(handler._session_manager.db).merge_variables(
             session_id,
-            {"_agent_context_injected": False},
+            {
+                "_agent_context_injected": False,
+                "_agent_context_rehydrate_pending": True,
+            },
         )
     except (json.JSONDecodeError, KeyError, psycopg.Error) as e:
         handler.logger.warning(f"Failed to reset agent context injection flag: {e}")

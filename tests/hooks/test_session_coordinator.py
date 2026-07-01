@@ -21,7 +21,7 @@ import logging
 import threading
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -313,8 +313,8 @@ class TestSessionLifecycleTransitions:
         assert count == 1
         assert mock_message_processor.register_session.call_count == 2
 
-    def test_reregister_resets_agent_context_injected(self) -> None:
-        """Test re-registration resets deferred persona injection flags."""
+    def test_reregister_does_not_reset_agent_context_flags(self) -> None:
+        """Test re-registration only restores transcript processing."""
         mock_session_storage = MagicMock()
         mock_session_storage.list.side_effect = lambda status, limit: {
             "active": [
@@ -336,22 +336,20 @@ class TestSessionLifecycleTransitions:
         )
 
         with patch("gobby.workflows.state_manager.SessionVariableManager") as MockSVMgr:
-            mock_sv_instance = MockSVMgr.return_value
             count = coordinator.reregister_active_sessions()
 
         assert count == 1
-        MockSVMgr.assert_called_once_with(mock_session_storage.db)
-        assert MockSVMgr.call_count == 1
-        assert MockSVMgr.call_args is not None
-        mock_sv_instance.merge_variables.assert_called_once_with(
+        assert mock_session_storage.list.call_args_list == [
+            call(status="active", limit=1000),
+            call(status="paused", limit=1000),
+        ]
+        mock_message_processor.register_session.assert_called_once_with(
             "session-1",
-            {
-                "_agent_context_injected": False,
-                "_agent_identity_reinject": False,
-            },
+            "/path/to/1.jsonl",
+            source="claude",
         )
-        assert mock_sv_instance.merge_variables.call_count == 1
-        assert mock_sv_instance.merge_variables.call_args is not None
+        assert mock_message_processor.register_session.call_count == 1
+        MockSVMgr.assert_not_called()
 
 
 class TestAgentRunCompletion:
