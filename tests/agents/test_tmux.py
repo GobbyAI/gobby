@@ -630,6 +630,17 @@ class TestTmuxSessionManager:
             assert "-g" not in mock_run.call_args.args
 
     @pytest.mark.asyncio
+    async def test_rename_window_escapes_tmux_format_markers(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "", "")
+            assert await mgr.rename_window("%42", "#99 Fix #title") is True
+
+        args = mock_run.call_args.args
+        assert args[args.index("rename-window") + 3] == "##99 Fix ##title"
+        assert args[args.index("select-pane") + 4] == "##99 Fix ##title"
+
+    @pytest.mark.asyncio
     async def test_rename_window_missing_pane_logs_debug(
         self,
         caplog: pytest.LogCaptureFixture,

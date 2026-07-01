@@ -338,7 +338,7 @@ def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]
     Deliberately never derives from terminal paths (cwd / project_path /
     workspace_path / repo_path basename): a path basename is indistinguishable
     from a real title and is exactly what made title-less sessions masquerade as
-    the project directory (the original ``#N: gobby`` bug). Falls back to the
+    the project directory (the original ``#N gobby`` bug). Falls back to the
     session ``source`` (e.g. ``claude``), then a neutral ``"untitled"`` label.
 
     With the per-turn heuristic, digest-cancellation fallback, and repair-sweep
@@ -374,6 +374,11 @@ def _strip_window_ref_prefix(title: str, ref: str | None) -> str:
     return prefix_re.sub("", title).strip()
 
 
+def _sanitize_tmux_window_title(value: str) -> str:
+    """Return a tmux-safe window title while preserving readable punctuation."""
+    return re.sub(r"\s+", " ", re.sub(r"\s*:\s*", " - ", value)).strip()
+
+
 def _session_ref_for_window_title(session: Any) -> str | None:
     seq_num = getattr(session, "seq_num", None)
     if isinstance(seq_num, int) and seq_num > 0:
@@ -391,7 +396,7 @@ def _session_ref_for_window_title(session: Any) -> str | None:
 def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title: str) -> str:
     """Resolve the final tmux window title: fallback when empty, ref-prefixed.
 
-    Prepends the session ref (e.g. ``#3605``) so the window reads ``#N: title``.
+    Prepends the session ref (e.g. ``#3605``) so the window reads ``#N title``.
     """
     ref = _session_ref_for_window_title(session)
     if not title or _contains_unresolved_session_ref(title):
@@ -404,8 +409,9 @@ def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title:
             ref,
         )
         resolved_title = normalize_title_candidate(fallback_title) or ""
+    resolved_title = _sanitize_tmux_window_title(resolved_title)
     if ref:
-        return f"{ref}: {resolved_title}"
+        return f"{ref} {resolved_title}".strip()
     return resolved_title
 
 

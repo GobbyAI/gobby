@@ -82,6 +82,11 @@ def _is_missing_tmux_target_error(stderr: str) -> bool:
     return any(fragment in message for fragment in _MISSING_TARGET_ERRORS)
 
 
+def _escape_tmux_format(value: str) -> str:
+    """Escape tmux format markers in user-visible strings."""
+    return value.replace("#", "##")
+
+
 def _is_missing_tmux_server_error(stderr: str) -> bool:
     """Return True when tmux reports that the isolated server is not running."""
     message = stderr.strip().lower()
@@ -667,6 +672,7 @@ class TmuxSessionManager:
         Returns:
             True on success.
         """
+        tmux_title = _escape_tmux_format(title)
         rc, _stdout, stderr = await self._run(
             "set-option",
             "-t",
@@ -683,13 +689,13 @@ class TmuxSessionManager:
             "rename-window",
             "-t",
             target,
-            title,
+            tmux_title,
             ";",
             "select-pane",
             "-t",
             target,
             "-T",
-            title,
+            tmux_title,
             ";",
             "set-option",
             "-w",
