@@ -157,7 +157,7 @@ fn core_file_filter_excludes_hidden_metadata_paths() {
         assert!(!is_core_file(file), "{file} should be filtered out");
     }
 
-    assert!(is_core_file("docs/guides/codewiki.md"));
+    assert!(is_core_file("crates/gcode/src/main.rs"));
 }
 
 #[test]
@@ -166,6 +166,19 @@ fn core_file_filter_excludes_tmp_directories() {
         "tmp/codewiki-laneb-claude-mid/_meta/contract.json",
         "tmp/cw-leaf/src/main.rs",
         "tmp/cw-probe1/config.yaml",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("crates/gcode/src/main.rs"));
+}
+
+#[test]
+fn core_file_filter_excludes_docs_directories() {
+    for file in [
+        "docs/evidence/wiki-parity-2026-06/wp3-compile-source.json",
+        "docs/guides/codewiki.md",
+        "docs/README.md",
     ] {
         assert!(!is_core_file(file), "{file} should be filtered out");
     }

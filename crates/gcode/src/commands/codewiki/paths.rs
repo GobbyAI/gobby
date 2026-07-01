@@ -127,6 +127,7 @@ pub(crate) fn is_core_file(file: &str) -> bool {
                 | "target"
                 | "node_modules"
                 | "tmp"
+                | "docs"
         )
     })
 }
