@@ -212,8 +212,29 @@ fn classify_transport_error(err: &ureq::Transport, error_text: &str) -> Delivery
         return DeliveryFailureKind::Connect;
     }
 
-    if error_text.to_ascii_lowercase().contains("timed out") {
+    classify_transport_error_text(error_text)
+}
+
+fn classify_transport_error_text(error_text: &str) -> DeliveryFailureKind {
+    let error_text = error_text.to_ascii_lowercase();
+    if error_text.contains("timed out") || error_text.contains("timeout") {
         return DeliveryFailureKind::Timeout;
+    }
+    if [
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "connection failed",
+        "failed to connect",
+        "could not connect",
+        "tcp connect error",
+        "dns error",
+        "nodename nor servname",
+    ]
+    .iter()
+    .any(|pattern| error_text.contains(pattern))
+    {
+        return DeliveryFailureKind::Connect;
     }
 
     DeliveryFailureKind::Other
@@ -489,5 +510,21 @@ mod tests {
         assert_eq!(report.status_code, Some(500));
         assert_eq!(report.response_body, Some("nope".to_string()));
         assert!(path.exists());
+    }
+
+    #[test]
+    fn classify_transport_error_text_recognizes_connect_and_timeout_failures() {
+        assert_eq!(
+            classify_transport_error_text("Connection refused (os error 61)"),
+            DeliveryFailureKind::Connect
+        );
+        assert_eq!(
+            classify_transport_error_text("request timed out while posting hook"),
+            DeliveryFailureKind::Timeout
+        );
+        assert_eq!(
+            classify_transport_error_text("TLS certificate is invalid"),
+            DeliveryFailureKind::Other
+        );
     }
 }

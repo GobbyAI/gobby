@@ -1,53 +1,188 @@
-//! Fernet decryption of Gobby's SecretStore.
+//! Fernet decryption of Gobby's shared SecretStore envelope.
 //!
-//! This matches the Python SecretStore chain:
-//! 1. Read `~/.gobby/machine_id`.
-//! 2. Read `~/.gobby/.secret_salt`.
-//! 3. Derive a Fernet key with PBKDF2-HMAC-SHA256.
-//! 4. Decrypt `secrets.encrypted_value`.
+//! This matches the Python SecretStore envelope:
+//! 1. Read `secret_key_material.default`.
+//! 2. Load the KEK from `~/.gobby/.secret_kek` or `GOBBY_SECRET_KEK_PASSPHRASE`.
+//! 3. Unwrap the Fernet DEK from `secret_key_material.wrapped_dek`.
+//! 4. Decrypt `secrets.encrypted_value` with the DEK.
 
 use anyhow::{Context as _, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE;
-use pbkdf2::pbkdf2_hmac;
-use postgres::Client;
-use sha2::Sha256;
+use postgres::{Client, Row};
+use scrypt::{Params as ScryptParams, scrypt};
 
+const SECRET_KEY_ID: &str = "default";
 const SECRET_NAME_MAX_LEN: usize = 256;
+const POSTURE_KEY_FILE: &str = "key_file";
+const POSTURE_SCRYPT_PASSPHRASE: &str = "scrypt_passphrase";
+const SECRET_KEK_PASSPHRASE_ENV: &str = "GOBBY_SECRET_KEK_PASSPHRASE";
+const SCRYPT_N: i32 = 1 << 14;
+const SCRYPT_R: i32 = 8;
+const SCRYPT_P: i32 = 1;
+const FERNET_KEY_LEN: usize = 32;
 
-fn derive_fernet_key(machine_id: &str, salt: &[u8]) -> String {
-    let mut key_bytes = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(machine_id.as_bytes(), salt, 600_000, &mut key_bytes);
-    URL_SAFE.encode(key_bytes)
+#[derive(Debug)]
+struct SecretKeyMaterial {
+    wrapped_dek: String,
+    kek_posture: String,
+    kek_salt: Option<String>,
+    kek_kdf_n: Option<i32>,
+    kek_kdf_r: Option<i32>,
+    kek_kdf_p: Option<i32>,
 }
 
-fn decrypt_fernet(key: &str, token: &str) -> anyhow::Result<String> {
+impl SecretKeyMaterial {
+    fn from_row(row: Row) -> anyhow::Result<Self> {
+        Ok(Self {
+            wrapped_dek: row.try_get("wrapped_dek")?,
+            kek_posture: row.try_get("kek_posture")?,
+            kek_salt: row.try_get("kek_salt")?,
+            kek_kdf_n: row.try_get("kek_kdf_n")?,
+            kek_kdf_r: row.try_get("kek_kdf_r")?,
+            kek_kdf_p: row.try_get("kek_kdf_p")?,
+        })
+    }
+}
+
+fn load_key_material(conn: &mut Client) -> anyhow::Result<SecretKeyMaterial> {
+    let row = conn
+        .query_one(
+            "SELECT wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p \
+             FROM secret_key_material WHERE id = $1",
+            &[&SECRET_KEY_ID],
+        )
+        .context("secret key material not found; run the Gobby daemon secret migration")?;
+    SecretKeyMaterial::from_row(row)
+}
+
+fn normalize_posture(posture: &str) -> anyhow::Result<String> {
+    let normalized = posture.trim().to_ascii_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        POSTURE_KEY_FILE | POSTURE_SCRYPT_PASSPHRASE => Ok(normalized),
+        _ => bail!(
+            "invalid secret KEK posture '{posture}'; expected '{POSTURE_KEY_FILE}' or '{POSTURE_SCRYPT_PASSPHRASE}'"
+        ),
+    }
+}
+
+fn validate_fernet_key(key: &str, label: &str) -> anyhow::Result<()> {
+    fernet::Fernet::new(key)
+        .map(|_| ())
+        .ok_or_else(|| anyhow::anyhow!("invalid {label} Fernet key"))
+}
+
+fn decrypt_fernet_bytes(key: &str, token: &str) -> anyhow::Result<Vec<u8>> {
     let fernet = fernet::Fernet::new(key).ok_or_else(|| anyhow::anyhow!("invalid Fernet key"))?;
     let plaintext = fernet
         .decrypt(token)
-        .map_err(|_| anyhow::anyhow!("Fernet decryption failed (machine ID may have changed)"))?;
+        .map_err(|_| anyhow::anyhow!("Fernet decryption failed"))?;
+    Ok(plaintext)
+}
+
+fn decrypt_fernet_string(key: &str, token: &str) -> anyhow::Result<String> {
+    let plaintext = decrypt_fernet_bytes(key, token)
+        .context("failed to decrypt secret value with envelope DEK")?;
     String::from_utf8(plaintext).context("decrypted secret is not valid UTF-8")
+}
+
+fn load_key_file_kek() -> anyhow::Result<String> {
+    let gobby_dir = crate::gobby_home()?;
+    let path = gobby_dir.join(".secret_kek");
+    let key = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read secret KEK file {}", path.display()))?;
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        bail!("secret KEK file is empty: {}", path.display());
+    }
+    validate_fernet_key(&key, "secret KEK file")?;
+    Ok(key)
+}
+
+fn positive_scrypt_param(name: &str, value: i32) -> anyhow::Result<u32> {
+    if value <= 0 {
+        bail!("scrypt parameter {name} must be positive");
+    }
+    u32::try_from(value).with_context(|| format!("scrypt parameter {name} is out of range"))
+}
+
+fn derive_scrypt_fernet_key(
+    passphrase: &str,
+    salt: &[u8],
+    n: i32,
+    r: i32,
+    p: i32,
+) -> anyhow::Result<String> {
+    let n = positive_scrypt_param("n", n)?;
+    let r = positive_scrypt_param("r", r)?;
+    let p = positive_scrypt_param("p", p)?;
+    if n < 2 || !n.is_power_of_two() {
+        bail!("scrypt parameter n must be a power of two greater than 1");
+    }
+    let log_n = u8::try_from(n.trailing_zeros()).context("scrypt parameter n is too large")?;
+    let params =
+        ScryptParams::new(log_n, r, p, FERNET_KEY_LEN).context("invalid scrypt KEK parameters")?;
+    let mut key_bytes = [0u8; FERNET_KEY_LEN];
+    scrypt(passphrase.as_bytes(), salt, &params, &mut key_bytes)
+        .context("failed to derive scrypt KEK")?;
+    Ok(URL_SAFE.encode(key_bytes))
+}
+
+fn scrypt_kek(material: &SecretKeyMaterial) -> anyhow::Result<String> {
+    let passphrase = std::env::var(SECRET_KEK_PASSPHRASE_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .with_context(|| {
+            format!("Secret KEK passphrase posture requires {SECRET_KEK_PASSPHRASE_ENV}")
+        })?;
+    let salt_text = material
+        .kek_salt
+        .as_deref()
+        .context("scrypt_passphrase KEK material is missing kek_salt")?;
+    let salt = URL_SAFE
+        .decode(salt_text)
+        .context("scrypt_passphrase KEK material has invalid kek_salt")?;
+    let n = material
+        .kek_kdf_n
+        .filter(|value| *value != 0)
+        .unwrap_or(SCRYPT_N);
+    let r = material
+        .kek_kdf_r
+        .filter(|value| *value != 0)
+        .unwrap_or(SCRYPT_R);
+    let p = material
+        .kek_kdf_p
+        .filter(|value| *value != 0)
+        .unwrap_or(SCRYPT_P);
+    derive_scrypt_fernet_key(&passphrase, &salt, n, r, p)
+}
+
+fn unwrap_dek(material: &SecretKeyMaterial) -> anyhow::Result<String> {
+    let posture = normalize_posture(&material.kek_posture)?;
+    let kek = match posture.as_str() {
+        POSTURE_KEY_FILE => load_key_file_kek()?,
+        POSTURE_SCRYPT_PASSPHRASE => scrypt_kek(material)?,
+        _ => unreachable!("normalize_posture validates supported postures"),
+    };
+    let dek = decrypt_fernet_bytes(&kek, &material.wrapped_dek)
+        .context("Secret DEK cannot be unwrapped with configured KEK")?;
+    let dek = String::from_utf8(dek).context("unwrapped secret DEK is not valid UTF-8")?;
+    validate_fernet_key(&dek, "secret DEK")?;
+    Ok(dek)
+}
+
+fn decrypt_secret_value(
+    material: &SecretKeyMaterial,
+    encrypted_value: &str,
+) -> anyhow::Result<String> {
+    let dek = unwrap_dek(material)?;
+    decrypt_fernet_string(&dek, encrypted_value)
 }
 
 /// Resolve a secret by name from the PostgreSQL hub `secrets` table.
 pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<String> {
     let name = secret_name.trim();
     validate_secret_name(name)?;
-
-    let gobby_dir = crate::gobby_home()?;
-    let machine_id_path = gobby_dir.join("machine_id");
-    let machine_id = std::fs::read_to_string(&machine_id_path)
-        .with_context(|| format!("failed to read {}", machine_id_path.display()))?
-        .trim()
-        .to_string();
-    if machine_id.is_empty() {
-        bail!("machine_id file is empty");
-    }
-
-    let salt_path = gobby_dir.join(".secret_salt");
-    let salt = std::fs::read(&salt_path)
-        .with_context(|| format!("failed to read {}", salt_path.display()))?;
-    let fernet_key = derive_fernet_key(&machine_id, &salt);
 
     // Secrets are resolved case-insensitively; case-only duplicates collide on this key.
     let name = name.to_lowercase();
@@ -58,8 +193,9 @@ pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<St
         )
         .with_context(|| format!("secret '{name}' not found in secrets table"))?;
     let encrypted: String = row.try_get("encrypted_value")?;
+    let material = load_key_material(conn)?;
 
-    decrypt_fernet(&fernet_key, &encrypted)
+    decrypt_secret_value(&material, &encrypted)
 }
 
 /// Resolve `$secret:NAME` and `${VAR}` patterns in a config value.
@@ -170,33 +306,160 @@ fn secret_boundary_char(value: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::sync::MutexGuard;
 
-    #[test]
-    fn derive_fernet_key_is_deterministic() {
-        let key1 = derive_fernet_key("test-machine-id", b"0123456789abcdef");
-        let key2 = derive_fernet_key("test-machine-id", b"0123456789abcdef");
+    const PYTHON_KEY_FILE_KEK: &str = "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=";
+    const PYTHON_WRAPPED_DEK_KEY_FILE: &str = "gAAAAABJlgLSAAAAAAAAAAAAAAAAAAAAAC9b8RrAMGFhE3wxSkKBFwLhxkJrL8D_3Yz5NsOSpTGXwSHaKKYAAv7LiH3nK3KaCIs4vSSbctmyv763hbGrXx2-xFonOlEINxCtTMFY15-9";
+    const PYTHON_SECRET_TOKEN: &str = "gAAAAABJlgLTAQEBAQEBAQEBAQEBAQEBARaUwRex_DmfFRE7ZvGLxsGAlqNaJoaqTlXAUOJNq7X7jeLdyzVD6zFZQceOWjduRQ==";
+    const PYTHON_PASSPHRASE: &str = "correct horse battery staple";
+    const PYTHON_SCRYPT_SALT: &str = "MDEyMzQ1Njc4OWFiY2RlZg==";
+    const PYTHON_SCRYPT_KEK: &str = "tjK03tRvEjqCcPwmgtddMkgjlXrk8U_b9rIvfeBMKCc=";
+    const PYTHON_WRAPPED_DEK_SCRYPT: &str = "gAAAAABJlgLUAgICAgICAgICAgICAgICAl0B0DJd9T7R9n92mSisMTeX4Vj42VnDpzkOXFJUDd6VWoPnzdjUwgxl9kPwERHWhTnsvnPDI9uxHC6T8MIDrcf0JdRVhu-OA3FeBELxYx4g";
 
-        assert_eq!(key1, key2);
-        assert!(!key1.is_empty());
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous_gobby_home: Option<OsString>,
+        previous_passphrase: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let guard = Self {
+                _lock: crate::config::TEST_ENV_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                previous_gobby_home: std::env::var_os("GOBBY_HOME"),
+                previous_passphrase: std::env::var_os(SECRET_KEK_PASSPHRASE_ENV),
+            };
+            guard.clear();
+            guard
+        }
+
+        fn clear(&self) {
+            // SAFETY: EnvGuard holds TEST_ENV_LOCK while mutating process environment.
+            unsafe {
+                std::env::remove_var("GOBBY_HOME");
+                std::env::remove_var(SECRET_KEK_PASSPHRASE_ENV);
+            }
+        }
+
+        fn set_gobby_home(&self, path: &Path) {
+            // SAFETY: EnvGuard holds TEST_ENV_LOCK while mutating process environment.
+            unsafe { std::env::set_var("GOBBY_HOME", path) };
+        }
+
+        fn set_passphrase(&self, value: &str) {
+            // SAFETY: EnvGuard holds TEST_ENV_LOCK while mutating process environment.
+            unsafe { std::env::set_var(SECRET_KEK_PASSPHRASE_ENV, value) };
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: EnvGuard holds TEST_ENV_LOCK while restoring process environment.
+            unsafe {
+                match &self.previous_gobby_home {
+                    Some(value) => std::env::set_var("GOBBY_HOME", value),
+                    None => std::env::remove_var("GOBBY_HOME"),
+                }
+                match &self.previous_passphrase {
+                    Some(value) => std::env::set_var(SECRET_KEK_PASSPHRASE_ENV, value),
+                    None => std::env::remove_var(SECRET_KEK_PASSPHRASE_ENV),
+                }
+            }
+        }
+    }
+
+    fn key_file_material() -> SecretKeyMaterial {
+        SecretKeyMaterial {
+            wrapped_dek: PYTHON_WRAPPED_DEK_KEY_FILE.to_string(),
+            kek_posture: POSTURE_KEY_FILE.to_string(),
+            kek_salt: None,
+            kek_kdf_n: None,
+            kek_kdf_r: None,
+            kek_kdf_p: None,
+        }
+    }
+
+    fn scrypt_material() -> SecretKeyMaterial {
+        SecretKeyMaterial {
+            wrapped_dek: PYTHON_WRAPPED_DEK_SCRYPT.to_string(),
+            kek_posture: POSTURE_SCRYPT_PASSPHRASE.to_string(),
+            kek_salt: Some(PYTHON_SCRYPT_SALT.to_string()),
+            kek_kdf_n: Some(SCRYPT_N),
+            kek_kdf_r: Some(SCRYPT_R),
+            kek_kdf_p: Some(SCRYPT_P),
+        }
     }
 
     #[test]
-    fn derive_fernet_key_uses_salt() {
-        let key1 = derive_fernet_key("test-machine-id", b"0123456789abcdef");
-        let key2 = derive_fernet_key("test-machine-id", b"fedcba9876543210");
+    fn python_key_file_fixture_decrypts_wrapped_dek_and_secret_value() {
+        let guard = EnvGuard::new();
+        let home = tempfile::tempdir().expect("temp home");
+        guard.set_gobby_home(home.path());
+        std::fs::write(
+            home.path().join(".secret_kek"),
+            format!("{PYTHON_KEY_FILE_KEK}\n"),
+        )
+        .expect("write secret KEK file");
 
-        assert_ne!(key1, key2);
+        let decrypted = decrypt_secret_value(&key_file_material(), PYTHON_SECRET_TOKEN)
+            .expect("python key-file fixture decrypts");
+
+        assert_eq!(decrypted, "postgres-secret");
     }
 
     #[test]
-    fn decrypt_fernet_round_trips() {
-        let fernet_key = derive_fernet_key("test-machine-42", b"abcdef0123456789");
-        let fernet = fernet::Fernet::new(&fernet_key).expect("valid Fernet key");
-        let token = fernet.encrypt(b"my-secret-password");
+    fn python_scrypt_fixture_decrypts_wrapped_dek_and_secret_value() {
+        let guard = EnvGuard::new();
+        guard.set_passphrase(PYTHON_PASSPHRASE);
+        let salt = URL_SAFE
+            .decode(PYTHON_SCRYPT_SALT)
+            .expect("fixture salt decodes");
 
-        let decrypted = decrypt_fernet(&fernet_key, &token).expect("decrypts");
+        let derived =
+            derive_scrypt_fernet_key(PYTHON_PASSPHRASE, &salt, SCRYPT_N, SCRYPT_R, SCRYPT_P)
+                .expect("derive scrypt KEK");
+        let decrypted = decrypt_secret_value(&scrypt_material(), PYTHON_SECRET_TOKEN)
+            .expect("python scrypt fixture decrypts");
 
-        assert_eq!(decrypted, "my-secret-password");
+        assert_eq!(derived, PYTHON_SCRYPT_KEK);
+        assert_eq!(decrypted, "postgres-secret");
+    }
+
+    #[test]
+    fn scrypt_passphrase_requires_env() {
+        let _guard = EnvGuard::new();
+
+        let error = decrypt_secret_value(&scrypt_material(), PYTHON_SECRET_TOKEN)
+            .expect_err("missing passphrase is rejected");
+
+        assert!(error.to_string().contains(SECRET_KEK_PASSPHRASE_ENV));
+    }
+
+    #[test]
+    fn key_file_kek_requires_existing_file() {
+        let guard = EnvGuard::new();
+        let home = tempfile::tempdir().expect("temp home");
+        guard.set_gobby_home(home.path());
+
+        let error = decrypt_secret_value(&key_file_material(), PYTHON_SECRET_TOKEN)
+            .expect_err("missing key file is rejected");
+
+        assert!(error.to_string().contains("failed to read secret KEK file"));
+    }
+
+    #[test]
+    fn posture_normalization_matches_python_contract() {
+        assert_eq!(
+            normalize_posture(" SCRYPT-PASSPHRASE ").expect("valid posture"),
+            POSTURE_SCRYPT_PASSPHRASE
+        );
+
+        let error = normalize_posture("unsupported").expect_err("invalid posture");
+        assert!(error.to_string().contains("invalid secret KEK posture"));
     }
 
     #[test]

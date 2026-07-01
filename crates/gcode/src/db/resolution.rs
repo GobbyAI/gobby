@@ -334,6 +334,7 @@ mod tests {
         HubDatabaseBootstrap {
             hub_backend: Some(hub_backend.to_string()),
             database_url: database_url.map(str::to_string),
+            daemon_url: None,
         }
     }
 
