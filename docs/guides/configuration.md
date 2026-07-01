@@ -88,6 +88,10 @@ stays owner-readable only. Gobby-generated helper bootstraps also use
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
 
+For a daemon and PostgreSQL hub shared across Tailscale, keep `bind_host` as the
+daemon listen address and configure remote clients with `daemon_url` or
+`GOBBY_DAEMON_URL`; see [shared-stack.md](shared-stack.md).
+
 ### Runtime Overrides
 
 Use the `gobby-config` MCP server or the web UI configuration routes for normal

@@ -9,6 +9,7 @@ links to the guide that owns that topic.
 |-------|-------------|
 | [system-requirements.md](system-requirements.md) | Supported operating systems, runtime prerequisites, and backing services |
 | [configuration.md](configuration.md) | Daemon, project, and environment configuration reference |
+| [shared-stack.md](shared-stack.md) | Tailscale shared daemon/PostgreSQL setup, trust boundary, and current remote limitations |
 
 ## Core Workflows
 
@@ -102,9 +103,10 @@ links to the guide that owns that topic.
 
 1. Read [system-requirements.md](system-requirements.md) to check prerequisites.
 2. Read [configuration.md](configuration.md) to understand daemon and project settings.
-3. Read [web-ui.md](web-ui.md) for the browser surfaces and route/API flow.
-4. Read [tasks.md](tasks.md) to learn task lifecycle basics.
-5. Read [cli-commands.md](cli-commands.md) for day-to-day commands.
+3. Read [shared-stack.md](shared-stack.md) before pointing other machines at a shared daemon.
+4. Read [web-ui.md](web-ui.md) for the browser surfaces and route/API flow.
+5. Read [tasks.md](tasks.md) to learn task lifecycle basics.
+6. Read [cli-commands.md](cli-commands.md) for day-to-day commands.
 
 ### Automated Development
 
