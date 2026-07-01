@@ -193,6 +193,117 @@ fn stale_render_version_disables_reuse() {
 }
 
 #[test]
+fn per_category_render_version_isolates_invalidation() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+
+    // Stale only the architecture page's render version. Every other category
+    // keeps version 20 and must reuse; only code/_architecture.md regenerates.
+    let meta_path = out_dir.join("_meta/codewiki.json");
+    let raw_meta = std::fs::read_to_string(&meta_path).expect("read meta");
+    let mut meta: serde_json::Value = serde_json::from_str(&raw_meta).expect("parse meta");
+    if let Some(arch) = meta["docs"]
+        .as_object_mut()
+        .expect("docs object")
+        .get_mut("code/_architecture.md")
+    {
+        arch["render_version"] = serde_json::json!(1);
+    }
+    std::fs::write(
+        &meta_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&meta).expect("serialize meta")
+        ),
+    )
+    .expect("write stale meta");
+
+    let mut regenerated_paths = Vec::new();
+    let mut second_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Regenerated prose.".to_string())
+        }
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = generate_hierarchical_docs_with_reuse(
+        &input,
+        Some(&mut second_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+
+    // Collect paths whose content changed (regenerated, not reused).
+    for doc in &second {
+        let prev = first.iter().find(|d| d.path == doc.path);
+        if prev.is_none_or(|p| p.content != doc.content) {
+            regenerated_paths.push(doc.path.as_str());
+        }
+    }
+
+    // Architecture must regenerate.
+    assert!(
+        regenerated_paths.contains(&"code/_architecture.md"),
+        "architecture page must regenerate when its render version is stale, got: {regenerated_paths:?}"
+    );
+
+    // File docs and module docs must NOT regenerate — their render versions are
+    // still valid.
+    let file_or_module_regen = regenerated_paths
+        .iter()
+        .any(|p| p.starts_with("code/files/") || p.starts_with("code/modules/"));
+    assert!(
+        !file_or_module_regen,
+        "file/module pages must reuse when only architecture render version is stale, regenerated: {regenerated_paths:?}"
+    );
+
+    // Curated pages must NOT regenerate.
+    let curated_regen = regenerated_paths
+        .iter()
+        .any(|p| p.starts_with("code/concepts/") || p.starts_with("code/narrative/"));
+    assert!(
+        !curated_regen,
+        "curated pages must reuse when only architecture render version is stale, regenerated: {regenerated_paths:?}"
+    );
+}
+
+#[test]
 fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");

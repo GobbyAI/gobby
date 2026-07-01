@@ -61,7 +61,55 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // Workflows/Getting Started/Operations/Data Model/CLI-API/Troubleshooting),
 // semantic cross-directory concept-cluster names, and an enumerable `Reference |
 // Summary` table on curated pages, so prior narrative/concept pages re-render.
-const CODEWIKI_RENDER_VERSION: u32 = 20;
+//
+// Per-category render versions (#1007): the single global version was replaced
+// by per-category constants so a template change in one renderer only
+// invalidates the pages it affects. All categories start at 20 (the prior
+// global value) for backward compatibility with existing _meta/codewiki.json.
+const RENDER_VERSION_DEFAULT: u32 = 20;
+const RENDER_VERSION_FILE: u32 = 20;
+const RENDER_VERSION_MODULE: u32 = 20;
+const RENDER_VERSION_REPO: u32 = 20;
+const RENDER_VERSION_ARCHITECTURE: u32 = 20;
+const RENDER_VERSION_INFRASTRUCTURE: u32 = 20;
+const RENDER_VERSION_FEATURES: u32 = 20;
+const RENDER_VERSION_DEPRECATIONS: u32 = 20;
+const RENDER_VERSION_MISC: u32 = 20;
+const RENDER_VERSION_CURATED: u32 = 20;
+const RENDER_VERSION_CHANGES: u32 = 20;
+
+/// Returns the render-version constant for a doc page path. Each page category
+/// (file docs, module docs, architecture, curated narrative, etc.) has its own
+/// version so a template change in one renderer only invalidates the pages it
+/// affects, instead of forcing a full wiki regeneration.
+pub(crate) fn render_version_for_path(path: &str) -> u32 {
+    if path.starts_with("code/files/") {
+        RENDER_VERSION_FILE
+    } else if path.starts_with("code/modules/") {
+        RENDER_VERSION_MODULE
+    } else if path.starts_with("code/concepts/") || path.starts_with("code/narrative/") {
+        RENDER_VERSION_CURATED
+    } else if path == "code/repo.md" {
+        RENDER_VERSION_REPO
+    } else if path == "code/_architecture.md" {
+        RENDER_VERSION_ARCHITECTURE
+    } else if path == "code/infrastructure.md" {
+        RENDER_VERSION_INFRASTRUCTURE
+    } else if path == "code/features.md" {
+        RENDER_VERSION_FEATURES
+    } else if path == "code/deprecations.md" {
+        RENDER_VERSION_DEPRECATIONS
+    } else if path == "code/_changes.md" {
+        RENDER_VERSION_CHANGES
+    } else if path == "code/_onboarding.md"
+        || path == "code/_hotspots.md"
+        || path == "code/_ownership.md"
+    {
+        RENDER_VERSION_MISC
+    } else {
+        RENDER_VERSION_DEFAULT
+    }
+}
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited

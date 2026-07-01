@@ -195,7 +195,7 @@ impl<'a> DocSink<'a> {
             && meta.ai_route == ai_outcome.route_label()
             && meta.ai_fallback == ai_outcome.fallback
             && meta.ai_generation_status == ai_outcome.status.as_str()
-            && meta.render_version == CODEWIKI_RENDER_VERSION
+            && meta.render_version == render_version_for_path(&doc.path)
             && !meta.source_hashes.is_empty()
             && (doc.summary.is_none() || meta.summary.is_some())
             && meta
@@ -236,7 +236,7 @@ impl<'a> DocSink<'a> {
                     && meta.ai_route == ai_outcome.route_label()
                     && meta.ai_fallback == ai_outcome.fallback
                     && meta.ai_generation_status == ai_outcome.status.as_str()
-                    && meta.render_version == CODEWIKI_RENDER_VERSION
+                    && meta.render_version == render_version_for_path(&doc.path)
                     && match &doc.invalidation_key {
                         Some(key) => {
                             meta.invalidation_key.as_deref() == Some(key.as_str())
@@ -267,7 +267,7 @@ impl<'a> DocSink<'a> {
                     && meta.ai_route == ai_outcome.route_label()
                     && meta.ai_fallback == ai_outcome.fallback
                     && meta.ai_generation_status == ai_outcome.status.as_str()
-                    && meta.render_version == CODEWIKI_RENDER_VERSION
+                    && meta.render_version == render_version_for_path(&doc.path)
                     && source_hash_key_sets_match(&meta.source_hashes, &source_hashes)
                     && source_hash_key_sets_match(&meta.neighbor_hashes, &neighbor_hashes)
                     && (doc.summary.is_none() || meta.summary.is_some())
@@ -310,7 +310,7 @@ impl<'a> DocSink<'a> {
                 ai_route: write_outcome.route_label().to_string(),
                 ai_fallback: write_outcome.fallback,
                 ai_generation_status: write_outcome.status.as_str().to_string(),
-                render_version: CODEWIKI_RENDER_VERSION,
+                render_version: render_version_for_path(&doc.path),
                 neighbor_hashes,
                 invalidation_key: doc.invalidation_key.clone(),
                 lane: lane.lane,

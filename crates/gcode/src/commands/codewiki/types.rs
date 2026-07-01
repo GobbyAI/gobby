@@ -580,7 +580,10 @@ pub(crate) struct CodewikiDocMeta {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) ai_generation_status: String,
     /// Render-template version for deterministic markdown emitted after model
-    /// generation. Missing versions force a one-time rewrite on upgrade.
+    /// generation. Per-category: each page type (file, module, architecture,
+    /// curated, etc.) has its own version constant so a template change in one
+    /// renderer only invalidates that category's pages (#1007). Missing or
+    /// stale versions force a rewrite of the affected category only.
     #[serde(default)]
     pub(crate) render_version: u32,
     /// Cross-file neighbor source hashes (#885, Leaf H). A source-file page
