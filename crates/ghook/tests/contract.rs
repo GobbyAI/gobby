@@ -804,9 +804,18 @@ fn run_ghook_with_dirs(
 
     let mut child = command.spawn()?;
     if let Some(mut child_stdin) = child.stdin.take() {
-        child_stdin.write_all(stdin.as_bytes())?;
+        write_stdin_allow_broken_pipe(&mut child_stdin, stdin.as_bytes())?;
     }
     Ok(child.wait_with_output()?)
+}
+
+fn write_stdin_allow_broken_pipe(stdin: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
+    // Invalid-arg paths can exit before stdin is read; CI can win that race.
+    match stdin.write_all(bytes) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn assert_json_stdout(output: &Output, expected: Value) -> TestResult {
