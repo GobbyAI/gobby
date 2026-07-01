@@ -1,7 +1,8 @@
 # Secrets Contract
 
-Gobby stores secret values in the hub, but decryption is daemon-only.
-Clients can create, replace, list metadata, and delete secrets; clients never
+Gobby stores secret values in the hub. Decryption is limited to the daemon and
+trusted local binaries that support standalone direct-hub mode. Remote clients
+can create, replace, list metadata, and delete secrets; remote clients never
 receive plaintext secret values, the DEK, or KEK material.
 
 ## Envelope Model
