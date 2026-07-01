@@ -17,6 +17,12 @@ def _source_web_dir(tmp_path: Path) -> Path:
     return web_dir
 
 
+def _source_checkout(tmp_path: Path) -> Path:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
+    (tmp_path / "src" / "gobby" / "install" / "shared").mkdir(parents=True)
+    return _source_web_dir(tmp_path)
+
+
 def _dist_web_dir(tmp_path: Path) -> Path:
     web_dir = tmp_path / "web"
     dist_dir = web_dir / "dist"
@@ -28,6 +34,21 @@ def _dist_web_dir(tmp_path: Path) -> Path:
 def test_auto_resolves_to_dev_when_source_web_dir_exists(tmp_path: Path) -> None:
     web_dir = _source_web_dir(tmp_path)
     config = DaemonConfig(ui={"mode": "auto", "web_dir": str(web_dir)})
+
+    resolution = resolve_ui_mode(config)
+
+    assert resolution.configured == "auto"
+    assert resolution.effective == "dev"
+    assert resolution.display == "auto -> dev"
+    assert resolution.source_web_dir == web_dir
+
+
+def test_auto_resolves_to_dev_in_source_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    web_dir = _source_checkout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    config = DaemonConfig(ui={"mode": "auto"})
 
     resolution = resolve_ui_mode(config)
 

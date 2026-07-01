@@ -19,6 +19,7 @@ from gobby.cli.utils_runtime import facade
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
+from gobby.utils.dev import is_dev_mode
 
 
 def _read_ui_pid_record(pid_file: Path) -> tuple[int, float | None]:
@@ -84,6 +85,15 @@ def find_web_dir(
         configured_path = cast(Path, deps.Path(web_dir).expanduser())
         if _qualifies(configured_path):
             return configured_path
+
+    try:
+        cwd = Path.cwd()
+    except OSError as exc:
+        deps.logger.debug("Could not resolve cwd for web UI discovery: %s", exc)
+    else:
+        source_web = cwd / "web"
+        if is_dev_mode(cwd) and _qualifies(source_web):
+            return source_web
 
     try:
         import gobby

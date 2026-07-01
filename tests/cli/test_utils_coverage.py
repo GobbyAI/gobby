@@ -199,6 +199,27 @@ def test_find_web_dir_ignores_cwd(tmp_path: Path) -> None:
     assert result is None
 
 
+def test_find_web_dir_detects_source_checkout_web(tmp_path: Path) -> None:
+    import gobby
+    from gobby.cli.utils import find_web_dir
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
+    (tmp_path / "src" / "gobby" / "install" / "shared").mkdir(parents=True)
+    web_dir = tmp_path / "web"
+    web_dir.mkdir()
+    (web_dir / "package.json").write_text("{}")
+    fake_pkg = tmp_path / "fake-pkg" / "__init__.py"
+    fake_pkg.parent.mkdir(parents=True)
+    fake_pkg.write_text("")
+
+    with (
+        patch("gobby.cli.utils_ui.Path.cwd", return_value=tmp_path),
+        patch.object(gobby, "__file__", str(fake_pkg)),
+    ):
+        result = find_web_dir(None, require_source=True)
+    assert result == web_dir
+
+
 def test_find_web_dir_none(tmp_path: Path) -> None:
     import gobby
     from gobby.cli.utils import find_web_dir
@@ -1395,7 +1416,7 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
     mock_parent = MagicMock()
     mock_parent.children.return_value = []
     mock_parent.cmdline.return_value = ["npm", "run", "dev"]
-    mock_parent.cwd.return_value = str(tmp_path)
+    mock_parent.cwd.return_value = str(Path.cwd() / "web")
     mock_parent.create_time.return_value = 100.0
     deps = MagicMock()
     deps.get_gobby_home.return_value = tmp_path
@@ -1437,7 +1458,7 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
     mock_parent = MagicMock()
     mock_parent.children.return_value = [mock_child]
     mock_parent.cmdline.return_value = ["npm", "run", "dev"]
-    mock_parent.cwd.return_value = str(tmp_path)
+    mock_parent.cwd.return_value = str(Path.cwd() / "web")
     mock_parent.create_time.return_value = 100.0
     deps = MagicMock()
     deps.get_gobby_home.return_value = tmp_path

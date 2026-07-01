@@ -19,10 +19,40 @@ def _source_web_dir(tmp_path: Path) -> Path:
     return web_dir
 
 
+def _source_checkout(tmp_path: Path) -> Path:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
+    (tmp_path / "src" / "gobby" / "install" / "shared").mkdir(parents=True)
+    return _source_web_dir(tmp_path)
+
+
 def test_effective_dev_starts_vite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     web_dir = _source_web_dir(tmp_path)
     config = DaemonConfig(
         ui={"enabled": True, "mode": "auto", "web_dir": str(web_dir)},
+        telemetry={"log_file": str(tmp_path / "logs" / "gobby.log")},
+    )
+    calls: list[tuple[object, ...]] = []
+
+    def fake_spawn_ui_server(*args: object, **kwargs: object) -> int:
+        calls.append((*args, kwargs))
+        return 1234
+
+    monkeypatch.setattr("gobby.cli.utils.spawn_ui_server", fake_spawn_ui_server)
+
+    _maybe_start_ui_dev_server(SimpleNamespace(config=config))
+
+    assert calls
+    assert calls[0][0:4] == ("localhost", 60889, web_dir, tmp_path / "logs" / "ui.log")
+    assert calls[0][4] == {"daemon_port": 60887, "ws_port": 60888}
+
+
+def test_source_checkout_auto_mode_starts_vite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    web_dir = _source_checkout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    config = DaemonConfig(
+        ui={"enabled": True, "mode": "auto"},
         telemetry={"log_file": str(tmp_path / "logs" / "gobby.log")},
     )
     calls: list[tuple[object, ...]] = []
