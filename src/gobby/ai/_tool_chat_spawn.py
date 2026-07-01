@@ -376,7 +376,7 @@ class CodexSpawnToolChatAdapter:
         if model:
             command.extend(["--model", model])
         _extend_reasoning_args(command, "codex", request.reasoning_effort)
-        command.append(compose_gcode_direct_prompt(request))
+        command.append("-")
         return command
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
@@ -395,6 +395,7 @@ class CodexSpawnToolChatAdapter:
                 neutral_cwd=work,
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=env,
+                stdin_input=compose_gcode_direct_prompt(request),
             )
             file_text = (
                 output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""

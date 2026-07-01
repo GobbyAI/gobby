@@ -8,6 +8,7 @@ external spawn stubbed out.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -53,6 +54,14 @@ def _request(**overrides: Any) -> ToolChatRequest:
     }
     base.update(overrides)
     return ToolChatRequest(**base)
+
+
+def _arg_max_for_regression() -> int:
+    try:
+        value = os.sysconf("SC_ARG_MAX")
+    except (AttributeError, OSError, ValueError):
+        return 262_144
+    return int(value) if value > 0 else 262_144
 
 
 # --- Shared prompt ---------------------------------------------------------
@@ -321,6 +330,7 @@ def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
     output_path = Path("/tmp/last-message.txt")
 
     command = adapter._build_command(request, model="gpt-5.5", output_path=output_path)
+    prompt = compose_gcode_direct_prompt(request)
 
     assert command[0] == "codex"
     assert "exec" in command
@@ -331,9 +341,10 @@ def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
     assert "--ignore-user-config" in command
     assert command[command.index("--output-last-message") + 1] == str(output_path)
     assert command[command.index("--model") + 1] == "gpt-5.5"
-    # The composed prompt is the final positional argument.
-    assert "Document the auth module." in command[-1]
-    assert "gcode" in command[-1]
+    assert command[-1] == "-"
+    assert prompt not in command
+    assert all("Document the auth module." not in arg for arg in command)
+    assert all("gcode" not in arg for arg in command)
 
 
 async def test_codex_adapter_captures_narrative_and_counts_tools(
@@ -353,6 +364,7 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
+        stdin_input: str | None = None,
     ) -> str:
         (neutral_cwd / "last-message.txt").write_text(
             "## Auth\n\nGrounded narrative citing src/auth.rs:10.",
@@ -360,6 +372,10 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
         )
         # gcode must be on PATH (~/.gobby/bin prepended)
         assert ".gobby/bin" in env_overrides["PATH"]
+        assert command[-1] == "-"
+        assert stdin_input is not None
+        assert "Document the auth module." in stdin_input
+        assert "gcode" in stdin_input
         return codex_jsonl
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
@@ -376,6 +392,37 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
     assert result.stop_reason == "completed"
 
 
+async def test_codex_adapter_sends_argmax_sized_prompt_through_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arg_max = _arg_max_for_regression()
+    oversized_prompt = "Document the generated aggregate.\n" + ("x" * (arg_max + 1))
+
+    async def fake_run(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        stdin_input: str | None = None,
+    ) -> str:
+        assert command[-1] == "-"
+        assert all(oversized_prompt not in arg for arg in command)
+        assert stdin_input is not None
+        assert oversized_prompt in stdin_input
+        assert len(stdin_input) > arg_max
+        (neutral_cwd / "last-message.txt").write_text("Large prompt ok.", encoding="utf-8")
+        return ""
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    adapter = CodexSpawnToolChatAdapter(command_path="codex")
+
+    result = await adapter.chat(_request(prompt=oversized_prompt), _binding())
+
+    assert result.text == "Large prompt ok."
+
+
 async def test_codex_adapter_falls_back_to_stream_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,6 +433,7 @@ async def test_codex_adapter_falls_back_to_stream_text(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
+        stdin_input: str | None = None,
     ) -> str:
         # No last-message file; stream has agent_message.
         return (
@@ -419,6 +467,7 @@ async def test_codex_adapter_hard_fails_on_empty_output(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
+        stdin_input: str | None = None,
     ) -> str:
         return ""
 
