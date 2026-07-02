@@ -42,7 +42,7 @@ class SearchService:
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Any] | None,
         kg_service: KnowledgeGraphService | None,
-        keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]],
+        keyword_search: Callable[..., list[tuple[str, float]]],
         config: MemoryConfig,
         falkordb_graph_search: bool,
         falkordb_graph_min_score: float,
@@ -114,6 +114,7 @@ class SearchService:
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
+        include_global: bool = True,
     ) -> list[Memory]:
         """Retrieve memories via VectorStore + optional FalkorDB graph search."""
         if query and self._vector_store and self._embed_fn:
@@ -123,7 +124,7 @@ class SearchService:
             query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = getattr(self._config, "temporal_decay_half_life_days", 30.0)
             effective_min_score = min_score if min_score is not None else 0.0
-            filters = memory_project_scope_filter(project_id)
+            filters = memory_project_scope_filter(project_id, include_global=include_global)
             use_graph = self._kg_service is not None and self._falkordb_graph_search
 
             if use_graph:
@@ -142,6 +143,7 @@ class SearchService:
                     session_id=session_id,
                     recall_request_id=recall_request_id,
                     caller=caller,
+                    include_global=include_global,
                 )
             else:
                 memories = await self._search_qdrant_keyword(
@@ -159,6 +161,7 @@ class SearchService:
                     session_id=session_id,
                     recall_request_id=recall_request_id,
                     caller=caller,
+                    include_global=include_global,
                 )
         elif query:
             memories = await self._keyword_fallback(
@@ -172,6 +175,7 @@ class SearchService:
                 session_id=session_id,
                 recall_request_id=recall_request_id,
                 caller=caller,
+                include_global=include_global,
             )
         else:
             memories = await self._run_storage(
@@ -182,6 +186,7 @@ class SearchService:
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
+                include_global=include_global,
             )
 
         self.update_access_stats(memories)
@@ -204,6 +209,7 @@ class SearchService:
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
+        include_global: bool = True,
     ) -> list[Memory]:
         return await search_with_graph(
             self,
@@ -223,6 +229,7 @@ class SearchService:
             session_id=session_id,
             recall_request_id=recall_request_id,
             caller=caller,
+            include_global=include_global,
         )
 
     async def _search_qdrant_keyword(
@@ -242,6 +249,7 @@ class SearchService:
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
+        include_global: bool = True,
     ) -> list[Memory]:
         return await search_qdrant_keyword(
             self,
@@ -260,6 +268,7 @@ class SearchService:
             session_id=session_id,
             recall_request_id=recall_request_id,
             caller=caller,
+            include_global=include_global,
         )
 
     async def _collect_active_results(
@@ -352,6 +361,7 @@ class SearchService:
         limit: int = 10,
         min_score: float = 0.5,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[tuple[str, float]]:
         return await search_graph_scored(
             kg_service=self._require_kg_service(),
@@ -359,6 +369,7 @@ class SearchService:
             limit=limit,
             min_score=min_score,
             project_id=project_id,
+            include_global=include_global,
         )
 
     async def _search_graph_for_memories(
@@ -381,6 +392,7 @@ class SearchService:
         query: str,
         limit: int,
         project_id: str | None,
+        include_global: bool = True,
     ) -> list[str]:
         return await keyword_ranked(
             run_storage=self._run_storage,
@@ -388,6 +400,7 @@ class SearchService:
             query=query,
             limit=limit,
             project_id=project_id,
+            include_global=include_global,
         )
 
     async def _keyword_fallback(
@@ -403,6 +416,7 @@ class SearchService:
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
+        include_global: bool = True,
     ) -> list[Memory]:
         memories = await keyword_fallback(
             run_storage=self._run_storage,
@@ -415,6 +429,7 @@ class SearchService:
             tags_all=tags_all,
             tags_any=tags_any,
             tags_none=tags_none,
+            include_global=include_global,
         )
         # One event per completed search — fallback searches must not be silent.
         self._emit_search_debug(

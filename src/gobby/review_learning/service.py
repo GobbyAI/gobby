@@ -30,7 +30,6 @@ from gobby.review_learning.promotion import (
     PromotionTaskManager,
     promote_lesson,
 )
-from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -63,7 +62,9 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         project_id: str,
         limit: int,
         tags_all: list[str] | None,
+        tags_none: list[str] | None = None,
         caller: str = "memory.search",
+        include_global: bool = True,
     ) -> list[Any]: ...
 
     async def alist_memories(
@@ -74,6 +75,7 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        include_global: bool = True,
     ) -> list[Any]: ...
 
 
@@ -99,8 +101,8 @@ class ReviewLearningService:
         language: str | None = None,
     ) -> dict[str, Any]:
         """Search memories for review-context relevant to each finding."""
-        project_id, _ = self._resolve_scope(session_id)
         normalized_findings = _normalize_recall_findings(findings)
+        project_id, _ = self._resolve_scope(session_id)
         grouped: list[dict[str, Any]] = []
         flat_matches: list[dict[str, Any]] = []
         for index, finding in enumerate(normalized_findings):
@@ -281,12 +283,16 @@ class ReviewLearningService:
         matches: list[dict[str, Any]] = []
         for query in queries:
             for tags_all in (None, ["review-lesson"]):
+                tags_none = ["review-lesson"] if tags_all is None else None
+                include_global = tags_all is None
                 memories = await self.memory_manager.search_memories(
                     query=query,
                     project_id=project_id,
                     limit=5,
                     tags_all=tags_all,
+                    tags_none=tags_none,
                     caller="review_learning.related_lessons",
+                    include_global=include_global,
                 )
                 for memory in memories:
                     memory_id = str(memory.id)
@@ -313,6 +319,10 @@ class ReviewLearningService:
         project_id = _current_project_id()
         effective_session_id = session_id or get_current_session_id()
         if not effective_session_id:
+            if project_id is None:
+                raise RuntimeError(
+                    "Review-learning requires a project context or resolvable session_id"
+                )
             return project_id, None
 
         try:
@@ -326,8 +336,12 @@ class ReviewLearningService:
                 (resolved_session_id,),
             )
             if row and row.get("project_id"):
-                project_id = str(row["project_id"])
-            return project_id, resolved_session_id
+                return str(row["project_id"]), resolved_session_id
+            if project_id is not None:
+                return project_id, resolved_session_id
+            raise RuntimeError(
+                f"Review-learning could not resolve a project for session {effective_session_id!r}"
+            )
         except (AttributeError, RuntimeError, ValueError, OSError) as exc:
             logger.debug(
                 "Could not resolve review-learning session %r: %s",
@@ -335,7 +349,11 @@ class ReviewLearningService:
                 exc,
                 exc_info=True,
             )
-            return project_id, None
+            if project_id is not None:
+                return project_id, None
+            raise RuntimeError(
+                "Review-learning requires a project context or resolvable session_id"
+            ) from exc
 
     async def _candidate_lesson_memories(
         self,
@@ -354,6 +372,7 @@ class ReviewLearningService:
                 memory_type="pattern",
                 limit=limit,
                 tags_all=["review-lesson", "confirmed", tag],
+                include_global=False,
             )
             for memory in tagged_memories:
                 memory_id = str(getattr(memory, "id", "") or "")
@@ -367,6 +386,7 @@ class ReviewLearningService:
             memory_type="pattern",
             limit=max(_LEGACY_SCAN_LIMIT, limit),
             tags_all=["review-lesson", "confirmed"],
+            include_global=False,
         )
         for memory in legacy_memories:
             memory_id = str(getattr(memory, "id", "") or "")
@@ -428,11 +448,11 @@ def _normalize_recall_findings(findings: list[dict[str, Any] | str]) -> list[dic
     return normalized
 
 
-def _current_project_id() -> str:
+def _current_project_id() -> str | None:
     project_ctx = get_project_context()
     if project_ctx and project_ctx.get("id"):
         return str(project_ctx["id"])
-    return PERSONAL_PROJECT_ID
+    return None
 
 
 def _flatten(value: Any) -> str:

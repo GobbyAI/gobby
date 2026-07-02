@@ -48,6 +48,7 @@ class MemoryQueryMixin(MemoryStoreBase):
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[Memory]:
         """
         List memories with optional filtering.
@@ -71,7 +72,11 @@ class MemoryQueryMixin(MemoryStoreBase):
         params: list[Any] = []
 
         if project_id:
-            query += " AND (project_id = %s OR project_id IS NULL)"
+            query += (
+                " AND (project_id = %s OR project_id IS NULL)"
+                if include_global
+                else " AND project_id = %s"
+            )
             params.append(project_id)
 
         if memory_type:
@@ -123,6 +128,7 @@ class MemoryQueryMixin(MemoryStoreBase):
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[Memory]:
         """
         Search memories by content with optional tag filtering.
@@ -144,7 +150,11 @@ class MemoryQueryMixin(MemoryStoreBase):
         params: list[Any] = [f"%{escaped_query}%"]
 
         if project_id:
-            sql += " AND (project_id = %s OR project_id IS NULL)"
+            sql += (
+                " AND (project_id = %s OR project_id IS NULL)"
+                if include_global
+                else " AND project_id = %s"
+            )
             params.append(project_id)
 
         vis = visibility_predicate(visibility)

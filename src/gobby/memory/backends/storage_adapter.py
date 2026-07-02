@@ -117,6 +117,7 @@ class StorageAdapter:
             tags_any=query.tags_any,
             tags_none=query.tags_none,
             visibility=query.visibility,
+            include_global=query.include_global,
         )
         if query.memory_type is not None:
             memories = [m for m in memories if m.memory_type == query.memory_type]
@@ -132,6 +133,7 @@ class StorageAdapter:
         tags_all: list[str] | None = None,
         *,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[MemoryRecord]:
         memories = await self._run_storage(
             self._storage.list_memories,
@@ -141,6 +143,7 @@ class StorageAdapter:
             offset=offset,
             tags_all=tags_all,
             visibility=visibility,
+            include_global=include_global,
         )
         return [self._to_record(m) for m in memories]
 

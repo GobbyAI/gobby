@@ -103,6 +103,7 @@ class NullBackend:
         tags_all: list[str] | None = None,
         *,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[MemoryRecord]:
         """List memories (always returns empty list)."""
         return []

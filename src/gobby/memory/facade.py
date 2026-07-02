@@ -68,9 +68,15 @@ class MemoryManagerFacadeMethods:
         query: str,
         limit: int,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[tuple[str, float]]:
         """Run dialect-aware keyword search and return ranked memory IDs."""
-        return self._keyword_service.search(query, limit, project_id)
+        return self._keyword_service.search(
+            query,
+            limit,
+            project_id,
+            include_global=include_global,
+        )
 
     @staticmethod
     def _record_to_memory(record: MemoryRecord) -> Memory:
@@ -150,6 +156,7 @@ class MemoryManagerFacadeMethods:
         session_id: str | None = None,
         recall_request_id: str | None = None,
         caller: str = "memory.search",
+        include_global: bool = True,
     ) -> list[Memory]:
         return await self._search_service.search(
             query=query,
@@ -164,6 +171,7 @@ class MemoryManagerFacadeMethods:
             session_id=session_id,
             recall_request_id=recall_request_id,
             caller=caller,
+            include_global=include_global,
         )
 
     async def search_memories_as_context(
@@ -329,6 +337,7 @@ class MemoryManagerFacadeMethods:
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[Memory]:
         return self._repository.list_memories(
             project_id,
@@ -339,6 +348,7 @@ class MemoryManagerFacadeMethods:
             tags_any,
             tags_none,
             visibility=visibility,
+            include_global=include_global,
         )
 
     async def alist_memories(
@@ -350,6 +360,7 @@ class MemoryManagerFacadeMethods:
         offset: int = 0,
         tags_all: list[str] | None = None,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[Memory]:
         return await self._repository.alist_memories(
             project_id=project_id,
@@ -358,6 +369,7 @@ class MemoryManagerFacadeMethods:
             offset=offset,
             tags_all=tags_all,
             visibility=visibility,
+            include_global=include_global,
         )
 
     def content_exists(

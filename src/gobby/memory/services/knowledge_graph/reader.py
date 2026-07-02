@@ -113,6 +113,7 @@ class KnowledgeGraphReader:
         limit: int = 10,
         min_score: float = 0.5,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[dict[str, Any]]:
         """Search entities by vector similarity and return with linked memory IDs."""
         await self.ensure_vector_index()
@@ -124,6 +125,8 @@ class KnowledgeGraphReader:
                 min_score=min_score,
                 project_id=project_id,
             )
+            if project_id is not None and not include_global:
+                entity_rows = [row for row in entity_rows if row.get("project_id") == project_id]
 
             if not entity_rows:
                 return []
@@ -138,14 +141,15 @@ class KnowledgeGraphReader:
                         "UNWIND $entity_keys AS entity_key "
                         "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE (e.project_id = $project_id "
-                        "OR e.project_id IS NULL) "
+                        "OR ($include_global AND e.project_id IS NULL)) "
                         "AND (m.project_id = $project_id "
-                        "OR m.project_id IS NULL) "
+                        "OR ($include_global AND m.project_id IS NULL)) "
                         "RETURN entity_key, m.memory_id AS memory_id "
                         "ORDER BY m.updated_at DESC LIMIT $memory_link_limit",
                         {
                             "entity_keys": entity_keys,
                             "project_id": project_id,
+                            "include_global": include_global,
                             "memory_link_limit": memory_link_limit,
                         },
                     )
@@ -247,6 +251,7 @@ class KnowledgeGraphReader:
         max_hops: int,
         limit: int,
         project_id: str | None,
+        include_global: bool,
     ) -> list[str]:
         related_keys: list[str] = []
         seen = set(seed_keys)
@@ -264,9 +269,9 @@ class KnowledgeGraphReader:
                 rows = await self._falkor.query(
                     "MATCH (start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity) "
                     "WHERE (start.project_id = $project_id "
-                    "OR start.project_id IS NULL) "
+                    "OR ($include_global AND start.project_id IS NULL)) "
                     "AND (neighbor.project_id = $project_id "
-                    "OR neighbor.project_id IS NULL) "
+                    "OR ($include_global AND neighbor.project_id IS NULL)) "
                     "AND NOT (type(r) IN $excluded_relationship_types) "
                     "RETURN neighbor.entity_key AS related_entity_key, "
                     "coalesce(r.weight, 1.0) AS edge_weight, r.updated_at AS updated_at "
@@ -275,6 +280,7 @@ class KnowledgeGraphReader:
                     {
                         "entity_key": source_key,
                         "project_id": project_id,
+                        "include_global": include_global,
                         "neighbor_limit": _RELATED_ENTITY_QUERY_LIMIT,
                         "excluded_relationship_types": list(_STRUCTURAL_RELATIONSHIP_TYPES),
                     },
@@ -342,6 +348,7 @@ class KnowledgeGraphReader:
         seed_keys: list[str],
         related_entity_keys: list[str],
         project_id: str | None,
+        include_global: bool,
     ) -> list[str]:
         if not self._cluster_recall_expansion or self._cluster_expansion_per_entity <= 0:
             return []
@@ -361,11 +368,11 @@ class KnowledgeGraphReader:
                 "UNWIND $source_keys AS source_key "
                 "MATCH (source:_Entity {entity_key: source_key}) "
                 "WHERE (source.project_id = $project_id "
-                "OR source.project_id IS NULL) "
+                "OR ($include_global AND source.project_id IS NULL)) "
                 "AND source.cluster_id IS NOT NULL AND source.cluster_id >= 0 "
                 "MATCH (candidate:_Entity {cluster_id: source.cluster_id}) "
                 "WHERE (candidate.project_id = $project_id "
-                "OR candidate.project_id IS NULL) "
+                "OR ($include_global AND candidate.project_id IS NULL)) "
                 "AND candidate.cluster_id IS NOT NULL AND candidate.cluster_id >= 0 "
                 "AND NOT (candidate.entity_key IN $excluded_keys) "
                 "RETURN DISTINCT candidate.entity_key AS entity_key, "
@@ -375,6 +382,7 @@ class KnowledgeGraphReader:
                     "source_keys": expansion_sources,
                     "excluded_keys": excluded_keys,
                     "project_id": project_id,
+                    "include_global": include_global,
                     "limit": expansion_limit,
                 },
             )
@@ -407,6 +415,7 @@ class KnowledgeGraphReader:
         max_hops: int = 2,
         limit: int = 20,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[str]:
         """Traverse from entities through relationships to find related memory IDs."""
         if not entity_keys or limit <= 0:
@@ -425,12 +434,14 @@ class KnowledgeGraphReader:
                 max_hops,
                 limit,
                 project_id,
+                include_global,
             )
             cluster_entity_keys = await self._find_cluster_entity_keys(
                 seed_keys,
                 seed_keys,
                 related_entity_keys,
                 project_id,
+                include_global,
             )
             memory_entity_keys = list(dict.fromkeys([*related_entity_keys, *cluster_entity_keys]))
             if not memory_entity_keys:
@@ -442,12 +453,17 @@ class KnowledgeGraphReader:
                 "MATCH (e:_Entity {entity_key: entity_key})"
                 "-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE (e.project_id = $project_id "
-                "OR e.project_id IS NULL) "
+                "OR ($include_global AND e.project_id IS NULL)) "
                 "AND (m.project_id = $project_id "
-                "OR m.project_id IS NULL) "
+                "OR ($include_global AND m.project_id IS NULL)) "
                 "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
                 "ORDER BY updated_at DESC LIMIT $limit",
-                {"entity_keys": memory_entity_keys, "limit": limit, "project_id": project_id},
+                {
+                    "entity_keys": memory_entity_keys,
+                    "limit": limit,
+                    "project_id": project_id,
+                    "include_global": include_global,
+                },
             )
             self._record_traversal_success()
             return [r["memory_id"] for r in rows if r.get("memory_id")]
@@ -550,6 +566,7 @@ class KnowledgeGraphReader:
         self,
         entity_keys: list[str],
         project_id: str | None,
+        include_global: bool = True,
     ) -> dict[str, list[str]] | None:
         """Map each entity key to the memory IDs that mention it via ``MENTIONED_IN``.
 
@@ -563,12 +580,16 @@ class KnowledgeGraphReader:
                 "UNWIND $entity_keys AS entity_key "
                 "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE (e.project_id = $project_id "
-                "OR e.project_id IS NULL) "
+                "OR ($include_global AND e.project_id IS NULL)) "
                 "AND (m.project_id = $project_id "
-                "OR m.project_id IS NULL) "
+                "OR ($include_global AND m.project_id IS NULL)) "
                 "RETURN e.entity_key AS entity_key, "
                 "collect(DISTINCT m.memory_id) AS memory_ids",
-                {"entity_keys": entity_keys, "project_id": project_id},
+                {
+                    "entity_keys": entity_keys,
+                    "project_id": project_id,
+                    "include_global": include_global,
+                },
             )
         except FalkorConnectionError as e:
             logger.warning(f"FalkorDB unreachable resolving entity backing memories: {e}")

@@ -327,12 +327,20 @@ def _filter_clauses(
     clauses: list[str] = []
     columns = config.filters or {}
     for filter_name, value in filters.items():
+        if config.table == "memories" and filter_name == "include_global":
+            continue
         if value is None or filter_name not in columns:
             continue
         placeholder_token = _add_param(hub, params, value)
         column = columns[filter_name]
         if config.table == "memories" and filter_name == "project_id":
-            clauses.append(f"({alias}.{column} = {placeholder_token} OR {alias}.{column} IS NULL)")
+            include_global = bool(filters.get("include_global", True))
+            if include_global:
+                clauses.append(
+                    f"({alias}.{column} = {placeholder_token} OR {alias}.{column} IS NULL)"
+                )
+            else:
+                clauses.append(f"{alias}.{column} = {placeholder_token}")
         else:
             clauses.append(f"{alias}.{column} = {placeholder_token}")
     return clauses

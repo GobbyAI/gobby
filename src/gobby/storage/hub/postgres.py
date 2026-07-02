@@ -7,6 +7,7 @@ import json
 import os
 import re
 import threading
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -388,6 +389,8 @@ def _normalize_row(row: Row | None) -> Row | None:
 
 
 def _normalize_value(value: Any) -> Any:
+    if isinstance(value, uuid.UUID):
+        return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, date):

@@ -25,6 +25,7 @@ async def search_graph_scored(
     limit: int = 10,
     min_score: float = 0.5,
     project_id: str | None = None,
+    include_global: bool = True,
 ) -> list[tuple[str, float]]:
     """Search FalkorDB graph for memory IDs, each scored by entity-match confidence."""
     entity_results = await kg_service.search_entities_by_vector(
@@ -32,6 +33,7 @@ async def search_graph_scored(
         limit=limit,
         min_score=min_score,
         project_id=project_id,
+        include_global=include_global,
     )
 
     if not entity_results:
@@ -68,6 +70,7 @@ async def search_graph_scored(
                     max_hops=1,
                     limit=limit,
                     project_id=project_id,
+                    include_global=include_global,
                 ),
                 timeout=_GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS,
             )

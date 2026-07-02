@@ -81,15 +81,28 @@ class FakeMemoryManager:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        include_global: bool = True,
     ) -> list[FakeMemory]:
         memories = self.memories
         if project_id is not None:
-            memories = [memory for memory in memories if memory.project_id == project_id]
+            memories = [
+                memory
+                for memory in memories
+                if memory.project_id == project_id or (include_global and memory.project_id is None)
+            ]
         if memory_type is not None:
             memories = [memory for memory in memories if memory.memory_type == memory_type]
         if tags_all:
             memories = [
                 memory for memory in memories if set(tags_all).issubset(set(memory.tags or []))
+            ]
+        if tags_any:
+            memories = [
+                memory for memory in memories if set(tags_any).intersection(memory.tags or [])
+            ]
+        if tags_none:
+            memories = [
+                memory for memory in memories if not set(tags_none).intersection(memory.tags or [])
             ]
         if limit is None:
             return memories[offset:]
@@ -103,6 +116,7 @@ class FakeMemoryManager:
         limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        include_global: bool = True,
     ) -> list[FakeMemory]:
         return self.list_memories(
             project_id=project_id,
@@ -110,6 +124,7 @@ class FakeMemoryManager:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            include_global=include_global,
         )
 
     async def search_memories(
@@ -118,17 +133,36 @@ class FakeMemoryManager:
         project_id: str | None = None,
         limit: int = 10,
         tags_all: list[str] | None = None,
+        tags_none: list[str] | None = None,
+        include_global: bool = True,
         **kwargs: Any,
     ) -> list[FakeMemory]:
         self.search_queries.append(
-            {"query": query, "project_id": project_id, "tags_all": tags_all, "limit": limit}
+            {
+                "query": query,
+                "project_id": project_id,
+                "tags_all": tags_all,
+                "tags_none": tags_none,
+                "include_global": include_global,
+                "limit": limit,
+            }
         )
         if self.raise_on_search:
             raise RuntimeError("search failed")
         results = self.search_results or self.memories
+        if project_id is not None:
+            results = [
+                memory
+                for memory in results
+                if memory.project_id == project_id or (include_global and memory.project_id is None)
+            ]
         if tags_all:
             results = [
                 memory for memory in results if set(tags_all).issubset(set(memory.tags or []))
+            ]
+        if tags_none:
+            results = [
+                memory for memory in results if not set(tags_none).intersection(memory.tags or [])
             ]
         return results[:limit]
 

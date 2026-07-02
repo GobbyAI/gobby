@@ -6,6 +6,7 @@ from gobby.mcp_proxy.tools.review_learning import create_review_learning_registr
 from tests.review_learning.conftest import FakeDB, FakeMemoryManager, FakeTaskManager
 
 pytestmark = pytest.mark.unit
+SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
 LEGACY_SERVICE_CONFIG_LESSON = """# Review Lesson: Propagate service config-store read failures
 
@@ -29,6 +30,10 @@ LEGACY_SERVICE_CONFIG_LESSON = """# Review Lesson: Propagate service config-stor
 ## Evidence
 {"changed_files": ["crates/gcode/src/config/services.rs", "crates/gcode/src/config/context.rs"]}
 """
+
+
+def _scoped_memory_manager(project_id: str = "_personal") -> FakeMemoryManager:
+    return FakeMemoryManager(db=FakeDB(session_id=SESSION_ID, project_id=project_id))
 
 
 def test_create_review_learning_registry_registers_two_tools() -> None:
@@ -69,7 +74,7 @@ def test_recall_review_context_schema_documents_finding_shapes() -> None:
 
 @pytest.mark.asyncio
 async def test_recall_review_context_groups_matches_per_finding() -> None:
-    memory_manager = FakeMemoryManager()
+    memory_manager = _scoped_memory_manager()
     await memory_manager.create_memory(
         "Local memory",
         tags=["review-lesson", "pattern:example"],
@@ -79,7 +84,7 @@ async def test_recall_review_context_groups_matches_per_finding() -> None:
 
     result = await registry.call(
         "recall_review_context",
-        {"findings": [{"title": "Local memory"}]},
+        {"findings": [{"title": "Local memory"}], "session_id": SESSION_ID},
     )
 
     assert result["success"] is True
@@ -89,7 +94,7 @@ async def test_recall_review_context_groups_matches_per_finding() -> None:
 
 @pytest.mark.asyncio
 async def test_recall_review_context_accepts_string_findings() -> None:
-    memory_manager = FakeMemoryManager()
+    memory_manager = _scoped_memory_manager()
     await memory_manager.create_memory(
         "Local memory",
         tags=["review-lesson", "pattern:example"],
@@ -99,7 +104,7 @@ async def test_recall_review_context_accepts_string_findings() -> None:
 
     result = await registry.call(
         "recall_review_context",
-        {"findings": ["Local memory"]},
+        {"findings": ["Local memory"], "session_id": SESSION_ID},
     )
 
     assert result["success"] is True
@@ -152,7 +157,7 @@ async def test_record_review_lesson_preserves_session_scope() -> None:
 
 @pytest.mark.asyncio
 async def test_recall_review_lessons_for_files_matches_recorded_finding_path() -> None:
-    memory_manager = FakeMemoryManager()
+    memory_manager = _scoped_memory_manager()
     registry = create_review_learning_registry(memory_manager, FakeTaskManager())
     await registry.call(
         "record_review_lesson",
@@ -169,12 +174,13 @@ async def test_recall_review_lessons_for_files_matches_recorded_finding_path() -
                 "prevention": "Delegate scheduled writes through WikiUpdateCoordinator.",
             },
             "evidence": {"commit": "abc"},
+            "session_id": SESSION_ID,
         },
     )
 
     result = await registry.call(
         "recall_review_lessons_for_files",
-        {"file_paths": ["src/gobby/wiki/scheduled_jobs.py"]},
+        {"file_paths": ["src/gobby/wiki/scheduled_jobs.py"], "session_id": SESSION_ID},
     )
 
     assert result["success"] is True
@@ -241,6 +247,42 @@ async def test_recall_review_lessons_for_files_matches_legacy_evidence_paths() -
     assert "preserve env precedence" in lesson["prevention"]
     assert "database reads" in lesson["avoid"]
     assert "## Provenance" not in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_recall_review_lessons_for_files_excludes_global_review_lessons() -> None:
+    memory_manager = FakeMemoryManager()
+    await memory_manager.create_memory(
+        LEGACY_SERVICE_CONFIG_LESSON.replace(
+            "service-config-propagate-db-errors",
+            "global-service-config-propagate-db-errors",
+        ),
+        tags=[
+            "review-lesson",
+            "confirmed",
+            "pattern:global-service-config-propagate-db-errors",
+        ],
+        project_id=None,
+    )
+    await memory_manager.create_memory(
+        LEGACY_SERVICE_CONFIG_LESSON,
+        tags=["review-lesson", "confirmed", "pattern:service-config-propagate-db-errors"],
+        project_id="_personal",
+    )
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+
+    result = await registry.call(
+        "recall_review_lessons_for_files",
+        {
+            "file_paths": ["/Users/josh/Projects/gobby-cli/crates/gcode/src/config/services.rs"],
+            "project_id": "_personal",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert result["lessons"][0]["memory_id"] == "mem-2"
+    assert result["lessons"][0]["pattern_id"] == "service-config-propagate-db-errors"
 
 
 @pytest.mark.asyncio

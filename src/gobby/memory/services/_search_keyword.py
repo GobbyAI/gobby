@@ -8,7 +8,7 @@ from typing import Any, cast
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 RunStorage = Callable[..., Awaitable[Any]]
-KeywordSearch = Callable[[str, int, str | None], list[tuple[str, float]]]
+KeywordSearch = Callable[..., list[tuple[str, float]]]
 
 
 async def keyword_ranked(
@@ -18,10 +18,18 @@ async def keyword_ranked(
     query: str,
     limit: int,
     project_id: str | None,
+    include_global: bool = True,
 ) -> list[str]:
     """Run keyword search and return ranked memory IDs for RRF merge."""
     results = cast(
-        list[tuple[str, float]], await run_storage(keyword_search, query, limit, project_id)
+        list[tuple[str, float]],
+        await run_storage(
+            keyword_search,
+            query,
+            limit,
+            project_id,
+            include_global=include_global,
+        ),
     )
     return [memory_id for memory_id, _ in results]
 
@@ -38,11 +46,18 @@ async def keyword_fallback(
     tags_all: list[str] | None,
     tags_any: list[str] | None,
     tags_none: list[str] | None,
+    include_global: bool = True,
 ) -> list[Memory]:
     """Keyword search fallback when vector search is unavailable."""
     keyword_results = cast(
         list[tuple[str, float]],
-        await run_storage(keyword_search, query, limit * 2, project_id),
+        await run_storage(
+            keyword_search,
+            query,
+            limit * 2,
+            project_id,
+            include_global=include_global,
+        ),
     )
     if not keyword_results:
         return []

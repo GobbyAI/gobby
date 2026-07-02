@@ -78,10 +78,20 @@ def is_recoverable_vector_store_error(error: BaseException) -> bool:
 VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
 
 
-def memory_project_scope_filter(project_id: str | None) -> Filter | None:
+def memory_project_scope_filter(
+    project_id: str | None,
+    *,
+    include_global: bool = True,
+) -> Filter | None:
     """Return Qdrant scope filter for project recall, including global memories."""
     if not project_id:
         return None
+    if not include_global:
+        return Filter(
+            must=[
+                FieldCondition(key="project_id", match=MatchValue(value=project_id)),
+            ]
+        )
     field = PayloadField(key="project_id")
     return Filter(
         should=[

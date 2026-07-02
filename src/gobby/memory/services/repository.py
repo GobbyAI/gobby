@@ -87,6 +87,7 @@ class MemoryRepository:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[Memory]:
         """List memories with optional filtering."""
         return self.storage.list_memories(
@@ -98,6 +99,7 @@ class MemoryRepository:
             tags_any=tags_any,
             tags_none=tags_none,
             visibility=visibility,
+            include_global=include_global,
         )
 
     async def alist_memories(
@@ -109,6 +111,7 @@ class MemoryRepository:
         offset: int = 0,
         tags_all: list[str] | None = None,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[Memory]:
         """List memories via backend."""
         resolved_limit = DEFAULT_LIST_LIMIT if limit is None else limit
@@ -119,6 +122,7 @@ class MemoryRepository:
             offset=offset,
             tags_all=tags_all,
             visibility=visibility,
+            include_global=include_global,
         )
         return [self.record_to_memory(record) for record in records]
 

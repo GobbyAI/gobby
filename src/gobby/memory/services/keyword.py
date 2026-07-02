@@ -24,11 +24,17 @@ class MemoryKeywordSearchService:
         query: str,
         limit: int,
         project_id: str | None = None,
+        *,
+        include_global: bool = True,
     ) -> list[tuple[str, float]]:
         """Return ranked memory IDs for a keyword query."""
         try:
             backend = pick_search_backend(self._db, "memories")
-            hits = backend.search(query, limit, filters={"project_id": project_id})
+            hits = backend.search(
+                query,
+                limit,
+                filters={"project_id": project_id, "include_global": include_global},
+            )
         except Exception as exc:
             if is_pg_search_parse_error(exc):
                 logger.debug("Memory keyword query parse failed: %s", exc)

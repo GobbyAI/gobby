@@ -109,6 +109,7 @@ class MemoryQuery:
         tags_all: Memory must have ALL of these tags
         tags_any: Memory must have at least ONE of these tags
         tags_none: Memory must have NONE of these tags
+        include_global: Include global memories when project_id is provided
         search_mode: Search mode - "auto", "text", "semantic", "hybrid"
 
     Example:
@@ -128,6 +129,7 @@ class MemoryQuery:
     tags_all: list[str] | None = None
     tags_any: list[str] | None = None
     tags_none: list[str] | None = None
+    include_global: bool = True
     search_mode: str = "auto"
     visibility: Visibility = "active"
 
@@ -377,6 +379,7 @@ class MemoryBackendProtocol(Protocol):
         tags_all: list[str] | None = None,
         *,
         visibility: Visibility = "active",
+        include_global: bool = True,
     ) -> list[MemoryRecord]:
         """List memories with optional filtering.
 

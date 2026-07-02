@@ -611,6 +611,7 @@ class KnowledgeGraphService:
         limit: int = 10,
         min_score: float = 0.5,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[dict[str, Any]]:
         """Search entities by vector similarity and return with linked memory IDs."""
         return await self._reader.search_entities_by_vector(
@@ -618,6 +619,7 @@ class KnowledgeGraphService:
             limit=limit,
             min_score=min_score,
             project_id=project_id,
+            include_global=include_global,
         )
 
     async def find_related_memory_ids(
@@ -626,6 +628,7 @@ class KnowledgeGraphService:
         max_hops: int = 2,
         limit: int = 20,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[str]:
         """Traverse from entities through relationships to find related memory IDs."""
         return await self._reader.find_related_memory_ids(
@@ -633,6 +636,7 @@ class KnowledgeGraphService:
             max_hops=max_hops,
             limit=limit,
             project_id=project_id,
+            include_global=include_global,
         )
 
     # -----------------------------------------------------------------------

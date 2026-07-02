@@ -31,6 +31,7 @@ class SearchPathHost(Protocol):
         limit: int = 10,
         min_score: float = 0.5,
         project_id: str | None = None,
+        include_global: bool = True,
     ) -> list[tuple[str, float]]: ...
 
     async def _keyword_ranked(
@@ -38,6 +39,7 @@ class SearchPathHost(Protocol):
         query: str,
         limit: int,
         project_id: str | None,
+        include_global: bool = True,
     ) -> list[str]: ...
 
     async def _collect_active_results(
@@ -104,6 +106,7 @@ async def search_with_graph(
     session_id: str | None = None,
     recall_request_id: str | None = None,
     caller: str = "memory.search",
+    include_global: bool = True,
 ) -> list[Memory]:
     """Run vector, graph, and keyword search, then materialize active memories."""
     vector_store = service._require_vector_store()
@@ -119,8 +122,14 @@ async def search_with_graph(
             limit=candidate_limit,
             min_score=graph_min_score,
             project_id=project_id,
+            include_global=include_global,
         )
-        keyword_coro = service._keyword_ranked(query, candidate_limit, project_id)
+        keyword_coro = service._keyword_ranked(
+            query,
+            candidate_limit,
+            project_id,
+            include_global=include_global,
+        )
         qdrant_result, graph_result, keyword_result = await asyncio.gather(
             qdrant_coro, graph_coro, keyword_coro, return_exceptions=True
         )
@@ -284,6 +293,7 @@ async def search_qdrant_keyword(
     session_id: str | None = None,
     recall_request_id: str | None = None,
     caller: str = "memory.search",
+    include_global: bool = True,
 ) -> list[Memory]:
     """Run vector plus keyword search, then materialize active memories."""
     vector_store = service._require_vector_store()
@@ -294,7 +304,12 @@ async def search_qdrant_keyword(
             limit=candidate_limit,
             filters=filters or None,
         )
-        keyword_coro = service._keyword_ranked(query, candidate_limit, project_id)
+        keyword_coro = service._keyword_ranked(
+            query,
+            candidate_limit,
+            project_id,
+            include_global=include_global,
+        )
         qdrant_result, keyword_result = await asyncio.gather(
             qdrant_coro, keyword_coro, return_exceptions=True
         )
