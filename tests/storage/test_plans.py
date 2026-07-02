@@ -91,3 +91,58 @@ def test_archive_removes_coverage_manifest(temp_db: HubDatabase, tmp_path: Path)
     manager.archive_plan("task-200-red", project_id=project_id)
 
     assert not manifest.exists()
+
+
+def _write_strategy_plan(root: Path) -> Path:
+    path = root / ".gobby" / "plans" / "strategy-300.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** strategy-300
+
+            ## Context
+
+            Freeform narrative headings with no section IDs.
+
+            ## Findings
+
+            More narrative.
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_strategy_plan_registers_without_coverage_manifest(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    manager = LocalPlanManager(temp_db)
+    project_id = _project(temp_db, tmp_path)
+    plan = _write_strategy_plan(tmp_path)
+    record = manager.create_plan(
+        project_id=project_id,
+        plan_id="strategy-300",
+        plan_path=plan,
+        plan_kind="strategy",
+        root_task_ref="#300",
+    )
+    manifest = coverage_manifest_path(
+        tmp_path,
+        project_id=project_id,
+        root_task_ref="#300",
+        plan_id="strategy-300",
+    )
+
+    assert record.plan_kind == "strategy"
+    assert not manifest.exists()
+
+    plan.write_text(plan.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    updated = manager.update_plan_hash(record.plan_id, project_id=project_id)
+
+    assert updated.plan_hash != record.plan_hash
+    assert not manifest.exists()
+
+    with pytest.raises(ValueError, match="does not carry a coverage manifest"):
+        manager.regenerate_coverage_manifest("strategy-300", project_id=project_id)

@@ -113,7 +113,8 @@ class LocalPlanManager:
             )
 
         record = self.get_plan(plan_id, project_id=project_id)
-        self._generate_coverage_manifest(record)
+        if record.plan_kind != PlanKind.strategy.value:
+            self._generate_coverage_manifest(record)
         return record
 
     def get_plan(self, plan_id_or_ref: str, *, project_id: str | None = None) -> PlanRecord:
@@ -174,7 +175,8 @@ class LocalPlanManager:
                 (doc.source_hash, now, record.id),
             )
         updated = self.get_plan(plan_id, project_id=record.project_id)
-        self._generate_coverage_manifest(updated)
+        if updated.plan_kind != PlanKind.strategy.value:
+            self._generate_coverage_manifest(updated)
         return updated
 
     def regenerate_coverage_manifest(
@@ -184,6 +186,8 @@ class LocalPlanManager:
         project_id: str | None = None,
     ) -> Path:
         record = self.get_plan(plan_id, project_id=project_id)
+        if record.plan_kind == PlanKind.strategy.value:
+            raise ValueError(f"strategy plan {record.plan_id!r} does not carry a coverage manifest")
         return self._generate_coverage_manifest(record)
 
     def _generate_coverage_manifest(self, record: PlanRecord) -> Path:
