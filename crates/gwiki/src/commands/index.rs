@@ -180,8 +180,10 @@ pub(crate) fn execute_ingest_file(
                 &output_scope,
                 &ai_context,
                 &options,
-                &path,
-                &fetched_at,
+                ingest::file::LocalFileSnapshot {
+                    path: &path,
+                    fetched_at: &fetched_at,
+                },
                 &mut progress_options,
             )?
         };
@@ -213,8 +215,10 @@ pub(crate) fn execute_ingest_file(
         &output_scope,
         &ai_context,
         &options,
-        &path,
-        &fetched_at,
+        ingest::file::LocalFileSnapshot {
+            path: &path,
+            fetched_at: &fetched_at,
+        },
         &mut progress_options,
     )?;
     let counts = index_counts(&store);

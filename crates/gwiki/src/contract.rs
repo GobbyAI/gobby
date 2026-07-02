@@ -312,6 +312,37 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
+                flags: vec![FlagContract::value("--retrieval-candidates", "N")],
+                json_output_keys: scoped_keys(vec![
+                    "token_compression",
+                    "graph_coverage",
+                    "retrieval_precision",
+                    "source_mix",
+                    "model_provider",
+                    "degraded_sources",
+                ]),
+                hard_dependencies: vec!["PostgreSQL", "seeded project"],
+                optional_dependencies: vec!["FalkorDB", "Qdrant+embeddings", "model"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "metrics for available dimensions only",
+                    metadata_keys: vec![
+                        "token_compression.available",
+                        "graph_coverage.available",
+                        "retrieval_precision.available",
+                        "source_mix.available",
+                        "model_provider.available",
+                        "degraded_sources[]",
+                    ],
+                }),
+                ..CommandContract::new(
+                    "benchmark",
+                    "Report benchmark metrics for an indexed seeded project.",
+                )
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
                 flags: vec![],
                 json_output_keys: vec!["command", "root", "text_path", "json_path", "status"],
                 ..CommandContract::new("health", "Write wiki health snapshots under meta/health.")

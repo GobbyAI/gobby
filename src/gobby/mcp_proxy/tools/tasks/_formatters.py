@@ -23,16 +23,20 @@ def _task_value(task: Any, name: str, default: Any = None) -> Any:
     task_dict = _task_dict(task)
     if name in task_dict:
         return task_dict[name]
-    return default
+    return getattr(task, name, default)
 
 
 def _task_dict(task: Any) -> dict[str, Any]:
     if isinstance(task, dict):
         return task
+    result: dict[str, Any] = {}
+    if hasattr(task, "__dict__"):
+        result.update(vars(task))
     if callable(getattr(task, "to_dict", None)):
         task_dict = task.to_dict()
-        return task_dict if isinstance(task_dict, dict) else {}
-    return {}
+        if isinstance(task_dict, dict):
+            result.update(task_dict)
+    return result
 
 
 def _plain(value: Any) -> Any:

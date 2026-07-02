@@ -1,6 +1,6 @@
 # Wiki bake-off — STATUS / resume breadcrumb (2026-06-14)
 
-Durable resume note (survives compaction). Plan: `/Users/josh/Projects/gobby-cli/.gobby/plans/wiki-fix.md` WP4. Gobby task **#734** (claimed — re-claim via `claim_task #734` if an edit hook blocks file writes). Two tracks (see `ADOPTION-CANDIDATES.md` header).
+Durable resume note (survives compaction). Plan: `<gobby-cli-repo>/.gobby/plans/wiki-fix.md` WP4. Gobby task **#734** (claimed — re-claim via `claim_task #734` if an edit hook blocks file writes). Two tracks (see `ADOPTION-CANDIDATES.md` header).
 
 ## Per-tool status
 | Tool | Track | Status | Artifacts |
@@ -18,13 +18,13 @@ DeepWiki ✅ · CodeWiki(Rust) ✅ · CodeWiki(Py) ✅ · gobby-codewiki ✅ · 
 **WP5 DONE (2026-06-14):** `fable-repo-analysis.md` → "Phase 4 — Live parity-plus proof" appended (3 per-track matrices + adoption analysis); adoption epic **#761** + leaf tasks **#762–#771** (one per C1–C10); lightweight evidence committed to `docs/evidence/wiki-bakeoff-2026-06/`. **Next = final self-audit**, then `[gobby-cli-#734]` commit (in progress) → Josh reviews/pushes.
 
 ## WP5 deliverable (after all runs)
-Append "Live parity+ proof (2026-06)" to `/Users/josh/Projects/gobby-cli/fable-repo-analysis.md`: two-track matrix re-scored, honest verdicts incl. competitor wins, + **"What competitors do better → what to adopt"** deep analysis sourced from `ADOPTION-CANDIDATES.md`. Then create **one gobby-cli epic with one leaf task per adoption candidate** (deduped across tools). Commit WP4 work `[gobby-cli-#734] ...` (includes wiki-fix.md WP4/WP5 edits). Josh pushes/tags — never Claude.
+Append "Live parity+ proof (2026-06)" to `<gobby-cli-repo>/fable-repo-analysis.md`: two-track matrix re-scored, honest verdicts incl. competitor wins, + **"What competitors do better → what to adopt"** deep analysis sourced from `ADOPTION-CANDIDATES.md`. Then create **one gobby-cli epic with one leaf task per adoption candidate** (deduped across tools). Commit WP4 work `[gobby-cli-#734] ...` (includes wiki-fix.md WP4/WP5 edits). Josh pushes/tags — never Claude.
 
 ## Environment (durable facts)
-- LM Studio host :1234, OpenAI-compatible, token-auth REQUIRED. Key = `OPENAI_API_KEY` in `/Users/josh/Projects/gobby/.env` (mode 600, value `sk-…` 35 chars). NEVER print/commit. `~/Projects/wiki-bakeoff/.env` mirrors it (populated).
+- LM Studio host :1234, OpenAI-compatible, token-auth REQUIRED. Key comes from `OPENAI_API_KEY`. NEVER print/commit local env files or values.
 - Chat model `google/gemma-4-26b-a4b-qat` (REASONING model — emits `reasoning_content`; with adequate budget `content` populates fine; use each tool's OWN defaults, no token tuning). Embeddings `text-embedding-nomic-embed-text-v1.5` (768-dim).
 - Container → host: `http://host.docker.internal:1234/v1` (compose needs `extra_hosts: host.docker.internal:host-gateway`). Host/local: `http://localhost:1234/v1`.
-- gobby Python repo `/Users/josh/Projects/gobby` IS gcode-indexed (4024 files, 55923 symbols). gobby-cli has 209GB `target/` — always feed tools a `git archive HEAD` clean copy.
+- gobby Python repo `<gobby-repo>` IS gcode-indexed (4024 files, 55923 symbols). `<gobby-cli-repo>` has a large `target/` — always feed tools a `git archive HEAD` clean copy.
 - Daemon containers (DO NOT TOUCH): `gobby-postgres`, `gobby-postgres-test-1`, `services-falkordb-1`, `services-qdrant-1`. Images left on disk: `deepwiki-open-deepwiki:latest` (1.2GB), `codewiki:0.0.1` (3.26GB).
-- Constraints: serialize Docker stacks (daemon stack already up — don't stack 5 more); no `git push`/`git add -A`/secrets; `GOBBY_TEST_PROTECT=1` on pytest; competitor clones in `~/Projects/wiki-bakeoff/<tool>/`.
+- Constraints: serialize Docker stacks (daemon stack already up — don't stack 5 more); no `git push`/`git add -A`/secrets; `GOBBY_TEST_PROTECT=1` on pytest; competitor clones in `<wiki-bakeoff>/<tool>/`.
 - **PRESERVE outputs (Josh, 2026-06-14):** do NOT delete `outputs/` or `inputs/` and do NOT commit them — they are the BEFORE-baseline for a planned **re-run of the battery after gobby implements adoption candidates C1–C9**. Cleanup = tear down containers only; competitor images (~5.7GB) are rebuildable but leave them to save re-run time. (memory `12bc03d0`)

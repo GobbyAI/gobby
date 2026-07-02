@@ -63,8 +63,7 @@ fn ingest_path_for_test(
         scope,
         ai_context,
         options,
-        path,
-        fetched_at,
+        LocalFileSnapshot { path, fetched_at },
         &mut crate::progress::ProgressOptions::default(),
     )
 }
@@ -87,8 +86,10 @@ fn file_ingest_progress_reports_ingest_and_index_phases() {
         &scope,
         &ai_context,
         &options,
-        &file_path,
-        "2026-05-29T16:45:00Z",
+        LocalFileSnapshot {
+            path: &file_path,
+            fetched_at: "2026-05-29T16:45:00Z",
+        },
         &mut crate::progress::ProgressOptions::with_sink(&mut progress),
     )
     .expect("ingest local file");

@@ -1,5 +1,24 @@
 use super::*;
 
+#[derive(Default)]
+struct RecordingProgress {
+    events: Vec<String>,
+}
+
+impl crate::progress::ProgressSink for RecordingProgress {
+    fn start(&mut self, phase: crate::progress::ProgressPhase, total: usize) {
+        self.events.push(format!("{phase:?}:start:{total}"));
+    }
+
+    fn advance(&mut self, phase: crate::progress::ProgressPhase, item: &str) {
+        self.events.push(format!("{phase:?}:advance:{item}"));
+    }
+
+    fn finish(&mut self, phase: crate::progress::ProgressPhase) {
+        self.events.push(format!("{phase:?}:finish"));
+    }
+}
+
 #[test]
 fn video_produces_transcript_and_frames() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -13,10 +32,14 @@ fn video_produces_transcript_and_frames() {
         fail_frames: None,
     };
     let vision = FakeVisionClient;
+    let mut progress = RecordingProgress::default();
 
     let result = ingest_video_file_with_processing(
         temp.path(),
-        &mut store,
+        VideoProcessingIndex {
+            store: &mut store,
+            progress: &mut crate::progress::ProgressOptions::with_sink(&mut progress),
+        },
         ScopeIdentity::topic("field-work"),
         VideoFileSnapshot {
             location: "/tmp/lecture.mp4".to_string(),
@@ -73,6 +96,13 @@ fn video_produces_transcript_and_frames() {
             .body
             .contains("frame lecture.mp4.frame-0000.jpg has 10 bytes")
     );
+    assert!(
+        progress
+            .events
+            .iter()
+            .any(|event| event.starts_with("VaultIndex:start:"))
+    );
+    assert!(progress.events.contains(&"VaultIndex:finish".to_string()));
 }
 
 #[test]
@@ -88,10 +118,14 @@ fn frame_interval_zero_disables_frames() {
         fail_frames: None,
     };
     let vision = FakeVisionClient;
+    let mut progress = crate::progress::ProgressOptions::default();
 
     let result = ingest_video_file_with_processing(
         temp.path(),
-        &mut store,
+        VideoProcessingIndex {
+            store: &mut store,
+            progress: &mut progress,
+        },
         ScopeIdentity::topic("field-work"),
         VideoFileSnapshot {
             location: "/tmp/lecture.mp4".to_string(),

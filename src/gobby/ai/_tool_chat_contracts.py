@@ -81,6 +81,14 @@ class ToolChatRequest:
     cli_candidate_timeout_seconds: float | None = None
 
 
+def _resolve_max_turns(request: ToolChatRequest, *, default: int) -> int:
+    if request.limits.max_turns is not None:
+        return request.limits.max_turns
+    if request.max_turns is not None:
+        return request.max_turns
+    return default
+
+
 @dataclass(frozen=True, kw_only=True)
 class ToolChatResult:
     """Result of a ``tool_chat`` run plus investigation provenance.

@@ -64,3 +64,33 @@ def test_task_summary_uses_to_dict_payload_fields() -> None:
     assert payload["validation_criteria"] == "Summary payload uses to_dict fields."
     assert payload["allow_automation"] is True
     assert payload["state"]["is_closed"] is False
+
+
+def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
+    task = SimpleNamespace(
+        id="03940009-0faa-4d80-9b96-289df7f44431",
+        seq_num=17426,
+        title="Preserve attribute fields",
+        task_type="bug",
+        category="code",
+        priority=1,
+        closed_at="2026-07-02T00:00:00Z",
+        current_stage={"name": "done", "state": "done"},
+        validation_criteria="Attribute-backed fields survive formatting.",
+        allow_automation=True,
+        to_dict=lambda: {
+            "id": "03940009-0faa-4d80-9b96-289df7f44431",
+            "seq_num": 17426,
+            "title": "Preserve attribute fields",
+        },
+    )
+
+    payload = task_summary_payload(task, dependencies={})
+
+    assert payload["task_type"] == "bug"
+    assert payload["category"] == "code"
+    assert payload["validation_criteria"] == "Attribute-backed fields survive formatting."
+    assert payload["allow_automation"] is True
+    assert payload["state"]["is_closed"] is True
+    assert payload["state"]["closed_at"] == "2026-07-02T00:00:00Z"
+    assert payload["state"]["current_stage"] == {"name": "done", "state": "done"}

@@ -419,7 +419,7 @@ missing from disk, so `orchestrator.yaml`, `front-half-orchestrator.yaml`,
 `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, the conductor pipeline, and retired
 `conductor`, `developer`, and `pipeline-worker` agents must stay out of bundled install
 roots. Real PR creation and richer merge/conflict handling are tracked in task
-# 13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
+\#13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
 where they are already available.
 
 ## Code Conventions

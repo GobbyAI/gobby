@@ -113,7 +113,7 @@ class LocalPlanManager:
             )
 
         record = self.get_plan(plan_id, project_id=project_id)
-        if record.plan_kind != PlanKind.strategy.value:
+        if _plan_carries_coverage_manifest(record.plan_kind):
             self._generate_coverage_manifest(record)
         return record
 
@@ -175,7 +175,7 @@ class LocalPlanManager:
                 (doc.source_hash, now, record.id),
             )
         updated = self.get_plan(plan_id, project_id=record.project_id)
-        if updated.plan_kind != PlanKind.strategy.value:
+        if _plan_carries_coverage_manifest(updated.plan_kind):
             self._generate_coverage_manifest(updated)
         return updated
 
@@ -186,8 +186,10 @@ class LocalPlanManager:
         project_id: str | None = None,
     ) -> Path:
         record = self.get_plan(plan_id, project_id=project_id)
-        if record.plan_kind == PlanKind.strategy.value:
-            raise ValueError(f"strategy plan {record.plan_id!r} does not carry a coverage manifest")
+        if not _plan_carries_coverage_manifest(record.plan_kind):
+            raise ValueError(
+                f"{record.plan_kind} plan {record.plan_id!r} does not carry a coverage manifest"
+            )
         return self._generate_coverage_manifest(record)
 
     def _generate_coverage_manifest(self, record: PlanRecord) -> Path:
@@ -310,6 +312,8 @@ class LocalPlanManager:
             raise ValueError(f"plan file must be inside project root: {absolute}") from exc
 
     def _remove_coverage_manifest(self, record: PlanRecord) -> None:
+        if not _plan_carries_coverage_manifest(record.plan_kind):
+            return
         path = coverage_manifest_path(
             self._project_root(record.project_id),
             project_id=record.project_id,
@@ -326,6 +330,10 @@ def _normalize_ref(ref: str) -> str:
     if stripped.isdecimal():
         return f"#{stripped}"
     return stripped
+
+
+def _plan_carries_coverage_manifest(plan_kind: str) -> bool:
+    return plan_kind != PlanKind.strategy.value
 
 
 def _now() -> str:

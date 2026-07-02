@@ -22,6 +22,7 @@ Version 7 covers the daemon-consumed surface:
 - `audit`
 - `graph`
 - `graph-context`
+- `benchmark`
 - `health`
 - `librarian`
 - `review-report`
@@ -81,7 +82,7 @@ Version 3 added code-grounded payload fields to `ask` and `graph-context`.
 `graph-context` returns `code_edges` and `code_citations` alongside `context`,
 `source_bundle`, `trust`, `freshness`, `audit`, `warnings`, and `degradation`.
 
-The `ask`, `graph-context`, `librarian`, `review-report`, and
+The `ask`, `graph-context`, `benchmark`, `librarian`, `review-report`, and
 `citation-quality` entries pin their dependency and degradation rows in the
 machine-readable contract. `ask` treats model synthesis, semantic vectors, and
 the FalkorDB graph boost as optional signals, and can degrade to
@@ -168,7 +169,7 @@ Both the CLI and daemon tests load this contract. New daemon-facing flags or JSO
 keys should update this document, the JSON contract, and the corresponding drift
 tests in the same change.
 
-The pinned `ask`, `graph-context`, `librarian`, `review-report`, and
+The pinned `ask`, `graph-context`, `benchmark`, `librarian`, `review-report`, and
 `citation-quality` command entries record their classification rows with
 top-level `hard_dependencies`, `optional_dependencies`, `multimodal`, and
 `degradation` fields so daemon consumers can detect dependency and degradation

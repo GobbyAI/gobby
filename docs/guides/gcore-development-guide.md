@@ -210,10 +210,10 @@ Every individual feature must compile in isolation. Do not rely on `--all-featur
 `gobby-core` is `0.x`. The contract:
 
 - **Patch bumps (0.4.x)** — bug fixes, doc changes, internal refactors with no public API change.
-- **Minor bumps (0.x.0)** — additive public API (new functions, new fields). Existing consumers stay compatible.
-- **Pre-1.0 breaking changes** — bump the minor and bump *every* consumer crate's gobby-core dep in the same release. Don't strand consumers on an old gobby-core.
+- **Additive minor bumps (0.x.0)** — new public API such as functions, structs, fields, or feature-gated modules. Existing consumers stay compatible.
+- **Pre-1.0 breaking minor bumps (0.x.0)** — removals, renames, type changes, feature default changes, or semantic contract changes. Bump the minor and bump *every* consumer crate's `gobby-core` dependency in the same release. Don't strand consumers on an old `gobby-core`.
 
-Consumers that depend only on the minor-line contract can pin to a minor version (`gobby-core = "0.7"`). In-tree crates released with `gobby-core` should pin to the current patch floor when they rely on behavior from that patch, for example `gobby-core = "0.7.0"`.
+Consumers that depend only on additive minor-line compatibility can pin to a minor version (`gobby-core = "0.7"`). In-tree crates released with `gobby-core` must move to the new minor when that minor is breaking, and should pin to the current patch floor when they rely on behavior from that patch, for example `gobby-core = "0.7.0"`.
 
 ## How to Consume
 
@@ -281,7 +281,7 @@ If yes to all checks, add the helper:
 4. Write tests that pin behavior under the failure modes the consumer cares about (missing input, malformed input, edge-case values).
 5. Update this guide's module map and feature gate table when the public boundary changes.
 6. Bump `gobby-core` to the next minor version since you're adding public API.
-7. Update consumer crates to use the new helper, replacing any duplicated implementation. Bump consumer package versions when those crates are part of the release.
+7. Update consumer crates to use the new helper, replacing any duplicated implementation. For breaking minor bumps, update every consumer crate's `gobby-core` dependency in the same release. Bump consumer package versions when those crates are part of the release.
 
 ## Testing
 

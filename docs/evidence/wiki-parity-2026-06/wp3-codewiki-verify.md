@@ -37,7 +37,7 @@ Note (minor): `docs/evidence/` appears as an architecture "subsystem" because th
 ## Link hygiene (`gwiki lint`)
 
 Initial lint surfaced **10 broken links**:
-- **8 markdown** absolute-path links to `/Users/josh/Projects/gobby/...` (wrong repo) — embedded in cached pre-#726 file summaries that were reused, then assembled verbatim into module pages. #726 (`sanitize_model_markdown_links`) sanitizes at generation, not at render-time assembly of cached summaries.
+- **8 markdown** absolute-path links to `<repo>/...` (wrong repo) — embedded in cached pre-#726 file summaries that were reused, then assembled verbatim into module pages. #726 (`sanitize_model_markdown_links`) sanitizes at generation, not at render-time assembly of cached summaries.
 - **2 wikilink** false-positives — symbol-summary prose quoting link-producing code: `wiki_link`'s purpose quotes `[[relative_path|title]]`; a compile test's purpose quotes `[[knowledge/topics/exact|Exact]]`. Sourced from PostgreSQL symbol summaries; honest descriptions, not navigation.
 
 **Fix:** deleted the 4 affected file pages + 2 module pages and re-ran codewiki `--scope crates/gcode/src/index/import_resolution/parser crates/gcode/src/index/parser/calls` (scoped run preserves aggregates via #715). File summaries regenerated through `ground_text`+#726 → absolute-path links stripped; module pages rebuilt from clean summaries. Result: **0 real broken links** (`wp3-codewiki-scoped.txt`, `wp3-codewiki-scoped2.txt`).

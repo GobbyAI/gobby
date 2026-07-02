@@ -37,6 +37,12 @@ pub struct StdinSnapshot {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LocalFileSnapshot<'a> {
+    pub path: &'a Path,
+    pub fetched_at: &'a str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LocalFileIngestResult {
     pub result: IngestResult,
@@ -49,8 +55,7 @@ pub fn ingest_path(
     scope: &ScopeIdentity,
     ai_context: &AiContext,
     options: &IngestFileOptions,
-    path: &Path,
-    fetched_at: &str,
+    snapshot: LocalFileSnapshot<'_>,
     progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<IngestResult, WikiError> {
     let mut ingest_progress = crate::progress::ActiveProgress::new(
@@ -58,9 +63,15 @@ pub fn ingest_path(
         crate::progress::ProgressPhase::IngestFile,
         1,
     );
-    let result =
-        ingest_path_without_index(vault_root, scope, ai_context, options, path, fetched_at)?;
-    ingest_progress.advance(&path.display().to_string());
+    let result = ingest_path_without_index(
+        vault_root,
+        scope,
+        ai_context,
+        options,
+        snapshot.path,
+        snapshot.fetched_at,
+    )?;
+    ingest_progress.advance(&snapshot.path.display().to_string());
     drop(ingest_progress);
     index_after_ingest(vault_root, store, progress)?;
     Ok(result.result)

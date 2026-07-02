@@ -105,6 +105,7 @@ cargo nextest run --workspace --no-default-features
 cargo test --doc --workspace --no-default-features
 cargo build --release -p gobby-code -p gobby-hooks -p gobby-wiki
 ```
+
 Optional pre-publish smoke: `cargo publish -p gobby-core --dry-run` (gobby-core
 has no internal deps; dependents can't dry-run until 0.4.0 is on crates.io).
 

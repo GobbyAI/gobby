@@ -1,8 +1,8 @@
 # Wiki bake-off evidence — 2026-06 (task #734, WP4/WP5)
 
 Lightweight evidence for the **live competitor bake-off** written up in
-[`fable-repo-analysis.md` → Phase 4](../../../fable-repo-analysis.md). Seven competitor tools run
-head-to-head against gobby's three wiki/code surfaces, same inputs, scored per track.
+[`fable-repo-analysis.md` → Phase 4](../../../fable-repo-analysis.md). Six competitors plus the
+gobby baseline run head-to-head across three wiki/code surfaces, same inputs, scored per track.
 
 Heavy raw outputs (generated wikis, graphs, synth pages, ~46 MB) are **not** committed — they live
 at `~/Projects/wiki-bakeoff/outputs/` as the **before-baseline for a re-run** after the C1–C10

@@ -8,6 +8,7 @@ catalog + content. Config: endpoint + key + model id only; OpenDeepWiki defaults
 is the axis).
 
 ## Result: **SUCCESS — complete 13-node hierarchical wiki on Rust**
+
 Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust corpus**. All
 13 catalog nodes persisted; 4 docs hit a `WriteDoc did not persist` agent miss but
 **self-healed on retry** (`WIKI_MAX_RETRY_ATTEMPTS=3`), so the wiki is complete.
@@ -23,6 +24,7 @@ Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust 
 | Doc store | DB (`DocFiles.Content`); pulled via `/api/v1/repos/{owner}/{repo}/docs/{slug}` |
 
 ## Quality is bimodal (largely a local-model artifact)
+
 - **~8 strong docs** (200–291 lines, multi-section, diagrams, real cited code): `overview`,
   `architecture/data-persistence`, `architecture/ai-orchestration`, `capabilities/gloc`,
   `capabilities/gwiki`, `workflows/codewiki-generation`, `workflows/multimodal-research`,
@@ -36,6 +38,7 @@ Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust 
   fault — a frontier model would fill these in.
 
 ## Where OpenDeepWiki is strong (model-independent design)
+
 1. **Information architecture.** A curated top-down hierarchy (Overview → Architecture →
    Capabilities → Workflows → Getting-Started) that correctly identified all five binaries +
    gcore + the architecture layers. Far more navigable than a flat per-file dump.
@@ -55,6 +58,7 @@ Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust 
    GitHub URLs (`GobbyAI/gobby`, `GobbyAI/gobby-cli`) — accurate grounding, not invented.
 
 ## Where gobby `codewiki` wins (parity-plus proof points)
+
 1. **Completeness + uniform depth.** gobby codewiki covered **all 65 files + 3 module docs**
    densely; OpenDeepWiki produced 13 concept pages with an **empty flagship stub** and uneven
    depth. (Caveat: gobby ran via frontier daemon lanes; OpenDeepWiki on local gemma — model
@@ -68,6 +72,7 @@ Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust 
    index + FalkorDB graph; OpenDeepWiki's catalog is LLM-inferred from a file walk.
 
 ## Where OpenDeepWiki wins (adoption candidates — see ADOPTION-CANDIDATES.md)
+
 - **Per-doc architecture diagrams** (mermaid flowcharts + sequence diagrams), 19 here vs gobby
   codewiki's 0 → **strongly reinforces C4** (diagram generation/fallback): OpenDeepWiki proves
   rich, accurate diagrams are achievable and high-value for human readers.
@@ -79,6 +84,7 @@ Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust 
   GitHub than bare `file:line` text. Minor → fold into gobby citation rendering.
 
 ## Honesty notes (about the bake-off)
+
 - Fair-config gotcha (config-ergonomics, not quality): flat `WIKI_CATALOG_MODEL` /
   `WIKI_CONTENT_MODEL` env did **not** reach the DB model binding (provider bound correctly to
   LM Studio; model fell back to the appsettings default `ark-code-latest`), causing an instant
@@ -91,6 +97,7 @@ Generated a full, navigable wiki where **CodeWiki refused/hung on the same Rust 
   *form*) are the fair comparison; raw completeness carries the model caveat.
 
 ## Net verdict (Track A2)
+
 **OpenDeepWiki is a legitimately strong code→docs generator and the most "human-handbook"-like
 competitor — it succeeded on Rust where CodeWiki refused, and beats gobby codewiki on diagram
 density, curated information architecture, and narrative readability.** gobby `codewiki` wins
@@ -101,5 +108,6 @@ curated **narrative handbook** — and its diagrams (C4) + hierarchical catalog 
 concrete, adoptable gaps.
 
 ## Artifacts
+
 `outputs/opendeepwiki/`: `SCORECARD.md`, `SETUP.md`, `compose.override.yaml` (in the
 OpenDeepWiki clone), `wiki/` (13 extracted `.md` docs), `wiki-json/` (raw API responses).

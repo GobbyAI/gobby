@@ -256,9 +256,13 @@ fn ingest_with_media(
     let source_path = vault_root.join(format!("{file_name}.source"));
     std::fs::write(&source_path, b"video bytes").expect("write source video");
     let mut store = MemoryWikiStore::default();
+    let mut progress = crate::progress::ProgressOptions::default();
     ingest_video_file_with_processing(
         vault_root,
-        &mut store,
+        VideoProcessingIndex {
+            store: &mut store,
+            progress: &mut progress,
+        },
         ScopeIdentity::topic("field-work"),
         VideoFileSnapshot {
             location: format!("/tmp/{file_name}"),

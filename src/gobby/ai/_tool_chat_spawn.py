@@ -47,7 +47,11 @@ from gobby.ai._text_generation_adapters import (
     _run_cli_text_generation_command,
     _seed_droid_factory_state,
 )
-from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult
+from gobby.ai._tool_chat_contracts import (
+    ToolChatRequest,
+    ToolChatResult,
+    _resolve_max_turns,
+)
 from gobby.ai._tool_chat_tools import validate_policy
 
 if TYPE_CHECKING:
@@ -573,13 +577,7 @@ class GrokSpawnToolChatAdapter:
         return path
 
     def _build_command(self, request: ToolChatRequest, *, model: str | None) -> list[str]:
-        max_turns = (
-            request.limits.max_turns
-            if request.limits.max_turns is not None
-            else request.max_turns
-            if request.max_turns is not None
-            else 30
-        )
+        max_turns = _resolve_max_turns(request, default=30)
         command = [
             self._resolve_command_path(),
             "--single",

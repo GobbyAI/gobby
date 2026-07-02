@@ -670,6 +670,53 @@
       }
     },
     {
+      "name": "benchmark",
+      "summary": "Report benchmark metrics for an indexed seeded project.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--retrieval-candidates",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "token_compression",
+        "graph_coverage",
+        "retrieval_precision",
+        "source_mix",
+        "model_provider",
+        "degraded_sources"
+      ],
+      "hard_dependencies": [
+        "PostgreSQL",
+        "seeded project"
+      ],
+      "optional_dependencies": [
+        "FalkorDB",
+        "Qdrant+embeddings",
+        "model"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "metrics for available dimensions only",
+        "metadata_keys": [
+          "token_compression.available",
+          "graph_coverage.available",
+          "retrieval_precision.available",
+          "source_mix.available",
+          "model_provider.available",
+          "degraded_sources[]"
+        ]
+      }
+    },
+    {
       "name": "health",
       "summary": "Write wiki health snapshots under meta/health.",
       "daemon_consumed": true,

@@ -19,6 +19,7 @@ from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.blocked_tool_recovery import _CODE_INDEX_REMEDIATION_RULES
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
@@ -2810,6 +2811,12 @@ class TestRequireCodeIndexSkillStructure:
         }
         rules = {row.name for row in manager.list_all(workflow_type="rule")}
         assert expected.issubset(rules)
+
+    def test_code_index_recovery_allowlist_names_installed_rules(self, db, manager) -> None:
+        _sync_bundled(db)
+        rules = {row.name for row in manager.list_all(workflow_type="rule")}
+
+        assert _CODE_INDEX_REMEDIATION_RULES.issubset(rules)
 
 
 class TestCodeIndexNavigationRules:

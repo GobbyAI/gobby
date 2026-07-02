@@ -27,6 +27,11 @@ pub(crate) trait VideoMediaExtractor {
 
 pub(crate) struct ProductionVideoMediaExtractor;
 
+pub(crate) struct VideoProcessingIndex<'a, 'p, S: WikiIndexStore> {
+    pub(crate) store: &'a mut S,
+    pub(crate) progress: &'a mut crate::progress::ProgressOptions<'p>,
+}
+
 impl VideoMediaExtractor for ProductionVideoMediaExtractor {
     fn extract_audio(&self, video: &Path) -> Result<NamedTempFile, WikiError> {
         crate::media::extract_audio_file(video)
@@ -44,7 +49,7 @@ impl VideoMediaExtractor for ProductionVideoMediaExtractor {
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub(crate) fn ingest_video_file_with_processing(
     vault_root: &Path,
-    store: &mut impl WikiIndexStore,
+    index: VideoProcessingIndex<'_, '_, impl WikiIndexStore>,
     scope: ScopeIdentity,
     snapshot: VideoFileSnapshot,
     transcription_endpoint: TranscriptionEndpoint<'_>,
@@ -59,11 +64,7 @@ pub(crate) fn ingest_video_file_with_processing(
         vision_endpoint,
         media,
     )?;
-    index_after_ingest(
-        vault_root,
-        store,
-        &mut crate::progress::ProgressOptions::default(),
-    )?;
+    index_after_ingest(vault_root, index.store, index.progress)?;
     Ok(result)
 }
 

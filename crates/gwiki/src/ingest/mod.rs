@@ -769,8 +769,10 @@ mod tests {
             &scope,
             &ai_context,
             &options,
-            &source_path,
-            "2026-05-29T17:00:00Z",
+            file::LocalFileSnapshot {
+                path: &source_path,
+                fetched_at: "2026-05-29T17:00:00Z",
+            },
             &mut crate::progress::ProgressOptions::default(),
         )
         .expect("ingest path");

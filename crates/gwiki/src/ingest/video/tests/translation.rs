@@ -44,10 +44,14 @@ fn video_long_english_translation_reuses_chunk_branch() {
         ]),
         calls: Rc::clone(&calls),
     };
+    let mut progress = crate::progress::ProgressOptions::default();
 
     let result = ingest_video_file_with_processing(
         temp.path(),
-        &mut store,
+        VideoProcessingIndex {
+            store: &mut store,
+            progress: &mut progress,
+        },
         ScopeIdentity::topic("field-work"),
         VideoFileSnapshot {
             location: "/tmp/lecture.mp4".to_string(),
