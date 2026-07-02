@@ -13,6 +13,11 @@ from gobby.hooks.events import HookEventType
 logger = logging.getLogger(__name__)
 
 CONSECUTIVE_TOOL_BLOCK_RULE = "consecutive-tool-block"
+_CODE_INDEX_REMEDIATION_RULES = {
+    "require-code-index-skill",
+    "prefer-gcode-for-code-search",
+    "prefer-gcode-for-source-read",
+}
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
 
 
@@ -119,6 +124,17 @@ def clear_blocked_tool_recovery_state(variables: dict[str, Any]) -> None:
     variables["_last_blocked_tool"] = ""
     variables["_last_blocked_rule_name"] = ""
     variables["_last_blocked_reason"] = ""
+
+
+def is_blocked_tool_recovery_remediation(
+    variables: dict[str, Any],
+    event_data: dict[str, Any],
+) -> bool:
+    """Return true when the current tool directly satisfies the last block's remediation."""
+    return (
+        variables.get("_last_blocked_rule_name") in _CODE_INDEX_REMEDIATION_RULES
+        and event_data.get("canonical_code_index_navigation") is True
+    )
 
 
 def format_consecutive_tool_block_reason(

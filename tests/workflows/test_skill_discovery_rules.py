@@ -2921,6 +2921,42 @@ class TestCodeIndexNavigationRules:
         assert allowed.decision == "allow"
         assert variables["code_index_navigation_used_this_turn"] is True
 
+    @pytest.mark.parametrize(
+        ("rule_name", "command"),
+        [
+            ("require-code-index-skill", 'gcode search-content "query" src'),
+            ("prefer-gcode-for-code-search", 'gcode grep "pattern" src -m 50'),
+            ("prefer-gcode-for-source-read", "gcode outline src/gobby/workflows/engine/core.py"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_gcode_navigation_remediation_clears_same_tool_retry_guard(
+        self, db, rule_name: str, command: str
+    ) -> None:
+        _sync_bundled(db)
+        variables = self._variables(loaded=True)
+        variables.update(
+            {
+                "_last_blocked_tool": "Bash",
+                "_last_blocked_rule_name": rule_name,
+                "_last_blocked_reason": f"Rule enforced by Gobby: [{rule_name}]\nUse gcode",
+                "consecutive_tool_blocks": 3,
+                "max_consecutive_blocked_tool_attempts": 5,
+            }
+        )
+        event = self._normalized_bash_event(command)
+
+        assert event.data["canonical_code_index_navigation"] is True
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "allow"
+        assert "consecutive-tool-block" not in (response.reason or "")
+        assert variables["consecutive_tool_blocks"] == 0
+        assert variables["_last_blocked_tool"] == ""
+        assert variables["_last_blocked_rule_name"] == ""
+        assert variables["_last_blocked_reason"] == ""
+
     @pytest.mark.asyncio
     async def test_turn_start_resets_gcode_navigation_flag(self, db) -> None:
         _sync_bundled(db)

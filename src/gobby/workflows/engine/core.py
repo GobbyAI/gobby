@@ -34,6 +34,7 @@ from gobby.workflows.definitions import (
 from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
     format_consecutive_tool_block_reason,
+    is_blocked_tool_recovery_remediation,
 )
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
@@ -188,28 +189,32 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                         tool_name = _get_tool_identity(event.data)
                         last_blocked = variables.get("_last_blocked_tool", "")
                         if tool_name == last_blocked:
-                            count = variables.get("consecutive_tool_blocks", 0) + 1
-                            variables["consecutive_tool_blocks"] = count
-                            max_attempts = int(
-                                variables.get("max_consecutive_blocked_tool_attempts", 5)
-                            )
-                            total_attempts = count + 1
-                            if total_attempts >= max_attempts:
-                                resp = HookResponse(
-                                    decision="block",
-                                    reason=format_consecutive_tool_block_reason(
-                                        tool_name=tool_name,
-                                        total_attempts=total_attempts,
-                                        variables=variables,
-                                    ),
+                            if is_blocked_tool_recovery_remediation(variables, event.data):
+                                variables["consecutive_tool_blocks"] = 0
+                                clear_blocked_tool_recovery_state(variables)
+                            else:
+                                count = variables.get("consecutive_tool_blocks", 0) + 1
+                                variables["consecutive_tool_blocks"] = count
+                                max_attempts = int(
+                                    variables.get("max_consecutive_blocked_tool_attempts", 5)
                                 )
-                                return self._finalize_block_response(
-                                    resp,
-                                    evaluation,
-                                    span,
-                                    source="rule",
-                                    rule_name="consecutive-tool-block",
-                                )
+                                total_attempts = count + 1
+                                if total_attempts >= max_attempts:
+                                    resp = HookResponse(
+                                        decision="block",
+                                        reason=format_consecutive_tool_block_reason(
+                                            tool_name=tool_name,
+                                            total_attempts=total_attempts,
+                                            variables=variables,
+                                        ),
+                                    )
+                                    return self._finalize_block_response(
+                                        resp,
+                                        evaluation,
+                                        span,
+                                        source="rule",
+                                        rule_name="consecutive-tool-block",
+                                    )
                         else:
                             # Different tool — reset counter, let it through to rule evaluation
                             variables["consecutive_tool_blocks"] = 0
