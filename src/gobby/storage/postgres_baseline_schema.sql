@@ -4,7 +4,7 @@ CREATE TABLE schema_migrations (
 );
 
 CREATE TABLE projects (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     repo_path TEXT,
     github_url TEXT,
@@ -20,9 +20,9 @@ CREATE TABLE projects (
 CREATE INDEX idx_projects_name ON projects(name);
 
 CREATE TABLE mcp_servers (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     name TEXT NOT NULL,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     transport TEXT NOT NULL,
     url TEXT,
     command TEXT,
@@ -47,8 +47,8 @@ CREATE INDEX idx_mcp_servers_enabled ON mcp_servers(enabled);
 CREATE UNIQUE INDEX idx_mcp_servers_name_project ON mcp_servers(name, project_id);
 
 CREATE TABLE tools (
-    id TEXT PRIMARY KEY,
-    mcp_server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    mcp_server_id UUID NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     description TEXT,
     input_schema JSONB,
@@ -63,9 +63,9 @@ CREATE INDEX idx_tools_name ON tools(name);
 
 CREATE TABLE tool_embeddings (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    tool_id UUID NOT NULL REFERENCES tools(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     server_name TEXT NOT NULL,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     embedding BYTEA NOT NULL,
     embedding_model TEXT NOT NULL,
     embedding_dim INTEGER NOT NULL,
@@ -87,7 +87,7 @@ CREATE TABLE tool_schema_hashes (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     server_name TEXT NOT NULL,
     tool_name TEXT NOT NULL,
-    project_id TEXT NOT NULL,
+    project_id UUID NOT NULL,
     schema_hash TEXT NOT NULL,
     last_verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -103,7 +103,7 @@ CREATE INDEX idx_schema_hashes_verified ON tool_schema_hashes(last_verified_at);
 
 CREATE TABLE tool_metrics (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     server_name TEXT NOT NULL,
     tool_name TEXT NOT NULL,
     call_count INTEGER NOT NULL DEFAULT 0,
@@ -129,7 +129,7 @@ CREATE INDEX idx_tool_metrics_last_called ON tool_metrics(last_called_at);
 
 CREATE TABLE tool_metrics_daily (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     server_name TEXT NOT NULL,
     tool_name TEXT NOT NULL,
     date DATE NOT NULL,
@@ -169,24 +169,24 @@ CREATE INDEX idx_machines_owner_user_id ON machines(owner_user_id)
 WHERE owner_user_id IS NOT NULL;
 
 CREATE TABLE sessions (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     external_id TEXT NOT NULL,
     machine_id TEXT NOT NULL,
     source TEXT NOT NULL,
-    project_id TEXT NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
     title TEXT,
     title_source TEXT,
     status TEXT DEFAULT 'active',
     transcript_path TEXT,
     summary_path TEXT,
     summary_markdown TEXT,
-    summary_revision_id TEXT,
+    summary_revision_id UUID,
     summary_source_context_hash TEXT,
     summary_digest_turn_count INTEGER,
     summary_generation_mode TEXT,
     summary_generated_at TIMESTAMPTZ,
     git_branch TEXT,
-    parent_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    parent_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     transcript_processed BOOLEAN DEFAULT FALSE,
     agent_depth INTEGER DEFAULT 0,
     spawned_by_agent_id TEXT,
@@ -279,13 +279,13 @@ CREATE INDEX idx_sessions_prune_status_updated_at ON sessions(status, updated_at
 CREATE INDEX idx_sessions_parent_session ON sessions(parent_session_id);
 
 CREATE TABLE session_summary_revisions (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     summary_markdown TEXT NOT NULL,
     generation_mode TEXT NOT NULL,
     source_context_hash TEXT,
     source_digest_turn_count INTEGER,
-    previous_revision_id TEXT,
+    previous_revision_id UUID,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT session_summary_revisions_digest_turn_count_nonnegative
@@ -333,7 +333,7 @@ CREATE UNIQUE INDEX idx_sessions_seq_num ON sessions(project_id, seq_num);
 CREATE UNIQUE INDEX idx_sessions_unique ON sessions(external_id, machine_id, source, project_id, session_type);
 
 CREATE TABLE session_stop_signals (
-    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     source TEXT NOT NULL,
     reason TEXT,
     requested_at TIMESTAMPTZ NOT NULL,
@@ -345,7 +345,7 @@ CREATE INDEX idx_stop_signals_pending ON session_stop_signals(acknowledged_at)
 
 CREATE TABLE loop_progress (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     progress_type TEXT NOT NULL,
     tool_name TEXT,
     details TEXT,
@@ -359,12 +359,12 @@ CREATE INDEX idx_loop_progress_high_value ON loop_progress(session_id, is_high_v
     WHERE is_high_value IS TRUE;
 
 CREATE TABLE tasks (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
-    parent_task_id TEXT REFERENCES tasks(id) DEFERRABLE INITIALLY IMMEDIATE,
-    created_in_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
-    claimed_by_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
-    closed_in_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
+    parent_task_id UUID REFERENCES tasks(id) DEFERRABLE INITIALLY IMMEDIATE,
+    created_in_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    claimed_by_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    closed_in_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     closed_commit_sha TEXT,
     closed_at TIMESTAMPTZ,
     title TEXT NOT NULL,
@@ -440,9 +440,9 @@ CREATE UNIQUE INDEX idx_tasks_github_issue_link
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
 
 ALTER TABLE agent_runs
-    ADD COLUMN parent_session_id TEXT NOT NULL REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
-    ADD COLUMN child_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
-    ADD COLUMN claimed_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    ADD COLUMN parent_session_id UUID NOT NULL REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    ADD COLUMN child_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    ADD COLUMN claimed_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     ADD COLUMN workflow_name TEXT,
     ADD COLUMN agent_name TEXT,
     ADD COLUMN provider TEXT NOT NULL,
@@ -465,7 +465,7 @@ ALTER TABLE agent_runs
     ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ADD COLUMN sdk_session_id TEXT,
     ADD COLUMN continuation_prompt TEXT,
-    ADD COLUMN task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    ADD COLUMN task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     ADD COLUMN pid INTEGER,
     ADD COLUMN tmux_session_name TEXT,
     ADD COLUMN worktree_id TEXT,
@@ -486,8 +486,8 @@ CREATE INDEX idx_agent_runs_task_id ON agent_runs(task_id);
 
 
 CREATE TABLE plans (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
     plan_id TEXT NOT NULL,
     plan_path TEXT NOT NULL,
     plan_hash TEXT,
@@ -508,8 +508,8 @@ CREATE INDEX idx_plans_project_state ON plans(project_id, state);
 
 CREATE TABLE task_dependencies (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    depends_on TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    depends_on UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     dep_type TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE(task_id, depends_on, dep_type)
@@ -520,7 +520,7 @@ CREATE INDEX idx_deps_task ON task_dependencies(task_id);
 CREATE INDEX idx_deps_depends_on ON task_dependencies(depends_on);
 
 CREATE TABLE task_dispatch_mutex (
-    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     lease_until TIMESTAMPTZ,
     lease_holder TEXT,
     run_id TEXT,
@@ -532,7 +532,7 @@ CREATE INDEX idx_dispatch_mutex_scan ON task_dispatch_mutex(lease_until, run_id)
 CREATE INDEX idx_dispatch_mutex_run_id ON task_dispatch_mutex(run_id);
 
 CREATE TABLE task_validation_backoff (
-    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     next_retry_at TIMESTAMPTZ,
     last_error TEXT,
@@ -541,7 +541,7 @@ CREATE TABLE task_validation_backoff (
 
 CREATE TABLE task_lifecycle_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     from_state TEXT,
     to_state TEXT NOT NULL,
     reason TEXT NOT NULL,
@@ -553,7 +553,7 @@ CREATE INDEX idx_lifecycle_events_task ON task_lifecycle_events(task_id, created
 
 CREATE TABLE project_lifecycle_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     event TEXT NOT NULL,
     reason TEXT NOT NULL,
     by_actor TEXT NOT NULL,
@@ -565,8 +565,8 @@ CREATE INDEX idx_project_lifecycle_events_project
 
 CREATE TABLE build_runs (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    root_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    root_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     input_ref TEXT,
     action TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'started'
@@ -593,9 +593,9 @@ CREATE INDEX idx_build_runs_input_started
 CREATE TABLE build_history_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     run_id TEXT REFERENCES build_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    root_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
-    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    root_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     event_type TEXT NOT NULL,
     action TEXT,
     message TEXT,
@@ -614,9 +614,9 @@ CREATE INDEX idx_build_history_events_run
 
 CREATE TABLE expansion_runs (
     id TEXT PRIMARY KEY,
-    parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    triggering_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    parent_task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    triggering_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending', 'running', 'compiled', 'applying', 'completed', 'failed', 'cancelled')),
     input_source TEXT NOT NULL
@@ -644,8 +644,8 @@ CREATE INDEX idx_expansion_runs_status ON expansion_runs(status, created_at DESC
 
 CREATE TABLE session_tasks (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     action TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE(session_id, task_id, action)
@@ -657,7 +657,7 @@ CREATE INDEX idx_session_tasks_task ON session_tasks(task_id);
 
 CREATE TABLE task_validation_history (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     iteration INTEGER NOT NULL,
     status TEXT NOT NULL,
     feedback TEXT,
@@ -672,8 +672,8 @@ CREATE INDEX idx_validation_history_task ON task_validation_history(task_id);
 
 CREATE TABLE task_selection_history (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    task_id TEXT NOT NULL,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID NOT NULL,
     selected_at TIMESTAMPTZ NOT NULL,
     context JSONB
 );
@@ -683,7 +683,7 @@ CREATE INDEX idx_task_selection_session ON task_selection_history(session_id, se
 CREATE INDEX idx_task_selection_task ON task_selection_history(session_id, task_id, selected_at DESC);
 
 CREATE TABLE workflow_states (
-    session_id TEXT PRIMARY KEY,
+    session_id UUID PRIMARY KEY,
     workflow_name TEXT NOT NULL,
     step TEXT NOT NULL,
     step_entered_at TIMESTAMPTZ,
@@ -698,7 +698,7 @@ CREATE TABLE workflow_states (
 
 CREATE TABLE workflow_audit_log (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL,
+    session_id UUID NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     step TEXT NOT NULL,
     event_type TEXT NOT NULL,
@@ -720,8 +720,8 @@ CREATE INDEX idx_audit_event_type ON workflow_audit_log(event_type);
 CREATE INDEX idx_audit_result ON workflow_audit_log(result);
 
 CREATE TABLE workflow_instances (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL,
     workflow_name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     priority INTEGER NOT NULL DEFAULT 100,
@@ -748,12 +748,12 @@ CREATE TABLE session_variables (
 );
 
 CREATE TABLE memories (
-    id TEXT PRIMARY KEY,
-    project_id TEXT REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    project_id UUID REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
     memory_type TEXT NOT NULL,
     content TEXT NOT NULL,
     source_type TEXT,
-    source_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    source_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
 tags JSONB,
@@ -803,8 +803,8 @@ GENERATED ALWAYS AS (memories_tags_to_text(tags)) STORED;
 
 CREATE TABLE session_memories (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     action TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     UNIQUE(session_id, memory_id, action)
@@ -815,8 +815,8 @@ CREATE INDEX idx_session_memories_session ON session_memories(session_id);
 CREATE INDEX idx_session_memories_memory ON session_memories(memory_id);
 
 CREATE TABLE memory_crossrefs (
-    source_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    target_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    source_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    target_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     similarity REAL NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (source_id, target_id)
@@ -829,9 +829,9 @@ CREATE INDEX idx_crossrefs_target ON memory_crossrefs(target_id);
 CREATE INDEX idx_crossrefs_similarity ON memory_crossrefs(similarity DESC);
 
 CREATE TABLE memory_dream_runs (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     -- Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID.
-    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
         CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed', 'interrupted')),
@@ -849,9 +849,9 @@ CREATE TABLE memory_dream_runs (
 
 CREATE TABLE memory_dream_snapshots (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES memory_dream_runs(id)
+    run_id UUID NOT NULL REFERENCES memory_dream_runs(id)
         ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    memory_id TEXT NOT NULL,
+    memory_id UUID NOT NULL,
     action TEXT NOT NULL
         CONSTRAINT memory_dream_snapshots_action_check
         CHECK (
@@ -870,12 +870,12 @@ ON memory_dream_snapshots(run_id);
 
 CREATE TABLE worktrees (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     branch_name TEXT NOT NULL,
     worktree_path TEXT NOT NULL,
     base_branch TEXT DEFAULT 'main',
-    agent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    agent_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     status TEXT DEFAULT 'active',
     merge_state TEXT,
     merged_at TIMESTAMPTZ,
@@ -935,9 +935,9 @@ CREATE INDEX idx_merge_conflicts_file_path ON merge_conflicts(file_path);
 CREATE INDEX idx_merge_conflicts_status ON merge_conflicts(status);
 
 CREATE TABLE inter_session_messages (
-    id TEXT PRIMARY KEY,
-    from_session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    to_session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    from_session UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    to_session UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     content TEXT NOT NULL,
     priority TEXT NOT NULL DEFAULT 'normal',
     sent_at TIMESTAMPTZ NOT NULL,
@@ -995,7 +995,7 @@ CREATE TABLE skills (
     enabled BOOLEAN DEFAULT TRUE,
     always_apply BOOLEAN DEFAULT FALSE,
     injection_format TEXT DEFAULT 'summary',
-    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     source TEXT DEFAULT 'installed',
     deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
@@ -1036,12 +1036,12 @@ CREATE INDEX idx_skill_files_type ON skill_files(file_type);
 
 CREATE TABLE clones (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     branch_name TEXT NOT NULL,
     clone_path TEXT NOT NULL,
     base_branch TEXT DEFAULT 'main',
-    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
-    agent_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    agent_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     status TEXT DEFAULT 'active',
     remote_url TEXT,
     last_sync_at TIMESTAMPTZ,
@@ -1063,7 +1063,7 @@ CREATE UNIQUE INDEX idx_clones_path ON clones(clone_path);
 
 CREATE TABLE cron_jobs (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     description TEXT,
     schedule_type TEXT NOT NULL,
@@ -1118,7 +1118,7 @@ CREATE INDEX idx_cron_runs_pipeline_execution ON cron_runs(pipeline_execution_id
 CREATE UNIQUE INDEX idx_cron_runs_one_active_per_job ON cron_runs(cron_job_id) WHERE status IN ('pending', 'running');
 
 CREATE TABLE project_github_triage_configs (
-    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (enabled IN (FALSE, TRUE)),
     webhook_enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (webhook_enabled IN (FALSE, TRUE)),
     repositories_json JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -1131,7 +1131,7 @@ CREATE TABLE project_github_triage_configs (
 
 CREATE TABLE gh_triage_deliveries (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     delivery_id TEXT NOT NULL,
     event TEXT NOT NULL,
     action TEXT,
@@ -1157,7 +1157,7 @@ CREATE INDEX idx_gh_triage_deliveries_issue
 
 CREATE TABLE gh_issues_triaged (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     repo TEXT NOT NULL,
     issue_number INTEGER NOT NULL,
     issue_url TEXT,
@@ -1168,7 +1168,7 @@ CREATE TABLE gh_issues_triaged (
     verdict TEXT NOT NULL
         CHECK (verdict IN ('implement', 'skip', 'escalate', 'dedup')),
     decision_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     vector_point_id TEXT,
     dedup_issue_key TEXT,
     source TEXT NOT NULL,
@@ -1188,7 +1188,7 @@ CREATE INDEX idx_gh_issues_triaged_task
 CREATE TABLE pipeline_executions (
     id TEXT PRIMARY KEY,
     pipeline_name TEXT NOT NULL,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     status TEXT NOT NULL DEFAULT 'pending',
     inputs_json JSONB,
     outputs_json JSONB,
@@ -1196,7 +1196,7 @@ CREATE TABLE pipeline_executions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     resume_token TEXT UNIQUE,
-    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     parent_execution_id TEXT REFERENCES pipeline_executions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     continuation_prompt TEXT,
     definition_json JSONB,
@@ -1235,7 +1235,7 @@ CREATE INDEX idx_step_executions_execution ON step_executions(execution_id);
 CREATE INDEX idx_step_executions_approval_token ON step_executions(approval_token);
 
 CREATE TABLE secrets (
-id TEXT PRIMARY KEY,
+id UUID PRIMARY KEY,
 name TEXT NOT NULL UNIQUE,
 encrypted_value TEXT NOT NULL,
 category TEXT DEFAULT 'general',
@@ -1259,9 +1259,9 @@ updated_at TIMESTAMPTZ NOT NULL
 CREATE INDEX idx_secrets_category ON secrets(category);
 
 CREATE TABLE task_comments (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    parent_comment_id TEXT REFERENCES task_comments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    parent_comment_id UUID REFERENCES task_comments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     author TEXT NOT NULL,
     author_type TEXT NOT NULL DEFAULT 'session',
     body TEXT NOT NULL,
@@ -1277,7 +1277,7 @@ CREATE INDEX idx_task_comments_created ON task_comments(task_id, created_at);
 
 CREATE TABLE session_skills (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     skill_name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1297,8 +1297,8 @@ CREATE TABLE config_store (
 CREATE INDEX idx_config_store_source ON config_store(source);
 
 CREATE TABLE workflow_definitions (
-    id TEXT PRIMARY KEY,
-    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     description TEXT,
     workflow_type TEXT NOT NULL DEFAULT 'workflow',
@@ -1346,7 +1346,7 @@ CREATE TABLE prompts (
     scope TEXT NOT NULL DEFAULT 'bundled'
         CHECK(scope IN ('bundled', 'global', 'project')),
     source_path TEXT,
-    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -1382,8 +1382,8 @@ CREATE TABLE model_costs (
 
 CREATE TABLE token_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    project_id TEXT,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID,
     message_id TEXT,
     source TEXT NOT NULL,
     origin TEXT NOT NULL,
@@ -1413,7 +1413,7 @@ CREATE UNIQUE INDEX idx_token_events_dedup
 
 CREATE TABLE task_affected_files (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     file_path TEXT NOT NULL,
     annotation_source TEXT NOT NULL DEFAULT 'expansion',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1426,14 +1426,14 @@ CREATE INDEX idx_taf_file_path ON task_affected_files(file_path);
 
 CREATE TABLE completion_subscribers (
     completion_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
+    session_id UUID NOT NULL,
     PRIMARY KEY (completion_id, session_id)
 );
 
 CREATE INDEX idx_completion_subscribers_completion ON completion_subscribers(completion_id);
 
 CREATE TABLE code_indexed_projects (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     root_path TEXT NOT NULL,
     total_files INTEGER NOT NULL DEFAULT 0,
     total_symbols INTEGER NOT NULL DEFAULT 0,
@@ -1444,8 +1444,8 @@ CREATE TABLE code_indexed_projects (
 );
 
 CREATE TABLE code_indexed_files (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL,
     file_path TEXT NOT NULL,
     language TEXT NOT NULL,
     content_hash TEXT NOT NULL,
@@ -1466,8 +1466,8 @@ CREATE INDEX idx_cif_graph_synced ON code_indexed_files(project_id, graph_synced
 CREATE INDEX idx_cif_vectors_synced ON code_indexed_files(project_id, vectors_synced);
 
 CREATE TABLE code_symbols (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL,
     file_path TEXT NOT NULL,
     name TEXT NOT NULL,
     qualified_name TEXT NOT NULL,
@@ -1479,7 +1479,7 @@ CREATE TABLE code_symbols (
     line_end INTEGER NOT NULL,
     signature TEXT,
     docstring TEXT,
-    parent_symbol_id TEXT,
+    parent_symbol_id UUID,
     content_hash TEXT NOT NULL,
     summary TEXT,
     summary_attempted_at TIMESTAMPTZ,
@@ -1501,7 +1501,7 @@ CREATE INDEX idx_cs_parent ON code_symbols(parent_symbol_id);
 
 CREATE TABLE code_imports (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    project_id TEXT NOT NULL,
+    project_id UUID NOT NULL,
     source_file TEXT NOT NULL,
     target_module TEXT NOT NULL,
     UNIQUE(project_id, source_file, target_module)
@@ -1511,15 +1511,16 @@ CREATE INDEX idx_ci_file ON code_imports(project_id, source_file);
 
 CREATE TABLE code_calls (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    caller_symbol_id TEXT NOT NULL,
-    callee_symbol_id TEXT NOT NULL DEFAULT '',
+    project_id UUID NOT NULL,
+    caller_symbol_id UUID NOT NULL,
+    callee_symbol_id UUID,
     callee_name TEXT NOT NULL,
     callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
     callee_external_module TEXT NOT NULL DEFAULT '',
     file_path TEXT NOT NULL,
     line INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(
+    CONSTRAINT code_calls_unique_call_target
+    UNIQUE NULLS NOT DISTINCT (
         project_id,
         caller_symbol_id,
         callee_symbol_id,
@@ -1538,8 +1539,8 @@ CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
 CREATE INDEX idx_cc_target ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
 
 CREATE TABLE code_content_chunks (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL,
     file_path TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     line_start INTEGER NOT NULL,
@@ -1555,7 +1556,7 @@ CREATE INDEX idx_ccc_project ON code_content_chunks(project_id);
 CREATE INDEX idx_ccc_file ON code_content_chunks(project_id, file_path);
 
 CREATE TABLE code_index_projection_cleanup_pending (
-    project_id TEXT NOT NULL,
+    project_id UUID NOT NULL,
     store TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
@@ -1570,7 +1571,7 @@ CREATE INDEX idx_cipcp_updated
     ON code_index_projection_cleanup_pending(updated_at, created_at);
 
 CREATE TABLE code_index_prune_dirty_projects (
-    project_id TEXT PRIMARY KEY,
+    project_id UUID PRIMARY KEY,
     root_path TEXT NOT NULL,
     reason TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
@@ -1651,8 +1652,8 @@ CREATE TABLE comms_identities (
     channel_id TEXT NOT NULL REFERENCES comms_channels(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     external_user_id TEXT NOT NULL,
     external_username TEXT,
-    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
-    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID REFERENCES projects(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1674,7 +1675,7 @@ CREATE TABLE comms_messages (
     content_type TEXT NOT NULL DEFAULT 'text',
     platform_message_id TEXT,
     platform_thread_id TEXT,
-    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     status TEXT NOT NULL DEFAULT 'sent',
     error TEXT,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -1694,8 +1695,8 @@ CREATE TABLE comms_routing_rules (
     name TEXT NOT NULL,
     channel_id TEXT REFERENCES comms_channels(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     event_pattern TEXT NOT NULL DEFAULT '*',
-    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     priority INTEGER DEFAULT 0,
     enabled BOOLEAN DEFAULT TRUE,
     config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -1723,8 +1724,8 @@ CREATE INDEX idx_comms_attachments_message ON comms_attachments(message_id);
 CREATE TABLE metrics_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     event_type TEXT NOT NULL,
-    project_id TEXT,
-    session_id TEXT,
+    project_id UUID,
+    session_id UUID,
     server_name TEXT,
     name TEXT NOT NULL,
     success BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1745,7 +1746,7 @@ CREATE INDEX idx_me_created ON metrics_events(created_at);
 CREATE TABLE metrics_events_archive (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     event_type TEXT NOT NULL,
-    project_id TEXT NOT NULL DEFAULT '',
+    project_id UUID,
     server_name TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL,
     call_count INTEGER NOT NULL DEFAULT 0,
@@ -1754,11 +1755,12 @@ CREATE TABLE metrics_events_archive (
     total_latency_ms REAL NOT NULL DEFAULT 0,
     block_count INTEGER NOT NULL DEFAULT 0,
     allow_count INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(event_type, project_id, server_name, name)
+    CONSTRAINT metrics_events_archive_unique_rollup
+    UNIQUE NULLS NOT DISTINCT(event_type, project_id, server_name, name)
 );
 
 CREATE TABLE chat_messages (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
@@ -1772,13 +1774,13 @@ CREATE TABLE chat_messages (
 CREATE INDEX idx_chat_messages_conv_seq ON chat_messages(conversation_id, seq);
 
 CREATE TABLE chat_attachments (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     -- Client/display identifiers intentionally do not reference server tables.
     draft_id TEXT,
     conversation_id TEXT,
     message_id TEXT,
-    target_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    target_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     filename TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
@@ -1835,9 +1837,9 @@ FOR EACH ROW
 EXECUTE FUNCTION touch_chat_attachments_updated_at();
 
 CREATE TABLE checkpoints (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     ref_name TEXT NOT NULL,
     commit_sha TEXT NOT NULL,
@@ -1854,8 +1856,8 @@ CREATE INDEX idx_checkpoints_session ON checkpoints(session_id);
 CREATE INDEX idx_checkpoints_run ON checkpoints(run_id);
 
 CREATE TABLE pending_interactions (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL,
     provider TEXT NOT NULL,
     tool_name TEXT,
@@ -1875,7 +1877,7 @@ CREATE UNIQUE INDEX idx_pending_interactions_active
     WHERE status = 'pending';
 
 CREATE TABLE task_artifacts (
-            task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+            task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
             plan_file_path TEXT,
             plan_file_hash TEXT,
             worktree_path TEXT,
@@ -1926,7 +1928,7 @@ CREATE TABLE integration_workspace_mutex (
 );
 
 CREATE TABLE task_delivery_campaigns (
-    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     state TEXT NOT NULL DEFAULT 'pending',
     delivery_mode TEXT NOT NULL DEFAULT 'auto'
         CHECK (delivery_mode IN ('auto','pull_request')),
@@ -1944,8 +1946,8 @@ CREATE TABLE task_delivery_campaigns (
 );
 
 CREATE TABLE task_delivery_units (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id UUID PRIMARY KEY,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     unit_key TEXT NOT NULL,
     worktree_id TEXT,
     repo TEXT,
@@ -2013,7 +2015,7 @@ CREATE INDEX idx_task_type_default_stages_position
                 ON task_type_default_stages (task_type, position);
 
 CREATE TABLE build_profiles (
-                id TEXT PRIMARY KEY,
+                id UUID PRIMARY KEY,
                 name TEXT NOT NULL,
                 display_label TEXT NOT NULL,
                 description TEXT NOT NULL,
@@ -2028,7 +2030,7 @@ CREATE TABLE build_profiles (
                 delivery_target_repo TEXT,
                 enabled BOOLEAN NOT NULL DEFAULT TRUE CHECK (enabled IN (FALSE, TRUE)),
                 source TEXT NOT NULL CHECK (source IN ('installed','project')),
-                project_id TEXT REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+                project_id UUID REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
                 tags_json JSONB NOT NULL DEFAULT '[]'::jsonb,
                 bundled_hash TEXT,
                 deleted_at TIMESTAMPTZ,
@@ -2045,7 +2047,7 @@ CREATE INDEX idx_build_profiles_project_source
                 ON build_profiles (project_id, source, name);
 
 CREATE TABLE task_stage_states (
-                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+                task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
                 stage_name TEXT NOT NULL
                     REFERENCES task_stages_registry(name) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
                 position INTEGER NOT NULL,
@@ -2058,9 +2060,9 @@ CREATE TABLE task_stage_states (
                     CHECK (review_policy IN ('none','required','optional')),
                 reviewer_agent TEXT,
                 entered_at TIMESTAMPTZ,
-                entered_by_session_id TEXT,
+                entered_by_session_id UUID,
                 completed_at TIMESTAMPTZ,
-                completed_by_session_id TEXT,
+                completed_by_session_id UUID,
                 completed_commit_sha TEXT,
                 work_attempt_count INTEGER NOT NULL DEFAULT 0,
                 review_round_count INTEGER NOT NULL DEFAULT 0,
@@ -2088,7 +2090,7 @@ CREATE INDEX idx_tasks_state_bucket
                 ON tasks(state_bucket);
 
 -- State bucket precedence is canonical: closed -> escalated -> first non-done stage -> ready.
-CREATE FUNCTION compute_task_state_bucket(p_task_id TEXT)
+CREATE FUNCTION compute_task_state_bucket(p_task_id UUID)
 RETURNS TEXT
 LANGUAGE sql
 STABLE
@@ -2118,7 +2120,7 @@ AS $$
     WHERE t.id = p_task_id
 $$;
 
-CREATE FUNCTION refresh_task_state_bucket(p_task_id TEXT)
+CREATE FUNCTION refresh_task_state_bucket(p_task_id UUID)
 RETURNS void
 LANGUAGE plpgsql
 AS $$

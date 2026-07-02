@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,7 +34,7 @@ MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS = (
     "'review'",
     "'promote'",
 )
-MEMORY_DREAM_PROJECT_FK = "project_id TEXT REFERENCES projects(id) ON DELETE CASCADE"
+MEMORY_DREAM_PROJECT_FK = "project_id UUID REFERENCES projects(id) ON DELETE CASCADE"
 MEMORY_DREAM_PROJECT_COMMENT = (
     "Nullable for global/system dream runs; cron rows are anchored to PERSONAL_PROJECT_ID."
 )
@@ -132,6 +133,11 @@ def _table_definition(content: str, table_name: str) -> str:
     return content[start:end]
 
 
+def _assert_column_type(table_sql: str, column_name: str, type_name: str) -> None:
+    pattern = rf"(?m)^\s*{re.escape(column_name)}\s+{re.escape(type_name)}\b"
+    assert re.search(pattern, table_sql), f"{column_name} is not declared as {type_name}"
+
+
 def _baseline_text() -> str:
     return POSTGRES_BASELINE_SCHEMA.read_text(encoding="utf-8")
 
@@ -207,6 +213,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "301_github_issue_source_text.postgres.sql",
         "302_machines_registry.postgres.sql",
         "303_secret_key_material.postgres.sql",
+        "304_uuid_identity_columns.postgres.sql",
     ]
 
 
@@ -218,7 +225,56 @@ def test_postgres_baseline_version_is_flattened_to_297() -> None:
     # post-baseline migrations ship above 297, so
     # latest_known_version reflects the migration file.
     assert module.BASELINE_VERSION == 297
-    assert module.latest_known_version() == 303
+    assert module.latest_known_version() == 304
+
+
+def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
+    baseline = _baseline_text()
+
+    for table_name, columns in {
+        "projects": ("id",),
+        "sessions": ("id", "project_id", "parent_session_id", "summary_revision_id"),
+        "tasks": ("id", "project_id", "parent_task_id", "created_in_session_id"),
+        "memories": ("id", "project_id", "source_session_id"),
+        "memory_crossrefs": ("source_id", "target_id"),
+        "code_symbols": ("id", "project_id", "parent_symbol_id"),
+        "workflow_instances": ("id", "session_id"),
+        "comms_identities": ("session_id", "project_id"),
+        "comms_messages": ("session_id",),
+        "comms_routing_rules": ("project_id", "session_id"),
+    }.items():
+        table_sql = _table_definition(baseline, table_name)
+        for column_name in columns:
+            _assert_column_type(table_sql, column_name, "UUID")
+
+    _assert_contains_all(
+        "agent_runs internal references",
+        baseline,
+        (
+            "ADD COLUMN parent_session_id UUID NOT NULL REFERENCES sessions(id)",
+            "ADD COLUMN child_session_id UUID REFERENCES sessions(id)",
+            "ADD COLUMN claimed_session_id UUID REFERENCES sessions(id)",
+            "ADD COLUMN task_id UUID REFERENCES tasks(id)",
+        ),
+    )
+
+
+def test_postgres_baseline_keeps_allowlisted_textual_ids() -> None:
+    baseline = _baseline_text()
+
+    for table_name, columns in {
+        "agent_runs": ("id",),
+        "cron_runs": ("id", "agent_run_id"),
+        "comms_channels": ("id",),
+        "comms_identities": ("id", "channel_id"),
+        "comms_messages": ("id", "channel_id", "identity_id", "platform_message_id"),
+        "secret_key_material": ("id",),
+        "session_variables": ("session_id",),
+        "spans": ("trace_id", "span_id", "parent_span_id"),
+    }.items():
+        table_sql = _table_definition(baseline, table_name)
+        for column_name in columns:
+            _assert_column_type(table_sql, column_name, "TEXT")
 
 
 def test_unmodeled_observation_hash_v2_purge_migration() -> None:
@@ -280,7 +336,7 @@ def test_session_summary_revisions_baseline_defines_schema() -> None:
         "generation_mode TEXT NOT NULL",
         "source_context_hash TEXT",
         "source_digest_turn_count INTEGER",
-        "previous_revision_id TEXT",
+        "previous_revision_id UUID",
         "metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb",
         "session_summary_revisions_digest_turn_count_nonnegative",
         "session_summary_revisions_generation_mode_valid",
@@ -374,7 +430,7 @@ def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
     symbol_retry_snippets = ("summary_attempted_at TIMESTAMPTZ",)
     prune_snippets = (
         "CREATE TABLE code_index_prune_dirty_projects",
-        "project_id TEXT PRIMARY KEY",
+        "project_id UUID PRIMARY KEY",
         "root_path TEXT NOT NULL",
         "reason TEXT NOT NULL",
         "attempts INTEGER NOT NULL DEFAULT 0",
