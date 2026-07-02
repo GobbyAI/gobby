@@ -202,20 +202,10 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
 def test_postgres_migrations_limited_to_known_post_baseline() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    # Post-flatten the baseline schema carries the squashed state; only these
-    # incremental migrations remain on disk for already-provisioned hubs. A
-    # stray .sql file here would silently run against every existing DB.
-    assert _tracked_migration_names(migrations_dir) == [
-        "295_relabel_gemini_sessions.postgres.sql",
-        "298_drop_session_wiki_schema.postgres.sql",
-        "299_unmodeled_observations.postgres.sql",
-        "300_purge_unmodeled_observations_for_hash_v2.postgres.sql",
-        "301_github_issue_source_text.postgres.sql",
-        "302_machines_registry.postgres.sql",
-        "303_secret_key_material.postgres.sql",
-        "304_uuid_identity_columns.postgres.sql",
-        "305_uuid_completion.postgres.sql",
-    ]
+    # The 0.5.0 pre-release flatten folded every migration (295-305) into the
+    # baseline schema; the migrations directory ships empty. A stray .sql file
+    # here would silently run against every existing DB.
+    assert _tracked_migration_names(migrations_dir) == []
 
 
 def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
@@ -226,34 +216,30 @@ def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
     invisible to CI — migration 304 took the daemon down twice this way.
     Any migration performing uuid casts must include a preflight DO block
     that RAISEs with the offending columns before the first cast.
-    304 is grandfathered: it is already applied to every populated hub it
-    will ever see and is removed at the next baseline flatten.
+    The directory is empty post-flatten; this contract binds every future
+    migration file.
     """
     migrations_dir = SRC_ROOT / "storage" / "migrations"
-    grandfathered = {304}
 
     for path in sorted(migrations_dir.glob("*.sql")):
-        version = int(path.name.split("_", 1)[0])
-        if version in grandfathered:
-            continue
         content = path.read_text(encoding="utf-8")
         if "TYPE UUID USING" not in content:
             continue
         assert "RAISE EXCEPTION" in content and "preflight" in content.lower(), (
             f"{path.name} performs uuid casts without a preflight guard; "
             "add a DO block that scans for uncastable values and RAISEs "
-            "with the offending column names (see 305_uuid_completion)"
+            "with the offending column names (see 305_uuid_completion in "
+            "git history for the reference pattern)"
         )
 
 
-def test_postgres_baseline_version_is_flattened_to_297() -> None:
+def test_postgres_baseline_version_is_flattened_to_305() -> None:
     import gobby.storage.migrations as module
 
-    # Baseline stays 297: bumping it would reclassify existing 297 hubs as
-    # corrupt_partial (recreation-required) instead of upgrading in place. The
-    # post-baseline migrations ship above 297, so
-    # latest_known_version reflects the migration file.
-    assert module.BASELINE_VERSION == 297
+    # The 0.5.0 pre-release flatten folded 295-305 into the baseline. With no
+    # migration files on disk, latest_known_version() is the baseline itself.
+    # Hubs below 305 take the corrupt_partial backup/recreate path.
+    assert module.BASELINE_VERSION == 305
     assert module.latest_known_version() == 305
 
 
@@ -273,6 +259,8 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
         "comms_routing_rules": ("project_id", "session_id"),
         "session_variables": ("session_id",),
         "rule_overrides": ("session_id",),
+        "unmodeled_observation_events": ("session_id",),
+        "unmodeled_observations": ("example_session_id",),
     }.items():
         table_sql = _table_definition(baseline, table_name)
         for column_name in columns:
@@ -315,24 +303,18 @@ def test_postgres_baseline_keeps_allowlisted_textual_ids() -> None:
     )
 
 
-def test_unmodeled_observation_hash_v2_purge_migration() -> None:
-    migration = (
-        SRC_ROOT
-        / "storage"
-        / "migrations"
-        / "300_purge_unmodeled_observations_for_hash_v2.postgres.sql"
-    ).read_text(encoding="utf-8")
+def test_unmodeled_observation_baseline_uses_uuid_session_columns() -> None:
+    # Session ids in the observation telemetry tables are native uuid; the
+    # event dedup key must be NULLS NOT DISTINCT so unknown-session events
+    # (NULL session_id) still collapse per occurrence.
+    baseline = _baseline_text()
 
-    _assert_contains_all(
-        "unmodeled observation hash v2 purge",
-        migration,
-        (
-            "to_regclass('public.unmodeled_observation_events')",
-            "DELETE FROM unmodeled_observation_events",
-            "to_regclass('public.unmodeled_observations')",
-            "DELETE FROM unmodeled_observations",
-        ),
-    )
+    events_sql = _table_definition(baseline, "unmodeled_observation_events")
+    _assert_column_type(events_sql, "session_id", "UUID")
+    assert "UNIQUE NULLS NOT DISTINCT" in events_sql
+
+    aggregate_sql = _table_definition(baseline, "unmodeled_observations")
+    _assert_column_type(aggregate_sql, "example_session_id", "UUID")
 
 
 def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:
@@ -398,11 +380,11 @@ def test_session_summary_revisions_baseline_defines_schema() -> None:
     _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
 
 
-def test_session_wiki_schema_removed_from_baseline_and_dropped_by_migration() -> None:
+def test_session_wiki_schema_removed_from_baseline() -> None:
     # The session wiki page is now the session summary; the second wiki
     # narrative, its 11 sessions.wiki_* columns, and session_wiki_revisions are
-    # gone. Fresh DBs (baseline at 298) must never create any of it, and the
-    # 298 migration must drop it from already-provisioned 297 hubs.
+    # gone. Fresh DBs must never create any of it (the 298 drop migration was
+    # folded into the baseline flatten).
     baseline = _baseline_text()
     removed_objects = (
         "wiki_path",
@@ -424,27 +406,6 @@ def test_session_wiki_schema_removed_from_baseline_and_dropped_by_migration() ->
         "sessions_wiki_synthesis_consecutive_failures_nonnegative",
     )
     _assert_absent_all("session wiki baseline removal", baseline, removed_objects)
-
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "298_drop_session_wiki_schema.postgres.sql"
-    ).read_text()
-    for removed_object in removed_objects:
-        assert removed_object in migration
-    _assert_contains_all(
-        "session wiki drop migration",
-        migration,
-        (
-            "DROP CONSTRAINT IF EXISTS sessions_wiki_revision_fk",
-            "DROP INDEX IF EXISTS idx_sessions_wiki_revision",
-            "DROP INDEX IF EXISTS idx_sessions_wiki_synthesis_failures_source",
-            "DROP CONSTRAINT IF EXISTS sessions_wiki_digest_turn_count_nonnegative",
-            "DROP COLUMN IF EXISTS wiki_path",
-            "DROP COLUMN IF EXISTS wiki_markdown",
-            "DROP COLUMN IF EXISTS wiki_synthesis_consecutive_failures",
-            "DROP COLUMN IF EXISTS wiki_synthesis_last_failed_at",
-            "DROP TABLE IF EXISTS session_wiki_revisions CASCADE",
-        ),
-    )
 
 
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:

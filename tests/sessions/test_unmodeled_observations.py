@@ -14,6 +14,13 @@ from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
 pytestmark = pytest.mark.unit
 
+# unmodeled_observation_events.session_id is a native uuid column; non-uuid
+# session ids are stored as NULL by the tracker guard.
+SESSION_RENDER_BLOCK = "aeaeaeae-0000-4000-8000-00000000ab01"
+SESSION_RENDER_TOOL = "aeaeaeae-0000-4000-8000-00000000ab02"
+SESSION_RENDER_SYNTHETIC = "aeaeaeae-0000-4000-8000-00000000ab03"
+SESSION_CLAUDE_UNKNOWN = "aeaeaeae-0000-4000-8000-00000000ab04"
+
 
 def _message(
     *,
@@ -47,14 +54,14 @@ def test_unknown_block_type_records_once_across_rerenders(temp_db: HubDatabase) 
 
     rendered = render_transcript(
         [msg],
-        session_id="session-render-block",
+        session_id=SESSION_RENDER_BLOCK,
         source="codex",
         observation_tracker=ObservationTracker(store),
     )
     _, _state = render_incremental(
         [msg],
         RenderState(),
-        session_id="session-render-block",
+        session_id=SESSION_RENDER_BLOCK,
         source="codex",
         observation_tracker=ObservationTracker(store),
     )
@@ -66,11 +73,41 @@ def test_unknown_block_type_records_once_across_rerenders(temp_db: HubDatabase) 
     ]
     events = temp_db.fetchall(
         "SELECT id FROM unmodeled_observation_events WHERE session_id = %s AND name = %s",
-        ("session-render-block", "new_provider_block"),
+        (SESSION_RENDER_BLOCK, "new_provider_block"),
     )
     assert rendered[0].content_blocks[0].type == "unknown"
     assert len(events) == 1
     assert rows[0].count == 1
+
+
+def test_non_uuid_session_id_stores_null_and_still_dedupes(temp_db: HubDatabase) -> None:
+    """Non-uuid session ids become NULL in the uuid columns; the
+    NULLS NOT DISTINCT dedup key still collapses repeat occurrences."""
+    store = UnmodeledObservationStore(temp_db)
+    msg = _message(index=104, content_type="odd_block", raw_type="odd_block")
+
+    for _ in range(2):
+        render_transcript(
+            [msg],
+            session_id="legacy-non-uuid-session",
+            source="codex",
+            observation_tracker=ObservationTracker(store),
+        )
+
+    events = temp_db.fetchall(
+        "SELECT session_id FROM unmodeled_observation_events WHERE name = %s",
+        ("odd_block",),
+    )
+    assert len(events) == 1
+    assert events[0]["session_id"] is None
+
+    rows = [
+        row
+        for row in store.list_observations(source="codex", kind="block_type")
+        if row.name == "odd_block"
+    ]
+    assert len(rows) == 1
+    assert rows[0].example_session_id is None
 
 
 def test_unknown_tool_name_records_classification(temp_db: HubDatabase) -> None:
@@ -85,7 +122,7 @@ def test_unknown_tool_name_records_classification(temp_db: HubDatabase) -> None:
 
     render_transcript(
         [msg],
-        session_id="session-render-tool",
+        session_id=SESSION_RENDER_TOOL,
         source="codex",
         observation_tracker=ObservationTracker(store),
     )
@@ -112,7 +149,7 @@ def test_synthetic_unknown_tool_name_is_excluded(temp_db: HubDatabase) -> None:
 
     render_transcript(
         [msg],
-        session_id="session-render-synthetic",
+        session_id=SESSION_RENDER_SYNTHETIC,
         source="codex",
         observation_tracker=ObservationTracker(store),
     )
@@ -242,7 +279,7 @@ def test_claude_unknown_record_routes_to_t2_via_parse_lines(temp_db: HubDatabase
     store = UnmodeledObservationStore(temp_db)
     rendered = render_transcript(
         parsed,
-        session_id="session-claude-unknown",
+        session_id=SESSION_CLAUDE_UNKNOWN,
         source=fallback_source,
         observation_tracker=ObservationTracker(store),
     )
@@ -263,7 +300,7 @@ def test_claude_unknown_record_routes_to_t2_via_parse_lines(temp_db: HubDatabase
     events = temp_db.fetchall(
         "SELECT source, source_ref, source_line FROM unmodeled_observation_events "
         "WHERE session_id = %s AND kind = 'block_type' AND name = %s",
-        ("session-claude-unknown", "brand-new-envelope"),
+        (SESSION_CLAUDE_UNKNOWN, "brand-new-envelope"),
     )
     assert len(events) == 1
     assert events[0]["source"] == "claude"

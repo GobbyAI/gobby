@@ -33,7 +33,9 @@ COUNT_SEMANTICS = "retention-window distinct transcript occurrences"
 
 @dataclass(frozen=True)
 class UnmodeledObservationInput:
-    session_id: str
+    # None when the transcript block carries no resolvable session uuid;
+    # the columns are native uuid and dedup is NULLS NOT DISTINCT.
+    session_id: str | None
     source: str
     kind: str
     name: str
@@ -54,7 +56,7 @@ class UnmodeledObservationRow:
     count: int
     first_seen_at: str
     last_seen_at: str
-    example_session_id: str
+    example_session_id: str | None
     sample_keys: list[str]
     sample_hash: str
 
@@ -172,7 +174,7 @@ class UnmodeledObservationStore:
                 """
                 UPDATE unmodeled_observation_events
                 SET last_seen_at = NOW()
-                WHERE session_id = %s
+                WHERE session_id IS NOT DISTINCT FROM %s
                   AND source = %s
                   AND kind = %s
                   AND name = %s

@@ -2170,6 +2170,64 @@ AFTER DELETE ON task_stage_states
 FOR EACH ROW
 EXECUTE FUNCTION refresh_task_state_bucket_from_stage();
 
+CREATE TABLE unmodeled_observation_events (
+    id TEXT PRIMARY KEY,
+    session_id UUID,
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    server_name TEXT NOT NULL DEFAULT '',
+    tool_type TEXT NOT NULL DEFAULT '',
+    source_ref TEXT NOT NULL DEFAULT '',
+    source_line INTEGER,
+    sample_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sample_hash TEXT NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unmodeled_observation_events_dedup_key UNIQUE NULLS NOT DISTINCT (
+        session_id,
+        source,
+        kind,
+        name,
+        server_name,
+        tool_type,
+        source_ref,
+        sample_hash
+    )
+);
+
+CREATE TABLE unmodeled_observations (
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    server_name TEXT NOT NULL DEFAULT '',
+    tool_type TEXT NOT NULL DEFAULT '',
+    count BIGINT NOT NULL DEFAULT 0 CHECK (count >= 0),
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    example_session_id UUID,
+    sample_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sample_hash TEXT NOT NULL,
+    PRIMARY KEY (source, kind, name, server_name, tool_type)
+);
+
+CREATE INDEX idx_unmodeled_observation_events_last_seen
+    ON unmodeled_observation_events(last_seen_at);
+
+CREATE INDEX idx_unmodeled_observation_events_group_recompute
+    ON unmodeled_observation_events(
+        source,
+        kind,
+        name,
+        server_name,
+        tool_type,
+        last_seen_at DESC,
+        first_seen_at DESC
+    );
+
+CREATE INDEX idx_unmodeled_observations_worklist
+    ON unmodeled_observations(count DESC, last_seen_at DESC);
+
 -- pg_search extension is provisioned by install (Docker initdb),
 -- not by this schema. The runner probes for its presence and refuses to baseline
 -- without it. See docs/runbooks/postgres-pgsearch-install.md.

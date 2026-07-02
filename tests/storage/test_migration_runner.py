@@ -93,26 +93,16 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
 
 
-def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
+def test_postgres_migration_discovery_finds_no_migrations_post_flatten() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
 
     discovered = runner._discover_migrations()
 
-    # Only post-baseline incremental migrations remain on disk; the rest is
-    # folded into postgres_baseline_schema.sql.
-    assert [(migration.version, migration.name) for migration in discovered] == [
-        (295, "relabel_gemini_sessions"),
-        (298, "drop_session_wiki_schema"),
-        (299, "unmodeled_observations"),
-        (300, "purge_unmodeled_observations_for_hash_v2"),
-        (301, "github_issue_source_text"),
-        (302, "machines_registry"),
-        (303, "secret_key_material"),
-        (304, "uuid_identity_columns"),
-        (305, "uuid_completion"),
-    ]
+    # The 0.5.0 pre-release flatten folded everything into
+    # postgres_baseline_schema.sql; the migrations directory ships empty.
+    assert discovered == []
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

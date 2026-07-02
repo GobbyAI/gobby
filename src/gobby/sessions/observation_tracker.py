@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.unmodeled_observations import (
     UnmodeledObservationInput,
     UnmodeledObservationStore,
@@ -119,10 +120,13 @@ class ObservationTracker:
         if self._store is None:
             return
 
+        # The uuid columns take NULL when the block carries no resolvable
+        # session uuid; "unknown" stays local to the log/dedup key above.
+        db_session_id = session_id if session_id and is_session_uuid(session_id) else None
         try:
             self._store.record(
                 UnmodeledObservationInput(
-                    session_id=resolved_session_id,
+                    session_id=db_session_id,
                     source=resolved_source,
                     kind=kind,
                     name=name,

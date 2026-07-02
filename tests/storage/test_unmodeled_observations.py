@@ -13,10 +13,13 @@ from gobby.storage.unmodeled_observations import (
 
 pytestmark = pytest.mark.unit
 
+# unmodeled_observation_events.session_id is a native uuid column.
+SESSION_STORAGE = "aeaeaeae-0000-4000-8000-00000000ac01"
+
 
 def _observation(name: str, *, source_ref: str = "42") -> UnmodeledObservationInput:
     return UnmodeledObservationInput(
-        session_id="session-storage",
+        session_id=SESSION_STORAGE,
         source="codex",
         kind="block_type",
         name=name,

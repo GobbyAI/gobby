@@ -18,7 +18,8 @@ tests/storage/test_migration_contract.py):
    POPULATED databases that migration tests (which run against fresh,
    empty schemas) can never exercise. Migration 304's bare
    ``caller_symbol_id::UUID`` cast took the daemon down twice for exactly
-   this reason; 305 carries the reference preflight pattern.
+   this reason; ``305_uuid_completion.postgres.sql`` (now folded into the
+   baseline — see git history) carries the reference preflight pattern.
 3. Optional text-uuid columns that used ``''`` sentinels convert with
    ``USING NULLIF(col::TEXT, '')::UUID`` after dropping NOT NULL.
 """
@@ -51,7 +52,7 @@ class MigrationUnsupportedError(Exception):
     """Raised when database version is too old or bookkeeping is corrupt."""
 
 
-BASELINE_VERSION = 297
+BASELINE_VERSION = 305
 
 
 _MIGRATION_FILE_RE = re.compile(r"^(?P<version>\d+)_(?P<name>.+?)(?:\.postgres)?\.sql$")

@@ -7,7 +7,6 @@ from collections.abc import Sequence
 
 import pytest
 
-from gobby.storage.migrations import MigrationRunner
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
@@ -32,45 +31,6 @@ def test_session_registration_boolean_case_is_postgres_safe() -> None:
     assert "WHEN %s THEN %s" in upsert_source
     assert "%s, 0, 0, 0, 0, NULL" not in source
     assert "%s, FALSE, 0, 0, 0, NULL" in source
-
-
-def test_relabel_gemini_sessions_migration_updates_persisted_sources(
-    session_manager: SessionManager,
-    sample_project: dict,
-) -> None:
-    session = session_manager.register(
-        external_id="legacy-gemini",
-        machine_id="machine",
-        source="gemini",
-        project_id=sample_project["id"],
-    )
-    session_manager.db.execute(
-        """
-        INSERT INTO session_stop_signals(session_id, source, reason, requested_at)
-        VALUES (%s, %s, %s, NOW())
-        """,
-        (
-            session.id,
-            "gemini",
-            "test",
-        ),
-    )
-
-    session_manager.db.execute("DELETE FROM schema_migrations WHERE version = %s", (295,))
-    runner = MigrationRunner(session_manager.db)
-    runner.apply_pending()
-    runner.apply_pending()
-
-    migrated = session_manager.get(session.id)
-    assert migrated is not None
-    assert migrated.source == "unknown"
-    assert [row.source for row in session_manager.list(sources=["unknown"])] == ["unknown"]
-
-    row = session_manager.db.fetchone(
-        "SELECT source FROM session_stop_signals WHERE session_id = %s",
-        (session.id,),
-    )
-    assert row["source"] == "unknown"
 
 
 def test_session_had_edits_updates_use_boolean_literals() -> None:
