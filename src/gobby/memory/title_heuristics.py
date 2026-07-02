@@ -59,8 +59,14 @@ _NATIVE_PLACEHOLDER_TITLES = frozenset({"new session"})
 # it's a response dump, not a title.
 _NATIVE_TITLE_MAX_RAW_LENGTH = 200
 
+# XML/tool tag titles that Claude can emit as ai-title values before real content lands.
+_NATIVE_TOOL_TAG_TITLE_RE = re.compile(
+    r"^</?(?:function_calls|invoke|parameter|local-command(?:[-_a-z0-9]*)?)(?:\s+[^>]*)?>$",
+    re.IGNORECASE,
+)
+
 # XML-like block markers that indicate a raw response dump, not a title.
-_NATIVE_TITLE_REJECT_MARKERS = ("<function_calls>", "<invoke", "<parameter")
+_NATIVE_TITLE_REJECT_MARKERS = ("<function_calls>", "<invoke", "<parameter", "<local-command")
 
 __all__ = [
     "LIFECYCLE_CMDS",
@@ -166,6 +172,11 @@ def _is_angle_bracket_placeholder(value: str) -> bool:
     """Return True for unsubstituted template variables like ``<user_query>``."""
     match = _ANGLE_BRACKET_PLACEHOLDER_RE.fullmatch(value.strip())
     return bool(match and match.group(1).lower() in _ANGLE_BRACKET_PLACEHOLDERS)
+
+
+def _is_native_tool_tag_title(value: str) -> bool:
+    """Return True when the entire native title is a raw provider/tool XML tag."""
+    return bool(_NATIVE_TOOL_TAG_TITLE_RE.fullmatch(value.strip()))
 
 
 def build_heuristic_title(prompt_text: Any) -> str | None:
@@ -331,7 +342,10 @@ def normalize_native_title(value: Any, *, source: str | None = None) -> str | No
         return None
     if len(title) > _NATIVE_TITLE_MAX_RAW_LENGTH:
         return None
-    if any(marker in title for marker in _NATIVE_TITLE_REJECT_MARKERS):
+    if _is_native_tool_tag_title(title):
+        return None
+    lowered_title = title.lower()
+    if any(marker in lowered_title for marker in _NATIVE_TITLE_REJECT_MARKERS):
         return None
     if is_template_placeholder(title):
         return None

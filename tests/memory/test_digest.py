@@ -306,6 +306,20 @@ class TestNormalizeNativeTitle:
             == "check-gobby-logs-for-tmux-warnings"
         )
 
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "<local-command>",
+            '<local-command name="pwd">',
+            "<local-command-stdout>",
+            "<function_calls>",
+            '<invoke name="test">',
+            '<parameter name="x">',
+        ],
+    )
+    def test_rejects_claude_native_tool_tag_titles(self, title: str) -> None:
+        assert normalize_native_title(title, source="claude") is None
+
     def test_rejects_new_session_placeholder(self) -> None:
         assert normalize_native_title("New Session") is None
         assert normalize_native_title("new session") is None
