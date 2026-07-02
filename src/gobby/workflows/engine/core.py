@@ -130,6 +130,15 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         ) as span:
             try:
                 if isinstance(event.data, dict):
+                    if event.cwd and "cwd" not in event.data:
+                        event.data["cwd"] = event.cwd
+                    project_path = event.metadata.get("project_path")
+                    if (
+                        isinstance(project_path, str)
+                        and project_path
+                        and "project_path" not in event.data
+                    ):
+                        event.data["project_path"] = project_path
                     normalize_tool_fields(event.data)
 
                 raw_event_value = _event_value(event.event_type)
@@ -450,6 +459,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
 
     def _load_session_overrides(self, session_id: str) -> dict[str, bool]:
         """Load session-scoped rule overrides."""
+        if not session_id:
+            # rule_overrides.session_id is a native uuid column; binding "" raises.
+            return {}
         rows = self.db.fetchall(
             "SELECT rule_name, enabled FROM rule_overrides WHERE session_id = %s",
             (session_id,),

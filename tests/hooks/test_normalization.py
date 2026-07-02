@@ -968,6 +968,53 @@ class TestCanonicalToolMetadata:
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "/repo/main.py"
 
+    def test_write_tool_scratchpad_path_is_not_repo_mutation(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        scratchpad = tmp_path / "gobby-agent-scratchpad-session" / "notes.md"
+        data = {
+            "tool_name": "Write",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"file_path": str(scratchpad)},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is False
+        assert data["canonical_file_path"] == str(scratchpad)
+
+    def test_write_tool_repo_path_is_repo_mutation(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        data = {
+            "tool_name": "Write",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"file_path": "src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "src/app.py"
+
+    def test_write_tool_mixed_scratchpad_and_repo_paths_is_repo_mutation(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        scratchpad = tmp_path / "gobby-agent-scratchpad-session" / "notes.md"
+        data = {
+            "tool_name": "Write",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"file_paths": [str(scratchpad), "src/app.py"]},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == [str(scratchpad), "src/app.py"]
+
     def test_edit_tool_sets_canonical_write_fields(self) -> None:
         data = {"tool_name": "Edit", "tool_input": {"file_path": "/repo/main.py"}}
 
@@ -1023,6 +1070,65 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_file_path"] == "--dash-prefixed.txt"
         assert data["canonical_file_paths"] == ["--dash-prefixed.txt", "normal.txt"]
+
+    def test_exec_command_rg_default_gobby_logs_is_not_repo_scoped(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        home = tmp_path / "home"
+        repo = tmp_path / "repo"
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(home))
+        data = {
+            "tool_name": "exec_command",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": "rg error ~/.gobby/logs/daemon.log"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_broad"] is True
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    def test_exec_command_grep_explicit_gobby_home_logs_is_not_repo_scoped(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        gobby_home = tmp_path / "gobby-home"
+        log_path = gobby_home / "logs" / "daemon.log"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        data = {
+            "tool_name": "exec_command",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": f"grep error {log_path}"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_broad"] is True
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    @pytest.mark.parametrize("command", ["rg error src", "rg error"])
+    def test_exec_command_rg_repo_search_is_repo_scoped(self, command: str, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        data = {
+            "tool_name": "exec_command",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": command},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_broad"] is True
+        assert data["canonical_code_navigation_repo_scope"] is True
 
 
 class TestToolErrorDetection:

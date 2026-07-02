@@ -2812,6 +2812,20 @@ class TestRequireCodeIndexSkillStructure:
         rules = {row.name for row in manager.list_all(workflow_type="rule")}
         assert expected.issubset(rules)
 
+    def test_code_index_block_rules_are_repo_scoped(self, db, manager) -> None:
+        _sync_bundled(db)
+        for rule_name in (
+            "require-code-index-skill",
+            "prefer-gcode-for-code-search",
+            "prefer-gcode-for-source-read",
+        ):
+            row = manager.get_by_name(rule_name)
+            assert row is not None
+            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            assert body.when is not None
+            assert "canonical_code_navigation_repo_scope" in body.when
+            assert "is not False" in body.when
+
     def test_code_index_recovery_allowlist_names_installed_rules(self, db, manager) -> None:
         _sync_bundled(db)
         rules = {row.name for row in manager.list_all(workflow_type="rule")}
@@ -2843,8 +2857,18 @@ class TestCodeIndexNavigationRules:
         )
 
     @classmethod
-    def _normalized_bash_event(cls, command: str) -> HookEvent:
+    def _normalized_bash_event(
+        cls,
+        command: str,
+        *,
+        cwd: str | None = None,
+        project_path: str | None = None,
+    ) -> HookEvent:
         data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+        if cwd is not None:
+            data["cwd"] = cwd
+        if project_path is not None:
+            data["project_path"] = project_path
         normalize_tool_fields(data)
         return cls._event(HookEventType.BEFORE_TOOL, data)
 
@@ -2896,6 +2920,49 @@ class TestCodeIndexNavigationRules:
             'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, '
             'or `gcode search-content "query" [PATH...]` for ranked content search.'
         ) in response.reason
+
+    @pytest.mark.asyncio
+    async def test_log_search_bypasses_code_index_rules(self, db, tmp_path, monkeypatch) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        gobby_home = tmp_path / "gobby-home"
+        log_path = gobby_home / "logs" / "daemon.log"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+        for loaded in (False, True):
+            event = self._normalized_bash_event(
+                f"rg error {log_path}",
+                cwd=str(repo),
+                project_path=str(repo),
+            )
+            assert event.data["canonical_code_navigation_repo_scope"] is False
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id="sess-1",
+                variables=self._variables(loaded=loaded),
+            )
+
+            assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_normalized_repo_search_still_blocks(self, db, tmp_path) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._normalized_bash_event(
+            "rg pattern src",
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+
+        assert event.data["canonical_code_navigation_repo_scope"] is True
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id="sess-1",
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db) -> None:

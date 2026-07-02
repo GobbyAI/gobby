@@ -5,7 +5,7 @@
     "config/bootstrap.yaml": "86b7fd24a84a5e5f14fc6911d122b3ca0bd22ec3e82e87eafe06ea1db25eb1c3",
     "config/config.yaml": "784d8aa1c2c99c9380894b49c721e0810c4428db3d7830d0fd43db6d8177dc74",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
-    "hooks/validate_settings.py": "3c1908e491289526f441cc9d4e7be638b5aa3e4a06fc236c44b531ef4505e0d3",
+    "hooks/validate_settings.py": "073b48372967d7996359d3e02352bf324c7d7bf6bfb9dce7f511823ad8c82de1",
     "prompts/agent/help-content.md": "79db2d2e74504abccab059d4ef17134a4d5b470341871a6347895fbcc37e971d",
     "prompts/agent/skill-hint.md": "79975a3a40e92f8f9bd9dabc4216756df828c9f8cab6bf9579777e23b3146e72",
     "prompts/agent/skill-not-found.md": "9be76cd58eddd87ce0c3a170a0149a3ef90ab96de6d504bace9233000c18aaca",
@@ -302,7 +302,7 @@
     "workflows/rules/brevity/detect-brevity-drift.yaml": "e8e64088efa9f72b3777d0d39bacf8adb7ce69d22b971af1fdb664241fb76790",
     "workflows/rules/brevity/reinforce-brevity.yaml": "28eb304aee9193755a1caf84723e4da4b449b13771a7e7e618aa1c25af3f7f07",
     "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "d2bf00170f01fa832f8f0c4738b609132e4230d38ded596ad7bf1090c975126a",
-    "workflows/rules/code-index/require-code-index-skill.yaml": "36db3f6dec64c25dc499895451abc2731a72367d02f6383aff326ac7f4f7a1b3",
+    "workflows/rules/code-index/require-code-index-skill.yaml": "5e6182aa4ef1643ce32f57df2e0cad86bc6ea8ad9d7578d5f891c2b8d8e3b509",
     "workflows/rules/context-handoff/auto-compact-after-task-close.yaml": "404f74d80aa61d83d0308aa729cbf5e5ee228b496caf7db197dd97b6190a9e9d",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "c3264b3993a33331a7d930e926fac329953f0bb396c15085d1f1725f5a1ee81d",
     "workflows/rules/context-handoff/inject-compact-handoff.yaml": "c5a2135d01f8f946eefc2184ab8af68145ea5769b5184877d93488bd44c86eaa",
@@ -400,7 +400,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "5f98172ef967a16d3b7acb080b559ab33af296a5ddac43543bcbbfa923048498"
+    "workflows/variables/gobby-default-variables.yaml": "81bcce11854bc7e09045e4ed25a337eb8edef44947b7231d7b8a60976433c65e"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

@@ -29,6 +29,7 @@ from gobby.hooks._normalization_shell import (
     shell_token_values,
     tokenize_shell_command,
 )
+from gobby.hooks._path_scope import apply_path_scope_metadata
 from gobby.hooks.code_navigation import (
     count_option_line_count,
     gcode_navigation_metadata,
@@ -637,8 +638,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     ):
         metadata.update(search_navigation_metadata())
 
-    if metadata.get("canonical_tool_kind") == "write" and "canonical_repo_mutation" not in metadata:
-        metadata["canonical_repo_mutation"] = True
+    apply_path_scope_metadata(data, metadata, canonical_file_paths)
 
     if canonical_file_paths:
         _setdefault_tool_input_paths(tool_input, canonical_file_paths)
