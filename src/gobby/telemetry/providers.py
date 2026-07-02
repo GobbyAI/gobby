@@ -14,6 +14,7 @@ from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
 from gobby.telemetry.exporters import create_exporters
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 _TRACER_PROVIDER: TracerProvider | None = None
 _METER_PROVIDER: MeterProvider | None = None
 _LOGGER_PROVIDER: LoggerProvider | None = None
+_SPAN_STORAGE_EXPORTER_REGISTERED = False
 _PROVIDER_LOCK = threading.Lock()
 
 
@@ -42,8 +44,6 @@ def get_tracer_provider(config: TelemetrySettings) -> TracerProvider:
             span_exporters, _, _ = create_exporters(config)
             _TRACER_PROVIDER = TracerProvider(resource=resource, sampler=sampler)
 
-            from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
             for exporter in span_exporters:
                 _TRACER_PROVIDER.add_span_processor(BatchSpanProcessor(exporter))
 
@@ -55,14 +55,17 @@ def add_span_storage_exporter(
     broadcast_callback: Callable[[dict[str, Any]], Any] | None = None,
 ) -> None:
     """Add GobbySpanExporter to the global TracerProvider."""
-    global _TRACER_PROVIDER
-    if _TRACER_PROVIDER is not None:
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
+    global _TRACER_PROVIDER, _SPAN_STORAGE_EXPORTER_REGISTERED
+    if _TRACER_PROVIDER is None:
+        return
+    with _PROVIDER_LOCK:
+        if _TRACER_PROVIDER is None or _SPAN_STORAGE_EXPORTER_REGISTERED:
+            return
         from gobby.telemetry.span_store import GobbySpanExporter
 
         exporter = GobbySpanExporter(storage, broadcast_callback=broadcast_callback)
         _TRACER_PROVIDER.add_span_processor(BatchSpanProcessor(exporter))
+        _SPAN_STORAGE_EXPORTER_REGISTERED = True
 
 
 def get_meter_provider(config: TelemetrySettings) -> MeterProvider:
@@ -94,11 +97,12 @@ def get_logger_provider(config: TelemetrySettings) -> LoggerProvider:
 
 def shutdown_providers() -> None:
     """Shutdown all providers and clear cache."""
-    global _TRACER_PROVIDER, _METER_PROVIDER, _LOGGER_PROVIDER
+    global _TRACER_PROVIDER, _METER_PROVIDER, _LOGGER_PROVIDER, _SPAN_STORAGE_EXPORTER_REGISTERED
 
     if _TRACER_PROVIDER is not None:
         _TRACER_PROVIDER.shutdown()
         _TRACER_PROVIDER = None
+        _SPAN_STORAGE_EXPORTER_REGISTERED = False
 
     if _METER_PROVIDER is not None:
         _METER_PROVIDER.shutdown()

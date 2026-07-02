@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from contextlib import contextmanager
 
 import pytest
@@ -200,10 +201,17 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _postgres_module()
     calls: dict[str, object] = {}
     monkeypatch.delenv("PGAPPNAME", raising=False)
+    monkeypatch.delenv("PGPOOL_MIN", raising=False)
+    monkeypatch.delenv("PGPOOL_MAX", raising=False)
+    monkeypatch.delenv("PGPOOL_TIMEOUT", raising=False)
+    monkeypatch.setenv("PGCONNECT_TIMEOUT", "99")
 
     class FakePool:
         def __init__(self, *args, **kwargs) -> None:
             calls["constructor_open"] = kwargs["open"]
+            calls["constructor_min_size"] = kwargs["min_size"]
+            calls["constructor_max_size"] = kwargs["max_size"]
+            calls["constructor_timeout"] = kwargs["timeout"]
             calls["pool_kwargs"] = kwargs["kwargs"]
 
         def open(self, *, wait: bool, timeout: float) -> None:
@@ -216,6 +224,9 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
 
     db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
     assert calls["constructor_open"] is False
+    assert calls["constructor_min_size"] == 2
+    assert calls["constructor_max_size"] == 20
+    assert calls["constructor_timeout"] == 5.0
     pool_kwargs = calls["pool_kwargs"]
     assert isinstance(pool_kwargs, dict)
     assert pool_kwargs["application_name"] == "gobby"
@@ -227,6 +238,163 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     db.open(timeout=9.0)
 
     assert calls["opened"] == (True, 1.5)
+
+
+def test_postgres_pool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _postgres_module()
+    calls: dict[str, object] = {}
+    monkeypatch.setenv("PGAPPNAME", "gobby-tests")
+    monkeypatch.setenv("PGPOOL_MIN", "4")
+    monkeypatch.setenv("PGPOOL_MAX", "24")
+    monkeypatch.setenv("PGPOOL_TIMEOUT", "7.5")
+    monkeypatch.setenv("PGPOOL_OPEN_TIMEOUT", "12.5")
+
+    class FakePool:
+        def __init__(self, *args, **kwargs) -> None:
+            calls["constructor_open"] = kwargs["open"]
+            calls["constructor_min_size"] = kwargs["min_size"]
+            calls["constructor_max_size"] = kwargs["max_size"]
+            calls["constructor_timeout"] = kwargs["timeout"]
+            calls["pool_kwargs"] = kwargs["kwargs"]
+
+        def open(self, *, wait: bool, timeout: float) -> None:
+            calls["opened"] = (wait, timeout)
+
+        def close(self) -> None:
+            calls["closed"] = True
+
+    monkeypatch.setattr(module, "ConnectionPool", FakePool)
+
+    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+    db.open()
+
+    assert calls["constructor_open"] is False
+    assert calls["constructor_min_size"] == 4
+    assert calls["constructor_max_size"] == 24
+    assert calls["constructor_timeout"] == 7.5
+    assert calls["pool_kwargs"]["application_name"] == "gobby-tests"
+    assert calls["opened"] == (True, 12.5)
+
+
+def test_transaction_pool_timeout_checks_pool_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _postgres_module()
+    pool_holder: dict[str, object] = {}
+
+    class TransactionContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class Connection:
+        def transaction(self):
+            return TransactionContext()
+
+    class TimeoutConnectionContext:
+        def __enter__(self):
+            raise module.PoolTimeout("couldn't get a connection after 5.00 sec")
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class ConnectionContext:
+        def __enter__(self):
+            return Connection()
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakePool:
+        def __init__(self, *args, **kwargs) -> None:
+            self.connection_calls = 0
+            self.check_calls = 0
+            pool_holder["pool"] = self
+
+        def open(self, *, wait: bool, timeout: float) -> None:
+            return None
+
+        def connection(self):
+            self.connection_calls += 1
+            if self.connection_calls == 1:
+                return TimeoutConnectionContext()
+            return ConnectionContext()
+
+        def check(self) -> None:
+            self.check_calls += 1
+
+        def get_stats(self) -> dict[str, int]:
+            return {"pool_size": 20, "pool_available": 0}
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(module, "ConnectionPool", FakePool)
+    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+
+    with caplog.at_level(logging.WARNING, logger=module.__name__):
+        with db.transaction():
+            pass
+
+    pool = pool_holder["pool"]
+    assert pool.connection_calls == 2
+    assert pool.check_calls == 1
+    assert "checking pool before retry" in caplog.text
+    assert "pool_size" in caplog.text
+
+
+def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    module = _postgres_module()
+    pool_holder: dict[str, object] = {}
+
+    class TimeoutConnectionContext:
+        def __enter__(self):
+            raise module.PoolTimeout("couldn't get a connection after 5.00 sec")
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakePool:
+        def __init__(self, *args, **kwargs) -> None:
+            self.connection_calls = 0
+            self.check_calls = 0
+            pool_holder["pool"] = self
+
+        def open(self, *, wait: bool, timeout: float) -> None:
+            return None
+
+        def connection(self):
+            self.connection_calls += 1
+            return TimeoutConnectionContext()
+
+        def check(self) -> None:
+            self.check_calls += 1
+
+        def get_stats(self) -> dict[str, int]:
+            return {"pool_size": 20, "pool_available": 0}
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(module, "ConnectionPool", FakePool)
+    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+
+    with caplog.at_level(logging.WARNING, logger=module.__name__):
+        with pytest.raises(module.PoolTimeout):
+            with db.transaction():
+                pass
+
+    pool = pool_holder["pool"]
+    assert pool.connection_calls == 2
+    assert pool.check_calls == 1
+    assert "retry failed" in caplog.text
+    assert "pool_size" in caplog.text
 
 
 def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:

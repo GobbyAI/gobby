@@ -5,6 +5,8 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from psycopg_pool import PoolTimeout
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -56,8 +58,15 @@ class SpanStorage:
 
         try:
             self.db.executemany(query, rows)
+        except PoolTimeout as e:
+            logger.warning(
+                "Dropping %d telemetry spans because hub pool acquisition timed out: %s",
+                len(spans),
+                e,
+            )
+            raise
         except Exception as e:
-            logger.error(f"Failed to save spans: {e}")
+            logger.error("Failed to save spans: %s", e)
             raise
 
     def get_trace(self, trace_id: str) -> list[dict[str, Any]]:

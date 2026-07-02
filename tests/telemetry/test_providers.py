@@ -2,11 +2,14 @@
 Tests for telemetry providers.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.trace import TracerProvider
 
+import gobby.telemetry.providers as providers
 from gobby.telemetry.config import TelemetrySettings
 from gobby.telemetry.providers import (
     get_logger_provider,
@@ -33,6 +36,30 @@ def test_get_tracer_provider() -> None:
 
     provider2 = get_tracer_provider(config)
     assert provider1 is provider2
+
+
+def test_add_span_storage_exporter_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = MagicMock()
+    batch_processors: list[object] = []
+
+    def fake_batch_processor(exporter: object) -> object:
+        batch_processors.append(exporter)
+        return exporter
+
+    monkeypatch.setattr(providers, "_TRACER_PROVIDER", provider)
+    monkeypatch.setattr(providers, "_SPAN_STORAGE_EXPORTER_REGISTERED", False)
+    monkeypatch.setattr(providers, "BatchSpanProcessor", fake_batch_processor)
+
+    providers.add_span_storage_exporter(MagicMock(), broadcast_callback=MagicMock())
+    providers.add_span_storage_exporter(MagicMock(), broadcast_callback=MagicMock())
+
+    assert provider.add_span_processor.call_count == 1
+    assert len(batch_processors) == 1
+
+    providers.shutdown_providers()
+
+    provider.shutdown.assert_called_once()
+    assert providers._SPAN_STORAGE_EXPORTER_REGISTERED is False
 
 
 def test_get_meter_provider() -> None:

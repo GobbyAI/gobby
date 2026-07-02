@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import logging
 import os
 import re
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import date, datetime
 from typing import Any, Literal, cast
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
@@ -44,6 +45,8 @@ from gobby.storage.migrations import (
     MigrationUnsupportedError,
     _split_statements_respecting_dollar_quotes,
 )
+
+logger = logging.getLogger(__name__)
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
@@ -91,8 +94,8 @@ class PostgresHubDatabase:
             conninfo=dsn,
             open=False,
             min_size=int(os.getenv("PGPOOL_MIN", "2")),
-            max_size=int(os.getenv("PGPOOL_MAX", "10")),
-            timeout=int(os.getenv("PGCONNECT_TIMEOUT", "5")),
+            max_size=int(os.getenv("PGPOOL_MAX", "20")),
+            timeout=float(os.getenv("PGPOOL_TIMEOUT", "5")),
             kwargs={
                 "application_name": os.getenv("PGAPPNAME", "gobby"),
                 "prepare_threshold": None,
@@ -127,6 +130,46 @@ class PostgresHubDatabase:
                 open_timeout = float(os.getenv("PGPOOL_OPEN_TIMEOUT", "30"))
             open_pool(wait=wait, timeout=open_timeout)
             self._pool_opened = True
+
+    def pool_stats(self) -> dict[str, Any]:
+        """Return best-effort pool diagnostics for acquisition failures."""
+        get_stats = getattr(self._pool, "get_stats", None)
+        if not callable(get_stats):
+            return {}
+        try:
+            return dict(get_stats())
+        except Exception as exc:
+            return {"pool_stats_error": f"{type(exc).__name__}: {exc}"}
+
+    @contextmanager
+    def _pool_connection(self) -> Iterator[psycopg.Connection[Any]]:
+        with ExitStack() as stack:
+            try:
+                conn = stack.enter_context(self._pool.connection())
+            except PoolTimeout:
+                logger.warning(
+                    "PostgreSQL hub pool acquisition timed out; checking pool before retry: "
+                    "pool_stats=%s",
+                    self.pool_stats(),
+                )
+                try:
+                    self._pool.check()
+                except Exception:
+                    logger.warning(
+                        "PostgreSQL hub pool check failed after acquisition timeout: pool_stats=%s",
+                        self.pool_stats(),
+                        exc_info=True,
+                    )
+                try:
+                    conn = stack.enter_context(self._pool.connection())
+                except PoolTimeout:
+                    logger.warning(
+                        "PostgreSQL hub pool acquisition retry failed: pool_stats=%s",
+                        self.pool_stats(),
+                        exc_info=True,
+                    )
+                    raise
+            yield conn
 
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
@@ -163,7 +206,7 @@ class PostgresHubDatabase:
             callbacks: list[Callable[[], Any]] = []
             _push_after_commit_scope(self._state)
             try:
-                with self._pool.connection() as conn, conn.transaction():
+                with self._pool_connection() as conn, conn.transaction():
                     txn = _PostgresTransaction(
                         conn,
                         is_immediate=is_immediate,

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import SpanKind
+from psycopg_pool import PoolTimeout
 
 if TYPE_CHECKING:
     from gobby.storage.spans import SpanStorage
@@ -47,6 +48,13 @@ class GobbySpanExporter(SpanExporter):
                     )
 
             return SpanExportResult.SUCCESS
+        except PoolTimeout as exc:
+            logger.warning(
+                "Dropping %d telemetry spans because hub pool acquisition timed out: %s",
+                len(spans),
+                exc,
+            )
+            return SpanExportResult.FAILURE
         except Exception:
             logger.error("Error exporting spans", exc_info=True)
             return SpanExportResult.FAILURE
