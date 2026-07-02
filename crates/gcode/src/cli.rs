@@ -1,6 +1,6 @@
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use gobby_code::output;
-use gobby_core::config::AiRouting;
+use gobby_core::config::{AiRouting, FeatureCandidate};
 
 const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
 const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
@@ -384,6 +384,7 @@ pub(crate) enum Command {
                 "ai",
                 "ai_depth",
                 "ai_aggregate_profile",
+                "ai_aggregate_candidate",
                 "ai_verify_profile",
                 "ai_verify_scope",
                 "ai_prose_depth",
@@ -412,6 +413,16 @@ pub(crate) enum Command {
         /// [default: feature_high — daemon chain codex/gpt-5.5@xhigh, then claude/opus@high]
         #[arg(long, value_name = "PROFILE")]
         ai_aggregate_profile: Option<String>,
+        /// Pin the aggregate writer to an explicit provider/model candidate
+        /// chain (repeatable, ordered; e.g. claude/sonnet@xhigh). Daemon route
+        /// only; supersedes profile routing for aggregate docs.
+        #[arg(
+            long,
+            value_name = "PROVIDER/MODEL[@EFFORT]",
+            value_parser = feature_candidate_label,
+            conflicts_with = "ai_aggregate_profile"
+        )]
+        ai_aggregate_candidate: Vec<FeatureCandidate>,
         /// Daemon feature profile for grounded verification
         /// [default: feature_mid]
         #[arg(long, value_name = "PROFILE")]
@@ -610,6 +621,10 @@ fn non_empty_grep_pattern(value: &str) -> Result<String, String> {
     } else {
         Ok(value.to_string())
     }
+}
+
+fn feature_candidate_label(value: &str) -> Result<FeatureCandidate, String> {
+    FeatureCandidate::parse_cli_label(value)
 }
 
 fn positive_usize(value: &str) -> Result<usize, String> {

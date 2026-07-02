@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gobby_core::config::AiRouting;
+use gobby_core::config::{AiRouting, FeatureCandidate};
 use serde::{Deserialize, Serialize};
 
 use crate::models::Symbol;
@@ -842,6 +842,14 @@ pub struct CodewikiAiOptions {
     /// the binding's default profile (see `text/generation.rs`); `Some(profile)`
     /// pins that named daemon feature profile instead.
     pub aggregate_profile: Option<String>,
+    /// Explicit provider/model candidate chain pinning the aggregate writer
+    /// (`--ai-aggregate-candidate`, repeatable and ordered). Empty (the
+    /// default) leaves profile-based routing in charge; non-empty entries are
+    /// forwarded via the daemon request's `candidates` field, superseding the
+    /// profile. Daemon route only — the Direct route rejects explicit
+    /// candidates with a hard error. Mutually exclusive with
+    /// `aggregate_profile` (enforced at the CLI).
+    pub aggregate_candidates: Vec<FeatureCandidate>,
     /// Override seams for the grounded verification pass. Each `None` falls
     /// back to the resolved `ai.text_generate.verify_*` config, then to the
     /// generate model/key and [`super::DEFAULT_VERIFY_PROFILE`]. Kept here so

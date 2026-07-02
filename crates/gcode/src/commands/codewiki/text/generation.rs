@@ -4,7 +4,8 @@ use std::time::Duration;
 use gobby_core::ai::generation::{
     ChatMessage, ChatTransport, DaemonAgenticResult, DirectChatTransport, DirectGenerationTarget,
     GenerationTier, StopReason, ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat,
-    generate_one_shot, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    generate_one_shot, generate_one_shot_pinned, profile_for_tier,
+    resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{
     AiNoticeKind, daemon::generate_via_daemon_with_max_tokens, effective_route,
@@ -133,6 +134,10 @@ pub(crate) fn resolve_text_generator(
     // resolves each profile to a concrete target so a standalone gcore.yaml
     // routes the tiers to their own provider/model/api_key.
     let aggregate_profile = ai.aggregate_profile.clone();
+    // Explicit `--ai-aggregate-candidate` pins supersede profile routing for
+    // the Aggregate tier only; run-level Direct-route rejection happens in
+    // `run.rs` (see `direct_route_candidate_error`) before any generation.
+    let aggregate_candidates = ai.aggregate_candidates.clone();
     let direct_targets = matches!(route, AiRouting::Direct)
         .then(|| resolve_direct_tier_targets(ctx, aggregate_profile.as_deref()));
     if direct_targets
@@ -156,17 +161,29 @@ pub(crate) fn resolve_text_generator(
             .map(|targets| targets.for_tier(gen_tier));
         let system = prompts::with_register(system, register);
         let prompt = bound_one_shot_prompt(prompt);
+        let pinned = gen_tier == GenerationTier::Aggregate && !aggregate_candidates.is_empty();
         let result = generate_with_bounded_retry(|| {
-            generate_one_shot(
-                &ai_context,
-                route,
-                gen_tier,
-                aggregate_profile.as_deref(),
-                target,
-                prompt.as_str(),
-                Some(system.as_ref()),
-                max_tokens,
-            )
+            if pinned {
+                generate_one_shot_pinned(
+                    &ai_context,
+                    route,
+                    &aggregate_candidates,
+                    prompt.as_str(),
+                    Some(system.as_ref()),
+                    max_tokens,
+                )
+            } else {
+                generate_one_shot(
+                    &ai_context,
+                    route,
+                    gen_tier,
+                    aggregate_profile.as_deref(),
+                    target,
+                    prompt.as_str(),
+                    Some(system.as_ref()),
+                    max_tokens,
+                )
+            }
         });
         match result {
             Ok(result) => clean_generated(result.text),
@@ -188,6 +205,30 @@ pub(crate) fn resolve_text_generator(
         ai_fallback: observed.fallback,
         no_generator_reason: None,
     }
+}
+
+/// Run-level guard for `--ai-aggregate-candidate` on the Direct route: an
+/// explicit candidate chain can only be honored by the daemon (the Direct
+/// route resolves a single profile target), so a Direct-resolved Lane A or an
+/// engaged Direct-resolved Lane B must fail the whole run loudly instead of
+/// degrading every aggregate page. Returns the error message to surface, or
+/// `None` when the pinned run may proceed.
+pub(crate) fn direct_route_candidate_error(
+    aggregate_candidates: &[gobby_core::config::FeatureCandidate],
+    text_route: AiRouting,
+    engaged_tool_loop_route: Option<AiRouting>,
+) -> Option<String> {
+    if aggregate_candidates.is_empty() {
+        return None;
+    }
+    let direct =
+        text_route == AiRouting::Direct || engaged_tool_loop_route == Some(AiRouting::Direct);
+    direct.then(|| {
+        "--ai-aggregate-candidate requires the daemon route (explicit candidates are \
+         unsupported on the Direct route); rerun with --ai daemon, or drop the flag and \
+         use --ai-aggregate-profile"
+            .to_string()
+    })
 }
 
 /// Maps the codewiki prompt tier onto the shared, provider-neutral generation
@@ -963,6 +1004,9 @@ pub(crate) fn resolve_tool_loop_generator(
     }
     let aggregate_profile = ai.aggregate_profile.clone();
     let profile = profile_for_tier(GenerationTier::Aggregate, aggregate_profile.as_deref());
+    // Explicit `--ai-aggregate-candidate` pins supersede the profile on the
+    // daemon route; the Direct route is rejected at run level in `run.rs`.
+    let aggregate_candidates = ai.aggregate_candidates.clone();
     let direct_target = if matches!(route, AiRouting::Direct) {
         let target = resolve_aggregate_direct_target(ctx, aggregate_profile.as_deref());
         // No resolved api_base means a Direct-route Lane B cannot run; decline
@@ -1002,6 +1046,7 @@ pub(crate) fn resolve_tool_loop_generator(
                 match daemon_agentic_chat(
                     &ai_context,
                     &profile,
+                    (!aggregate_candidates.is_empty()).then_some(aggregate_candidates.as_slice()),
                     &project_path,
                     &tool_policy,
                     &messages,

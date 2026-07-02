@@ -17,9 +17,9 @@ pub(crate) use frontmatter::{
 };
 pub(crate) use generation::{
     GRAPH_UNAVAILABLE, GenerationContent, GenerationObservability, GenerationOutcome,
-    LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator, generate_aggregate,
-    is_ai_generation_failure_code, maybe_generate, resolve_text_generator, resolve_text_verifier,
-    resolve_tool_loop_generator,
+    LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator, direct_route_candidate_error,
+    generate_aggregate, is_ai_generation_failure_code, maybe_generate, resolve_text_generator,
+    resolve_text_verifier, resolve_tool_loop_generator,
 };
 pub(crate) use sanitize::neutralize_symbol_purpose_links;
 pub(crate) use structural::{

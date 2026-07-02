@@ -162,6 +162,24 @@ docs stay on the daemon default profile. The aggregate writer defaults to the
 `feature_high` profile (daemon chain: codex/gpt-5.5@xhigh, then
 claude/opus@high); override it with `--ai-aggregate-profile <PROFILE>`.
 
+For per-run model pinning (bakeoffs, cost control) without touching daemon
+config, pass `--ai-aggregate-candidate <PROVIDER/MODEL[@EFFORT]>` instead. The
+flag is repeatable and ordered — the chain becomes the exact fallback sequence
+the daemon tries — and each entry may pin its own reasoning effort (`low`,
+`medium`, `high`, `xhigh`, or `max`; the daemon still skips efforts a provider
+does not support):
+
+```bash
+gcode codewiki --ai daemon --ai-aggregate-candidate claude/sonnet@xhigh \
+  --ai-aggregate-candidate codex/gpt-5.5@xhigh
+```
+
+Explicit candidates supersede profile routing for aggregate docs only (file
+and symbol docs keep their default profile) and conflict with
+`--ai-aggregate-profile` — choose one. The flag is daemon-route only: a run
+whose aggregate writing resolves to the Direct route fails immediately with a
+clear error rather than generating with an unpinned model.
+
 ### Prose Depth and Audience Register
 
 Two dials shape generated prose independently of `--ai-depth` (which controls

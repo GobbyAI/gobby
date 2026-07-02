@@ -135,8 +135,9 @@ pub fn generate_via_daemon_with_max_tokens(
 /// Pin an explicit provider/model candidate chain for this one call, overriding
 /// the binding's profile/provider/model/reasoning. Each [`FeatureCandidate`]
 /// carries its own optional `reasoning_effort`. Used by callers that need a
-/// specific model (e.g. codewiki's aggregate writer requesting opus-first)
-/// regardless of the binding's default daemon feature profile.
+/// specific model (e.g. codewiki's aggregate writer under
+/// `--ai-aggregate-candidate`) regardless of the binding's default daemon
+/// feature profile.
 pub fn generate_via_daemon_with_candidates(
     cfg: &AiContext,
     prompt: &str,

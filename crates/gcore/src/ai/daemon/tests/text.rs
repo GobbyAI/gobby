@@ -98,6 +98,63 @@ fn configured_binding_profile_replaces_feature_low_default() {
 }
 
 #[test]
+fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
+    use crate::ai::generation::generate_one_shot_pinned;
+    use crate::config::AiRouting;
+
+    let (port, request) = spawn_server(r#"{"text":"ok","model":"claude-sonnet"}"#);
+    let home = temp_home();
+    let _env = EnvGuard::set_home(home.path());
+    write_daemon_files(home.path(), port, "text-token");
+    let mut cfg = test_context(Some("project-123"));
+    // A configured binding profile/provider/model must not leak into a pinned
+    // call: the explicit chain supersedes the whole binding.
+    cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+    cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
+    cfg.bindings.text_generate.profile = Some("feature_low".to_string());
+    let candidates = vec![
+        FeatureCandidate {
+            candidate: "claude/sonnet".to_string(),
+            reasoning_effort: Some("xhigh".to_string()),
+        },
+        FeatureCandidate {
+            candidate: "codex/gpt-5.5".to_string(),
+            reasoning_effort: None,
+        },
+    ];
+
+    let result = generate_one_shot_pinned(
+        &cfg,
+        AiRouting::Daemon,
+        &candidates,
+        "Pinned prompt",
+        Some("Be brief"),
+        Some(64),
+    )
+    .unwrap();
+    let request = request.join().unwrap().unwrap();
+    let body = request_body_json(&request);
+
+    assert!(request.starts_with("POST /api/llm/generate HTTP/1.1"));
+    assert_eq!(
+        body["candidates"],
+        serde_json::json!([
+            {"candidate":"claude/sonnet","reasoning_effort":"xhigh"},
+            {"candidate":"codex/gpt-5.5"}
+        ])
+    );
+    assert!(body.get("profile").is_none());
+    assert!(body.get("provider").is_none());
+    assert!(body.get("model").is_none());
+    assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(body["prompt"], "Pinned prompt");
+    assert_eq!(body["system_prompt"], "Be brief");
+    assert_eq!(body["max_tokens"], 64);
+    assert_eq!(body["project_id"], "project-123");
+    assert_eq!(result.text, "ok");
+}
+
+#[test]
 fn forwards_candidates_and_reasoning_effort_from_binding() {
     let (port, request) = spawn_server(r#"{"text":"ok","applied_reasoning_effort":"high"}"#);
     let home = temp_home();

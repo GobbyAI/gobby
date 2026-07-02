@@ -122,12 +122,14 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn codewiki_ai_options(
     ai: Option<AiRouteArg>,
     ai_depth: cli::AiDepthArg,
     ai_prose_depth: cli::AiProseDepthArg,
     ai_register: Option<cli::AiRegisterArg>,
     ai_aggregate_profile: Option<String>,
+    ai_aggregate_candidate: Vec<gobby_core::config::FeatureCandidate>,
     ai_verify_profile: Option<String>,
     ai_verify_scope: cli::AiVerifyScopeArg,
 ) -> commands::codewiki::CodewikiAiOptions {
@@ -137,6 +139,7 @@ fn codewiki_ai_options(
         prose_depth: ai_prose_depth.into(),
         register: ai_register.map(Into::into),
         aggregate_profile: ai_aggregate_profile,
+        aggregate_candidates: ai_aggregate_candidate,
         verify_profile: ai_verify_profile,
         verify_model: None,
         verify_api_key: None,
@@ -551,6 +554,7 @@ fn run() -> anyhow::Result<()> {
             ai,
             ai_depth,
             ai_aggregate_profile,
+            ai_aggregate_candidate,
             ai_verify_profile,
             ai_verify_scope,
             ai_prose_depth,
@@ -577,6 +581,7 @@ fn run() -> anyhow::Result<()> {
                     ai_prose_depth,
                     ai_register,
                     ai_aggregate_profile,
+                    ai_aggregate_candidate,
                     ai_verify_profile,
                     ai_verify_scope,
                 ),

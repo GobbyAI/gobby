@@ -21,12 +21,13 @@ pub(super) use super::super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
     DirectChatTransport, DirectGenerationTarget, FEATURE_HIGH, FEATURE_LOW, FEATURE_MID,
     GenerationTier, StopReason, ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits,
-    ToolSchema, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    ToolSchema, generate_one_shot_pinned, profile_for_tier, resolve_direct_generation_target,
+    run_tool_loop,
 };
 pub(super) use crate::ai_context::{AiBindings, AiContext, AiLimiter};
 pub(super) use crate::ai_types::{AiError, TokenUsage};
 pub(super) use crate::config::{
-    AiRouting, AiTuning, CapabilityBinding, ConfigSource, TEST_ENV_LOCK, ai_keys,
+    AiRouting, AiTuning, CapabilityBinding, ConfigSource, FeatureCandidate, TEST_ENV_LOCK, ai_keys,
 };
 pub(super) use crate::test_http::spawn_json_response;
 

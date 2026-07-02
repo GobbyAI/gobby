@@ -219,7 +219,7 @@ pub(crate) use text::{
     CitationResolver, FrontmatterLaneB, GRAPH_UNAVAILABLE, GenerationContent,
     GenerationObservability, GenerationOutcome, LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator,
     VerifyOutcome, append_curated_source_files, append_relevant_source_files, citation_list,
-    citation_markers, collect_link_spans, display_child_summary,
+    citation_markers, collect_link_spans, direct_route_candidate_error, display_child_summary,
     frontmatter_aggregate_with_verify_notes, frontmatter_aggregate_without_ranges,
     frontmatter_with_degradation, frontmatter_with_degradation_and_verify_notes_without_ranges,
     frontmatter_with_degradation_without_ranges, generate_aggregate, ground_text,

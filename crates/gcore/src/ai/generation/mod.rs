@@ -17,7 +17,7 @@ pub mod tier;
 pub mod tool_loop;
 pub mod transport;
 
-pub use lane_a::{generate_one_shot, generate_text_with_target};
+pub use lane_a::{generate_one_shot, generate_one_shot_pinned, generate_text_with_target};
 pub use profile::{DirectGenerationTarget, resolve_direct_generation_target};
 pub use tier::{FEATURE_HIGH, FEATURE_LOW, FEATURE_MID, GenerationTier, profile_for_tier};
 pub use tool_loop::{

@@ -464,3 +464,49 @@ fn invalid_embedding_timeout_uses_default() {
 
     assert_eq!(embedding.timeout_seconds, EMBEDDING_DEFAULT_TIMEOUT_SECONDS);
 }
+
+#[test]
+fn feature_candidate_parses_cli_labels() {
+    let plain = FeatureCandidate::parse_cli_label("claude/sonnet").expect("plain label parses");
+    assert_eq!(plain.candidate, "claude/sonnet");
+    assert!(plain.reasoning_effort.is_none());
+
+    let pinned =
+        FeatureCandidate::parse_cli_label("claude/sonnet@xhigh").expect("effort label parses");
+    assert_eq!(pinned.candidate, "claude/sonnet");
+    assert_eq!(pinned.reasoning_effort.as_deref(), Some("xhigh"));
+
+    // Whitespace is trimmed and effort matches case-insensitively, stored
+    // lowercase.
+    let padded =
+        FeatureCandidate::parse_cli_label("  codex / gpt-5.5 @ XHIGH ").expect("padded parses");
+    assert_eq!(padded.candidate, "codex/gpt-5.5");
+    assert_eq!(padded.reasoning_effort.as_deref(), Some("xhigh"));
+}
+
+#[test]
+fn feature_candidate_rejects_malformed_cli_labels() {
+    for label in ["sonnet", "/sonnet", "claude/", "@xhigh", "", "  "] {
+        let error = FeatureCandidate::parse_cli_label(label).expect_err("malformed label rejected");
+        assert!(
+            error.contains("expected provider/model[@effort]"),
+            "{label}: {error}"
+        );
+    }
+}
+
+#[test]
+fn feature_candidate_rejects_unknown_efforts() {
+    for label in [
+        "claude/sonnet@",
+        "claude/sonnet@ultra",
+        "claude/sonnet@hi gh",
+    ] {
+        let error = FeatureCandidate::parse_cli_label(label).expect_err("unknown effort rejected");
+        assert!(
+            error.contains("invalid reasoning effort"),
+            "{label}: {error}"
+        );
+        assert!(error.contains("low, medium, high, xhigh, max"), "{error}");
+    }
+}

@@ -130,6 +130,7 @@ fn codewiki_ai_options_routes_verify_profile_override() {
         cli::AiProseDepthArg::Deep,
         Some(cli::AiRegisterArg::Newcomer),
         Some("aggregate_profile".to_string()),
+        Vec::new(),
         Some("feature_mid".to_string()),
         cli::AiVerifyScopeArg::All,
     );
@@ -138,6 +139,7 @@ fn codewiki_ai_options_routes_verify_profile_override() {
         options.aggregate_profile.as_deref(),
         Some("aggregate_profile")
     );
+    assert!(options.aggregate_candidates.is_empty());
     assert_eq!(options.verify_profile.as_deref(), Some("feature_mid"));
     assert_eq!(
         options.prose_depth,
@@ -151,4 +153,25 @@ fn codewiki_ai_options_routes_verify_profile_override() {
         options.verify_scope,
         gobby_code::commands::codewiki::VerifyScope::All
     );
+}
+
+#[test]
+fn codewiki_ai_options_threads_aggregate_candidates() {
+    let candidates = vec![gobby_core::config::FeatureCandidate {
+        candidate: "claude/sonnet".to_string(),
+        reasoning_effort: Some("xhigh".to_string()),
+    }];
+    let options = codewiki_ai_options(
+        Some(AiRouteArg::Daemon),
+        cli::AiDepthArg::Files,
+        cli::AiProseDepthArg::Standard,
+        None,
+        None,
+        candidates.clone(),
+        None,
+        cli::AiVerifyScopeArg::Aggregates,
+    );
+
+    assert_eq!(options.aggregate_candidates, candidates);
+    assert!(options.aggregate_profile.is_none());
 }

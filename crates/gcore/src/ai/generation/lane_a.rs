@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use reqwest::blocking::Client;
 use reqwest::header::AUTHORIZATION;
 
-use crate::ai::daemon::generate_via_daemon_with_max_tokens;
+use crate::ai::daemon::{generate_via_daemon_with_candidates, generate_via_daemon_with_max_tokens};
 use crate::ai::text::chat_completion_usage;
 use crate::ai::{
     chat_api_root, chat_completion_content, chat_completion_model, parse_json_response,
@@ -24,7 +24,7 @@ use crate::ai::{
 };
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TextResult};
-use crate::config::{AiCapability, AiRouting};
+use crate::config::{AiCapability, AiRouting, FeatureCandidate};
 
 use super::profile::DirectGenerationTarget;
 use super::tier::{GenerationTier, profile_for_tier};
@@ -66,6 +66,44 @@ pub fn generate_one_shot(
             })?;
             generate_text_with_target(context, target, prompt, system, max_tokens)
         }
+        AiRouting::Off | AiRouting::Auto => Err(AiError::not_configured(
+            Some(AiCapability::TextGenerate.as_str().to_string()),
+            "text generation route is off or unresolved (Auto); resolve to Daemon or Direct first",
+        )),
+    }
+}
+
+/// One-shot generation with an explicit provider/model candidate chain pinned
+/// for this call (codewiki's `--ai-aggregate-candidate`). The Daemon route
+/// forwards the chain via the request's `candidates` field, superseding the
+/// binding's profile/provider/model; the Direct route resolves exactly one
+/// profile target and cannot honor a candidate chain, so explicit candidates
+/// are rejected with a clear error instead of silently generating with an
+/// unpinned model.
+pub fn generate_one_shot_pinned(
+    context: &AiContext,
+    route: AiRouting,
+    candidates: &[FeatureCandidate],
+    prompt: &str,
+    system: Option<&str>,
+    max_tokens: Option<usize>,
+) -> Result<TextResult, AiError> {
+    if candidates.is_empty() {
+        return Err(AiError::not_configured(
+            Some(AiCapability::TextGenerate.as_str().to_string()),
+            "pinned one-shot generation requires at least one candidate",
+        ));
+    }
+    match route {
+        AiRouting::Daemon => {
+            generate_via_daemon_with_candidates(context, prompt, system, max_tokens, candidates)
+        }
+        AiRouting::Direct => Err(AiError::not_configured(
+            Some(AiCapability::TextGenerate.as_str().to_string()),
+            "explicit generation candidates are unsupported on the Direct route (it resolves a \
+             single profile target); use the daemon route, or pin a profile via an aggregate \
+             profile override instead",
+        )),
         AiRouting::Off | AiRouting::Auto => Err(AiError::not_configured(
             Some(AiCapability::TextGenerate.as_str().to_string()),
             "text generation route is off or unresolved (Auto); resolve to Daemon or Direct first",

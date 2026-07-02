@@ -15,9 +15,10 @@ use super::{
     BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput, CodewikiProgress,
     CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT,
     ReusePlan, build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
-    build_feature_catalog_doc, build_system_model, build_truth_digest, fetch_codewiki_graph_edges,
-    generation, in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator,
-    resolve_text_verifier, resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
+    build_feature_catalog_doc, build_system_model, build_truth_digest,
+    direct_route_candidate_error, fetch_codewiki_graph_edges, generation, in_scope, io,
+    is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
+    resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -100,6 +101,19 @@ pub fn run(
     // explicit graph-unavailable result instead of an empty one.
     let resolved_tool_loop_generator =
         resolve_tool_loop_generator(ctx, &ai, input.graph_availability);
+    // A pinned candidate chain (--ai-aggregate-candidate) is daemon-only: fail
+    // the run loudly before generation if either aggregate writing lane
+    // resolved to the Direct route, rather than degrading every page.
+    if let Some(error) = direct_route_candidate_error(
+        &ai.aggregate_candidates,
+        resolved_generator.ai_route,
+        resolved_tool_loop_generator
+            .generator
+            .is_some()
+            .then_some(resolved_tool_loop_generator.ai_outcome.route),
+    ) {
+        anyhow::bail!(error);
+    }
     let aggregate_ai_outcome = if resolved_tool_loop_generator.generator.is_some() {
         resolved_tool_loop_generator.ai_outcome
     } else {

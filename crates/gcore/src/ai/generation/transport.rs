@@ -26,7 +26,7 @@ use crate::ai::{
 };
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TokenUsage};
-use crate::config::AiCapability;
+use crate::config::{AiCapability, FeatureCandidate};
 
 use super::profile::DirectGenerationTarget;
 use super::tool_loop::{
@@ -237,7 +237,8 @@ pub struct ToolPolicy {
 }
 
 /// One-shot daemon-side agentic narrative generation. POSTs the system+user
-/// `messages` plus the feature `profile`, absolute `project_path`, and the
+/// `messages` plus the feature `profile` (or an explicit `candidates` chain
+/// that supersedes it), absolute `project_path`, and the
 /// caller's `tool_policy` to the daemon's `/api/llm/chat/completions` endpoint;
 /// the daemon runs its own agent loop over the repo (executing only the
 /// whitelisted tools) and returns the finished narrative. A single POST — no
@@ -245,9 +246,11 @@ pub struct ToolPolicy {
 /// (it carries the final answer and `investigation` provenance, not `tool_calls`
 /// to execute locally). Token auth, retry, and the `ToolChat` timeout match
 /// [`DaemonChatTransport::complete`].
+#[allow(clippy::too_many_arguments)]
 pub fn daemon_agentic_chat(
     context: &AiContext,
     profile: &str,
+    candidates: Option<&[FeatureCandidate]>,
     project_path: &str,
     tool_policy: &ToolPolicy,
     messages: &[ChatMessage],
@@ -255,7 +258,8 @@ pub fn daemon_agentic_chat(
     reasoning_effort: Option<&str>,
 ) -> Result<DaemonAgenticResult, AiError> {
     let profile = profile.trim();
-    if profile.is_empty() {
+    let candidates = candidates.filter(|candidates| !candidates.is_empty());
+    if profile.is_empty() && candidates.is_none() {
         return Err(AiError::not_configured(
             Some(AiCapability::ToolChat.as_str().to_string()),
             "daemon agentic chat profile is required",
@@ -266,6 +270,7 @@ pub fn daemon_agentic_chat(
     let token = read_local_cli_token()?;
     let body = build_daemon_agentic_body(
         profile,
+        candidates,
         context.project_id.as_deref(),
         project_path,
         tool_policy,
@@ -293,13 +298,17 @@ pub fn daemon_agentic_chat(
 }
 
 /// Build the daemon agentic-chat body: the system+user `messages`, the feature
-/// `profile`, the active `project_id`, the absolute `project_path` the daemon
-/// investigates, the caller's `tool_policy` (the daemon builds the executable
-/// tools from it and enforces its own whitelist), and optional
-/// `max_turns`/`reasoning_effort`. No `tools`/`tool_choice`/`model` — the daemon
-/// owns its provider/model selection and builds the tools from the policy.
+/// `profile` (or an explicit `candidates` chain that supersedes it, mirroring
+/// the one-shot `/api/llm/generate` precedence), the active `project_id`, the
+/// absolute `project_path` the daemon investigates, the caller's `tool_policy`
+/// (the daemon builds the executable tools from it and enforces its own
+/// whitelist), and optional `max_turns`/`reasoning_effort`. No
+/// `tools`/`tool_choice`/`model` — the daemon owns its provider/model selection
+/// and builds the tools from the policy.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_daemon_agentic_body(
     profile: &str,
+    candidates: Option<&[FeatureCandidate]>,
     project_id: Option<&str>,
     project_path: &str,
     tool_policy: &ToolPolicy,
@@ -310,7 +319,18 @@ pub(crate) fn build_daemon_agentic_body(
     let mut body = Map::new();
     let messages: Vec<Value> = messages.iter().map(message_to_json).collect();
     body.insert("messages".to_string(), Value::Array(messages));
-    insert_trimmed(&mut body, "profile", Some(profile));
+    match candidates {
+        // An explicit candidate chain pins the exact provider/model sequence
+        // for this call; the profile is omitted so the daemon routes to the
+        // requested candidates only (each carries its own reasoning pin).
+        Some(candidates) => {
+            body.insert(
+                "candidates".to_string(),
+                serde_json::to_value(candidates).expect("feature candidates serialize"),
+            );
+        }
+        None => insert_trimmed(&mut body, "profile", Some(profile)),
+    }
     insert_trimmed(&mut body, "project_id", project_id);
     insert_trimmed(&mut body, "project_path", Some(project_path));
     body.insert("tool_policy".to_string(), tool_policy_to_json(tool_policy));

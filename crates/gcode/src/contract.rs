@@ -314,6 +314,10 @@ pub fn contract() -> CliContract {
                     ai_flag(),
                     ai_depth_flag(),
                     FlagContract::value("--ai-aggregate-profile", "PROFILE"),
+                    FlagContract::repeatable_value(
+                        "--ai-aggregate-candidate",
+                        "PROVIDER/MODEL[@EFFORT]",
+                    ),
                     FlagContract::value("--ai-verify-profile", "PROFILE"),
                     ai_verify_scope_flag(),
                     ai_prose_depth_flag(),

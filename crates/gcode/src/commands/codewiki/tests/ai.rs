@@ -795,3 +795,34 @@ fn parse_yaml_frontmatter(markdown: &str) -> serde_yaml::Value {
         .expect("frontmatter block");
     serde_yaml::from_str(yaml).expect("parse frontmatter")
 }
+
+#[test]
+fn direct_route_candidate_error_gates_pinned_runs() {
+    use gobby_core::config::FeatureCandidate;
+
+    let pinned = vec![FeatureCandidate {
+        candidate: "claude/sonnet".to_string(),
+        reasoning_effort: Some("xhigh".to_string()),
+    }];
+
+    // No pins: every route combination proceeds.
+    assert!(
+        direct_route_candidate_error(&[], AiRouting::Direct, Some(AiRouting::Direct)).is_none()
+    );
+    // Pinned + daemon everywhere: proceeds (Lane B absent or daemon).
+    assert!(direct_route_candidate_error(&pinned, AiRouting::Daemon, None).is_none());
+    assert!(
+        direct_route_candidate_error(&pinned, AiRouting::Daemon, Some(AiRouting::Daemon)).is_none()
+    );
+    // Pinned + a Direct-resolved lane fails the run with an actionable message.
+    for (text_route, lane_b_route) in [
+        (AiRouting::Direct, None),
+        (AiRouting::Direct, Some(AiRouting::Daemon)),
+        (AiRouting::Daemon, Some(AiRouting::Direct)),
+    ] {
+        let error = direct_route_candidate_error(&pinned, text_route, lane_b_route)
+            .expect("direct route rejected");
+        assert!(error.contains("--ai-aggregate-candidate"), "{error}");
+        assert!(error.contains("daemon route"), "{error}");
+    }
+}

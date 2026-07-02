@@ -97,6 +97,7 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     let result = daemon_agentic_chat(
         &context,
         "feature_high",
+        None,
         "/abs/repo",
         &tool_policy,
         &messages,
@@ -165,6 +166,7 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
     let result = daemon_agentic_chat(
         &context,
         "feature_high",
+        None,
         "/abs/repo",
         &tool_policy,
         &messages,
@@ -203,6 +205,7 @@ fn daemon_agentic_chat_rejects_blank_profile_before_daemon_setup() {
     let error = daemon_agentic_chat(
         &context,
         " \t ",
+        None,
         "/repo",
         &tool_policy,
         &messages,
@@ -213,4 +216,89 @@ fn daemon_agentic_chat_rejects_blank_profile_before_daemon_setup() {
 
     assert!(matches!(error, AiError::NotConfigured { .. }), "{error}");
     assert!(error.to_string().contains("profile is required"), "{error}");
+}
+
+#[test]
+fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
+    // An explicit candidate chain (--ai-aggregate-candidate) pins the exact
+    // provider/model sequence: the body carries `candidates` and omits
+    // `profile`, mirroring the one-shot /api/llm/generate precedence.
+    let response = r#"{"model":"claude-sonnet","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"pinned narrative"}}]}"#;
+    let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+    let home = tempfile::tempdir().expect("temp home");
+    let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
+    let context = daemon_agentic_context(Some("project-7"));
+    let messages = vec![ChatMessage::user("seed")];
+    let tool_policy = ToolPolicy {
+        cli: "gcode".to_string(),
+        tools: vec!["search".to_string()],
+        allow_mutation: false,
+    };
+    let candidates = vec![
+        FeatureCandidate {
+            candidate: "claude/sonnet".to_string(),
+            reasoning_effort: Some("xhigh".to_string()),
+        },
+        FeatureCandidate {
+            candidate: "codex/gpt-5.5".to_string(),
+            reasoning_effort: None,
+        },
+    ];
+
+    let result = daemon_agentic_chat(
+        &context,
+        "feature_high",
+        Some(&candidates),
+        "/abs/repo",
+        &tool_policy,
+        &messages,
+        None,
+        None,
+    )
+    .expect("agentic chat succeeds");
+
+    let raw = handle.join().unwrap().unwrap();
+    let body = request_body_json(&raw);
+    assert!(body.get("profile").is_none());
+    assert_eq!(
+        body["candidates"],
+        serde_json::json!([
+            {"candidate":"claude/sonnet","reasoning_effort":"xhigh"},
+            {"candidate":"codex/gpt-5.5"}
+        ])
+    );
+    assert_eq!(result.content.as_deref(), Some("pinned narrative"));
+}
+
+#[test]
+fn daemon_agentic_chat_empty_candidates_fall_back_to_profile() {
+    // An empty chain is "not pinned": the profile is required and forwarded.
+    let response = r#"{"model":"m","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"body"}}]}"#;
+    let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+    let home = tempfile::tempdir().expect("temp home");
+    let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
+    let context = daemon_agentic_context(None);
+    let messages = vec![ChatMessage::user("seed")];
+    let tool_policy = ToolPolicy {
+        cli: "gcode".to_string(),
+        tools: vec!["search".to_string()],
+        allow_mutation: false,
+    };
+
+    daemon_agentic_chat(
+        &context,
+        "feature_high",
+        Some(&[]),
+        "/abs/repo",
+        &tool_policy,
+        &messages,
+        None,
+        None,
+    )
+    .expect("agentic chat succeeds");
+
+    let raw = handle.join().unwrap().unwrap();
+    let body = request_body_json(&raw);
+    assert_eq!(body["profile"], "feature_high");
+    assert!(body.get("candidates").is_none());
 }

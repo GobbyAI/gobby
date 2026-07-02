@@ -1258,6 +1258,14 @@
           "repeatable": false
         },
         {
+          "name": "--ai-aggregate-candidate",
+          "takes_value": true,
+          "value_name": "PROVIDER/MODEL[@EFFORT]",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
           "name": "--ai-verify-profile",
           "takes_value": true,
           "value_name": "PROFILE",
@@ -1288,38 +1296,38 @@
           "required": false,
           "repeatable": false
         },
-    {
-      "name": "--ai-register",
-      "takes_value": true,
-      "value_name": "newcomer|maintainer|agent",
-      "allowed_values": [
+        {
+          "name": "--ai-register",
+          "takes_value": true,
+          "value_name": "newcomer|maintainer|agent",
+          "allowed_values": [
             "newcomer",
             "maintainer",
             "agent"
           ],
-      "required": false,
-      "repeatable": false
-    },
-    {
-      "name": "--edge-limit",
-      "takes_value": true,
-      "value_name": "N",
-      "allowed_values": [],
-      "required": false,
-      "repeatable": false
-    },
-    {
-      "name": "--include-docs",
-      "takes_value": false,
-      "value_name": null,
-      "allowed_values": [],
-      "required": false,
-      "repeatable": false
-    },
-    {
-      "name": "--repair-citations",
-      "takes_value": false,
-      "value_name": null,
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--edge-limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--include-docs",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--repair-citations",
+          "takes_value": false,
+          "value_name": null,
           "allowed_values": [],
           "required": false,
           "repeatable": false
@@ -1334,11 +1342,11 @@
         "changed_paths",
         "skipped",
         "files",
-    "modules",
-    "symbols",
-    "ai_enabled",
-    "degraded_pages",
-    "pages_scanned",
+        "modules",
+        "symbols",
+        "ai_enabled",
+        "degraded_pages",
+        "pages_scanned",
         "pages_repaired",
         "citations_repaired",
         "citations_unresolved"

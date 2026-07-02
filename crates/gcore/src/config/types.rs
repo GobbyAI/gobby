@@ -215,12 +215,60 @@ impl std::fmt::Display for ParseAiCapabilityError {
 
 impl std::error::Error for ParseAiCapabilityError {}
 
+/// Reasoning-effort labels accepted when parsing CLI candidate pins. The
+/// daemon still applies per-provider capability gating at runtime, so a label
+/// accepted here can still be skipped by a provider that does not support it.
+pub const KNOWN_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
 /// One text-generation provider/model candidate plus an optional reasoning pin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FeatureCandidate {
     pub candidate: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+}
+
+impl FeatureCandidate {
+    /// Parse a CLI `provider/model[@effort]` label (e.g. `claude/sonnet@xhigh`)
+    /// into a structured candidate. Both provider and model are required; the
+    /// optional `@effort` suffix must be one of [`KNOWN_REASONING_EFFORTS`]
+    /// (matched case-insensitively, stored lowercase).
+    pub fn parse_cli_label(label: &str) -> Result<Self, String> {
+        let trimmed = label.trim();
+        let (candidate, effort) = match trimmed.rsplit_once('@') {
+            Some((candidate, effort)) => (candidate.trim(), Some(effort.trim())),
+            None => (trimmed, None),
+        };
+        let (provider, model) = candidate.split_once('/').unwrap_or(("", ""));
+        let (provider, model) = (provider.trim(), model.trim());
+        if provider.is_empty() || model.is_empty() {
+            return Err(format!(
+                "invalid candidate `{label}`: expected provider/model[@effort], \
+                 e.g. claude/sonnet@xhigh"
+            ));
+        }
+        let reasoning_effort = match effort {
+            Some(effort) => {
+                let known = KNOWN_REASONING_EFFORTS
+                    .iter()
+                    .find(|known| known.eq_ignore_ascii_case(effort));
+                match known {
+                    Some(known) => Some((*known).to_string()),
+                    None => {
+                        return Err(format!(
+                            "invalid reasoning effort `{effort}` in `{label}`: expected one of {}",
+                            KNOWN_REASONING_EFFORTS.join(", ")
+                        ));
+                    }
+                }
+            }
+            None => None,
+        };
+        Ok(Self {
+            candidate: format!("{provider}/{model}"),
+            reasoning_effort,
+        })
+    }
 }
 
 impl<'de> Deserialize<'de> for FeatureCandidate {
