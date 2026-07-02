@@ -15,6 +15,7 @@ from gobby.sync.linear_support import (
     _gobby_seq_from_linear_title,
     _linear_fetch_failure_limiter,
     _local_title_from_linear,
+    is_transient_linear_fetch_error,
     logger,
     project_gobby_state_for_linear,
 )
@@ -388,7 +389,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         return created
 
     async def _push_task_rows(self, rows: list[Any]) -> dict[str, int]:
-        stats = {"pushed": 0, "skipped": 0, "errors": 0}
+        stats = {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
         for row in rows:
             try:
                 await self.sync_task_to_linear(row["id"])
@@ -418,7 +419,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         push_stats = await self.push_active_tasks()
 
         synced_at = None
-        if push_stats.get("errors", 0) == 0:
+        if push_stats.get("errors", 0) == 0 and push_stats.get("deferred", 0) == 0:
             synced_at = datetime.now(UTC).isoformat()
             self._update_synced_at(synced_at)
 
@@ -439,7 +440,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             raise ValueError("No team_id provided and no default linear_team_id configured.")
 
         synced_at = _parse_linear_timestamp(self._get_project_synced_at())
-        stats = {"updated": 0, "skipped": 0, "errors": 0}
+        stats = {"updated": 0, "skipped": 0, "errors": 0, "deferred": 0}
 
         rows = self.task_manager.db.fetchall(
             "SELECT id, linear_issue_id FROM tasks "
@@ -470,8 +471,12 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     project_id=self._get_linear_project_id(),
                 )
             except (LinearGraphQLError, httpx.HTTPError) as graphql_error:
-                _linear_fetch_failure_limiter.log_failure(logger, graphql_error)
-                stats["errors"] = len(rows)
+                if is_transient_linear_fetch_error(graphql_error):
+                    _linear_fetch_failure_limiter.log_deferred(logger, graphql_error)
+                    stats["deferred"] = len(rows)
+                else:
+                    _linear_fetch_failure_limiter.log_failure(logger, graphql_error)
+                    stats["errors"] = len(rows)
                 return stats
 
         _linear_fetch_failure_limiter.log_success(logger)
@@ -544,11 +549,16 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         effective_team_id = team_id or self.linear_team_id
 
         pull_stats = await self.pull_linear_updates(team_id=effective_team_id)
-        push_stats = await self.push_dirty_tasks()
-
         pull_errors = int(pull_stats.get("errors", 0))
+        pull_deferred = int(pull_stats.get("deferred", 0))
+        if pull_errors or pull_deferred:
+            push_stats = {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
+        else:
+            push_stats = await self.push_dirty_tasks()
+
         push_errors = int(push_stats.get("errors", 0))
-        cursor_updated = pull_errors == 0 and push_errors == 0
+        push_deferred = int(push_stats.get("deferred", 0))
+        cursor_updated = not (pull_errors or pull_deferred or push_errors or push_deferred)
         synced_at: str | None
         if cursor_updated:
             synced_at = datetime.now(UTC).isoformat()

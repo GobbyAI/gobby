@@ -102,15 +102,20 @@ def create_linear_sync_handler(
             push = result["push"]
             pull_errors = int(pull.get("errors", 0))
             push_errors = int(push.get("errors", 0))
+            pull_deferred = int(pull.get("deferred", 0))
+            push_deferred = int(push.get("deferred", 0))
             if pull_errors or push_errors:
                 raise RuntimeError(
                     "Linear sync completed with errors: "
-                    f"pull_errors={pull_errors}, push_errors={push_errors}"
+                    f"pull_errors={pull_errors}, push_errors={push_errors}, "
+                    f"pull_deferred={pull_deferred}, push_deferred={push_deferred}"
                 )
+            status = "deferred" if pull_deferred or push_deferred else "complete"
             return (
-                f"Linear sync complete: "
-                f"pulled {pull['updated']} (skipped {pull['skipped']}, errors {pull_errors}), "
-                f"pushed {push['pushed']} (errors {push_errors})"
+                f"Linear sync {status}: "
+                f"pulled {pull['updated']} "
+                f"(skipped {pull['skipped']}, errors {pull_errors}, deferred {pull_deferred}), "
+                f"pushed {push['pushed']} (errors {push_errors}, deferred {push_deferred})"
             )
         except Exception as e:
             logger.error("Linear sync cron failed: %s", e, exc_info=True)

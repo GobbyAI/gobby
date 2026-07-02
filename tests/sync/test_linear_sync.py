@@ -7,6 +7,7 @@ and Linear via the official Linear MCP server.
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from gobby.integrations.linear_graphql import LinearGraphQLError
@@ -14,7 +15,11 @@ from gobby.mcp_proxy.models import MCPError
 from gobby.storage.cron_models import CronJob
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
-from gobby.sync.linear_support import _extract_records, linear_issue_title
+from gobby.sync.linear_support import (
+    _extract_records,
+    is_transient_linear_fetch_error,
+    linear_issue_title,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -47,6 +52,25 @@ def test_linear_issue_title_canonicalizes_existing_ref_spacing() -> None:
     assert linear_issue_title(task) == "#42: Already prefixed"
 
 
+def test_transient_linear_fetch_error_accepts_wrapped_network_failure() -> None:
+    error = _wrapped_graphql_error(
+        httpx.ConnectError("network unavailable", request=_linear_graphql_request())
+    )
+
+    assert is_transient_linear_fetch_error(error) is True
+
+
+def test_transient_linear_fetch_error_accepts_wrapped_retryable_status() -> None:
+    error = _wrapped_graphql_error(_http_status_error(503))
+
+    assert is_transient_linear_fetch_error(error) is True
+
+
+def test_transient_linear_fetch_error_rejects_permanent_graphql_failure() -> None:
+    assert is_transient_linear_fetch_error(LinearGraphQLError("Invalid query")) is False
+    assert is_transient_linear_fetch_error(_wrapped_graphql_error(_http_status_error(401))) is False
+
+
 def _set_task_state(task: MagicMock, state: str) -> None:
     task.closed_at = None
     task.escalated_at = None
@@ -65,6 +89,33 @@ def _cron_job() -> CronJob:
         created_at="2026-02-10T00:00:00+00:00",
         updated_at="2026-02-10T00:00:00+00:00",
     )
+
+
+def _linear_graphql_request() -> httpx.Request:
+    return httpx.Request("POST", "https://api.linear.app/graphql")
+
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = _linear_graphql_request()
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(f"HTTP {status_code}", request=request, response=response)
+
+
+def _wrapped_graphql_error(cause: BaseException) -> LinearGraphQLError:
+    try:
+        raise LinearGraphQLError("Linear GraphQL request failed after 3 attempts.") from cause
+    except LinearGraphQLError as exc:
+        return exc
+
+
+def _configure_graphql_pull_result(
+    sync_service: LinearSyncService, side_effect: object
+) -> MagicMock:
+    client = MagicMock()
+    client.list_issues = AsyncMock(side_effect=side_effect)
+    sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
+    sync_service._get_graphql_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
+    return client
 
 
 @pytest.fixture
@@ -120,8 +171,8 @@ async def test_linear_sync_handler_raises_on_partial_errors(
     service.is_available.return_value = True
     service.sync_all = AsyncMock(
         return_value={
-            "pull": {"updated": 0, "skipped": 0, "errors": 1},
-            "push": {"pushed": 0, "errors": 2},
+            "pull": {"updated": 0, "skipped": 0, "errors": 1, "deferred": 0},
+            "push": {"pushed": 0, "errors": 2, "deferred": 0},
         }
     )
     handler = linear_module.create_linear_sync_handler(
@@ -134,6 +185,34 @@ async def test_linear_sync_handler_raises_on_partial_errors(
     with patch.object(linear_module, "LinearSyncService", return_value=service):
         with pytest.raises(RuntimeError, match="pull_errors=1, push_errors=2"):
             await handler(_cron_job())
+
+
+@pytest.mark.asyncio
+async def test_linear_sync_handler_reports_deferred_without_raising(
+    mock_mcp_manager,
+    mock_task_manager,
+) -> None:
+    """Deferred-only sync results do not fail cron."""
+    service = MagicMock()
+    service.is_available.return_value = True
+    service.sync_all = AsyncMock(
+        return_value={
+            "pull": {"updated": 0, "skipped": 0, "errors": 0, "deferred": 83},
+            "push": {"pushed": 0, "errors": 0, "deferred": 0},
+        }
+    )
+    handler = linear_module.create_linear_sync_handler(
+        mock_mcp_manager,
+        mock_task_manager,
+        project_id="test-project-id",
+        team_id="team-123",
+    )
+
+    with patch.object(linear_module, "LinearSyncService", return_value=service):
+        result = await handler(_cron_job())
+
+    assert "Linear sync deferred" in result
+    assert "deferred 83" in result
 
 
 @pytest.mark.asyncio
@@ -515,7 +594,7 @@ class TestLinearSyncServiceSync:
 
         result = await sync_service.pull_linear_updates()
 
-        assert result == {"updated": 1, "skipped": 0, "errors": 0}
+        assert result == {"updated": 1, "skipped": 0, "errors": 0, "deferred": 0}
         mock_task_manager.reconcile_task_state.assert_called_once_with(
             "task-1",
             title="Finished feature",
@@ -537,28 +616,74 @@ class TestLinearSyncServiceSync:
         mock_task_manager.db.fetchall.return_value = [
             {"id": "task-1", "linear_issue_id": "issue-1"}
         ]
-        client = MagicMock()
-        client.list_issues = AsyncMock(side_effect=LinearGraphQLError("network unavailable"))
-        sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
-        sync_service._get_graphql_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
+        _configure_graphql_pull_result(
+            sync_service,
+            _wrapped_graphql_error(
+                httpx.ConnectError("network unavailable", request=_linear_graphql_request())
+            ),
+        )
         caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")
 
         first = await sync_service.pull_linear_updates()
         second = await sync_service.pull_linear_updates()
 
-        error_records = [
+        warning_records = [
             record
             for record in caplog.records
-            if record.levelno >= logging.ERROR
-            and "Failed to fetch Linear issues" in record.getMessage()
+            if record.levelno >= logging.WARNING
+            and "Deferred Linear issue fetch" in record.getMessage()
         ]
-        assert first["errors"] == 1
-        assert second["errors"] == 1
-        assert len(error_records) == 1
+        assert first["errors"] == 0
+        assert first["deferred"] == 1
+        assert second["errors"] == 0
+        assert second["deferred"] == 1
+        assert len(warning_records) == 1
         assert any(
             "Suppressing repeated Linear issue fetch failure #1" in record.getMessage()
             for record in caplog.records
         )
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_defers_transient_graphql_fetch_for_all_linked_tasks(
+        self, sync_service: LinearSyncService, mock_task_manager
+    ) -> None:
+        """One transient list-fetch exhaustion defers all linked rows."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": f"task-{index}", "linear_issue_id": f"issue-{index}"} for index in range(83)
+        ]
+        client = _configure_graphql_pull_result(
+            sync_service,
+            _wrapped_graphql_error(
+                httpx.ConnectError("network unavailable", request=_linear_graphql_request())
+            ),
+        )
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 0, "skipped": 0, "errors": 0, "deferred": 83}
+        sync_service._linear_mcp_has_tool.assert_called_once_with("list_issues")  # type: ignore[attr-defined]
+        sync_service._get_graphql_client.assert_awaited_once_with()  # type: ignore[attr-defined]
+        client.list_issues.assert_awaited_once_with(team_id="team-123", project_id="lin-proj")
+        mock_task_manager.reconcile_task_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pull_updates_counts_permanent_graphql_failure_as_errors(
+        self, sync_service: LinearSyncService, mock_task_manager
+    ) -> None:
+        """Permanent GraphQL failures still count against linked rows."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "issue-1"},
+            {"id": "task-2", "linear_issue_id": "issue-2"},
+        ]
+        client = _configure_graphql_pull_result(sync_service, LinearGraphQLError("Invalid query"))
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 0, "skipped": 0, "errors": 2, "deferred": 0}
+        sync_service._linear_mcp_has_tool.assert_called_once_with("list_issues")  # type: ignore[attr-defined]
+        sync_service._get_graphql_client.assert_awaited_once_with()  # type: ignore[attr-defined]
+        client.list_issues.assert_awaited_once_with(team_id="team-123", project_id="lin-proj")
+        mock_task_manager.reconcile_task_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_pull_updates_recovery_resets_linear_fetch_failure_limit(
@@ -568,17 +693,21 @@ class TestLinearSyncServiceSync:
         mock_task_manager.db.fetchall.return_value = [
             {"id": "task-1", "linear_issue_id": "issue-1"}
         ]
-        client = MagicMock()
-        client.list_issues = AsyncMock(
-            side_effect=[
-                LinearGraphQLError("network unavailable"),
-                LinearGraphQLError("network unavailable"),
+        _configure_graphql_pull_result(
+            sync_service,
+            [
+                _wrapped_graphql_error(
+                    httpx.ConnectError("network unavailable", request=_linear_graphql_request())
+                ),
+                _wrapped_graphql_error(
+                    httpx.ConnectError("network unavailable", request=_linear_graphql_request())
+                ),
                 [],
-                LinearGraphQLError("network unavailable"),
-            ]
+                _wrapped_graphql_error(
+                    httpx.ConnectError("network unavailable", request=_linear_graphql_request())
+                ),
+            ],
         )
-        sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
-        sync_service._get_graphql_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
         caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")
 
         await sync_service.pull_linear_updates()
@@ -586,15 +715,16 @@ class TestLinearSyncServiceSync:
         recovered = await sync_service.pull_linear_updates()
         await sync_service.pull_linear_updates()
 
-        error_records = [
+        warning_records = [
             record
             for record in caplog.records
-            if record.levelno >= logging.ERROR
-            and "Failed to fetch Linear issues" in record.getMessage()
+            if record.levelno >= logging.WARNING
+            and "Deferred Linear issue fetch" in record.getMessage()
         ]
         assert recovered["errors"] == 0
+        assert recovered["deferred"] == 0
         assert recovered["skipped"] == 1
-        assert len(error_records) == 2
+        assert len(warning_records) == 2
         assert any(
             "Linear issue fetch recovered after 1 suppressed repeat(s)" in record.getMessage()
             for record in caplog.records
@@ -606,11 +736,9 @@ class TestLinearSyncServiceSync:
     ) -> None:
         """sync_all preserves the cursor when Linear pull fails."""
         sync_service.pull_linear_updates = AsyncMock(
-            return_value={"updated": 0, "skipped": 0, "errors": 2}
+            return_value={"updated": 0, "skipped": 0, "errors": 2, "deferred": 0}
         )
-        sync_service.push_dirty_tasks = AsyncMock(
-            return_value={"pushed": 0, "skipped": 0, "errors": 0}
-        )
+        sync_service.push_dirty_tasks = AsyncMock()
         sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
         sync_service._update_synced_at = MagicMock()
 
@@ -618,6 +746,28 @@ class TestLinearSyncServiceSync:
 
         assert result["cursor_updated"] is False
         assert result["synced_at"] == "old-cursor"
+        assert result["push"] == {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
+        sync_service.push_dirty_tasks.assert_not_called()
+        sync_service._update_synced_at.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_all_does_not_update_cursor_or_push_when_pull_is_deferred(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """sync_all preserves pull-first safety when Linear pull is deferred."""
+        sync_service.pull_linear_updates = AsyncMock(
+            return_value={"updated": 0, "skipped": 0, "errors": 0, "deferred": 83}
+        )
+        sync_service.push_dirty_tasks = AsyncMock()
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
+        sync_service._update_synced_at = MagicMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["cursor_updated"] is False
+        assert result["synced_at"] == "old-cursor"
+        assert result["push"] == {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
+        sync_service.push_dirty_tasks.assert_not_called()
         sync_service._update_synced_at.assert_not_called()
 
     @pytest.mark.asyncio
@@ -626,10 +776,10 @@ class TestLinearSyncServiceSync:
     ) -> None:
         """sync_all preserves the cursor when Linear push fails."""
         sync_service.pull_linear_updates = AsyncMock(
-            return_value={"updated": 1, "skipped": 0, "errors": 0}
+            return_value={"updated": 1, "skipped": 0, "errors": 0, "deferred": 0}
         )
         sync_service.push_dirty_tasks = AsyncMock(
-            return_value={"pushed": 0, "skipped": 0, "errors": 1}
+            return_value={"pushed": 0, "skipped": 0, "errors": 1, "deferred": 0}
         )
         sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
         sync_service._update_synced_at = MagicMock()
@@ -646,10 +796,10 @@ class TestLinearSyncServiceSync:
     ) -> None:
         """sync_all advances the cursor after an error-free bidirectional sync."""
         sync_service.pull_linear_updates = AsyncMock(
-            return_value={"updated": 0, "skipped": 1, "errors": 0}
+            return_value={"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
         )
         sync_service.push_dirty_tasks = AsyncMock(
-            return_value={"pushed": 1, "skipped": 0, "errors": 0}
+            return_value={"pushed": 1, "skipped": 0, "errors": 0, "deferred": 0}
         )
         sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
         sync_service._update_synced_at = MagicMock()
@@ -906,7 +1056,7 @@ class TestLinearSyncServiceCreate:
         """sync_active_forward creates missing active issues and skips pull."""
         sync_service.create_missing_issues = AsyncMock(return_value=[{"id": "lin-1"}])
         sync_service.push_active_tasks = AsyncMock(
-            return_value={"pushed": 2, "skipped": 0, "errors": 0}
+            return_value={"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
         )
         sync_service.pull_linear_updates = AsyncMock()
         sync_service._update_synced_at = MagicMock()
@@ -926,7 +1076,7 @@ class TestLinearSyncServiceCreate:
         """sync_active_forward leaves synced_at unchanged when active push fails."""
         sync_service.create_missing_issues = AsyncMock(return_value=[])
         sync_service.push_active_tasks = AsyncMock(
-            return_value={"pushed": 1, "skipped": 0, "errors": 1}
+            return_value={"pushed": 1, "skipped": 0, "errors": 1, "deferred": 0}
         )
         sync_service._update_synced_at = MagicMock()
 
@@ -946,7 +1096,7 @@ class TestLinearSyncServiceCreate:
         sql = mock_task_manager.db.fetchall.call_args.args[0]
         assert "linear_issue_id IS NOT NULL" in sql
         assert "closed_at IS NULL" in sql
-        assert result == {"pushed": 2, "skipped": 0, "errors": 0}
+        assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
         assert sync_service.sync_task_to_linear.await_count == 2
 
 

@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any, cast
 
+import httpx
+
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_task_escalated
 
 logger = logging.getLogger("gobby.sync.linear")
@@ -19,20 +21,49 @@ class _RepeatedFetchFailureLimiter:
 
     def __init__(self, *, summary_interval: int) -> None:
         self._summary_interval = summary_interval
+        self._category: str | None = None
         self._message: str | None = None
         self._suppressed_count = 0
 
     def reset(self) -> None:
+        self._category = None
         self._message = None
         self._suppressed_count = 0
 
     def log_failure(self, log: logging.Logger, error: BaseException) -> None:
+        self._log_repeated(
+            log,
+            error,
+            category="failure",
+            first_level=logging.ERROR,
+            first_message="Failed to fetch Linear issues",
+        )
+
+    def log_deferred(self, log: logging.Logger, error: BaseException) -> None:
+        self._log_repeated(
+            log,
+            error,
+            category="deferred",
+            first_level=logging.WARNING,
+            first_message="Deferred Linear issue fetch",
+        )
+
+    def _log_repeated(
+        self,
+        log: logging.Logger,
+        error: BaseException,
+        *,
+        category: str,
+        first_level: int,
+        first_message: str,
+    ) -> None:
         message = str(error)
-        if message != self._message:
+        if message != self._message or category != self._category:
             self._log_changed_failure(log)
+            self._category = category
             self._message = message
             self._suppressed_count = 0
-            log.error("Failed to fetch Linear issues: %s", message)
+            log.log(first_level, "%s: %s", first_message, message)
             return
 
         self._suppressed_count += 1
@@ -76,6 +107,22 @@ class _RepeatedFetchFailureLimiter:
 _linear_fetch_failure_limiter = _RepeatedFetchFailureLimiter(
     summary_interval=_LINEAR_FETCH_FAILURE_SUMMARY_INTERVAL
 )
+
+
+def is_transient_linear_fetch_error(error: BaseException) -> bool:
+    """Return True when a Linear issue-list fetch should be retried later."""
+    if isinstance(error, httpx.HTTPStatusError):
+        return _is_retryable_http_status(error.response.status_code)
+    if isinstance(error, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    cause = error.__cause__
+    if cause is not None and cause is not error:
+        return is_transient_linear_fetch_error(cause)
+    return False
+
+
+def _is_retryable_http_status(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500
 
 
 class LinearSyncError(Exception):
