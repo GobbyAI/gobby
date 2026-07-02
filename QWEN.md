@@ -21,7 +21,8 @@ These are enforced by hooks, rules and workflows.
 13. **ALWAYS remember: Rule templates are not rules.** Templates must be installed in the rules engine to function. Templates are enabled by default and sync to the DB on first startup. The DB is the source of truth — before telling the user a rule is disabled, check the installed version in the DB.
 14. **ALWAYS prefer gcode over grep/rg/sed/awk/nl.** gcode is an advanced code index/graph tool and is *FAR* superior to grep/rg/sed/awk/nl for code search and analysis.
 15. **NEVER guess or assume unless explicitly asked.** Only state things you *KNOW* to be true, otherwise challenge your guess or assumption through exploration, research, and/or tool use.
-16. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
+16. **DO NOT CREATE BACKWARD COMPATIBILITY.** We haven't shipped 0.5.0 yet. There is no backward compatibility to maintain.
+17. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
 
 ## Progressive Tool Discovery Enforced by Hooks
 
@@ -190,6 +191,7 @@ Types: `fix`, `feat`, `refactor`, `chore`.
 Before editing files, **create or claim a Gobby task** and work under that task. Use the `gobby-tasks` MCP server for task lifecycle operations — **never** use the `gobby tasks` CLI or direct storage/SQL/REST mutations for agent task writes. The MCP path is the only path that correctly updates workflow/session state.
 
 When working task state:
+
 - Use lifecycle MCP tools: `create_task` (with `claim=true`), `claim_task`, `close_task`, `reopen_task`, `escalate_task`; use `gobby-tasks-ops` review tools such as `submit_for_review(stage_name="...")`
 - Do NOT set generic `status`/`assignee` fields through `update_task`, CLI, or DB writes
 - If `gobby-tasks` MCP is unavailable, stop and surface that as the blocker
@@ -213,6 +215,7 @@ Files in `src/gobby/install/shared/` (rules/, workflows/, agents/, pipelines/) a
 ## Configuration
 
 Configuration lives in `src/gobby/config/` with ~15 modules covering:
+
 - `app.py` — DaemonConfig (YAML config model)
 - `bootstrap.py` — Pre-DB bootstrap settings
 - `features.py` — Feature flags

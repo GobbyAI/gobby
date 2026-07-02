@@ -21,7 +21,8 @@ These are enforced by hooks, rules and workflows.
 13. **ALWAYS remember: Rule templates are not rules.** Templates must be installed in the rules engine to function. Templates are enabled by default and sync to the DB on first startup. The DB is the source of truth — before telling the user a rule is disabled, check the installed version in the DB.
 14. **ALWAYS prefer gcode over grep/rg/sed/awk/nl.** gcode is an advanced code index/graph tool and is *FAR* superior to grep/rg/sed/awk/nl for code search and analysis.
 15. **NEVER guess or assume unless explicitly asked.** Only state things you *KNOW* to be true, otherwise challenge your guess or assumption through exploration, research, and/or tool use.
-16. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
+16. **DO NOT CREATE BACKWARD COMPATIBILITY.** We haven't shipped 0.5.0 yet. There is no backward compatibility to maintain.
+17. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
 
 ## Progressive Tool Discovery Enforced by Hooks
 
@@ -180,6 +181,7 @@ call_tool("gobby-sessions", "get_current_session", {
 When spawned as a subagent (via `spawn_agent`), follow the workflow instructions provided at session start. The workflow will guide you through the task lifecycle.
 
 **Key points:**
+
 - Your workflow instructions are injected at session start and step transitions
 - Follow the workflow's termination instructions (typically `kill_agent`)
 - Do NOT use `/quit` or similar CLI commands
