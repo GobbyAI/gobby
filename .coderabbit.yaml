@@ -62,6 +62,21 @@ reviews:
         - Check for proper event handling patterns
         - Ensure plugins follow the HookPlugin interface
 
+    - path: "crates/**/*.rs"
+      instructions: |
+        - Review Rust crate changes as production code, not generated output
+        - Check ownership, lifetimes, error propagation, feature-gated behavior, and async/blocking boundaries
+        - Verify CLI contract changes and focused Rust test coverage for changed behavior
+
+    - path: "**/Cargo.toml"
+      instructions: |
+        - Verify workspace membership, feature flags, dependency versions, package metadata, and rust-version changes
+        - Check that crate manifest changes remain consistent with the root workspace
+
+    - path: "Cargo.lock"
+      instructions: |
+        - Review lockfile changes for unexpected dependency upgrades, duplicate versions, yanked crates, and advisory-sensitive packages
+
   # Tool integrations
   tools:
     # Enable AST-based analysis
@@ -79,12 +94,19 @@ reviews:
     shellcheck:
       enabled: true
 
+    # Rust crate analysis
+    clippy:
+      enabled: true
+
+    # Dependency vulnerability scanning, including Cargo.lock
+    osvScanner:
+      enabled: true
+
   # Ignore patterns - files to skip reviewing
   path_filters:
     - "!docs/plans/abandoned/**"  # Historical plans, not active guidelines
     - "!docs/plans/completed/**"
     - "!.gobby/plans/completed/**"
-    - "!**/*.lock"
     - "!**/uv.lock"
     - "!**/.gobby/tasks.jsonl"
     - "!**/.gobby/memories.jsonl"
