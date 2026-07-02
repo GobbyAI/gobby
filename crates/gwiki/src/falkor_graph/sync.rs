@@ -7,7 +7,7 @@ use postgres::Client;
 use crate::WikiError;
 use crate::graph::{
     GraphStatement, MENTIONS_TARGET_REL, SUPPORTS_REL, WIKI_DOC_LABEL, WIKI_LINKS_TO_REL,
-    WIKI_SOURCE_LABEL, WIKI_TARGET_LABEL, graph_write_statements,
+    WIKI_SOURCE_LABEL, WIKI_TARGET_LABEL, WikiGraphFacts, graph_write_statements,
 };
 use crate::search::SearchScope;
 
@@ -33,30 +33,70 @@ pub(crate) fn sync_scope_from_postgres(
     conn: &mut Client,
     scope: &SearchScope,
     config: &FalkorConfig,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<(), WikiError> {
     require_scoped(scope).map_err(graph_sync_error)?;
     let facts = load_wiki_graph_facts(conn, scope)?;
     let deleted_paths = load_deleted_paths(conn, scope)?;
+    let work = graph_sync_work(scope, &facts, &deleted_paths);
+    let mut progress = crate::progress::ActiveProgress::new(
+        progress,
+        crate::progress::ProgressPhase::GraphSync,
+        work.len(),
+    );
     let mut client = GraphClient::from_config(config, FALKORDB_GRAPH_NAME).map_err(|error| {
         WikiError::Config {
             detail: format!("failed to connect to FalkorDB for gwiki graph sync: {error}"),
         }
     })?;
 
-    for statement in scope_edge_cleanup_statements(scope) {
-        execute_statement(&mut client, statement).map_err(graph_sync_error)?;
-    }
-    for path in &deleted_paths {
-        execute_statement(&mut client, stale_doc_delete_statement(scope, path))
-            .map_err(graph_sync_error)?;
-    }
-    for statement in graph_write_statements(&facts) {
-        execute_statement(&mut client, statement).map_err(graph_sync_error)?;
-    }
-    for statement in orphan_cleanup_statements(scope) {
-        execute_statement(&mut client, statement).map_err(graph_sync_error)?;
+    for item in work {
+        execute_statement(&mut client, item.statement).map_err(graph_sync_error)?;
+        progress.advance(&item.label);
     }
     Ok(())
+}
+
+struct GraphSyncWorkItem {
+    label: String,
+    statement: GraphStatement,
+}
+
+fn graph_sync_work(
+    scope: &SearchScope,
+    facts: &WikiGraphFacts,
+    deleted_paths: &[String],
+) -> Vec<GraphSyncWorkItem> {
+    let mut work = Vec::new();
+    work.extend(
+        scope_edge_cleanup_statements(scope)
+            .into_iter()
+            .map(|statement| GraphSyncWorkItem {
+                label: "scope-cleanup".to_string(),
+                statement,
+            }),
+    );
+    work.extend(deleted_paths.iter().map(|path| GraphSyncWorkItem {
+        label: path.clone(),
+        statement: stale_doc_delete_statement(scope, path),
+    }));
+    work.extend(
+        graph_write_statements(facts)
+            .into_iter()
+            .map(|statement| GraphSyncWorkItem {
+                label: "graph-write".to_string(),
+                statement,
+            }),
+    );
+    work.extend(
+        orphan_cleanup_statements(scope)
+            .into_iter()
+            .map(|statement| GraphSyncWorkItem {
+                label: "orphan-cleanup".to_string(),
+                statement,
+            }),
+    );
+    work
 }
 
 pub(crate) fn purge_scope(scope: &SearchScope, config: &FalkorConfig) -> Result<(), WikiError> {
@@ -183,5 +223,36 @@ fn execute_statement(client: &mut GraphClient, statement: GraphStatement) -> any
 fn graph_sync_error(error: anyhow::Error) -> WikiError {
     WikiError::Config {
         detail: format!("failed to sync gwiki graph to FalkorDB: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_sync_work_has_determinate_progress_items() {
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts::default();
+        let deleted_paths = vec!["knowledge/deleted.md".to_string()];
+
+        let work = graph_sync_work(&scope, &facts, &deleted_paths);
+
+        assert_eq!(work.len(), 6);
+        let labels = work
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec![
+                "scope-cleanup",
+                "scope-cleanup",
+                "scope-cleanup",
+                "knowledge/deleted.md",
+                "orphan-cleanup",
+                "orphan-cleanup"
+            ]
+        );
     }
 }

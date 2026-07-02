@@ -21,6 +21,7 @@ pub mod degradation;
 mod libpq;
 pub mod machine;
 pub mod markdown;
+pub mod progress;
 pub mod setup;
 pub mod token_budget;
 

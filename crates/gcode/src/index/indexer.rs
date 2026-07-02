@@ -18,7 +18,8 @@ pub use freshness_probe::project_changed_since;
 pub use lifecycle::invalidate;
 pub use pipeline::index_files;
 pub use types::{
-    IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, UnsupportedFileType,
+    IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest,
+    UnsupportedFileType,
 };
 
 #[cfg(test)]

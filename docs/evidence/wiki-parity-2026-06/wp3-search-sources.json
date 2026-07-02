@@ -1,0 +1,228 @@
+gwiki: search resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/gwiki/src/search/rrf.rs.md",
+      "symbol": "crates/gwiki/src/search/rrf.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/search.rs.md",
+      "symbol": "crates/gcode/src/commands/search.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/search/rrf.rs.md",
+      "symbol": "crates/gcode/src/search/rrf.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 10,
+  "query": "reciprocal rank fusion hybrid search",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/search.md",
+      "result_type": "wiki",
+      "score": 0.03333333333333333,
+      "snippet": "## Overview The `search` module provides hybrid code search over a Postgres-backed index. It combines full-text search (`fts`) across sym",
+      "source_path": "code/modules/crates/gcode/src/search.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search",
+      "wiki_page": "code/modules/crates/gcode/src/search.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        },
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gwiki/src/search.md",
+      "result_type": "wiki",
+      "score": 0.03278688524590164,
+      "snippet": "## Overview The crates/gwiki/src/search module implements a robust, multi-strategy search system for wiki documentation. It integrates traditional keywor",
+      "source_path": "code/modules/crates/gwiki/src/search.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gwiki/src/search",
+      "wiki_page": "code/modules/crates/gwiki/src/search.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        },
+        {
+          "rank": 3,
+          "score": 0.015873015873015872,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gwiki/src/search/rrf.rs.md",
+      "result_type": "code",
+      "score": 0.03200204813108039,
+      "snippet": "--- title: crates/gwiki/src/search/rrf.rs type: code_file provenance: - file: crates/gwiki/src/search/rrf.rs ranges: - 8-92 - 94-96 - 98-108",
+      "source_path": "code/files/crates/gwiki/src/search/rrf.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gwiki/src/search/rrf.rs",
+      "wiki_page": "code/files/crates/gwiki/src/search/rrf.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 8,
+          "score": 0.014705882352941176,
+          "source": "bm25"
+        },
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:raw/INDEX.md",
+      "result_type": "wiki",
+      "score": 0.030834914611005692,
+      "snippet": "## Source manifest - [Mean reciprocal rank - Wikipedia](https://en.wikipedia.org/wiki/Mean_reciprocal_rank) - id: `src-9171ba1efd048efb-https-en-",
+      "source_path": "raw/INDEX.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "Raw Sources",
+      "wiki_page": "raw/INDEX.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 5,
+          "score": 0.015384615384615385,
+          "source": "bm25"
+        },
+        {
+          "rank": 7,
+          "score": 0.014925373134328358,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/search.rs.md",
+      "result_type": "code",
+      "score": 0.030309988518943745,
+      "snippet": "--- title: crates/gcode/src/commands/search.rs type: code_file provenance: - file: crates/gcode/src/commands/search.rs ranges: - 13-21 - 25-200 - 202",
+      "source_path": "code/files/crates/gcode/src/commands/search.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/search.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/search.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 4,
+          "score": 0.015625,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:knowledge/topics/how-does-codewiki-derive-mermaid-diagrams-from-falkordb-call-and-import-edges.md",
+      "result_type": "wiki",
+      "score": 0.015625,
+      "snippet": "## Citations",
+      "source_path": "knowledge/topics/how-does-codewiki-derive-mermaid-diagrams-from-falkordb-call-and-import-edges.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "How does codewiki derive Mermaid diagrams from FalkorDB call and import edges?",
+      "wiki_page": "knowledge/topics/how-does-codewiki-derive-mermaid-diagrams-from-falkordb-call-and-import-edges.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 5,
+          "score": 0.015384615384615385,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/search/fts.md",
+      "result_type": "wiki",
+      "score": 0.015384615384615385,
+      "snippet": "## Overview",
+      "source_path": "code/modules/crates/gcode/src/search/fts.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search/fts",
+      "wiki_page": "code/modules/crates/gcode/src/search/fts.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 9,
+          "score": 0.014492753623188406,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/search/rrf.rs.md",
+      "result_type": "code",
+      "score": 0.014492753623188406,
+      "snippet": "## API Symbols",
+      "source_path": "code/files/crates/gcode/src/search/rrf.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search/rrf.rs",
+      "wiki_page": "code/files/crates/gcode/src/search/rrf.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 9,
+          "score": 0.014492753623188406,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src.md",
+      "result_type": "wiki",
+      "score": 0.014492753623188406,
+      "snippet": "s validate parsing and routing across the full command set: search (symbol, language, content, and text queries with positional paths and format handling), graph operations (caller",
+      "source_path": "code/modules/crates/gcode/src.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src",
+      "wiki_page": "code/modules/crates/gcode/src.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

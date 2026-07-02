@@ -1,0 +1,30 @@
+gwiki: ingest-url resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "accepted": [
+    {
+      "final_url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+      "raw_path": "raw/src-495a2039993adc47-https-en-wikipedia-org-wiki-retrieval-augmented.md",
+      "requested_url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+      "source": {
+        "content_hash": "495a2039993adc47ed6a430dae4449cc519a45d30fe9e3505339de22252316ff",
+        "id": "src-495a2039993adc47-https-en-wikipedia-org-wiki-retrieval-augmented",
+        "kind": "url",
+        "location": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation"
+      }
+    }
+  ],
+  "command": "ingest-url",
+  "failed": [],
+  "indexed": {
+    "chunks": 1909,
+    "documents": 448,
+    "ingestions": 1812,
+    "links": 2699,
+    "sources": 448
+  },
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "status": "ingested"
+}

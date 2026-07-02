@@ -65,7 +65,11 @@ pub fn ingest_image_with_production_vision(
 ) -> Result<ImageIngestResult, WikiError> {
     let result =
         ingest_image_with_production_vision_without_index(vault_root, scope, ai_context, snapshot)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 
@@ -111,7 +115,11 @@ pub fn ingest_image_with_vision(
     endpoint: VisionEndpoint<'_>,
 ) -> Result<ImageIngestResult, WikiError> {
     let result = ingest_image_with_vision_without_index(vault_root, scope, snapshot, endpoint)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

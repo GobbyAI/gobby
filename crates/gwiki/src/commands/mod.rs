@@ -29,20 +29,22 @@ pub(crate) mod vault_tools;
 use std::path::Path;
 
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
-use crate::{Command, CommandOutcome, CommandResult, ScopeIdentity, ScopeSelection, WikiError};
+use crate::{
+    Command, CommandOutcome, CommandResult, RunOptions, ScopeIdentity, ScopeSelection, WikiError,
+};
 
-pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
+pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {
     match command {
         Command::Init { scope } => init::execute(scope),
         Command::Setup { scope, options } => setup::execute(scope, options),
-        Command::Index { scope } => index::execute(scope),
+        Command::Index { scope } => index::execute(scope, run_options),
         Command::Collect { scope } => collect::execute(scope),
         Command::IngestFile {
             path,
             scope,
             options,
-        } => index::execute_ingest_file(path, scope, options),
-        Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope),
+        } => index::execute_ingest_file(path, scope, options, run_options),
+        Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope, run_options),
         Command::SyncSessions { scope, options } => session_sync::execute(scope, options),
         Command::Refresh {
             scope,

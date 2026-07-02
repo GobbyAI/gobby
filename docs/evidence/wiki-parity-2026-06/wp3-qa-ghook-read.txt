@@ -1,0 +1,10 @@
+## Purpose
+
+Implements the enqueue-first transport for `ghook --gobby-owned`: it names inbox envelopes with lexicographically sortable `prefix-ts13-uuid.json` filenames, writes them atomically into `~/.gobby/hooks/inbox/`, posts them to the daemon, and either deletes the inbox file on a 2xx response or leaves/quarantines it for later drain replay on failure. `DeliveryOutcome`, `DeliveryFailureKind`, and `DeliveryReport` model the result of the live POST so callers can distinguish successful delivery from queued replay and classify HTTP, connection, timeout, or other transport failures. The helper functions derive inbox/quarantine paths, generate timestamps and filenames, perform atomic writes, enqueue envelopes, extract envelope IDs from paths, classify transport errors, and move malformed envelopes into quarantine; the tests verify filename format, atomic write behavior, enqueue/quarantine writes, and that `post_and_cleanup` captures success bodies, error bodies, and special endpoint behavior.
+[crates/ghook/src/transport.rs:31-36]
+[crates/ghook/src/transport.rs:40-45]
+[crates/ghook/src/transport.rs:49-55]
+[crates/ghook/src/transport.rs:58-60]
+[crates/ghook/src/transport.rs:63-65]
+
+## API Symbols

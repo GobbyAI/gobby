@@ -1,0 +1,79 @@
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "symbol": "crates/gcode/src/commands/codewiki/build_parts/snapshot.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "symbol": "crates/gcode/src/commands/codewiki/build_parts/changes.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 3,
+  "query": "How are codewiki symbol IDs kept in parity with the Python daemon make_id?",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "result_type": "code",
+      "score": 0.016666666666666666,
+      "snippet": "## API Symbols",
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/build_parts/snapshot.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/repo.md",
+      "result_type": "wiki",
+      "score": 0.016666666666666666,
+      "snippet": "## Modules - [[code/modules/crates|crates]] - The crates module is a container directory with no direct files of its own; it groups the Rust workspace's tooling crate",
+      "source_path": "code/repo.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "Repository Overview",
+      "wiki_page": "code/repo.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "result_type": "code",
+      "score": 0.01639344262295082,
+      "snippet": "## API Symbols",
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/build_parts/changes.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

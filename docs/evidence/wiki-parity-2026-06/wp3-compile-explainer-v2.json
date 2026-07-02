@@ -1,0 +1,48 @@
+gwiki: compile resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "ai": {
+    "citations_kept": 5,
+    "citations_stripped": 0,
+    "error": null,
+    "fallback_sections": 0,
+    "model": "haiku",
+    "requested_mode": "daemon",
+    "route": "daemon",
+    "status": "generated"
+  },
+  "article_path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/topics/gsqz-compression-shipping-decision.md",
+  "command": "compile",
+  "daemon_synthesis_available": true,
+  "handoff_id": "compile-gsqz-compression-shipping-decision-1781313990584",
+  "index_path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/_index.md",
+  "outline": [
+    "Overview",
+    "Shipping thresholds"
+  ],
+  "page_writes": [
+    {
+      "kind": "created",
+      "path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/topics/gsqz-compression-shipping-decision.md"
+    },
+    {
+      "kind": "created",
+      "path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/sources/how-gsqz-decides-whether-compressed-output-ships.md"
+    }
+  ],
+  "prompt": {
+    "daemon_synthesis_available": true,
+    "system": "You write a grounded wiki explainer from supplied source excerpts. Use only facts stated in the excerpts. Write each requested section as a markdown '## <section>' heading followed by one or two short paragraphs. Plain paragraphs only - no extra headings, no lists, no code fences. Cite supporting sources inline with [source: <path>] markers, copying a path exactly as listed. Never invent paths. If the excerpts do not cover a section, state that the sources do not cover it.",
+    "tokens_estimated": 547,
+    "truncated_sources": 0,
+    "user": "Topic: gsqz compression shipping decision\nWrite the explainer with exactly these sections:\n- Overview\n- Shipping thresholds\n\nSource excerpts:\n1. How gsqz decides whether compressed output ships [source: raw/src-c285c500482efa89-private-tmp-wp3-deposit-note-md.md]\n# wp3-deposit-note.md\n---\ntitle: How gsqz decides whether compressed output ships\nsource: agent research via gwiki search + read (wiki parity+ WP3 deposit demo)\n---\n# How gsqz decides whether compressed output ships\nResearched 2026-06-12 by composing `gwiki search` (\"gsqz output compression\nthresholds savings\") and `gwiki read` over the project wiki.\ngsqz wraps a shell command, strips ANSI codes, and matches the command line\nagainst configured pipeline regexes — first match wins; the matched pipeline's\nstep sequence (filter, group, dedup, truncate) is applied to the captured\noutput ([[code/files/crates/gsqz/src/compressor.rs]], provenance\ncrates/gsqz/src/compressor.rs:78-233). The compressor then enforces shipping\nthresholds before the compressed text replaces the original: minimum output\nlength, maximum compressed line count, and a savings ceiling — output that\ncompresses past the 95% savings threshold is treated as suspicious and the\noriginal is kept ([[code/files/crates/gsqz/src/compressor.rs]], provenance\ncrates/gsqz/src/compressor.rs:235-266). `CompressionResult::savings_pct`\nreports the realized savings for daemon metrics\n(crates/gsqz/src/compressor.rs:15-20). The wrapper always exits 0 so the\ncalling LLM reads pass/fail from content, not exit codes\n([[code/modules/crates/gsqz]]).\nCitations:\n- [[code/files/crates/gsqz/src/compressor.rs]] (crates/gsqz/src/compressor.rs)\n- [[code/modules/crates/gsqz]] (crates/gsqz)\n\n"
+  },
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "source_paths": [
+    "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/sources/how-gsqz-decides-whether-compressed-output-ships.md"
+  ],
+  "status": "compiled",
+  "target_kind": "topic"
+}

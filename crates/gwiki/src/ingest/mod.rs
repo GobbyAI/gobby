@@ -128,10 +128,14 @@ fn sanitize_asset_suffix(value: &str) -> String {
 pub(crate) fn index_after_ingest(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<(), WikiError> {
-    indexer::index_vault(vault_root, store).map_err(|error| WikiError::InvalidInput {
-        field: "index",
-        message: error.to_string(),
+    let options = crate::support::config::local_index_options()?;
+    indexer::index_vault(vault_root, store, options, progress).map_err(|error| {
+        WikiError::InvalidInput {
+            field: "index",
+            message: error.to_string(),
+        }
     })
 }
 
@@ -144,7 +148,11 @@ pub(crate) fn write_raw_then_index(
     asset_path: Option<PathBuf>,
 ) -> Result<IngestResult, WikiError> {
     let raw_path = write_raw_markdown(vault_root, &record, markdown)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
 
     Ok(IngestResult {
         record,
@@ -763,6 +771,7 @@ mod tests {
             &options,
             &source_path,
             "2026-05-29T17:00:00Z",
+            &mut crate::progress::ProgressOptions::default(),
         )
         .expect("ingest path");
 

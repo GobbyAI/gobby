@@ -2,8 +2,8 @@ use postgres::GenericClient;
 use serde::{Deserialize, Serialize};
 
 pub use crate::index::indexer::{
-    IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, UnsupportedFileType, index_files,
-    project_changed_since,
+    IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest,
+    UnsupportedFileType, index_files, project_changed_since,
 };
 
 use crate::models::{

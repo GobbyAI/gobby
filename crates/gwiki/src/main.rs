@@ -541,7 +541,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match gobby_wiki::run(command) {
+    match gobby_wiki::run(command, gobby_wiki::RunOptions { quiet }) {
         Ok(outcome) => {
             if !quiet {
                 for message in &outcome.status_messages {

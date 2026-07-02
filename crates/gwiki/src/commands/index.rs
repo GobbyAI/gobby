@@ -8,10 +8,12 @@ use gobby_core::config::{
     resolve_qdrant_config,
 };
 use gobby_core::degradation::{DegradationKind, ServiceState};
+use gobby_core::progress::ProgressBar;
 use postgres::Client;
 use serde_json::json;
 
 use crate::ingest::{self, IngestResult};
+use crate::progress::{ProgressOptions, ProgressPhase, ProgressSink};
 use crate::search::SearchScope;
 use crate::support::config::{index_options_from_conn, local_index_options, qdrant_config_has_url};
 use crate::support::counts::{IndexCounts, index_counts, postgres_index_counts};
@@ -24,8 +26,8 @@ use crate::support::search::PostgresConfigSource;
 use crate::support::text::degradation_label;
 use crate::support::time::collect_timestamp;
 use crate::{
-    CommandOutcome, IngestFileOptions, ScopeIdentity, ScopeKind, ScopeSelection, WikiError,
-    indexer, store, vault, vector,
+    CommandOutcome, IngestFileOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection,
+    WikiError, indexer, store, vault, vector,
 };
 
 const VIDEO_FRAME_INTERVAL_KEY: &str = "gwiki.ingest.video_frame_interval_seconds";
@@ -37,22 +39,70 @@ struct IndexReport {
     degradations: Vec<DegradationKind>,
 }
 
-pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+struct StderrWikiProgress {
+    quiet: bool,
+    bar: Option<ProgressBar>,
+}
+
+impl StderrWikiProgress {
+    fn new(quiet: bool) -> Self {
+        Self { quiet, bar: None }
+    }
+}
+
+impl ProgressSink for StderrWikiProgress {
+    fn start(&mut self, phase: ProgressPhase, total: usize) {
+        let mut bar = ProgressBar::new(total, self.quiet);
+        bar.draw(phase_label(phase));
+        self.bar = Some(bar);
+    }
+
+    fn advance(&mut self, phase: ProgressPhase, item: &str) {
+        if let Some(bar) = self.bar.as_mut() {
+            bar.tick(format!("{} {item}", phase_label(phase)));
+        }
+    }
+
+    fn finish(&mut self, _phase: ProgressPhase) {
+        if let Some(bar) = self.bar.as_mut() {
+            bar.finish();
+        }
+        self.bar = None;
+    }
+}
+
+fn phase_label(phase: ProgressPhase) -> &'static str {
+    match phase {
+        ProgressPhase::IngestFile => "ingest-file",
+        ProgressPhase::IngestUrl => "ingest-url",
+        ProgressPhase::VaultIndex => "index",
+        ProgressPhase::VectorSync => "qdrant",
+        ProgressPhase::GraphSync => "falkor",
+    }
+}
+
+pub(crate) fn execute(
+    selection: ScopeSelection,
+    run_options: RunOptions,
+) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     ensure_scope_root(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
-    let report = index_resolved_scope_report(&scope)?;
+    let mut progress = StderrWikiProgress::new(run_options.quiet);
+    let mut progress_options = ProgressOptions::with_sink(&mut progress);
+    let report = index_resolved_scope_report(&scope, &mut progress_options)?;
     Ok(render_index(output_scope, scope.root(), report))
 }
 
 pub(crate) fn index_resolved_scope(
     scope: &crate::scope::ResolvedScope,
 ) -> Result<IndexCounts, WikiError> {
-    Ok(index_resolved_scope_report(scope)?.counts)
+    Ok(index_resolved_scope_report(scope, &mut ProgressOptions::default())?.counts)
 }
 
 fn index_resolved_scope_report(
     scope: &crate::scope::ResolvedScope,
+    progress: &mut ProgressOptions<'_>,
 ) -> Result<IndexReport, WikiError> {
     if let Some(database_url) = database_url_for("gwiki index")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki index")?;
@@ -60,13 +110,17 @@ fn index_resolved_scope_report(
         let index_options = index_options_from_conn(&mut conn)?;
         {
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
-            indexer::index_vault_with_options(scope.root(), &mut store, index_options)?;
+            indexer::index_vault(scope.root(), &mut store, index_options, progress)?;
         }
         let mut degradations = Vec::new();
-        if let Some(degradation) = sync_qdrant_vectors(&mut conn, &search_scope, "gwiki index")? {
+        if let Some(degradation) =
+            sync_qdrant_vectors(&mut conn, &search_scope, "gwiki index", progress)?
+        {
             degradations.push(degradation);
         }
-        if let Some(degradation) = sync_falkor_graph(&mut conn, &search_scope, "gwiki index")? {
+        if let Some(degradation) =
+            sync_falkor_graph(&mut conn, &search_scope, "gwiki index", progress)?
+        {
             degradations.push(degradation);
         }
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
@@ -78,7 +132,7 @@ fn index_resolved_scope_report(
 
     let index_options = local_index_options()?;
     let mut store = store::MemoryWikiStore::default();
-    indexer::index_vault_with_options(scope.root(), &mut store, index_options)?;
+    indexer::index_vault(scope.root(), &mut store, index_options, progress)?;
     Ok(IndexReport {
         counts: index_counts(&store),
         degradations: Vec::new(),
@@ -89,6 +143,7 @@ pub(crate) fn execute_ingest_file(
     path: PathBuf,
     selection: ScopeSelection,
     options: IngestFileOptions,
+    run_options: RunOptions,
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     // Vault initialization is idempotent here; ingest only needs the paths to exist.
@@ -104,6 +159,8 @@ pub(crate) fn execute_ingest_file(
     let project_id = ai_project_id(&output_scope);
     let gobby_home = gobby_home()?;
     let fetched_at = collect_timestamp()?;
+    let mut progress = StderrWikiProgress::new(run_options.quiet);
+    let mut progress_options = ProgressOptions::with_sink(&mut progress);
     if let Some(database_url) = database_url_for("gwiki ingest-file")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-file")?;
         let (ai_context, options) = {
@@ -125,11 +182,22 @@ pub(crate) fn execute_ingest_file(
                 &options,
                 &path,
                 &fetched_at,
+                &mut progress_options,
             )?
         };
-        sync_qdrant_vectors(&mut conn, &search_scope, "gwiki ingest-file")?;
+        sync_qdrant_vectors(
+            &mut conn,
+            &search_scope,
+            "gwiki ingest-file",
+            &mut progress_options,
+        )?;
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
-        sync_falkor_graph(&mut conn, &search_scope, "gwiki ingest-file")?;
+        sync_falkor_graph(
+            &mut conn,
+            &search_scope,
+            "gwiki ingest-file",
+            &mut progress_options,
+        )?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
@@ -147,6 +215,7 @@ pub(crate) fn execute_ingest_file(
         &options,
         &path,
         &fetched_at,
+        &mut progress_options,
     )?;
     let counts = index_counts(&store);
     Ok(render_ingest_file(&path, output_scope, &result, counts))
@@ -155,6 +224,7 @@ pub(crate) fn execute_ingest_file(
 pub(crate) fn execute_ingest_url(
     urls: Vec<String>,
     selection: ScopeSelection,
+    run_options: RunOptions,
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     // Vault initialization is idempotent here; ingest only needs the paths to exist.
@@ -168,24 +238,48 @@ pub(crate) fn execute_ingest_url(
     }
     let output_scope = resolved_scope_identity(&scope);
     let fetched_at = collect_timestamp()?;
+    let mut progress = StderrWikiProgress::new(run_options.quiet);
+    let mut progress_options = ProgressOptions::with_sink(&mut progress);
     if let Some(database_url) = database_url_for("gwiki ingest-url")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-url")?;
         let search_scope = search_scope_for_resolved(&scope);
         let result = {
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
-            ingest::url::ingest_urls(scope.root(), &mut store, &urls, &fetched_at)?
+            ingest::url::ingest_urls(
+                scope.root(),
+                &mut store,
+                &urls,
+                &fetched_at,
+                &mut progress_options,
+            )?
         };
         let counts =
             indexed_counts_for_postgres(&mut conn, &search_scope, !result.accepted.is_empty())?;
         if !result.accepted.is_empty() {
-            sync_qdrant_vectors(&mut conn, &search_scope, "gwiki ingest-url")?;
-            sync_falkor_graph(&mut conn, &search_scope, "gwiki ingest-url")?;
+            sync_qdrant_vectors(
+                &mut conn,
+                &search_scope,
+                "gwiki ingest-url",
+                &mut progress_options,
+            )?;
+            sync_falkor_graph(
+                &mut conn,
+                &search_scope,
+                "gwiki ingest-url",
+                &mut progress_options,
+            )?;
         }
         return Ok(render_ingest_url(output_scope, &result, counts));
     }
 
     let mut store = store::MemoryWikiStore::default();
-    let result = ingest::url::ingest_urls(scope.root(), &mut store, &urls, &fetched_at)?;
+    let result = ingest::url::ingest_urls(
+        scope.root(),
+        &mut store,
+        &urls,
+        &fetched_at,
+        &mut progress_options,
+    )?;
     let counts = index_counts(&store);
     Ok(render_ingest_url(output_scope, &result, counts))
 }
@@ -291,6 +385,7 @@ pub(crate) fn sync_falkor_graph(
     conn: &mut Client,
     search_scope: &SearchScope,
     command: &'static str,
+    progress: &mut ProgressOptions<'_>,
 ) -> Result<Option<DegradationKind>, WikiError> {
     let gobby_home = gobby_home()?;
     let primary = PostgresConfigSource { conn };
@@ -304,7 +399,9 @@ pub(crate) fn sync_falkor_graph(
         log::warn!("{command}: FalkorDB config not found; skipping gwiki graph sync");
         return Ok(Some(not_configured_degradation(FALKORDB_SERVICE)));
     };
-    if let Err(error) = crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor) {
+    if let Err(error) =
+        crate::falkor_graph::sync_scope_from_postgres(conn, search_scope, &falkor, progress)
+    {
         log::warn!(
             "{command}: FalkorDB graph sync failed; continuing with PostgreSQL index: {error}"
         );
@@ -317,6 +414,7 @@ pub(crate) fn sync_qdrant_vectors(
     conn: &mut Client,
     search_scope: &SearchScope,
     command: &'static str,
+    progress: &mut ProgressOptions<'_>,
 ) -> Result<Option<DegradationKind>, WikiError> {
     let gobby_home = gobby_home()?;
     let (embedding, qdrant) = {
@@ -348,6 +446,7 @@ pub(crate) fn sync_qdrant_vectors(
         &mut source,
         &mut embedder,
         &mut store,
+        progress,
     ) {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -727,6 +826,18 @@ mod tests {
                 .text
                 .contains("Degradations: qdrant_unreachable")
         );
+    }
+
+    #[test]
+    fn quiet_progress_sink_disables_progress_bar() {
+        let mut progress = StderrWikiProgress::new(true);
+
+        progress.start(ProgressPhase::VaultIndex, 2);
+
+        assert!(progress.bar.as_ref().is_some_and(|bar| !bar.is_enabled()));
+        progress.advance(ProgressPhase::VaultIndex, "notes/page.md");
+        progress.finish(ProgressPhase::VaultIndex);
+        assert!(progress.bar.is_none());
     }
 
     #[test]

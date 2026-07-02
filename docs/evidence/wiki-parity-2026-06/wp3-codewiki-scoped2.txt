@@ -1,0 +1,21 @@
+codewiki: loading indexed files
+codewiki: loading symbols for 11 files
+codewiki: fetching graph edges for 11 files and 100 symbols (limit 5000)
+codewiki: loading leading content chunks
+codewiki: reading metadata for scoped write
+codewiki: generating file docs for 11 files
+codewiki: reusing file doc file 1/11 crates/gcode/src/index/import_resolution/parser/go_rust.rs
+codewiki: reusing file doc file 2/11 crates/gcode/src/index/import_resolution/parser/java_csharp.rs
+codewiki: reusing file doc file 3/11 crates/gcode/src/index/import_resolution/parser/mod.rs
+codewiki: reusing file doc file 4/11 crates/gcode/src/index/import_resolution/parser/php_kotlin.rs
+codewiki: reusing file doc file 5/11 crates/gcode/src/index/import_resolution/parser/python_js.rs
+codewiki: reusing file doc file 6/11 crates/gcode/src/index/import_resolution/parser/rest.rs
+codewiki: reusing file doc file 7/11 crates/gcode/src/index/parser/calls/ast.rs
+codewiki: reusing file doc file 8/11 crates/gcode/src/index/parser/calls/dart_textual.rs
+codewiki: reusing file doc file 9/11 crates/gcode/src/index/parser/calls/resolution.rs
+codewiki: reusing file doc file 10/11 crates/gcode/src/index/parser/calls/shadowing.rs
+codewiki: reusing file doc file 11/11 crates/gcode/src/index/parser/calls/text.rs
+codewiki: generating module docs
+codewiki: generating module doc module 1/2 crates/gcode/src/index/import_resolution/parser
+codewiki: generating module doc module 2/2 crates/gcode/src/index/parser/calls
+wrote 11 scoped file docs and 2 scoped module docs to .gobby/wiki

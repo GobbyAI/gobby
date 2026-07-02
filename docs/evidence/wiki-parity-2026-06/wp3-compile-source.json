@@ -1,0 +1,4 @@
+{
+  "code": "io_error",
+  "message": "read research checkpoint failed for /Users/josh/Projects/gobby-cli/.gobby/wiki/.gwiki/research-session.json: No such file or directory (os error 2) (io_error)"
+}

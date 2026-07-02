@@ -89,7 +89,11 @@ pub fn ingest_video(
         VideoDegradationContext::default(),
         |record| write_asset(vault_root, record, &snapshot.file_name, &snapshot.bytes),
     )?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 
@@ -121,7 +125,11 @@ fn ingest_video_file_with_degradations(
         transcription_degradation,
         suppress_frame_sampling,
     )?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 
@@ -174,7 +182,11 @@ pub fn ingest_video_file_with_production_processing(
     let result = ingest_video_file_with_production_processing_without_index(
         vault_root, scope, ai_context, snapshot, translate,
     )?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

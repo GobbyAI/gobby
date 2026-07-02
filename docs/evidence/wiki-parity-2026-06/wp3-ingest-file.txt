@@ -1,0 +1,25 @@
+gwiki: ingest-file resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "asset_path": null,
+  "command": "ingest-file",
+  "indexed": {
+    "chunks": 1909,
+    "documents": 448,
+    "ingestions": 1812,
+    "links": 2700,
+    "sources": 448
+  },
+  "path": "README.md",
+  "raw_path": "raw/src-d0009cf2de348320-users-josh-projects-gobby-cli-readme-md.md",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "source": {
+    "content_hash": "d0009cf2de348320b2ec055f2376a32f200e04e4051615cf8a70dac14e0b7267",
+    "id": "src-d0009cf2de348320-users-josh-projects-gobby-cli-readme-md",
+    "kind": "markdown",
+    "location": "/Users/josh/Projects/gobby-cli/README.md"
+  },
+  "status": "ingested"
+}

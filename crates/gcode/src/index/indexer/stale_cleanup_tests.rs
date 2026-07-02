@@ -1,4 +1,4 @@
-use super::{IndexRequest, index_files};
+use super::{IndexOptions, IndexRequest, index_files};
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use std::path::{Path, PathBuf};
@@ -33,8 +33,12 @@ mod serial_db {
             project_root.path().to_path_buf(),
             project_id.clone(),
         );
-        let initial = index_files(discovered_request(project_root.path(), true), &ctx)
-            .expect("initial discovered index");
+        let initial = index_files(
+            discovered_request(project_root.path(), true),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("initial discovered index");
         assert_eq!(initial.indexed_files, 1);
         assert!(
             symbol_count(&mut conn, &project_id, "src/lib.rs") > 0,
@@ -42,8 +46,12 @@ mod serial_db {
         );
 
         write_file(project_root.path(), "src/lib.rs", b"");
-        let reindex = index_files(discovered_request(project_root.path(), false), &ctx)
-            .expect("reindex discovered scan");
+        let reindex = index_files(
+            discovered_request(project_root.path(), false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("reindex discovered scan");
 
         assert_eq!(reindex.indexed_files, 0);
         assert_eq!(

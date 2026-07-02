@@ -59,7 +59,11 @@ pub(crate) fn ingest_video_file_with_processing(
         vision_endpoint,
         media,
     )?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

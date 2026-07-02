@@ -10,6 +10,25 @@ use crate::api::IngestFileOptions;
 use crate::sources::{SourceKind, SourceManifest};
 use crate::store::MemoryWikiStore;
 
+#[derive(Default)]
+struct RecordingProgress {
+    events: Vec<String>,
+}
+
+impl crate::progress::ProgressSink for RecordingProgress {
+    fn start(&mut self, phase: crate::progress::ProgressPhase, total: usize) {
+        self.events.push(format!("{phase:?}:start:{total}"));
+    }
+
+    fn advance(&mut self, phase: crate::progress::ProgressPhase, item: &str) {
+        self.events.push(format!("{phase:?}:advance:{item}"));
+    }
+
+    fn finish(&mut self, phase: crate::progress::ProgressPhase) {
+        self.events.push(format!("{phase:?}:finish"));
+    }
+}
+
 fn no_ai_context() -> AiContext {
     let mut source = EnvOnlySource;
     let mut context = AiContext::resolve(None, &mut source);
@@ -27,6 +46,70 @@ fn ingest_options() -> IngestFileOptions {
         video_frame_interval_seconds: Some(0),
         ..IngestFileOptions::default()
     }
+}
+
+fn ingest_path_for_test(
+    vault_root: &Path,
+    store: &mut impl crate::store::WikiIndexStore,
+    scope: &ScopeIdentity,
+    ai_context: &AiContext,
+    options: &IngestFileOptions,
+    path: &Path,
+    fetched_at: &str,
+) -> Result<IngestResult, WikiError> {
+    ingest_path(
+        vault_root,
+        store,
+        scope,
+        ai_context,
+        options,
+        path,
+        fetched_at,
+        &mut crate::progress::ProgressOptions::default(),
+    )
+}
+
+#[test]
+fn file_ingest_progress_reports_ingest_and_index_phases() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("field-notes.md");
+    std::fs::write(&file_path, b"# Field Notes\n\nLocal markdown source.\n")
+        .expect("write local file");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+    let mut progress = RecordingProgress::default();
+
+    ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-05-29T16:45:00Z",
+        &mut crate::progress::ProgressOptions::with_sink(&mut progress),
+    )
+    .expect("ingest local file");
+
+    assert_eq!(
+        progress.events.first().map(String::as_str),
+        Some("IngestFile:start:1")
+    );
+    assert!(
+        progress
+            .events
+            .contains(&format!("IngestFile:advance:{}", file_path.display()))
+    );
+    assert!(progress.events.contains(&"IngestFile:finish".to_string()));
+    assert!(
+        progress
+            .events
+            .iter()
+            .any(|event| event.starts_with("VaultIndex:start:"))
+    );
+    assert!(progress.events.contains(&"VaultIndex:finish".to_string()));
 }
 
 #[test]
@@ -60,7 +143,7 @@ fn file_and_stdin_ingest_hash_sources() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let file_result = ingest_path(
+    let file_result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -114,7 +197,7 @@ fn common_audio_extensions_ingest_as_audio_assets() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -166,7 +249,7 @@ fn dispatches_media_to_orchestrators() {
         std::fs::write(&path, format!("{name} bytes")).expect("write media file");
         let mut store = MemoryWikiStore::default();
 
-        let result = ingest_path(
+        let result = ingest_path_for_test(
             temp.path(),
             &mut store,
             &scope,
@@ -199,7 +282,7 @@ fn no_ai_dispatch_degrades() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -229,7 +312,7 @@ fn media_dispatch_registers_once() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    ingest_path(
+    ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -294,7 +377,7 @@ fn detects_documents_and_inlines_structured_text() {
 
     let small_csv = temp.path().join("data.csv");
     std::fs::write(&small_csv, b"city,count\nDuluth,3\n").expect("write csv");
-    let small_result = ingest_path(
+    let small_result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -309,7 +392,7 @@ fn detects_documents_and_inlines_structured_text() {
 
     let large_json = temp.path().join("large.json");
     std::fs::write(&large_json, vec![b'a'; 262_145]).expect("write large json");
-    let large_result = ingest_path(
+    let large_result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -337,7 +420,7 @@ fn jsonl_session_archive_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -381,7 +464,7 @@ fn raw_claude_jsonl_session_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -424,7 +507,7 @@ fn codex_jsonl_session_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -467,7 +550,7 @@ fn gemini_jsonl_session_is_not_supported() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let error = ingest_path(
+    let error = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -498,7 +581,7 @@ fn grok_jsonl_session_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -539,7 +622,7 @@ fn droid_jsonl_session_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -579,7 +662,7 @@ fn qwen_jsonl_session_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -618,7 +701,7 @@ fn dispatches_office_html_to_document() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -652,7 +735,7 @@ fn dispatches_pdf_to_combined_path() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -682,7 +765,7 @@ fn office_html_store_as_asset_without_documents_feature() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,
@@ -710,7 +793,7 @@ fn pdf_store_as_asset_without_documents_feature() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let result = ingest_path_for_test(
         temp.path(),
         &mut store,
         &scope,

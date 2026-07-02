@@ -19,29 +19,34 @@ use super::lifecycle::{
 };
 use super::local_imports::{resolve_local_import_calls, resolve_project_local_import_calls};
 use super::overlay::index_overlay_files;
-use super::types::{IndexOutcome, IndexRequest};
+use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest};
 use super::util::{
     DEFAULT_EXCLUDES, filter_discovered_paths, relative_path, requested_relative_path,
     unsupported_file_types,
 };
 
-pub fn index_files(request: IndexRequest, ctx: &Context) -> anyhow::Result<IndexOutcome> {
+pub fn index_files(
+    request: IndexRequest,
+    ctx: &Context,
+    options: IndexOptions<'_>,
+) -> anyhow::Result<IndexOutcome> {
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    index_files_with_connection(&mut conn, request, ctx)
+    index_files_with_connection(&mut conn, request, ctx, options)
 }
 
 fn index_files_with_connection(
     conn: &mut Client,
     request: IndexRequest,
     ctx: &Context,
+    mut options: IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
     if matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. }) {
         return index_overlay_files(conn, &request, ctx);
     }
     if request.explicit_files.is_empty() {
-        index_discovered_files(conn, &request, ctx)
+        index_discovered_files(conn, &request, ctx, &mut options)
     } else {
-        index_explicit_files_with_connection(conn, &request, ctx)
+        index_explicit_files_with_connection(conn, &request, ctx, &mut options)
     }
 }
 
@@ -49,6 +54,7 @@ fn index_discovered_files(
     conn: &mut Client,
     request: &IndexRequest,
     ctx: &Context,
+    options: &mut IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
     let project_id = ctx.project_id.as_str();
     let start = Instant::now();
@@ -102,6 +108,7 @@ fn index_discovered_files(
     outcome.durations.discovery_ms = discovery_start.elapsed().as_millis() as u64;
 
     let indexing_start = Instant::now();
+    let mut progress = ActiveIndexProgress::new(options.progress.take(), eligible_files);
     for path in &candidates {
         let rel = match relative_path(path, root_path) {
             Ok(r) => r,
@@ -138,6 +145,7 @@ fn index_discovered_files(
                 )?;
             }
         }
+        progress.advance(&rel);
     }
 
     for path in &content_only {
@@ -155,6 +163,7 @@ fn index_discovered_files(
             Some(counts) => outcome.add_counts(counts),
             None => outcome.skipped_files += 1,
         }
+        progress.advance(&rel);
     }
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
@@ -183,6 +192,7 @@ fn index_explicit_files_with_connection(
     conn: &mut Client,
     request: &IndexRequest,
     ctx: &Context,
+    options: &mut IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
     let project_id = ctx.project_id.as_str();
     let start = Instant::now();
@@ -265,7 +275,9 @@ fn index_explicit_files_with_connection(
 
     let indexing_start = Instant::now();
     let routed_file_count = routed_files.len();
+    let mut progress = ActiveIndexProgress::new(options.progress.take(), routed_file_count);
     for (abs, route) in routed_files {
+        let rel = relative_path(&abs, root_path).ok();
         match route {
             ExplicitFileRoute::Ast => {
                 if let Some(count) = index_file(
@@ -290,6 +302,9 @@ fn index_explicit_files_with_connection(
             }
             _ => unreachable!("skip routes are filtered before indexing"),
         }
+        if let Some(rel) = rel {
+            progress.advance(&rel);
+        }
     }
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
@@ -309,6 +324,78 @@ fn index_explicit_files_with_connection(
 
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
+}
+
+struct ActiveIndexProgress<'a> {
+    sink: Option<&'a mut dyn IndexProgressSink>,
+}
+
+impl<'a> ActiveIndexProgress<'a> {
+    fn new(sink: Option<&'a mut dyn IndexProgressSink>, total: usize) -> Self {
+        let mut progress = Self { sink };
+        if let Some(sink) = progress.sink.as_deref_mut() {
+            sink.start(total);
+        }
+        progress
+    }
+
+    fn advance(&mut self, file_path: &str) {
+        if let Some(sink) = self.sink.as_deref_mut() {
+            sink.advance(file_path);
+        }
+    }
+}
+
+impl Drop for ActiveIndexProgress<'_> {
+    fn drop(&mut self) {
+        if let Some(sink) = self.sink.as_deref_mut() {
+            sink.finish();
+        }
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingProgress {
+        events: Vec<String>,
+    }
+
+    impl IndexProgressSink for RecordingProgress {
+        fn start(&mut self, total: usize) {
+            self.events.push(format!("start:{total}"));
+        }
+
+        fn advance(&mut self, file_path: &str) {
+            self.events.push(format!("advance:{file_path}"));
+        }
+
+        fn finish(&mut self) {
+            self.events.push("finish".to_string());
+        }
+    }
+
+    #[test]
+    fn index_progress_reports_start_advance_and_finish() {
+        let mut sink = RecordingProgress::default();
+        {
+            let mut progress = ActiveIndexProgress::new(Some(&mut sink), 2);
+            progress.advance("src/one.rs");
+            progress.advance("src/two.rs");
+        }
+
+        assert_eq!(
+            sink.events,
+            vec![
+                "start:2",
+                "advance:src/one.rs",
+                "advance:src/two.rs",
+                "finish"
+            ]
+        );
+    }
 }
 
 fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {

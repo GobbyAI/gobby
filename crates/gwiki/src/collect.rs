@@ -146,7 +146,11 @@ pub fn collect_inbox_and_index(
 ) -> Result<CollectReport, WikiError> {
     let report = collect_inbox(vault_root, fetched_at)?;
     if !report.accepted.is_empty() {
-        index_after_ingest(vault_root, store)?;
+        index_after_ingest(
+            vault_root,
+            store,
+            &mut crate::progress::ProgressOptions::default(),
+        )?;
     }
     Ok(report)
 }

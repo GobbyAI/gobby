@@ -1,0 +1,342 @@
+gwiki: ask resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "ai": {
+    "error": null,
+    "model": "gpt-5.4-mini",
+    "requested": true,
+    "requested_mode": "daemon",
+    "route": "daemon",
+    "status": "available"
+  },
+  "code_citations": [
+    {
+      "file": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "symbol": "crates/gcode/src/graph/code_graph/connection.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "symbol": "crates/gcode/src/commands/graph/reads.rs"
+    },
+    {
+      "file": "code/files/crates/gcore/src/falkor.rs.md",
+      "symbol": "crates/gcore/src/falkor.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/search/graph_boost.rs.md",
+      "symbol": "crates/gcode/src/search/graph_boost.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/codewiki/graph.rs.md",
+      "symbol": "crates/gcode/src/commands/codewiki/graph.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/setup.rs.md",
+      "symbol": "crates/gcode/src/commands/setup.rs"
+    }
+  ],
+  "command": "ask",
+  "degraded": false,
+  "degraded_sources": [],
+  "evidence": [
+    {
+      "excerpt_chars": 1167,
+      "source_path": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md"
+    },
+    {
+      "excerpt_chars": 1011,
+      "source_path": "code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/commands/graph/reads.rs.md"
+    },
+    {
+      "excerpt_chars": 744,
+      "source_path": "code/files/crates/gcore/src/falkor.rs.md",
+      "wiki_page": "code/files/crates/gcore/src/falkor.rs.md"
+    },
+    {
+      "excerpt_chars": 3232,
+      "source_path": "code/modules/crates/gcode/src/graph/code_graph.md",
+      "wiki_page": "code/modules/crates/gcode/src/graph/code_graph.md"
+    },
+    {
+      "excerpt_chars": 2062,
+      "source_path": "code/modules/crates/gcode/src/commands/graph.md",
+      "wiki_page": "code/modules/crates/gcode/src/commands/graph.md"
+    },
+    {
+      "excerpt_chars": 2517,
+      "source_path": "code/modules/crates/gcode/src/search.md",
+      "wiki_page": "code/modules/crates/gcode/src/search.md"
+    },
+    {
+      "excerpt_chars": 10,
+      "source_path": "code/files/crates/gcode/src/search/graph_boost.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/search/graph_boost.rs.md"
+    },
+    {
+      "excerpt_chars": 3242,
+      "source_path": "code/modules/crates/gcode/src/commands.md",
+      "wiki_page": "code/modules/crates/gcode/src/commands.md"
+    },
+    {
+      "excerpt_chars": 10,
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/graph.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/graph.rs.md"
+    },
+    {
+      "excerpt_chars": 10,
+      "source_path": "code/files/crates/gcode/src/commands/setup.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/commands/setup.rs.md"
+    }
+  ],
+  "hits": [
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "result_type": "code",
+      "score": 0.03306010928961749,
+      "snippet": "## Purpose This file provides utilities for managing FalkorDB graph client connections with configurable error handling semantics. It",
+      "source_path": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/graph/code_graph/connection.rs",
+      "wiki_page": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 4,
+          "score": 0.015625,
+          "source": "bm25"
+        },
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "result_type": "code",
+      "score": 0.032018442622950824,
+      "snippet": "## Purpose Provides the read-side support for graph-backed `gcode` commands. It centralizes user-facing fallback behavior when the FalkorDB graph backend is missing o",
+      "source_path": "code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/graph/reads.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/graph/reads.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 9,
+          "score": 0.014492753623188406,
+          "source": "bm25"
+        },
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcore/src/falkor.rs.md",
+      "result_type": "code",
+      "score": 0.030621785881252923,
+      "snippet": "## Purpose This file defines the FalkorDB adapter boundary for `gcore`: it wraps a blocking `SyncGraph` in `GraphClient`, provides a",
+      "source_path": "code/files/crates/gcore/src/falkor.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcore/src/falkor.rs",
+      "wiki_page": "code/files/crates/gcore/src/falkor.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 7,
+          "score": 0.014925373134328358,
+          "source": "bm25"
+        },
+        {
+          "rank": 6,
+          "score": 0.015151515151515152,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/graph/code_graph.md",
+      "result_type": "wiki",
+      "score": 0.03007688828584351,
+      "snippet": "## Files - [[code/files/crates/gcode/src/graph/code_graph/connection.rs|crates/gcode/src/graph/code_graph/connection.rs]] - This file provides utilitie",
+      "source_path": "code/modules/crates/gcode/src/graph/code_graph.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/graph/code_graph",
+      "wiki_page": "code/modules/crates/gcode/src/graph/code_graph.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/commands/graph.md",
+      "result_type": "wiki",
+      "score": 0.016666666666666666,
+      "snippet": "## Overview The `crates/gcode/src/commands/graph` module is the command-facing layer for graph operations in `gcode`. It covers lifecycle comman",
+      "source_path": "code/modules/crates/gcode/src/commands/graph.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/commands/graph",
+      "wiki_page": "code/modules/crates/gcode/src/commands/graph.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/search.md",
+      "result_type": "wiki",
+      "score": 0.016129032258064516,
+      "snippet": "## Overview The search module is the gcode search orchestration layer: it groups PostgreSQL BM25 full-text search, semantic-vector inputs, graph-deriv",
+      "source_path": "code/modules/crates/gcode/src/search.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/search",
+      "wiki_page": "code/modules/crates/gcode/src/search.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 3,
+          "score": 0.015873015873015872,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/search/graph_boost.rs.md",
+      "result_type": "code",
+      "score": 0.015873015873015872,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcode/src/search/graph_boost.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search/graph_boost.rs",
+      "wiki_page": "code/files/crates/gcode/src/search/graph_boost.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 3,
+          "score": 0.015873015873015872,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/commands.md",
+      "result_type": "wiki",
+      "score": 0.015873015873015872,
+      "snippet": "## Child Modules - [[code/modules/crates/gcode/src/commands/codewiki|crates/gcode/src/commands/codewiki]] - The codewiki command owns end-to-end repository docum",
+      "source_path": "code/modules/crates/gcode/src/commands.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/commands",
+      "wiki_page": "code/modules/crates/gcode/src/commands.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 4,
+          "score": 0.015625,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/codewiki/graph.rs.md",
+      "result_type": "code",
+      "score": 0.015625,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/graph.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/graph.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/graph.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 5,
+          "score": 0.015384615384615385,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/setup.rs.md",
+      "result_type": "code",
+      "score": 0.015384615384615385,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcode/src/commands/setup.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/setup.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/setup.rs.md"
+    }
+  ],
+  "prompt_token_budget": 12000,
+  "prompt_tokens_estimated": 3915,
+  "query": "What does gcode return when FalkorDB graph backend is unavailable?",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "sources": [
+    "bm25",
+    "code/files/crates/gcode/src/commands/codewiki/graph.rs.md",
+    "code/files/crates/gcode/src/commands/graph/reads.rs.md",
+    "code/files/crates/gcode/src/commands/setup.rs.md",
+    "code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+    "code/files/crates/gcode/src/search/graph_boost.rs.md",
+    "code/files/crates/gcore/src/falkor.rs.md",
+    "code/modules/crates/gcode/src/commands.md",
+    "code/modules/crates/gcode/src/commands/graph.md",
+    "code/modules/crates/gcode/src/graph/code_graph.md",
+    "code/modules/crates/gcode/src/search.md",
+    "semantic"
+  ],
+  "status": "answered",
+  "synthesis": {
+    "answer": "When the FalkorDB graph backend is unavailable, `gcode` degrades rather than hard-failing for optional graph reads: it returns hints, empty paginated responses, or `None` for graph-read failures [crates/gcode/src/commands/graph/reads.rs:14-20] [crates/gcode/src/commands/graph/reads.rs:50-73]. For required graph operations, it returns a `GraphReadError` mapped to service state like unavailable or unreachable [crates/gcode/src/graph/code_graph/connection.rs:14-40].",
+    "citation_check": {
+      "checked_claims": 3,
+      "status": "supported",
+      "unsupported_claims": []
+    },
+    "model": "gpt-5.4-mini"
+  },
+  "truncated": false,
+  "truncated_components": [],
+  "warnings": []
+}

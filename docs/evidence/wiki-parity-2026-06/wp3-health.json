@@ -1,0 +1,72 @@
+gwiki: health resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "broken_links": [
+    {
+      "kind": "wikilink",
+      "line": 75,
+      "path": "code/files/crates/gwiki/src/compile/tests.rs.md",
+      "target": "knowledge/topics/exact"
+    },
+    {
+      "kind": "wikilink",
+      "line": 130,
+      "path": "code/files/crates/gwiki/src/synthesis.rs.md",
+      "target": "relative_path"
+    }
+  ],
+  "command": "health",
+  "duplicate_concepts": [],
+  "json_path": "meta/health/latest.json",
+  "root": "/Users/josh/Projects/gobby-cli/.gobby/wiki",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "stale_citations": [],
+  "stale_pages": [],
+  "text_path": "meta/health/latest.md",
+  "uncited_sources": [
+    {
+      "location": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+      "path": "raw/src-495a2039993adc47-https-en-wikipedia-org-wiki-retrieval-augmented.md",
+      "source_id": "src-495a2039993adc47-https-en-wikipedia-org-wiki-retrieval-augmented"
+    },
+    {
+      "location": "/Users/josh/Projects/gobby-cli/README.md",
+      "path": "raw/src-d0009cf2de348320-users-josh-projects-gobby-cli-readme-md.md",
+      "source_id": "src-d0009cf2de348320-users-josh-projects-gobby-cli-readme-md"
+    },
+    {
+      "location": "/private/tmp/wp3-deposit-note.md",
+      "path": "raw/src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md.md",
+      "source_id": "src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md"
+    }
+  ],
+  "uncompiled_sources": [
+    {
+      "location": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+      "path": "raw/src-495a2039993adc47-https-en-wikipedia-org-wiki-retrieval-augmented.md",
+      "source_id": "src-495a2039993adc47-https-en-wikipedia-org-wiki-retrieval-augmented"
+    },
+    {
+      "location": "/Users/josh/Projects/gobby-cli/README.md",
+      "path": "raw/src-d0009cf2de348320-users-josh-projects-gobby-cli-readme-md.md",
+      "source_id": "src-d0009cf2de348320-users-josh-projects-gobby-cli-readme-md"
+    },
+    {
+      "location": "/private/tmp/wp3-logo.png",
+      "path": "raw/src-cfe14a7625e12a59-private-tmp-wp3-logo-png.md",
+      "source_id": "src-cfe14a7625e12a59-private-tmp-wp3-logo-png"
+    },
+    {
+      "location": "inbox/wp3-rrf-note.md",
+      "path": "raw/src-ab36a0b101bf7f6f-inbox-wp3-rrf-note-md.md",
+      "source_id": "src-ab36a0b101bf7f6f-inbox-wp3-rrf-note-md"
+    },
+    {
+      "location": "/private/tmp/wp3-deposit-note.md",
+      "path": "raw/src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md.md",
+      "source_id": "src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md"
+    }
+  ]
+}

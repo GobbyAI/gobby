@@ -79,6 +79,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
                     sync_projections: false,
                 },
                 &index_ctx,
+                api::IndexOptions::default(),
             )
         })? {
             IndexLockResult::Acquired(outcome) => outcome,

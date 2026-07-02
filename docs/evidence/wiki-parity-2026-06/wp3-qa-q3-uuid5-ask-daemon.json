@@ -1,0 +1,328 @@
+gwiki: ask resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "ai": {
+    "error": null,
+    "model": "gpt-5.4-mini",
+    "requested": true,
+    "requested_mode": "daemon",
+    "route": "daemon",
+    "status": "available"
+  },
+  "code_citations": [
+    {
+      "file": "code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md",
+      "symbol": "docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "symbol": "crates/gcode/src/commands/codewiki/build_parts/snapshot.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "symbol": "crates/gcode/src/commands/codewiki/build_parts/changes.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/codewiki/io.rs.md",
+      "symbol": "crates/gcode/src/commands/codewiki/io.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/models.rs.md",
+      "symbol": "crates/gcode/src/models.rs"
+    },
+    {
+      "file": "code/files/crates/gwiki/src/sources/render.rs.md",
+      "symbol": "crates/gwiki/src/sources/render.rs"
+    }
+  ],
+  "command": "ask",
+  "degraded": false,
+  "degraded_sources": [],
+  "evidence": [
+    {
+      "excerpt_chars": 3230,
+      "source_path": "code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md",
+      "wiki_page": "code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md"
+    },
+    {
+      "excerpt_chars": 14,
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md"
+    },
+    {
+      "excerpt_chars": 3247,
+      "source_path": "code/repo.md",
+      "wiki_page": "code/repo.md"
+    },
+    {
+      "excerpt_chars": 14,
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md"
+    },
+    {
+      "excerpt_chars": 3251,
+      "source_path": "code/modules/crates/gcode/src/commands/codewiki/build_parts.md",
+      "wiki_page": "code/modules/crates/gcode/src/commands/codewiki/build_parts.md"
+    },
+    {
+      "excerpt_chars": 3279,
+      "source_path": "code/modules/crates/gcode.md",
+      "wiki_page": "code/modules/crates/gcode.md"
+    },
+    {
+      "excerpt_chars": 1113,
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/io.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/io.rs.md"
+    },
+    {
+      "excerpt_chars": 10,
+      "source_path": "code/files/crates/gcode/src/models.rs.md",
+      "wiki_page": "code/files/crates/gcode/src/models.rs.md"
+    },
+    {
+      "excerpt_chars": 3301,
+      "source_path": "code/_architecture.md",
+      "wiki_page": "code/_architecture.md"
+    },
+    {
+      "excerpt_chars": 10,
+      "source_path": "code/files/crates/gwiki/src/sources/render.rs.md",
+      "wiki_page": "code/files/crates/gwiki/src/sources/render.rs.md"
+    }
+  ],
+  "hits": [
+    {
+      "explanations": [
+        {
+          "rank": 4,
+          "score": 0.015625,
+          "source": "bm25"
+        },
+        {
+          "rank": 3,
+          "score": 0.015873015873015872,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md",
+      "result_type": "code",
+      "score": 0.03149801587301587,
+      "snippet": "--- title: docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json type: code_file provenance: - file: docs/evidence/wiki-parity-2026-06/wp3-comp",
+      "source_path": "code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json",
+      "wiki_page": "code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "result_type": "code",
+      "score": 0.016666666666666666,
+      "snippet": "## API Symbols",
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/build_parts/snapshot.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/repo.md",
+      "result_type": "wiki",
+      "score": 0.016666666666666666,
+      "snippet": "## Modules - [[code/modules/crates|crates]] - The crates module is a container directory with no direct files of its own; it groups the Rust workspace's tooling crate",
+      "source_path": "code/repo.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "Repository Overview",
+      "wiki_page": "code/repo.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "result_type": "code",
+      "score": 0.01639344262295082,
+      "snippet": "## API Symbols",
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/build_parts/changes.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/commands/codewiki/build_parts.md",
+      "result_type": "wiki",
+      "score": 0.01639344262295082,
+      "snippet": "## Files - [[code/files/crates/gcode/src/commands/codewiki/build_parts/architecture.rs|crates/gcode/src/commands/codewiki/build_parts/architecture.rs]] - This file builds",
+      "source_path": "code/modules/crates/gcode/src/commands/codewiki/build_parts.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/build_parts",
+      "wiki_page": "code/modules/crates/gcode/src/commands/codewiki/build_parts.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode.md",
+      "result_type": "wiki",
+      "score": 0.016129032258064516,
+      "snippet": "[[code/modules/crates/gcode/assets|crates/gcode/assets]] - The crates/gcode/assets module is an asset container rather than an implementation module: it has no direct files of its",
+      "source_path": "code/modules/crates/gcode.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode",
+      "wiki_page": "code/modules/crates/gcode.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 3,
+          "score": 0.015873015873015872,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/codewiki/io.rs.md",
+      "result_type": "code",
+      "score": 0.015873015873015872,
+      "snippet": "## Purpose Provides the I/O layer for Codewiki document generation, incremental persistence, pruning, and metadata handling. The top-level w",
+      "source_path": "code/files/crates/gcode/src/commands/codewiki/io.rs.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/commands/codewiki/io.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/codewiki/io.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 4,
+          "score": 0.015625,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/models.rs.md",
+      "result_type": "code",
+      "score": 0.015625,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcode/src/models.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/models.rs",
+      "wiki_page": "code/files/crates/gcode/src/models.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 5,
+          "score": 0.015384615384615385,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/_architecture.md",
+      "result_type": "wiki",
+      "score": 0.015384615384615385,
+      "snippet": "de|crates/gcode]] - crates/gcode provides Gobby’s fast code index CLI and library surface: it discovers projects, indexes code and content, exposes search/graph/vector/codewiki com",
+      "source_path": "code/_architecture.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "Architecture Overview",
+      "wiki_page": "code/_architecture.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 5,
+          "score": 0.015384615384615385,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gwiki/src/sources/render.rs.md",
+      "result_type": "code",
+      "score": 0.015384615384615385,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gwiki/src/sources/render.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gwiki/src/sources/render.rs",
+      "wiki_page": "code/files/crates/gwiki/src/sources/render.rs.md"
+    }
+  ],
+  "prompt_token_budget": 12000,
+  "prompt_tokens_estimated": 4789,
+  "query": "How are codewiki symbol IDs kept in parity with the Python daemon make_id?",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "sources": [
+    "bm25",
+    "code/_architecture.md",
+    "code/files/crates/gcode/src/commands/codewiki/build_parts/changes.rs.md",
+    "code/files/crates/gcode/src/commands/codewiki/build_parts/snapshot.rs.md",
+    "code/files/crates/gcode/src/commands/codewiki/io.rs.md",
+    "code/files/crates/gcode/src/models.rs.md",
+    "code/files/crates/gwiki/src/sources/render.rs.md",
+    "code/files/docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json.md",
+    "code/modules/crates/gcode.md",
+    "code/modules/crates/gcode/src/commands/codewiki/build_parts.md",
+    "code/repo.md",
+    "semantic"
+  ],
+  "status": "answered",
+  "synthesis": {
+    "answer": "The provided evidence is insufficient to explain the parity mechanism. It shows that Codewiki records stable component IDs and generated wiki-parity artifacts, but it does not include the Python daemon `make_id` implementation or any shared ID-generation logic tying the two together.[docs/evidence/wiki-parity-2026-06/wp3-compile-explainer.json:3-12][crates/gcode/src/commands/codewiki/build_parts/snapshot.rs]",
+    "citation_check": {
+      "checked_claims": 4,
+      "status": "unsupported_claims",
+      "unsupported_claims": [
+        "The provided evidence is insufficient to explain the parity mechanism"
+      ]
+    },
+    "model": "gpt-5.4-mini"
+  },
+  "truncated": false,
+  "truncated_components": [],
+  "warnings": [
+    "synthesis claim lacks citation support in retrieved evidence: The provided evidence is insufficient to explain the parity mechanism"
+  ]
+}

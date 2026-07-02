@@ -99,7 +99,12 @@ fn memory_index_counts(
 ) -> Result<counts::IndexCounts, WikiError> {
     let mut store = store::MemoryWikiStore::default();
     if root.is_dir() {
-        indexer::index_vault_with_options(root, &mut store, index_options)?;
+        indexer::index_vault(
+            root,
+            &mut store,
+            index_options,
+            &mut crate::progress::ProgressOptions::default(),
+        )?;
     }
     Ok(counts::index_counts(&store))
 }

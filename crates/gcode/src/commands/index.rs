@@ -1,10 +1,15 @@
 use crate::config;
 use crate::config::Context;
-use crate::index::api::{self, IndexDegradation, IndexOutcome, IndexRequest, UnsupportedFileType};
+use crate::index::api::{
+    self, IndexDegradation, IndexOutcome, IndexProgressSink, IndexRequest, UnsupportedFileType,
+};
 use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::output::{self, Format};
-use crate::projection::sync::{self, ProjectionSyncReports};
+use crate::projection::sync::{
+    self, ProjectionProgressSink, ProjectionSyncReports, ProjectionTarget,
+};
 use crate::utils::short_id;
+use gobby_core::progress::ProgressBar;
 use serde::Serialize;
 
 pub fn run(
@@ -35,8 +40,13 @@ pub fn run(
         sync_projections,
     };
 
+    let mut index_progress = StderrIndexProgress::new(target_ctx.quiet);
     let outcome = match index_lock::with_project_lock(&target_ctx, IndexLockPolicy::Wait, || {
-        api::index_files(request, &target_ctx)
+        api::index_files(
+            request,
+            &target_ctx,
+            api::IndexOptions::with_progress(&mut index_progress),
+        )
     })? {
         IndexLockResult::Acquired(outcome) => outcome,
         IndexLockResult::Busy => anyhow::bail!(
@@ -45,7 +55,12 @@ pub fn run(
         ),
     };
     if sync_projections {
-        let projections = sync::sync_after_index(&target_ctx, &outcome.indexed_file_paths)?;
+        let mut projection_progress = StderrProjectionProgress::new(target_ctx.quiet);
+        let projections = sync::sync_after_index(
+            &target_ctx,
+            &outcome.indexed_file_paths,
+            &mut projection_progress,
+        )?;
         let payload = sync_projections_payload(&outcome, projections);
         return match format {
             Format::Json => output::print_json(&payload),
@@ -56,6 +71,77 @@ pub fn run(
     match format {
         Format::Json => output::print_json(&outcome),
         Format::Text => output::print_text(&index_text(&outcome)),
+    }
+}
+
+struct StderrIndexProgress {
+    quiet: bool,
+    bar: Option<ProgressBar>,
+}
+
+impl StderrIndexProgress {
+    fn new(quiet: bool) -> Self {
+        Self { quiet, bar: None }
+    }
+}
+
+impl IndexProgressSink for StderrIndexProgress {
+    fn start(&mut self, total: usize) {
+        let mut bar = ProgressBar::new(total, self.quiet);
+        bar.draw("indexing");
+        self.bar = Some(bar);
+    }
+
+    fn advance(&mut self, file_path: &str) {
+        if let Some(bar) = self.bar.as_mut() {
+            bar.tick(file_path);
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some(bar) = self.bar.as_mut() {
+            bar.finish();
+        }
+        self.bar = None;
+    }
+}
+
+struct StderrProjectionProgress {
+    quiet: bool,
+    bar: Option<ProgressBar>,
+}
+
+impl StderrProjectionProgress {
+    fn new(quiet: bool) -> Self {
+        Self { quiet, bar: None }
+    }
+}
+
+impl ProjectionProgressSink for StderrProjectionProgress {
+    fn start(&mut self, target: ProjectionTarget, total: usize) {
+        let mut bar = ProgressBar::new(total, self.quiet);
+        bar.draw(format!("{} sync", projection_label(target)));
+        self.bar = Some(bar);
+    }
+
+    fn advance(&mut self, target: ProjectionTarget, file_path: &str) {
+        if let Some(bar) = self.bar.as_mut() {
+            bar.tick(format!("{} {file_path}", projection_label(target)));
+        }
+    }
+
+    fn finish(&mut self, _target: ProjectionTarget) {
+        if let Some(bar) = self.bar.as_mut() {
+            bar.finish();
+        }
+        self.bar = None;
+    }
+}
+
+fn projection_label(target: ProjectionTarget) -> &'static str {
+    match target {
+        ProjectionTarget::Graph => "graph",
+        ProjectionTarget::Vectors => "vectors",
     }
 }
 

@@ -1,0 +1,24 @@
+gwiki: collect resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "accepted": 1,
+  "actions": {
+    "accepted": [
+      {
+        "inbox_path": "inbox/wp3-rrf-note.md",
+        "kind": "markdown",
+        "raw_path": "raw/src-ab36a0b101bf7f6f-inbox-wp3-rrf-note-md.md",
+        "reason": null,
+        "status": "accepted"
+      }
+    ],
+    "skipped": []
+  },
+  "command": "collect",
+  "root": "/Users/josh/Projects/gobby-cli/.gobby/wiki",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "skipped": 0,
+  "status": "ready"
+}

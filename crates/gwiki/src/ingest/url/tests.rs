@@ -17,6 +17,25 @@ use crate::store::{
     WikiSource,
 };
 
+#[derive(Default)]
+struct RecordingProgress {
+    events: Vec<String>,
+}
+
+impl crate::progress::ProgressSink for RecordingProgress {
+    fn start(&mut self, phase: crate::progress::ProgressPhase, total: usize) {
+        self.events.push(format!("{phase:?}:start:{total}"));
+    }
+
+    fn advance(&mut self, phase: crate::progress::ProgressPhase, item: &str) {
+        self.events.push(format!("{phase:?}:advance:{item}"));
+    }
+
+    fn finish(&mut self, phase: crate::progress::ProgressPhase) {
+        self.events.push(format!("{phase:?}:finish"));
+    }
+}
+
 #[test]
 fn url_ingest_writes_raw_and_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -107,6 +126,50 @@ fn html_parser_extracts_body_text_and_decodes_entities() {
 }
 
 #[test]
+fn batch_url_ingest_progress_reports_urls_and_index_phase() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let urls = vec![
+        "https://example.test/one".to_string(),
+        "https://example.test/two".to_string(),
+    ];
+    let mut store = MemoryWikiStore::default();
+    let mut progress = RecordingProgress::default();
+
+    ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &urls,
+        "2026-06-02T00:00:00Z",
+        |url, fetched_at| Ok(test_snapshot(url, url, url, fetched_at)),
+        &mut crate::progress::ProgressOptions::with_sink(&mut progress),
+    )
+    .expect("batch ingest");
+
+    assert_eq!(
+        progress.events.first().map(String::as_str),
+        Some("IngestUrl:start:2")
+    );
+    assert!(
+        progress
+            .events
+            .contains(&"IngestUrl:advance:https://example.test/one".to_string())
+    );
+    assert!(
+        progress
+            .events
+            .contains(&"IngestUrl:advance:https://example.test/two".to_string())
+    );
+    assert!(progress.events.contains(&"IngestUrl:finish".to_string()));
+    assert!(
+        progress
+            .events
+            .iter()
+            .any(|event| event.starts_with("VaultIndex:start:"))
+    );
+    assert!(progress.events.contains(&"VaultIndex:finish".to_string()));
+}
+
+#[test]
 fn batch_url_ingest_accepts_successes_and_records_failures() {
     let temp = tempfile::tempdir().expect("tempdir");
     let urls = vec![
@@ -127,6 +190,7 @@ fn batch_url_ingest_accepts_successes_and_records_failures() {
                 Err(UrlIngestFailure::new(url, "http_status", "HTTP status 500"))
             }
         },
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("batch ingest");
 
@@ -166,6 +230,7 @@ fn batch_url_ingest_indexes_once_after_accepted_batch() {
         &urls,
         "2026-06-02T00:00:00Z",
         |url, fetched_at| Ok(test_snapshot(url, url, url, fetched_at)),
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("batch ingest");
 

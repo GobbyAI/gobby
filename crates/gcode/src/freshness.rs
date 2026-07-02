@@ -50,6 +50,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
                             sync_projections: false,
                         },
                         ctx,
+                        api::IndexOptions::default(),
                     )?;
                 }
                 FreshnessScope::Files(paths) => {
@@ -69,6 +70,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
                                 sync_projections: false,
                             },
                             ctx,
+                            api::IndexOptions::default(),
                         )?;
                     }
                 }
@@ -298,6 +300,7 @@ mod tests {
                 sync_projections: false,
             },
             ctx,
+            api::IndexOptions::default(),
         )
         .expect("full index of test project");
     }

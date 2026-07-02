@@ -7,6 +7,7 @@ use crate::commands::index::{
     sync_falkor_graph, sync_qdrant_vectors,
 };
 use crate::ingest::{self, session_archive};
+use crate::progress::ProgressOptions;
 use crate::support::counts::{IndexCounts, index_counts};
 use crate::support::env::database_url_for;
 use crate::support::scope::{
@@ -88,8 +89,9 @@ pub(crate) fn execute(
         // Reconciled deletions change the index just like accepted ingests, so
         // gate Qdrant/Falkor sync on any change, not only newly accepted pages.
         if result.has_changes() {
-            sync_qdrant_vectors(&mut conn, &search_scope, COMMAND)?;
-            sync_falkor_graph(&mut conn, &search_scope, COMMAND)?;
+            let mut progress = ProgressOptions::default();
+            sync_qdrant_vectors(&mut conn, &search_scope, COMMAND, &mut progress)?;
+            sync_falkor_graph(&mut conn, &search_scope, COMMAND, &mut progress)?;
         }
         return Ok(render_sync_sessions(output_scope, &result, counts));
     }

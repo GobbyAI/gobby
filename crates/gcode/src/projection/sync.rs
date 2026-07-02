@@ -21,6 +21,12 @@ pub struct ProjectionSyncRequest {
     pub targets: Vec<ProjectionTarget>,
 }
 
+pub trait ProjectionProgressSink {
+    fn start(&mut self, target: ProjectionTarget, total: usize);
+    fn advance(&mut self, target: ProjectionTarget, file_path: &str);
+    fn finish(&mut self, target: ProjectionTarget);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectionSyncStatus {
     pub project_id: String,
@@ -159,11 +165,11 @@ pub fn pending_after_code_fact_write(request: ProjectionSyncRequest) -> Projecti
 pub fn sync_after_index(
     ctx: &Context,
     file_paths: &[String],
+    progress: &mut dyn ProjectionProgressSink,
 ) -> anyhow::Result<ProjectionSyncReports> {
-    Ok(ProjectionSyncReports {
-        graph: sync_graph_files(ctx, file_paths)?,
-        vector: sync_vector_files(ctx, file_paths)?,
-    })
+    let graph = sync_graph_files(ctx, file_paths, Some(progress))?;
+    let vector = sync_vector_files(ctx, file_paths, Some(progress))?;
+    Ok(ProjectionSyncReports { graph, vector })
 }
 
 pub(crate) fn sync_files_with_state<S>(
@@ -171,6 +177,8 @@ pub(crate) fn sync_files_with_state<S>(
     file_paths: &[String],
     state: &mut S,
     mut sync_one: impl FnMut(&mut S, &str) -> anyhow::Result<ProjectionFileSyncOutcome>,
+    target: ProjectionTarget,
+    progress: Option<&mut dyn ProjectionProgressSink>,
 ) -> ProjectionSyncReport {
     let mut synced_files = 0usize;
     let mut synced_symbols = 0usize;
@@ -178,6 +186,7 @@ pub(crate) fn sync_files_with_state<S>(
     let mut failed_files = 0usize;
     let mut errors = Vec::new();
     let mut error_kind = None;
+    let mut progress = ActiveProjectionProgress::new(progress, target, file_paths.len());
 
     for file_path in file_paths {
         match sync_one(state, file_path) {
@@ -202,6 +211,7 @@ pub(crate) fn sync_files_with_state<S>(
                 errors.push(format!("{file_path}: {}", typed.message));
             }
         }
+        progress.advance(file_path);
     }
 
     if errors.is_empty() {
@@ -223,7 +233,11 @@ pub(crate) fn sync_files_with_state<S>(
     }
 }
 
-fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<ProjectionSyncReport> {
+fn sync_graph_files(
+    ctx: &Context,
+    file_paths: &[String],
+    progress: Option<&mut dyn ProjectionProgressSink>,
+) -> anyhow::Result<ProjectionSyncReport> {
     if file_paths.is_empty() {
         return Ok(ProjectionSyncReport::ok(0, 0));
     }
@@ -232,6 +246,8 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
     }
 
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    let mut progress =
+        ActiveProjectionProgress::new(progress, ProjectionTarget::Graph, file_paths.len());
     let report = match code_graph::with_code_graph(ctx, |graph| {
         let mut synced_files = 0usize;
         let mut synced_symbols = 0usize;
@@ -263,6 +279,7 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
                     errors.push(format!("{file_path}: {}", typed.message));
                 }
             }
+            progress.advance(file_path);
         }
 
         if errors.is_empty() {
@@ -309,7 +326,11 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
     Ok(report)
 }
 
-fn sync_vector_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<ProjectionSyncReport> {
+fn sync_vector_files(
+    ctx: &Context,
+    file_paths: &[String],
+    progress: Option<&mut dyn ProjectionProgressSink>,
+) -> anyhow::Result<ProjectionSyncReport> {
     if file_paths.is_empty() {
         return Ok(ProjectionSyncReport::ok(0, 0));
     }
@@ -336,7 +357,51 @@ fn sync_vector_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Pro
         file_paths,
         &mut state,
         VectorProjectionState::sync_file,
+        ProjectionTarget::Vectors,
+        progress,
     ))
+}
+
+struct ActiveProjectionProgress<'a> {
+    sink: Option<&'a mut dyn ProjectionProgressSink>,
+    target: ProjectionTarget,
+    started: bool,
+}
+
+impl<'a> ActiveProjectionProgress<'a> {
+    fn new(
+        sink: Option<&'a mut dyn ProjectionProgressSink>,
+        target: ProjectionTarget,
+        total: usize,
+    ) -> Self {
+        let mut progress = Self {
+            sink,
+            target,
+            started: total > 0,
+        };
+        if progress.started
+            && let Some(sink) = progress.sink.as_deref_mut()
+        {
+            sink.start(target, total);
+        }
+        progress
+    }
+
+    fn advance(&mut self, file_path: &str) {
+        if let Some(sink) = self.sink.as_deref_mut() {
+            sink.advance(self.target, file_path);
+        }
+    }
+}
+
+impl Drop for ActiveProjectionProgress<'_> {
+    fn drop(&mut self) {
+        if self.started
+            && let Some(sink) = self.sink.as_deref_mut()
+        {
+            sink.finish(self.target);
+        }
+    }
 }
 
 fn sync_graph_file(
@@ -474,14 +539,20 @@ mod tests {
         }
         let mut state = State::default();
 
-        let report =
-            sync_files_with_state(&test_context(), &files, &mut state, |state, file_path| {
+        let report = sync_files_with_state(
+            &test_context(),
+            &files,
+            &mut state,
+            |state, file_path| {
                 state.synced.push(file_path.to_string());
                 if file_path == "src/fail.rs" {
                     anyhow::bail!("projection write failed");
                 }
                 Ok(ProjectionFileSyncOutcome::Synced { symbols: 3 })
-            });
+            },
+            ProjectionTarget::Vectors,
+            None,
+        );
 
         assert_eq!(
             state.synced,
@@ -508,14 +579,20 @@ mod tests {
         }
         let mut state = State::default();
 
-        let report =
-            sync_files_with_state(&test_context(), &files, &mut state, |state, file_path| {
+        let report = sync_files_with_state(
+            &test_context(),
+            &files,
+            &mut state,
+            |state, file_path| {
                 state.synced.push(file_path.to_string());
                 if file_path == "src/missing.rs" {
                     return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
                 }
                 Ok(ProjectionFileSyncOutcome::Synced { symbols: 2 })
-            });
+            },
+            ProjectionTarget::Vectors,
+            None,
+        );
 
         assert_eq!(state.synced, vec!["src/missing.rs", "src/ok.rs"]);
         assert_eq!(report.status, ProjectionStatus::Ok);
@@ -525,5 +602,51 @@ mod tests {
         assert_eq!(report.failed_files, 0);
         assert!(!report.degraded);
         assert!(report.error.is_none());
+    }
+
+    #[test]
+    fn sync_state_reports_projection_progress_for_each_file() {
+        let files = vec!["src/one.rs".to_string(), "src/two.rs".to_string()];
+        #[derive(Default)]
+        struct State;
+        let mut state = State;
+        #[derive(Default)]
+        struct RecordingProgress {
+            events: Vec<String>,
+        }
+        impl ProjectionProgressSink for RecordingProgress {
+            fn start(&mut self, target: ProjectionTarget, total: usize) {
+                self.events.push(format!("{target:?}:start:{total}"));
+            }
+
+            fn advance(&mut self, target: ProjectionTarget, file_path: &str) {
+                self.events.push(format!("{target:?}:advance:{file_path}"));
+            }
+
+            fn finish(&mut self, target: ProjectionTarget) {
+                self.events.push(format!("{target:?}:finish"));
+            }
+        }
+        let mut progress = RecordingProgress::default();
+
+        let report = sync_files_with_state(
+            &test_context(),
+            &files,
+            &mut state,
+            |_state, _file_path| Ok(ProjectionFileSyncOutcome::Synced { symbols: 1 }),
+            ProjectionTarget::Graph,
+            Some(&mut progress),
+        );
+
+        assert_eq!(report.status, ProjectionStatus::Ok);
+        assert_eq!(
+            progress.events,
+            vec![
+                "Graph:start:2",
+                "Graph:advance:src/one.rs",
+                "Graph:advance:src/two.rs",
+                "Graph:finish"
+            ]
+        );
     }
 }

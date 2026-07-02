@@ -1,0 +1,114 @@
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/ghook/src/transport.rs.md",
+      "symbol": "crates/ghook/src/transport.rs"
+    },
+    {
+      "file": "code/files/crates/ghook/schemas/inbox-envelope.v1.schema.json.md",
+      "symbol": "crates/ghook/schemas/inbox-envelope.v1.schema.json"
+    },
+    {
+      "file": "code/files/crates/ghook/src/envelope.rs.md",
+      "symbol": "crates/ghook/src/envelope.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 4,
+  "query": "ghook inbox enqueue fails daemon down durability",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/ghook/src/transport.rs.md",
+      "result_type": "code",
+      "score": 0.03333333333333333,
+      "snippet": "## Purpose Implements the enqueue-first transport for `ghook --gobby-owned`: it names inbox envelopes with lexicographically sortable `prefix-ts13",
+      "source_path": "code/files/crates/ghook/src/transport.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/ghook/src/transport.rs",
+      "wiki_page": "code/files/crates/ghook/src/transport.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        },
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/ghook/schemas.md",
+      "result_type": "wiki",
+      "score": 0.03225806451612903,
+      "snippet": "## Overview The `crates/ghook/schemas` module defines the strict JSON contracts for ghook’s external diagnostic and queueing surfaces. Both sche",
+      "source_path": "code/modules/crates/ghook/schemas.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/ghook/schemas",
+      "wiki_page": "code/modules/crates/ghook/schemas.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/ghook/schemas/inbox-envelope.v1.schema.json.md",
+      "result_type": "code",
+      "score": 0.01639344262295082,
+      "snippet": "--- title: crates/ghook/schemas/inbox-envelope.v1.schema.json type: code_file provenance: - file: crates/ghook/schemas/inbox-envelope.v1.s",
+      "source_path": "code/files/crates/ghook/schemas/inbox-envelope.v1.schema.json.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/ghook/schemas/inbox-envelope.v1.schema.json",
+      "wiki_page": "code/files/crates/ghook/schemas/inbox-envelope.v1.schema.json.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/ghook/src/envelope.rs.md",
+      "result_type": "code",
+      "score": 0.01639344262295082,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/ghook/src/envelope.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/ghook/src/envelope.rs",
+      "wiki_page": "code/files/crates/ghook/src/envelope.rs.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

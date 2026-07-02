@@ -1,0 +1,12 @@
+gwiki: ingest-file resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+Ingested file
+Scope: project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+Raw: raw/src-b0a5f010d03afe00-private-tmp-wp3-deposit-note-md.md
+Asset: <none>
+Source: /private/tmp/wp3-deposit-note.md (markdown)
+Content hash: b0a5f010d03afe0023b6ed99799d673b5d7fa45fedba5b58dcd6d9d69000b517
+Documents: 528
+Chunks: 2235
+Links: 3016
+Sources: 528
+Ingestions: 1600

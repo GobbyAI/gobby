@@ -47,7 +47,11 @@ pub fn ingest_pdf_file(
     options: PdfIngestOptions,
 ) -> Result<IngestResult, WikiError> {
     let result = ingest_pdf_file_without_index(vault_root, scope, snapshot, endpoint, options)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 
@@ -123,7 +127,11 @@ pub fn ingest_pages_with_vision(
         rendered_pages,
         endpoint,
     )?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

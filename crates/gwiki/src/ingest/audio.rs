@@ -192,7 +192,11 @@ pub fn ingest_audio_with_transcription(
 ) -> Result<AudioIngestResult, WikiError> {
     let result =
         ingest_audio_with_transcription_without_index(vault_root, scope, snapshot, endpoint)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

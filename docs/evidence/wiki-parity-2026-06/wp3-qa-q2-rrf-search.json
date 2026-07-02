@@ -1,0 +1,85 @@
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/gcode/src/search/rrf.rs.md",
+      "symbol": "crates/gcode/src/search/rrf.rs"
+    },
+    {
+      "file": "code/files/crates/gwiki/src/search/rrf.rs.md",
+      "symbol": "crates/gwiki/src/search/rrf.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 3,
+  "query": "How does gobby-cli merge hybrid search results with reciprocal rank fusion?",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/search/rrf.rs.md",
+      "result_type": "code",
+      "score": 0.03279569892473118,
+      "snippet": "## Purpose This file provides a small Reciprocal Rank Fusion wrapper for search results. It defines `MergedResult` as the merged output shape `(symbol_id, com",
+      "source_path": "code/files/crates/gcode/src/search/rrf.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search/rrf.rs",
+      "wiki_page": "code/files/crates/gcode/src/search/rrf.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/docs/evidence.md",
+      "result_type": "wiki",
+      "score": 0.016666666666666666,
+      "snippet": "ores proof artifacts for a gwiki parity workflow that first searches a resolved project scope and then uses selected sources to compile a grounded explainer. The key flow is searc",
+      "source_path": "code/modules/docs/evidence.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "docs/evidence",
+      "wiki_page": "code/modules/docs/evidence.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gwiki/src/search/rrf.rs.md",
+      "result_type": "code",
+      "score": 0.01639344262295082,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gwiki/src/search/rrf.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gwiki/src/search/rrf.rs",
+      "wiki_page": "code/files/crates/gwiki/src/search/rrf.rs.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

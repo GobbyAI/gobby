@@ -1,0 +1,25 @@
+gwiki: ingest-file resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "asset_path": "raw/assets/src-cfe14a7625e12a59-private-tmp-wp3-logo-png.png",
+  "command": "ingest-file",
+  "indexed": {
+    "chunks": 1916,
+    "documents": 449,
+    "ingestions": 1813,
+    "links": 2701,
+    "sources": 449
+  },
+  "path": "/tmp/wp3-logo.png",
+  "raw_path": "raw/src-cfe14a7625e12a59-private-tmp-wp3-logo-png.md",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "source": {
+    "content_hash": "cfe14a7625e12a596ec3baab06c1bc3800891f6429b3b4f22fa3452b85c54477",
+    "id": "src-cfe14a7625e12a59-private-tmp-wp3-logo-png",
+    "kind": "image",
+    "location": "/private/tmp/wp3-logo.png"
+  },
+  "status": "ingested"
+}

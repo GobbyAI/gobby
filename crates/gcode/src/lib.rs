@@ -9,7 +9,6 @@ pub mod index;
 pub(crate) mod index_lock;
 pub mod models;
 pub mod output;
-pub mod progress;
 pub mod project;
 pub mod projection;
 pub mod savings;

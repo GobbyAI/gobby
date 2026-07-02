@@ -427,7 +427,11 @@ pub(crate) fn sync_session_transcript_archives(
     // Deletions alone still need downstream sync, so index on any change
     // (accepted or reconciled), not just newly accepted sessions.
     if batch.has_changes() {
-        index_after_ingest(vault_root, store)?;
+        index_after_ingest(
+            vault_root,
+            store,
+            &mut crate::progress::ProgressOptions::default(),
+        )?;
     }
 
     Ok(batch)

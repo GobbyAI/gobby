@@ -16,6 +16,25 @@ pub struct IndexRequest {
     pub sync_projections: bool,
 }
 
+pub trait IndexProgressSink {
+    fn start(&mut self, total: usize);
+    fn advance(&mut self, file_path: &str);
+    fn finish(&mut self);
+}
+
+#[derive(Default)]
+pub struct IndexOptions<'a> {
+    pub progress: Option<&'a mut dyn IndexProgressSink>,
+}
+
+impl<'a> IndexOptions<'a> {
+    pub fn with_progress(progress: &'a mut dyn IndexProgressSink) -> Self {
+        Self {
+            progress: Some(progress),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexDurations {
     pub discovery_ms: u64,

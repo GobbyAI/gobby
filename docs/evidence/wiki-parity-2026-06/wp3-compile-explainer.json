@@ -1,0 +1,45 @@
+gwiki: compile resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "ai": {
+    "citations_kept": 2,
+    "citations_stripped": 0,
+    "error": null,
+    "fallback_sections": 0,
+    "model": "gpt-5.4-mini",
+    "requested_mode": "daemon",
+    "route": "daemon",
+    "status": "generated"
+  },
+  "article_path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/topics/hybrid-search-result-merging.md",
+  "command": "compile",
+  "daemon_synthesis_available": true,
+  "handoff_id": "compile-hybrid-search-result-merging-1781420467017",
+  "index_path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/_index.md",
+  "outline": [],
+  "page_writes": [
+    {
+      "kind": "created",
+      "path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/topics/hybrid-search-result-merging.md"
+    },
+    {
+      "kind": "created",
+      "path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/sources/how-gobby-cli-merges-hybrid-search-results.md"
+    }
+  ],
+  "prompt": {
+    "daemon_synthesis_available": true,
+    "system": "You write a grounded wiki explainer from supplied source excerpts. Use only facts stated in the excerpts. Write each requested section as a markdown '## <section>' heading followed by one or two short paragraphs. Plain paragraphs only - no extra headings, no lists, no code fences. Cite supporting sources inline with [source: <path>] markers, copying a path exactly as listed. Never invent paths. If the excerpts do not cover a section, state that the sources do not cover it.",
+    "tokens_estimated": 340,
+    "truncated_sources": 0,
+    "user": "Topic: hybrid search result merging\nWrite the explainer with exactly these sections:\n- Overview\n\nSource excerpts:\n1. How gobby-cli merges hybrid search results [source: raw/src-ab36a0b101bf7f6f-inbox-wp3-rrf-note-md.md]\n# wp3-rrf-note.md\n# How gobby-cli merges hybrid search results\nThe gcode and gwiki search stacks both combine three independent retrieval\nsignals — pg_search BM25, Qdrant semantic vectors, and a FalkorDB graph\nrelevance boost — and merge their ranked lists with Reciprocal Rank Fusion\n(RRF). RRF is rank-based, so it is robust to incomparable per-engine scores:\neach engine contributes 1/(k + rank) per document, and the sums determine the\nfinal order. Any engine can be absent (graph down, embeddings off) and the\nfusion still returns a sensible ranking from the remaining signals.\nSource: crates/gcode/src/search/rrf.rs; CLAUDE.md \"search/ — Search Pipeline\".\n\n"
+  },
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "source_paths": [
+    "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/sources/how-gobby-cli-merges-hybrid-search-results.md"
+  ],
+  "status": "compiled",
+  "target_kind": "topic"
+}

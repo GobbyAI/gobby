@@ -1,0 +1,138 @@
+gwiki: search resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/gcode/src/search/rrf.rs.md",
+      "symbol": "crates/gcode/src/search/rrf.rs"
+    },
+    {
+      "file": "code/files/crates/gwiki/src/search/rrf.rs.md",
+      "symbol": "crates/gwiki/src/search/rrf.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/search/mod.rs.md",
+      "symbol": "crates/gcode/src/search/mod.rs"
+    },
+    {
+      "file": "code/files/crates/gcore/src/search.rs.md",
+      "symbol": "crates/gcore/src/search.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 5,
+  "query": "reciprocal rank fusion hybrid search merge",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        },
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/search/rrf.rs.md",
+      "result_type": "code",
+      "score": 0.03306010928961749,
+      "snippet": "## Purpose This file provides a small Reciprocal Rank Fusion wrapper for search results. It defines `MergedResult` as the merged output shape `(symbol_id, com",
+      "source_path": "code/files/crates/gcode/src/search/rrf.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search/rrf.rs",
+      "wiki_page": "code/files/crates/gcode/src/search/rrf.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gwiki/src/search/rrf.rs.md",
+      "result_type": "code",
+      "score": 0.03306010928961749,
+      "snippet": "## Purpose Implements reciprocal-rank fusion for wiki search results by combining BM25, semantic, and graph hit lists into a single `WikiSearc",
+      "source_path": "code/files/crates/gwiki/src/search/rrf.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gwiki/src/search/rrf.rs",
+      "wiki_page": "code/files/crates/gwiki/src/search/rrf.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/search/mod.rs.md",
+      "result_type": "code",
+      "score": 0.016129032258064516,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcode/src/search/mod.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/search/mod.rs",
+      "wiki_page": "code/files/crates/gcode/src/search/mod.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/search.md",
+      "result_type": "wiki",
+      "score": 0.016129032258064516,
+      "snippet": "--- title: crates/gcode/src/search type: code_module provenance: - file: crates/gcode/src/search/fts.rs ranges: - 1-32 - file: crates/gcode/src/",
+      "source_path": "code/modules/crates/gcode/src/search.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/search",
+      "wiki_page": "code/modules/crates/gcode/src/search.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 3,
+          "score": 0.015873015873015872,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcore/src/search.rs.md",
+      "result_type": "code",
+      "score": 0.015873015873015872,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcore/src/search.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcore/src/search.rs",
+      "wiki_page": "code/files/crates/gcore/src/search.rs.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

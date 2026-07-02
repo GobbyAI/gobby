@@ -348,10 +348,11 @@ mod tests {
         write_file(vault.path(), "knowledge/topics/ignored.md", "# Ignored\n");
 
         let mut store = MemoryWikiStore::default();
-        crate::indexer::index_vault_with_options(
+        crate::indexer::index_vault(
             vault.path(),
             &mut store,
             local_index_options().expect("index options"),
+            &mut crate::progress::ProgressOptions::default(),
         )
         .expect("index vault");
 

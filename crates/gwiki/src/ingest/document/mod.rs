@@ -81,7 +81,11 @@ pub fn ingest_document(
     snapshot: DocumentSnapshot,
 ) -> Result<DocumentIngestResult, WikiError> {
     let result = ingest_document_without_index(vault_root, scope, snapshot)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 
@@ -109,7 +113,11 @@ pub fn ingest_document_with_endpoint(
 ) -> Result<DocumentIngestResult, WikiError> {
     let result =
         ingest_document_with_endpoint_without_index(vault_root, scope, snapshot, endpoint)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

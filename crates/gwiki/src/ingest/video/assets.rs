@@ -18,7 +18,11 @@ pub(crate) fn ingest_video_with_asset(
         degradations,
         write_asset_fn,
     )?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
     Ok(result)
 }
 

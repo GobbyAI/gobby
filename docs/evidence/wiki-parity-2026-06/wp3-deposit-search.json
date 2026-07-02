@@ -1,0 +1,91 @@
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/gsqz/src/compressor.rs.md",
+      "symbol": "crates/gsqz/src/compressor.rs"
+    },
+    {
+      "file": "code/files/crates/gsqz/src/main.rs.md",
+      "symbol": "crates/gsqz/src/main.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 3,
+  "query": "gsqz always exit code 0 compressed output contract",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        },
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gsqz/src/compressor.rs.md",
+      "result_type": "code",
+      "score": 0.03306010928961749,
+      "snippet": "## Purpose This file implements the `gsqz` compression engine for command output. It defines `CompressionResult` for reporting the compressed text, size stat",
+      "source_path": "code/files/crates/gsqz/src/compressor.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gsqz/src/compressor.rs",
+      "wiki_page": "code/files/crates/gsqz/src/compressor.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gsqz/src/main.rs.md",
+      "result_type": "code",
+      "score": 0.03306010928961749,
+      "snippet": "--- title: crates/gsqz/src/main.rs type: code_file provenance: - file: crates/gsqz/src/main.rs ranges: - 25-48 - 50-65 - 67-139",
+      "source_path": "code/files/crates/gsqz/src/main.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gsqz/src/main.rs",
+      "wiki_page": "code/files/crates/gsqz/src/main.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 2,
+          "score": 0.016129032258064516,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates.md",
+      "result_type": "wiki",
+      "score": 0.016129032258064516,
+      "snippet": "## Child Modules - [[code/modules/crates/gcode|crates/gcode]] - The crates/gcode module packages the Rust gcode tool as both a CLI and a reus",
+      "source_path": "code/modules/crates.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates",
+      "wiki_page": "code/modules/crates.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

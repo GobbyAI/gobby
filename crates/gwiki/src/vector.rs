@@ -103,6 +103,7 @@ pub(crate) fn sync_scope_vectors<S, E, V>(
     source: &mut S,
     embedder: &mut E,
     store: &mut V,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<WikiVectorSyncOutcome, WikiVectorError>
 where
     S: WikiVectorChunkSource,
@@ -112,8 +113,14 @@ where
     let collection = store.resolve_collection(scope)?;
     let chunks = source.chunks(scope)?;
     let stale_paths = source.stale_paths(scope)?;
+    let mut progress = crate::progress::ActiveProgress::new(
+        progress,
+        crate::progress::ProgressPhase::VectorSync,
+        stale_paths.len() + chunks.len(),
+    );
     for path in &stale_paths {
         store.delete_points(&collection, delete_filter_for_path(scope, path))?;
+        progress.advance(path);
     }
 
     if chunks.is_empty() {
@@ -167,6 +174,7 @@ where
                 vector,
                 payload: payload_for_chunk(scope, chunk),
             });
+            progress.advance(&chunk.path);
         }
     }
 
@@ -474,8 +482,14 @@ mod tests {
         };
         let mut store = RecordingVectorStore::default();
 
-        let outcome = sync_scope_vectors(&scope, &mut source, &mut embedder, &mut store)
-            .expect("vector sync succeeds");
+        let outcome = sync_scope_vectors(
+            &scope,
+            &mut source,
+            &mut embedder,
+            &mut store,
+            &mut crate::progress::ProgressOptions::default(),
+        )
+        .expect("vector sync succeeds");
 
         assert_eq!(outcome.chunks, 1);
         assert_eq!(outcome.upserted, 1);
@@ -522,6 +536,68 @@ mod tests {
     }
 
     #[test]
+    fn vector_sync_reports_progress_for_stale_paths_and_chunks() {
+        let scope = SearchScope::project("project-1");
+        let chunk = WikiVectorChunk {
+            id: "chunk:project:project-1:notes/page.md:0".to_string(),
+            path: "notes/page.md".to_string(),
+            title: Some("Page".to_string()),
+            heading: Some("Overview".to_string()),
+            chunk_index: 0,
+            byte_start: 12,
+            byte_end: 64,
+            content: "Durable notes about Rust ownership.".to_string(),
+        };
+        let mut source = MockChunkSource {
+            chunks: vec![chunk],
+            stale_paths: vec!["notes/stale.md".to_string()],
+        };
+        let mut embedder = MockEmbedder {
+            vectors: vec![vec![0.1, 0.2, 0.3]],
+            inputs: Vec::new(),
+        };
+        let mut store = RecordingVectorStore::default();
+        #[derive(Default)]
+        struct RecordingProgress {
+            events: Vec<String>,
+        }
+        impl crate::progress::ProgressSink for RecordingProgress {
+            fn start(&mut self, phase: crate::progress::ProgressPhase, total: usize) {
+                self.events.push(format!("{phase:?}:start:{total}"));
+            }
+
+            fn advance(&mut self, phase: crate::progress::ProgressPhase, item: &str) {
+                self.events.push(format!("{phase:?}:advance:{item}"));
+            }
+
+            fn finish(&mut self, phase: crate::progress::ProgressPhase) {
+                self.events.push(format!("{phase:?}:finish"));
+            }
+        }
+        let mut progress = RecordingProgress::default();
+
+        let outcome = sync_scope_vectors(
+            &scope,
+            &mut source,
+            &mut embedder,
+            &mut store,
+            &mut crate::progress::ProgressOptions::with_sink(&mut progress),
+        )
+        .expect("vector sync succeeds");
+
+        assert_eq!(outcome.chunks, 1);
+        assert_eq!(
+            progress.events,
+            vec![
+                "VectorSync:start:2",
+                "VectorSync:advance:notes/stale.md",
+                "VectorSync:advance:notes/page.md",
+                "VectorSync:finish"
+            ]
+        );
+    }
+
+    #[test]
     fn vector_sync_batches_embedding_and_upserts() {
         let scope = SearchScope::project("project-1");
         let chunks = (0..129)
@@ -546,8 +622,14 @@ mod tests {
         };
         let mut store = RecordingVectorStore::default();
 
-        let outcome = sync_scope_vectors(&scope, &mut source, &mut embedder, &mut store)
-            .expect("vector sync succeeds");
+        let outcome = sync_scope_vectors(
+            &scope,
+            &mut source,
+            &mut embedder,
+            &mut store,
+            &mut crate::progress::ProgressOptions::default(),
+        )
+        .expect("vector sync succeeds");
 
         assert_eq!(outcome.chunks, 129);
         assert_eq!(outcome.upserted, 129);

@@ -24,7 +24,12 @@ pub(crate) fn indexed_store_for_selection(
     let index_options = config::local_index_options()?;
     let mut store = store::MemoryWikiStore::default();
     if resolved.scope.root().is_dir() {
-        indexer::index_vault_with_options(resolved.scope.root(), &mut store, index_options)?;
+        indexer::index_vault(
+            resolved.scope.root(),
+            &mut store,
+            index_options,
+            &mut crate::progress::ProgressOptions::default(),
+        )?;
     }
 
     Ok((

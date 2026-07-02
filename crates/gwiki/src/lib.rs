@@ -37,6 +37,7 @@ pub(crate) mod normalize;
 pub(crate) mod obsidian;
 pub mod output;
 pub(crate) mod paths;
+pub(crate) mod progress;
 pub(crate) mod provenance;
 pub(crate) mod registry;
 pub(crate) mod schema;
@@ -55,7 +56,7 @@ pub(crate) mod vision;
 
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget,
-    ReviewReportOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
+    ReviewReportOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
     SyncSessionsOptions,
 };
 pub use error::WikiError;

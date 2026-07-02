@@ -135,6 +135,11 @@ pub enum Command {
     },
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunOptions {
+    pub quiet: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadTarget {
     Path(PathBuf),

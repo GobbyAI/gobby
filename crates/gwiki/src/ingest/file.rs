@@ -51,10 +51,18 @@ pub fn ingest_path(
     options: &IngestFileOptions,
     path: &Path,
     fetched_at: &str,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<IngestResult, WikiError> {
+    let mut ingest_progress = crate::progress::ActiveProgress::new(
+        progress,
+        crate::progress::ProgressPhase::IngestFile,
+        1,
+    );
     let result =
         ingest_path_without_index(vault_root, scope, ai_context, options, path, fetched_at)?;
-    index_after_ingest(vault_root, store)?;
+    ingest_progress.advance(&path.display().to_string());
+    drop(ingest_progress);
+    index_after_ingest(vault_root, store, progress)?;
     Ok(result.result)
 }
 
@@ -84,7 +92,11 @@ pub fn ingest_stdin(
         None,
     );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
 
     Ok(IngestResult {
         record,

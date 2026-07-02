@@ -1,0 +1,85 @@
+{
+  "code_citations": [
+    {
+      "file": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "symbol": "crates/gcode/src/graph/code_graph/connection.rs"
+    },
+    {
+      "file": "code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "symbol": "crates/gcode/src/commands/graph/reads.rs"
+    }
+  ],
+  "command": "search",
+  "degradations": [],
+  "limit": 3,
+  "query": "What does gcode return when FalkorDB graph backend is unavailable?",
+  "results": [
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "bm25"
+        },
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "result_type": "code",
+      "score": 0.03306010928961749,
+      "snippet": "## Purpose This file provides utilities for managing FalkorDB graph client connections with configurable error handling semantics. It",
+      "source_path": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md",
+      "sources": [
+        "bm25",
+        "semantic"
+      ],
+      "title": "crates/gcode/src/graph/code_graph/connection.rs",
+      "wiki_page": "code/files/crates/gcode/src/graph/code_graph/connection.rs.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 0,
+          "score": 0.016666666666666666,
+          "source": "bm25"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/commands/graph.md",
+      "result_type": "wiki",
+      "score": 0.016666666666666666,
+      "snippet": "## Overview The `crates/gcode/src/commands/graph` module is the command-facing layer for graph operations in `gcode`. It covers lifecycle comman",
+      "source_path": "code/modules/crates/gcode/src/commands/graph.md",
+      "sources": [
+        "bm25"
+      ],
+      "title": "crates/gcode/src/commands/graph",
+      "wiki_page": "code/modules/crates/gcode/src/commands/graph.md"
+    },
+    {
+      "explanations": [
+        {
+          "rank": 1,
+          "score": 0.01639344262295082,
+          "source": "semantic"
+        }
+      ],
+      "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "result_type": "code",
+      "score": 0.01639344262295082,
+      "snippet": "## Purpose",
+      "source_path": "code/files/crates/gcode/src/commands/graph/reads.rs.md",
+      "sources": [
+        "semantic"
+      ],
+      "title": "crates/gcode/src/commands/graph/reads.rs",
+      "wiki_page": "code/files/crates/gcode/src/commands/graph/reads.rs.md"
+    }
+  ],
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  }
+}

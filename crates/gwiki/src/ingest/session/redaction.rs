@@ -116,7 +116,12 @@ mod tests {
         assert!(!derived_markdown.contains(&openai_key));
 
         let mut store = MemoryWikiStore::default();
-        index_after_ingest(temp.path(), &mut store).expect("index redacted session markdown");
+        index_after_ingest(
+            temp.path(),
+            &mut store,
+            &mut crate::progress::ProgressOptions::default(),
+        )
+        .expect("index redacted session markdown");
         let indexed_text = indexed_store_text(&store);
         assert!(!indexed_text.contains("/Users/casey"));
         assert!(!indexed_text.contains("casey@example.com"));

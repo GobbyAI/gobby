@@ -1,0 +1,14 @@
+gwiki: search resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+Search results for "gsqz output compression thresholds savings"
+Scope: project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+- code/modules/crates/gsqz.md | crates/gsqz | d-line interface and daemon communication. It manages input/output modes, resolves daemon endpoints, fetches configurations, and reports context token savings. - **Command Routing
+- code/modules/crates/gsqz/src.md | crates/gsqz/src | d-line interface and daemon communication. It manages input/output modes, resolves daemon endpoints, fetches configurations, and reports context token savings. - **Command Routing
+- code/files/crates/gsqz/src/config.rs.md | crates/gsqz/src/config.rs | --- title: crates/gsqz/src/config.rs type: code_file provenance: - file: crates/gsqz/src/config.rs ranges: - 26-35 - 38-47 - 49-58
+- code/files/crates/gsqz/src/primitives/prose.rs.md | crates/gsqz/src/primitives/prose.rs | --- title: crates/gsqz/src/primitives/prose.rs type: code_file provenance: - file: crates/gsqz/src/primitives/prose.rs ranges: - 5-9
+- code/files/crates/gsqz/src/daemon.rs.md | crates/gsqz/src/daemon.rs | --- title: crates/gsqz/src/daemon.rs type: code_file provenance: - file: crates/gsqz/src/daemon.rs ranges: - 11-23 - 26-28 - 32-43
+- code/modules/crates/gsqz/src/primitives.md | crates/gsqz/src/primitives | ## Overview
+- code/files/crates/gsqz/src/compressor.rs.md | crates/gsqz/src/compressor.rs | ## Purpose
+- code/files/crates/gsqz/src/main.rs.md | crates/gsqz/src/main.rs | `c7adc044-6efa-5afc-8862-690c339ee32c`) lines 25-48 [crates/gsqz/src/main.rs:25-48] - Signature: `struct Cli {` - Purpose: A command-line interface argument struct for a compre
+- code/files/crates/gsqz/src/primitives/filter.rs.md | crates/gsqz/src/primitives/filter.rs | ## Purpose
+- code/files/crates/gsqz/src/primitives/group.rs.md | crates/gsqz/src/primitives/group.rs | ## Purpose
+

@@ -71,7 +71,11 @@ pub fn ingest_snapshot(
     snapshot: UrlSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let result = ingest_snapshot_without_index(vault_root, snapshot)?;
-    index_after_ingest(vault_root, store)?;
+    index_after_ingest(
+        vault_root,
+        store,
+        &mut crate::progress::ProgressOptions::default(),
+    )?;
 
     Ok(result)
 }
@@ -152,6 +156,7 @@ pub(crate) fn ingest_urls(
     store: &mut impl WikiIndexStore,
     urls: &[String],
     fetched_at: &str,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<UrlBatchIngest, WikiError> {
     ingest_urls_with_fetcher(
         vault_root,
@@ -159,6 +164,7 @@ pub(crate) fn ingest_urls(
         urls,
         fetched_at,
         fetch::fetch_url_snapshot,
+        progress,
     )
 }
 
@@ -175,6 +181,7 @@ pub(crate) fn ingest_urls_with_fetcher(
     urls: &[String],
     fetched_at: &str,
     mut fetch: impl FnMut(&str, &str) -> Result<UrlSnapshot, UrlIngestFailure>,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<UrlBatchIngest, WikiError> {
     if urls.is_empty() {
         return Err(WikiError::InvalidInput {
@@ -185,6 +192,11 @@ pub(crate) fn ingest_urls_with_fetcher(
 
     let mut accepted = Vec::new();
     let mut failed = Vec::new();
+    let mut ingest_progress = crate::progress::ActiveProgress::new(
+        progress,
+        crate::progress::ProgressPhase::IngestUrl,
+        urls.len(),
+    );
     for url in urls {
         match fetch(url, fetched_at) {
             Ok(snapshot) => {
@@ -201,10 +213,12 @@ pub(crate) fn ingest_urls_with_fetcher(
             }
             Err(error) => failed.push(error),
         }
+        ingest_progress.advance(url);
     }
+    drop(ingest_progress);
 
     if !accepted.is_empty() {
-        index_after_ingest(vault_root, store)?;
+        index_after_ingest(vault_root, store, progress)?;
     }
 
     Ok(UrlBatchIngest { accepted, failed })

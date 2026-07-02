@@ -1,0 +1,25 @@
+gwiki: ingest-file resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+{
+  "asset_path": null,
+  "command": "ingest-file",
+  "indexed": {
+    "chunks": 1926,
+    "documents": 451,
+    "ingestions": 1816,
+    "links": 2705,
+    "sources": 451
+  },
+  "path": "/tmp/wp3-deposit-note.md",
+  "raw_path": "raw/src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md.md",
+  "scope": {
+    "id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+    "kind": "project"
+  },
+  "source": {
+    "content_hash": "a23d7939da1b175cda166e225c577f5e85f5b14a3be00f99f61b47ec0828b235",
+    "id": "src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md",
+    "kind": "markdown",
+    "location": "/private/tmp/wp3-deposit-note.md"
+  },
+  "status": "ingested"
+}

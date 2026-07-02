@@ -7,6 +7,7 @@ use gobby_core::indexing::{
 };
 
 use crate::links as wiki_links;
+use crate::progress::{ActiveProgress, ProgressOptions, ProgressPhase};
 use crate::store::{
     StoreError, WikiChunk, WikiDocument, WikiDocumentKind, WikiIndexStore, WikiIngestion,
     WikiIngestionEvent, WikiLink, WikiSource, configured_memory_index_limit_bytes,
@@ -82,20 +83,17 @@ impl From<std::io::Error> for IndexError {
 pub fn index_vault(
     vault_root: impl AsRef<Path>,
     store: &mut impl WikiIndexStore,
-) -> Result<(), IndexError> {
-    index_vault_with_options(vault_root, store, IndexOptions::default())
-}
-
-pub fn index_vault_with_options(
-    vault_root: impl AsRef<Path>,
-    store: &mut impl WikiIndexStore,
     options: IndexOptions,
+    progress: &mut ProgressOptions<'_>,
 ) -> Result<(), IndexError> {
     let vault_root = vault_root.as_ref();
     let previous_hashes = store.indexed_hashes()?;
     let current_hashes = discover_indexable_hashes(vault_root, options)?;
+    let events = index_events_from_hashes(&previous_hashes, &current_hashes);
+    let mut progress = ActiveProgress::new(progress, ProgressPhase::VaultIndex, events.len());
 
-    for event in index_events_from_hashes(&previous_hashes, &current_hashes) {
+    for event in events {
+        let progress_item = index_event_path(&event).display().to_string();
         match event {
             IndexEvent::Added(path) => {
                 index_file(
@@ -142,9 +140,20 @@ pub fn index_vault_with_options(
                 })?;
             }
         }
+        progress.advance(&progress_item);
     }
 
     Ok(())
+}
+
+fn index_event_path(event: &IndexEvent) -> &Path {
+    match event {
+        IndexEvent::Added(path)
+        | IndexEvent::Changed(path)
+        | IndexEvent::Deleted(path)
+        | IndexEvent::Unchanged(path) => path,
+        IndexEvent::Skipped { path, .. } => path,
+    }
 }
 
 fn discover_indexable_hashes(
@@ -404,12 +413,43 @@ mod tests {
         MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiIngestionEvent, WikiLink, WikiSource,
     };
 
+    #[derive(Default)]
+    struct RecordingProgress {
+        events: Vec<String>,
+    }
+
+    impl crate::progress::ProgressSink for RecordingProgress {
+        fn start(&mut self, phase: crate::progress::ProgressPhase, total: usize) {
+            self.events.push(format!("{phase:?}:start:{total}"));
+        }
+
+        fn advance(&mut self, phase: crate::progress::ProgressPhase, item: &str) {
+            self.events.push(format!("{phase:?}:advance:{item}"));
+        }
+
+        fn finish(&mut self, phase: crate::progress::ProgressPhase) {
+            self.events.push(format!("{phase:?}:finish"));
+        }
+    }
+
     fn write_file(root: &Path, relative: &str, contents: &str) {
         let path = root.join(relative);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create parent");
         }
         std::fs::write(path, contents).expect("write file");
+    }
+
+    fn index_vault_for_test(
+        vault_root: impl AsRef<Path>,
+        store: &mut impl WikiIndexStore,
+    ) -> Result<(), IndexError> {
+        index_vault(
+            vault_root,
+            store,
+            IndexOptions::default(),
+            &mut crate::progress::ProgressOptions::default(),
+        )
     }
 
     fn seed_derived_rows(store: &mut MemoryWikiStore, relative: &str) {
@@ -457,7 +497,7 @@ mod tests {
         );
         let mut store = MemoryWikiStore::default();
 
-        index_vault(tempdir.path(), &mut store).expect("index vault");
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
         let path = PathBuf::from("knowledge/topics/rust.md");
         assert_eq!(store.documents[&path].kind, WikiDocumentKind::Topic);
@@ -465,6 +505,42 @@ mod tests {
         assert_eq!(store.links[&path].len(), 2);
         assert_eq!(store.sources[&path].kind, WikiDocumentKind::Topic);
         assert_eq!(store.ingestions[0].event, WikiIngestionEvent::Added);
+    }
+
+    #[test]
+    fn index_vault_progress_reports_each_index_event() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_file(tempdir.path(), "knowledge/topics/a.md", "# A\n");
+        write_file(tempdir.path(), "knowledge/topics/b.md", "# B\n");
+        let mut store = MemoryWikiStore::default();
+        let mut progress = RecordingProgress::default();
+
+        index_vault(
+            tempdir.path(),
+            &mut store,
+            IndexOptions::default(),
+            &mut crate::progress::ProgressOptions::with_sink(&mut progress),
+        )
+        .expect("index vault");
+
+        assert_eq!(
+            progress.events.first().map(String::as_str),
+            Some("VaultIndex:start:2")
+        );
+        assert!(
+            progress
+                .events
+                .contains(&"VaultIndex:advance:knowledge/topics/a.md".to_string())
+        );
+        assert!(
+            progress
+                .events
+                .contains(&"VaultIndex:advance:knowledge/topics/b.md".to_string())
+        );
+        assert_eq!(
+            progress.events.last().map(String::as_str),
+            Some("VaultIndex:finish")
+        );
     }
 
     #[test]
@@ -480,7 +556,7 @@ mod tests {
         write_file(tempdir.path(), "knowledge/topics/ignored.md", "# Ignored\n");
 
         let mut default_store = MemoryWikiStore::default();
-        index_vault(tempdir.path(), &mut default_store).expect("default index vault");
+        index_vault_for_test(tempdir.path(), &mut default_store).expect("default index vault");
         assert!(
             default_store
                 .documents
@@ -493,12 +569,13 @@ mod tests {
         );
 
         let mut disabled_store = MemoryWikiStore::default();
-        index_vault_with_options(
+        index_vault(
             tempdir.path(),
             &mut disabled_store,
             IndexOptions {
                 respect_gitignore: false,
             },
+            &mut crate::progress::ProgressOptions::default(),
         )
         .expect("disabled gitignore index vault");
         assert!(
@@ -517,7 +594,7 @@ mod tests {
         let mut store = MemoryWikiStore::default();
         seed_derived_rows(&mut store, "knowledge/topics/stale.md");
 
-        index_vault(tempdir.path(), &mut store).expect("index vault");
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
         let stale = PathBuf::from("knowledge/topics/stale.md");
         assert!(!store.documents.contains_key(&stale));
@@ -546,7 +623,7 @@ mod tests {
         let raw_before = std::fs::read_to_string(&raw_path).expect("read raw source");
         let mut store = MemoryWikiStore::default();
 
-        index_vault(tempdir.path(), &mut store).expect("index vault");
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
         assert_eq!(
             std::fs::read_to_string(raw_path).expect("read raw source after indexing"),
@@ -567,7 +644,7 @@ mod tests {
         write_file(tempdir.path(), "knowledge/concepts/stable.md", body);
         let mut store = MemoryWikiStore::default();
 
-        index_vault(tempdir.path(), &mut store).expect("first index");
+        index_vault_for_test(tempdir.path(), &mut store).expect("first index");
         assert_eq!(
             store.file_hashes[&PathBuf::from("knowledge/concepts/stable.md")],
             content_hash(body.as_bytes())
@@ -577,7 +654,7 @@ mod tests {
         let link_replacements = store.link_replacements;
         let source_upserts = store.source_upserts;
 
-        index_vault(tempdir.path(), &mut store).expect("second index");
+        index_vault_for_test(tempdir.path(), &mut store).expect("second index");
 
         assert_eq!(store.document_upserts, document_upserts);
         assert_eq!(store.chunk_replacements, chunk_replacements);
@@ -603,7 +680,7 @@ mod tests {
         );
         let mut store = MemoryWikiStore::default();
 
-        index_vault(tempdir.path(), &mut store).expect("index vault");
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
 
         let path = PathBuf::from("code/crates/gwiki/src/indexer.md");
         let document = store.documents.get(&path).expect("codedoc document");
@@ -631,7 +708,7 @@ mod tests {
         );
         let mut store = MemoryWikiStore::default();
 
-        index_vault(tempdir.path(), &mut store).expect("index unified vault");
+        index_vault_for_test(tempdir.path(), &mut store).expect("index unified vault");
 
         let module_path = PathBuf::from("code/modules/src.md");
         let file_path = PathBuf::from("code/files/src/lib.rs.md");
@@ -657,7 +734,7 @@ mod tests {
         write_file(tempdir.path(), "code/nested/ignored.txt", "not markdown\n");
         let mut store = MemoryWikiStore::default();
 
-        index_vault(tempdir.path(), &mut store).expect("first index");
+        index_vault_for_test(tempdir.path(), &mut store).expect("first index");
 
         let a_path = PathBuf::from("code/a.md");
         let b_path = PathBuf::from("code/nested/b.md");
@@ -672,7 +749,7 @@ mod tests {
         assert_eq!(store.ingestions.len(), 2);
 
         write_file(tempdir.path(), "code/a.md", "# A\n\nChanged.\n");
-        index_vault(tempdir.path(), &mut store).expect("second index");
+        index_vault_for_test(tempdir.path(), &mut store).expect("second index");
 
         assert_eq!(store.document_upserts, 3);
         assert_eq!(store.chunk_replacements, 3);
