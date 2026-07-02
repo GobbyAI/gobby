@@ -49,7 +49,6 @@ _FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
 )
 _UNEXPECTED_CONFIG_ERROR = "Internal config error"
-_GENERATION_PROFILE_DEFAULTS_PREFIX = "ai.generation.profile_defaults."
 
 
 def _mask_secret_value(key: str, value: Any) -> Any:
@@ -67,9 +66,7 @@ def _validate_falkordb_secret(key: str, value: Any) -> None:
 
 
 def _reject_unsupported_structured_value(key: str, value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict | list):
-        return None
-    if key.startswith(_GENERATION_PROFILE_DEFAULTS_PREFIX) and isinstance(value, list):
+    if not isinstance(value, dict):
         return None
     return {
         "success": False,

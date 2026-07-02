@@ -26,8 +26,8 @@ GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
 GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
 
 
-async def test_managed_gcode_pin_requires_1_3_4() -> None:
-    assert GCODE_PIN == "1.3.4"
+async def test_managed_gcode_pin_requires_1_4_0() -> None:
+    assert GCODE_PIN == "1.4.0"
 
 
 class FakeProcess:
@@ -351,7 +351,7 @@ async def test_gateway_builds_codewiki_args(
     calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
 
-    result = await gateway.codewiki(tmp_path, out_dir, ai="auto")
+    result = await gateway.codewiki(tmp_path, out_dir, ai="auto", scopes=["crates", "web", "src"])
 
     assert result == {"changed_paths": ["repo.md"]}
     assert calls[1] == (
@@ -361,6 +361,10 @@ async def test_gateway_builds_codewiki_args(
         str(tmp_path),
         "--out",
         str(out_dir),
+        "--scope",
+        "crates",
+        "web",
+        "src",
         "--ai",
         "auto",
         "--format",

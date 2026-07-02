@@ -20,6 +20,8 @@ from gobby.code_index.gcode_gateway import (
     GcodeUnavailableError,
     GcodeVersionError,
 )
+from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
+from gobby.storage.projects import LocalProjectManager, Project
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -68,6 +70,23 @@ def _require_project_id(project_id: str | None) -> str:
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
     return project_id
+
+
+def _server_wiki_config(server: HTTPServer) -> WikiConfig:
+    wiki_config = getattr(getattr(server, "config", None), "wiki", None)
+    if isinstance(wiki_config, WikiConfig):
+        return wiki_config
+    return WikiConfig()
+
+
+async def _resolve_project_name(server: HTTPServer, project_id: str | None) -> str | None:
+    if project_id is None:
+        return None
+    project_manager = LocalProjectManager(server.services.database)
+    project = cast(Project | None, await _run_db(server, project_manager.get, project_id))
+    if project is None:
+        raise HTTPException(status_code=400, detail=f"Unknown project_id: {project_id}")
+    return project.name
 
 
 def _graph_http_exception(error: Exception) -> HTTPException:
@@ -451,6 +470,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
 
         try:
+            project_name = await _resolve_project_name(server, body.project_id)
+            scopes = resolve_codewiki_scopes(_server_wiki_config(server), project_name)
             accepted = bool(
                 await _run_db(
                     server,
@@ -459,8 +480,11 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                     project_id=body.project_id,
                     out_dir=body.out_dir,
                     ai=body.ai,
+                    scopes=scopes,
                 )
             )
+        except HTTPException:
+            raise
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:

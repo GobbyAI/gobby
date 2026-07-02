@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 class FakeGcodeGateway:
     def __init__(self, result: dict[str, Any]) -> None:
         self.result = result
-        self.calls: list[tuple[Path, Path, str | None]] = []
+        self.calls: list[tuple[Path, Path, str | None, list[str] | None]] = []
 
     async def codewiki(
         self,
@@ -29,8 +29,9 @@ class FakeGcodeGateway:
         out_dir: Path,
         *,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> dict[str, Any]:
-        self.calls.append((project_root, out_dir, ai))
+        self.calls.append((project_root, out_dir, ai, scopes))
         return self.result
 
 
@@ -41,8 +42,9 @@ class FailingGcodeGateway:
         _out_dir: Path,
         *,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> dict[str, Any]:
-        _ = ai
+        _ = ai, scopes
         raise GcodeGatewayError("gcode failed")
 
 
@@ -73,7 +75,7 @@ async def test_refresh_runs_codewiki_indexes_changed_vault_docs(tmp_path: Path) 
         CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1", ai="daemon")
     )
 
-    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon")]
+    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", None)]
     assert gwiki.ingested == []
     assert gwiki.index_count == 1
     assert result.changed_count == 2
@@ -99,13 +101,33 @@ async def test_refresh_with_external_out_dir_ingests_changed_docs(tmp_path: Path
         )
     )
 
-    assert gcode.calls == [(tmp_path, out_dir, "auto")]
+    assert gcode.calls == [(tmp_path, out_dir, "auto", None)]
     assert gwiki.ingested == [
         out_dir / "repo.md",
         out_dir / "files/src/lib.rs.md",
     ]
     assert gwiki.index_count == 1
     assert result.ingested_paths == tuple(gwiki.ingested)
+
+
+async def test_refresh_passes_scopes_to_gcode_gateway(tmp_path: Path) -> None:
+    gcode = FakeGcodeGateway({"changed_paths": []})
+    service = CodewikiRefreshService(
+        gcode_gateway_factory=lambda: gcode,
+        gwiki_gateway_factory=lambda _root: FakeGwikiGateway(),
+    )
+
+    result = await service.refresh(
+        CodewikiRefreshRequest(
+            root_path=str(tmp_path),
+            project_id="proj-1",
+            ai="daemon",
+            scopes=["crates", "web", "src"],
+        )
+    )
+
+    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", ["crates", "web", "src"])]
+    assert result.indexed is False
 
 
 @pytest.mark.asyncio

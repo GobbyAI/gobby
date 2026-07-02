@@ -96,6 +96,7 @@ class CodewikiRefreshTrigger:
         project_id: str | None = None,
         out_dir: str | None = None,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> bool:
         """Schedule a refresh when wiki.codewiki_on_commit is enabled."""
         if not codewiki_on_commit_enabled(self._config_store_provider()):
@@ -106,6 +107,7 @@ class CodewikiRefreshTrigger:
             project_id=project_id,
             out_dir=out_dir,
             ai=normalize_codewiki_ai(ai),
+            scopes=scopes,
         )
         self._loop.call_soon_threadsafe(self._schedule_request, request)
         return True

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -26,13 +28,38 @@ class FakeConfigStore:
         return self._value
 
 
+class ImmediateLoop:
+    def call_soon_threadsafe(self, callback: Callable[..., object], *args: object) -> None:
+        callback(*args)
+
+    def call_later(
+        self,
+        _delay: float,
+        _callback: Callable[..., object],
+        *_args: object,
+    ) -> FakeTimerHandle:
+        return FakeTimerHandle()
+
+
+class FakeTimerHandle:
+    def cancel(self) -> None:
+        pass
+
+
 class FakeGcodeGateway:
     def __init__(self, result: dict[str, object]) -> None:
         self.result = result
-        self.calls: list[tuple[Path, Path, str | None]] = []
+        self.calls: list[tuple[Path, Path, str | None, list[str] | None]] = []
 
-    async def codewiki(self, project_root: Path, out_dir: Path, *, ai: str | None = None) -> dict:
-        self.calls.append((project_root, out_dir, ai))
+    async def codewiki(
+        self,
+        project_root: Path,
+        out_dir: Path,
+        *,
+        ai: str | None = None,
+        scopes: list[str] | None = None,
+    ) -> dict:
+        self.calls.append((project_root, out_dir, ai, scopes))
         return self.result
 
 
@@ -43,8 +70,9 @@ class CancelledGcodeGateway:
         _out_dir: Path,
         *,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> dict:
-        _ = ai
+        _ = ai, scopes
         raise asyncio.CancelledError
 
 
@@ -55,8 +83,9 @@ class FailingGcodeGateway:
         _out_dir: Path,
         *,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> dict:
-        _ = ai
+        _ = ai, scopes
         raise RuntimeError("unexpected refresh failure")
 
 
@@ -112,9 +141,32 @@ async def test_refresh_runs_codewiki_and_indexes_changed_vault_docs(tmp_path: Pa
     )
     await trigger._flush(trigger._root_key(str(tmp_path)))
 
-    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon")]
+    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", None)]
     assert gwiki.ingested == []
     assert gwiki.index_count == 1
+
+
+@pytest.mark.asyncio
+async def test_request_refresh_passes_scopes_to_refresh_request(tmp_path: Path) -> None:
+    gcode = FakeGcodeGateway({"changed_paths": []})
+    trigger = CodewikiRefreshTrigger(
+        loop=cast(asyncio.AbstractEventLoop, ImmediateLoop()),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=lambda: gcode,
+        gwiki_gateway_factory=lambda _root: FakeGwikiGateway(),
+        debounce_seconds=60,
+    )
+
+    accepted = trigger.request_refresh(
+        root_path=str(tmp_path),
+        project_id="proj-1",
+        ai="daemon",
+        scopes=["crates", "web", "src"],
+    )
+    await trigger._flush(trigger._root_key(str(tmp_path)))
+
+    assert accepted is True
+    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", ["crates", "web", "src"])]
 
 
 @pytest.mark.asyncio
@@ -140,7 +192,7 @@ async def test_refresh_with_external_out_dir_ingests_changed_docs(tmp_path: Path
     )
     await trigger._flush(trigger._root_key(str(tmp_path)))
 
-    assert gcode.calls == [(tmp_path, out_dir, "daemon")]
+    assert gcode.calls == [(tmp_path, out_dir, "daemon", None)]
     assert gwiki.ingested == [
         out_dir / "repo.md",
         out_dir / "files/src/lib.rs.md",

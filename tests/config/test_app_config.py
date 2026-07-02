@@ -66,6 +66,7 @@ from gobby.config.tasks import (
     WorkflowConfig,
 )
 from gobby.config.ui import UIConfig
+from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
 from gobby.telemetry.config import TelemetrySettings
 
 pytestmark = pytest.mark.unit
@@ -82,6 +83,49 @@ def test_code_index_config_maintenance_defaults() -> None:
     assert config.nightly_full_reindex_timeout_seconds == 7200
     assert config.nightly_full_reindex_concurrency == 1
     assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
+
+
+def test_wiki_config_codewiki_scope_defaults() -> None:
+    config = WikiConfig()
+
+    assert config.codewiki_scopes == []
+    assert config.codewiki_project_scopes_by_name == {}
+    assert resolve_codewiki_scopes(config, "gobby") == []
+
+
+def test_wiki_config_project_name_scopes_override_global_scopes() -> None:
+    config = WikiConfig(
+        codewiki_scopes=["src"],
+        codewiki_project_scopes_by_name={"gobby": ["crates", "web", "src"]},
+    )
+
+    assert resolve_codewiki_scopes(config, "gobby") == ["crates", "web", "src"]
+
+
+def test_wiki_config_global_scopes_are_fallback() -> None:
+    config = WikiConfig(
+        codewiki_scopes=["src"],
+        codewiki_project_scopes_by_name={"other": ["crates"]},
+    )
+
+    assert resolve_codewiki_scopes(config, "gobby") == ["src"]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"codewiki_scopes": "src"},
+        {"codewiki_scopes": ["src", ""]},
+        {"codewiki_scopes": ["src", 1]},
+        {"codewiki_project_scopes_by_name": ["gobby"]},
+        {"codewiki_project_scopes_by_name": {"": ["src"]}},
+        {"codewiki_project_scopes_by_name": {"gobby": "src"}},
+        {"codewiki_project_scopes_by_name": {"gobby": ["src", None]}},
+    ],
+)
+def test_wiki_config_rejects_malformed_codewiki_scope_config(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        WikiConfig(**kwargs)
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ import pytest
 from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_CATALOG_KEY,
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
@@ -483,7 +484,8 @@ class TestEnsureDefaults:
         result = tool(section="ai.embeddings")
 
         assert result["success"] is True
-        assert result["total_section_keys"] == 5
+        assert result["total_section_keys"] == 6
+        assert AI_EMBEDDING_CATALOG_KEY in result["keys_inserted"]
         assert AI_EMBEDDING_MODEL_KEY in result["keys_inserted"]
         assert "ai.embeddings.provider" not in result["keys_inserted"]
         assert all(key.startswith("ai.embeddings.") for key in result["keys_inserted"])
@@ -744,6 +746,24 @@ class TestSetConfigBatch:
         assert profile_defaults[0].reasoning_effort == "low"
         assert profile_defaults[1].reasoning_effort is None
 
+    def test_batch_set_accepts_list_leaf_values(
+        self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Batch config writes allow list values for list-typed leaf config keys."""
+        scopes = ["crates", "web", "src"]
+        tool = config_registry.get_tool("set_config_batch")
+
+        result = tool(
+            entries=[
+                {"key": "wiki.codewiki_project_scopes_by_name.gobby", "value": scopes},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert config_store.get("wiki.codewiki_project_scopes_by_name.gobby") == scopes
+        assert config_state["config"].wiki.codewiki_project_scopes_by_name["gobby"] == scopes
+
     def test_batch_set_reports_original_canonical_embedding_keys(
         self, config_registry, config_store: ConfigStore
     ) -> None:
@@ -847,17 +867,18 @@ class TestSetConfigBatch:
         assert result["success"] is False
         assert "dict" in result["error"].lower()
 
-    def test_batch_set_rejects_list_values(self, config_registry) -> None:
-        """List values are rejected (the validation check covers list and dict)."""
+    def test_batch_set_rejects_list_values_for_scalar_keys(self, config_registry) -> None:
+        """List values still fail closed when the target field is not list-typed."""
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
-                {"key": "digest.providers", "value": ["claude", "local"]},
+                {"key": "digest.timeout", "value": ["claude", "local"]},
             ]
         )
 
         assert result["success"] is False
-        assert "list" in result["error"].lower()
+        assert "digest.timeout" in result["error"]
+        assert "valid integer" in result["error"].lower()
 
     def test_batch_set_rejects_missing_key(self, config_registry) -> None:
         """Entries without 'key' are rejected."""

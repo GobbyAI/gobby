@@ -70,6 +70,20 @@ class WikiConfig(BaseModel):
             "daemon host's local timezone when it can be resolved, otherwise UTC."
         ),
     )
+    codewiki_scopes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Default repo-relative paths passed to gcode codewiki --scope. "
+            "Empty preserves the all-core-files behavior."
+        ),
+    )
+    codewiki_project_scopes_by_name: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Project-name keyed codewiki scope overrides. Project names are unique "
+            "operator-facing config keys; project UUIDs remain internal."
+        ),
+    )
 
     @field_validator("debounce_interval", "poll_interval")
     @classmethod
@@ -77,3 +91,38 @@ class WikiConfig(BaseModel):
         if value <= 0:
             raise ValueError("interval must be greater than zero")
         return value
+
+    @field_validator("codewiki_scopes", mode="before")
+    @classmethod
+    def validate_codewiki_scopes(cls, value: object) -> object:
+        return _validate_codewiki_scope_list(value, field_name="codewiki_scopes")
+
+    @field_validator("codewiki_project_scopes_by_name", mode="before")
+    @classmethod
+    def validate_codewiki_project_scopes_by_name(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            raise ValueError("codewiki_project_scopes_by_name must be a mapping")
+        for project_name, scopes in value.items():
+            if not isinstance(project_name, str) or not project_name.strip():
+                raise ValueError("codewiki project scope keys must be non-empty strings")
+            _validate_codewiki_scope_list(
+                scopes,
+                field_name=f"codewiki_project_scopes_by_name.{project_name}",
+            )
+        return value
+
+
+def resolve_codewiki_scopes(wiki_config: WikiConfig, project_name: str | None) -> list[str]:
+    """Resolve codewiki scopes using project-name override then global fallback."""
+    if project_name is not None and project_name in wiki_config.codewiki_project_scopes_by_name:
+        return list(wiki_config.codewiki_project_scopes_by_name[project_name])
+    return list(wiki_config.codewiki_scopes)
+
+
+def _validate_codewiki_scope_list(value: object, *, field_name: str) -> object:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of non-empty strings")
+    for scope in value:
+        if not isinstance(scope, str) or not scope.strip():
+            raise ValueError(f"{field_name} must contain only non-empty strings")
+    return value

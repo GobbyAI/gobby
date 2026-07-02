@@ -435,6 +435,7 @@ class GcodeGateway:
         out_dir: Path,
         *,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> dict[str, Any]:
         args = [
             "codewiki",
@@ -443,6 +444,8 @@ class GcodeGateway:
             "--out",
             str(out_dir),
         ]
+        if scopes:
+            args.extend(["--scope", *scopes])
         if ai is not None:
             args.extend(["--ai", ai])
         return await self._run_json(args, timeout=self._rebuild_timeout_seconds)

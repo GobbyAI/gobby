@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000000"
+PROJECT_NAME = "gobby"
 
 
 class FakeCronExecutor:
@@ -90,10 +91,12 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
         cron_storage=storage,
         cron_executor=executor,
         project_id=PROJECT_ID,
+        project_name=PROJECT_NAME,
         repo_path=tmp_path,
         wiki_config=WikiConfig(
             codewiki_nightly_enabled=True,
             codewiki_nightly_timezone="America/Chicago",
+            codewiki_project_scopes_by_name={PROJECT_NAME: ["crates", "web", "src"]},
         ),
     )
 
@@ -111,9 +114,11 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
     assert job.action_config == {
         "handler": handler_name,
         "project_id": PROJECT_ID,
+        "project_name": PROJECT_NAME,
         "root_path": str(tmp_path.resolve(strict=False)),
         "out_dir": str((tmp_path / "gobby-wiki").resolve(strict=False)),
         "ai": CODEWIKI_NIGHTLY_AI,
+        "scopes": ["crates", "web", "src"],
     }
     assert job.next_run_at is not None
     assert job.next_run_at.endswith("+00:00")
@@ -122,11 +127,13 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
         cron_storage=storage,
         cron_executor=executor,
         project_id=PROJECT_ID,
+        project_name=PROJECT_NAME,
         repo_path=tmp_path,
         wiki_config=WikiConfig(
             codewiki_nightly_enabled=True,
             codewiki_nightly_schedule_cron="0 4 * * *",
             codewiki_nightly_timezone="America/Chicago",
+            codewiki_project_scopes_by_name={PROJECT_NAME: ["src"]},
         ),
     )
 
@@ -165,11 +172,11 @@ def test_register_codewiki_nightly_crons_covers_each_project_once(
         cron_executor=executor,
         # project_a appears twice (dedup) and no_repo_project has no repo path.
         projects=[
-            (project_a.id, repo_a),
-            (project_b.id, repo_b),
-            (project_a.id, repo_a),
-            (duplicate_repo_project, repo_a),
-            (no_repo_project, ""),
+            (project_a.id, project_a.name, repo_a),
+            (project_b.id, project_b.name, repo_b),
+            (project_a.id, project_a.name, repo_a),
+            (duplicate_repo_project, "duplicate-repo", repo_a),
+            (no_repo_project, "no-repo", ""),
         ],
         wiki_config=WikiConfig(codewiki_nightly_enabled=True),
     )
@@ -192,6 +199,7 @@ async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -
         project_id=PROJECT_ID,
         root_path=tmp_path,
         out_dir=tmp_path / "gobby-wiki",
+        scopes=["crates", "web", "src"],
         refresh_service=service,
     )
 
@@ -204,6 +212,7 @@ async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -
             project_id=PROJECT_ID,
             out_dir=str(tmp_path / "gobby-wiki"),
             ai=CODEWIKI_NIGHTLY_AI,
+            scopes=["crates", "web", "src"],
         )
     ]
 

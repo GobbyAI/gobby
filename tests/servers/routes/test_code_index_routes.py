@@ -24,6 +24,7 @@ from gobby.code_index.gcode_gateway import (
 )
 from gobby.code_index.models import IndexedProject, Symbol
 from gobby.config.code_index import CodeIndexConfig
+from gobby.config.wiki import WikiConfig
 from gobby.servers.routes.code_index import create_code_index_router
 
 pytestmark = pytest.mark.unit
@@ -46,10 +47,26 @@ def _make_symbol(symbol_id: str = "sym-1", name: str = "handler") -> Symbol:
     )
 
 
+def _make_project_row(project_id: str = "proj-1", name: str = "gobby") -> dict[str, Any]:
+    return {
+        "id": project_id,
+        "name": name,
+        "repo_path": "/repo",
+        "github_url": None,
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-01-01T00:00:00",
+    }
+
+
 @pytest.fixture
 def mock_server() -> MagicMock:
     server = MagicMock()
+    server.config = SimpleNamespace(
+        wiki=WikiConfig(codewiki_project_scopes_by_name={"gobby": ["crates", "web", "src"]})
+    )
     server.services = MagicMock()
+    server.services.database = MagicMock()
+    server.services.database.fetchone.return_value = _make_project_row()
     code_indexer = MagicMock()
     code_indexer.graph_overview = AsyncMock(return_value={"nodes": [], "links": []})
     code_indexer.graph_file = AsyncMock(return_value={"nodes": [], "links": []})
@@ -110,6 +127,7 @@ def test_codewiki_refresh_schedules_trigger(client: TestClient, mock_server: Mag
         project_id="proj-1",
         out_dir=None,
         ai="daemon",
+        scopes=["crates", "web", "src"],
     )
 
 
@@ -134,11 +152,18 @@ def test_codewiki_refresh_runs_trigger_through_db_bridge(
 
     assert response.status_code == 202
     assert response.json()["accepted"] is True
-    assert calls == [
+    assert len(calls) == 2
+    assert calls[1:] == [
         (
             trigger.request_refresh,
             (),
-            {"root_path": "/repo", "project_id": "proj-1", "out_dir": None, "ai": "daemon"},
+            {
+                "root_path": "/repo",
+                "project_id": "proj-1",
+                "out_dir": None,
+                "ai": "daemon",
+                "scopes": ["crates", "web", "src"],
+            },
         )
     ]
 
@@ -153,6 +178,23 @@ def test_codewiki_refresh_reports_disabled(client: TestClient, mock_server: Magi
     assert response.status_code == 202
     assert response.json()["accepted"] is False
     assert response.json()["reason"] == "wiki.codewiki_on_commit disabled"
+
+
+def test_codewiki_refresh_rejects_unknown_project_id(
+    client: TestClient, mock_server: MagicMock
+) -> None:
+    trigger = MagicMock()
+    mock_server.services.codewiki_trigger = trigger
+    mock_server.services.database.fetchone.return_value = None
+
+    response = client.post(
+        "/api/code-index/codewiki/refresh",
+        json={"root_path": "/repo", "project_id": "missing"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unknown project_id: missing"
+    trigger.request_refresh.assert_not_called()
 
 
 def test_codewiki_refresh_requires_trigger(client: TestClient) -> None:

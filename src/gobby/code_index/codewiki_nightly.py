@@ -15,7 +15,7 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshService,
     normalize_codewiki_ai,
 )
-from gobby.config.wiki import WikiConfig
+from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
@@ -44,6 +44,7 @@ def create_codewiki_nightly_handler(
     root_path: Path,
     out_dir: Path,
     ai: str = CODEWIKI_NIGHTLY_AI,
+    scopes: list[str] | None = None,
     refresh_service: CodewikiRefreshService | None = None,
 ) -> CronHandler:
     service = refresh_service or CodewikiRefreshService()
@@ -56,6 +57,7 @@ def create_codewiki_nightly_handler(
                 project_id=project_id,
                 out_dir=str(out_dir),
                 ai=normalized_ai,
+                scopes=scopes,
             )
         )
         return (
@@ -71,6 +73,7 @@ def register_codewiki_nightly_cron(
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
     project_id: str,
+    project_name: str,
     repo_path: str | Path,
     wiki_config: WikiConfig,
     refresh_service: CodewikiRefreshService | None = None,
@@ -85,12 +88,15 @@ def register_codewiki_nightly_cron(
     handler_name = codewiki_nightly_handler_name(project_id)
     job_name = codewiki_nightly_job_name(project_id)
     description = f"Nightly codewiki refresh for project {project_id}"
+    scopes = resolve_codewiki_scopes(wiki_config, project_name)
     action_config = {
         "handler": handler_name,
         "project_id": project_id,
+        "project_name": project_name,
         "root_path": str(root),
         "out_dir": str(out_dir),
         "ai": CODEWIKI_NIGHTLY_AI,
+        "scopes": scopes,
     }
 
     cron_executor.register_handler(
@@ -100,6 +106,7 @@ def register_codewiki_nightly_cron(
             root_path=root,
             out_dir=out_dir,
             ai=CODEWIKI_NIGHTLY_AI,
+            scopes=scopes,
             refresh_service=service,
         ),
     )
@@ -163,11 +170,11 @@ def register_codewiki_nightly_crons(
     *,
     cron_storage: CronJobStorage,
     cron_executor: CronRegistrationProtocol,
-    projects: Iterable[tuple[str, str | Path]],
+    projects: Iterable[tuple[str, str, str | Path]],
     wiki_config: WikiConfig,
     refresh_service: CodewikiRefreshService | None = None,
 ) -> int:
-    """Register the nightly codewiki cron for each ``(project_id, repo_path)``.
+    """Register the nightly codewiki cron for each ``(project_id, name, repo_path)``.
 
     Every project the memory dream judges per-project reads its own
     ``gobby-wiki/_meta/truth_digest.json``; a project whose codewiki is never
@@ -182,8 +189,8 @@ def register_codewiki_nightly_crons(
     seen: set[str] = set()
     seen_repo_paths: set[str] = set()
     registered = 0
-    for project_id, repo_path in projects:
-        if not project_id or project_id in seen or not repo_path:
+    for project_id, project_name, repo_path in projects:
+        if not project_id or project_id in seen or not project_name or not repo_path:
             continue
         repo_key = str(Path(repo_path).resolve(strict=False))
         if repo_key in seen_repo_paths:
@@ -194,6 +201,7 @@ def register_codewiki_nightly_crons(
             cron_storage=cron_storage,
             cron_executor=cron_executor,
             project_id=project_id,
+            project_name=project_name,
             repo_path=repo_path,
             wiki_config=wiki_config,
             refresh_service=service,

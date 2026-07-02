@@ -369,10 +369,13 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 # whose codewiki is never refreshed is judged against a stale or
                 # absent digest. Register a nightly refresh for the runner
                 # project plus every memory-bearing project with a repo path.
-                codewiki_targets: dict[str, str] = {}
+                codewiki_targets: dict[str, tuple[str, str]] = {}
                 current_project = pm.get(runner.project_id) if runner.project_id else None
                 if current_project is not None and current_project.repo_path:
-                    codewiki_targets[current_project.id] = current_project.repo_path
+                    codewiki_targets[current_project.id] = (
+                        current_project.name,
+                        current_project.repo_path,
+                    )
 
                 if runner.memory_manager is not None:
                     # A far-future cutoff makes every live memory "due", so the
@@ -394,7 +397,10 @@ def init_orchestration(runner: GobbyRunner) -> None:
                             continue
                         memory_project = pm.get(memory_project_id)
                         if memory_project is not None and memory_project.repo_path:
-                            codewiki_targets[memory_project_id] = memory_project.repo_path
+                            codewiki_targets[memory_project_id] = (
+                                memory_project.name,
+                                memory_project.repo_path,
+                            )
 
                 if not codewiki_targets:
                     logger.debug(
@@ -404,7 +410,10 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     registered_count = register_codewiki_nightly_crons(
                         cron_storage=runner.cron_storage,
                         cron_executor=cron_executor,
-                        projects=list(codewiki_targets.items()),
+                        projects=[
+                            (project_id, project_name, repo_path)
+                            for project_id, (project_name, repo_path) in codewiki_targets.items()
+                        ],
                         wiki_config=runner.config.wiki,
                     )
                     logger.debug(

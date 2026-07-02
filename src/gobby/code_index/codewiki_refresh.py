@@ -22,6 +22,7 @@ class CodewikiGenerator(Protocol):
         out_dir: Path,
         *,
         ai: str | None = None,
+        scopes: list[str] | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -37,6 +38,7 @@ class CodewikiRefreshRequest:
     project_id: str | None = None
     out_dir: str | None = None
     ai: str = "auto"
+    scopes: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,12 @@ class CodewikiRefreshService:
         except Exception as exc:
             raise CodewikiGatewayConstructionError(request.project_id or str(root), exc) from exc
 
-        result = await gcode.codewiki(root, out_dir, ai=normalize_codewiki_ai(request.ai))
+        result = await gcode.codewiki(
+            root,
+            out_dir,
+            ai=normalize_codewiki_ai(request.ai),
+            scopes=request.scopes,
+        )
         changed_paths = tuple(changed_doc_paths(out_dir, result))
         ingested_paths: list[Path] = []
         if changed_paths:
