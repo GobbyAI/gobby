@@ -136,11 +136,12 @@ def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
 
 
 def _finish_reason_from_stop_reason(stop_reason: str | None) -> str:
-    if stop_reason in (None, "", "completed", "stop"):
+    if stop_reason is None:
+        return "stop"
+    if stop_reason in ("", "completed", "stop"):
         return "stop"
     if stop_reason in {"max_turns", "max_tool_calls"}:
         return "length"
-    assert stop_reason is not None
     return stop_reason
 
 

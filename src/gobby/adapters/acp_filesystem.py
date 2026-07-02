@@ -159,6 +159,7 @@ def _root_path_from_value(value: str) -> Path | None:
 
 
 def _reject_git_path(resolved: ACPResolvedPath) -> None:
+    # Check full absolute parts so symlink-resolved paths cannot hide a .git segment.
     if ".git" in resolved.path.parts:
         raise ACPFileSystemError("access to .git paths is not allowed")
 

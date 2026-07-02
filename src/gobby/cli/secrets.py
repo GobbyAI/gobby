@@ -15,6 +15,8 @@ from gobby.storage.secrets import (
     SecretStore,
 )
 
+NEW_SECRET_KEK_PASSPHRASE_ENV = "GOBBY_NEW_SECRET_KEK_PASSPHRASE"
+
 
 class _SecretStoreContext:
     """Context manager that ensures the DB is closed after use."""
@@ -48,7 +50,7 @@ def _display_posture(posture: str | None) -> str:
 
 
 def _prompt_kek_passphrase() -> str:
-    passphrase = os.environ.get(SECRET_KEK_PASSPHRASE_ENV)
+    passphrase = os.environ.get(NEW_SECRET_KEK_PASSPHRASE_ENV)
     if passphrase:
         return passphrase
     return str(

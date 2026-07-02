@@ -285,21 +285,8 @@ def _expire_stale_terminal_sessions_for_context(
                 exc_info=True,
             )
             continue
-        try:
-            if handler._session_manager.mark_session_expired(candidate_id):
-                expired_session_ids.append(candidate_id)
-        except Exception as e:
-            handler.logger.warning(
-                "Failed to expire stale terminal session",
-                extra={
-                    "session_id": session_id,
-                    "project_id": project_id,
-                    "candidate_session_id": candidate_id,
-                    "error_type": type(e).__name__,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
+        if handler._session_manager.mark_session_expired(candidate_id):
+            expired_session_ids.append(candidate_id)
 
     if expired_session_ids:
         handler.logger.info(

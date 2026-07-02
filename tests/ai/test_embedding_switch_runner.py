@@ -6,7 +6,13 @@ from typing import Any
 
 import pytest
 
-from gobby.ai.embedding_switch import PHASE_ACTIVE, PHASE_BUILDING, PHASE_FLIPPING, SwitchJournal
+from gobby.ai.embedding_switch import (
+    PHASE_ACTIVE,
+    PHASE_BUILDING,
+    PHASE_FLIPPING,
+    PHASE_STAGING,
+    SwitchJournal,
+)
 from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
 from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY
 from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
@@ -106,6 +112,25 @@ def _issue_record(*, source_text: str | None) -> GitHubIssueTriageRecord:
         created_at="2026-05-03T00:00:00Z",
         updated_at="2026-05-03T00:00:00Z",
     )
+
+
+@pytest.mark.asyncio
+async def test_run_staging_failure_keeps_staging_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=object())
+
+    async def fail_stage(_journal: SwitchJournal) -> object:
+        raise RuntimeError("stage failed")
+
+    monkeypatch.setattr(runner, "stage", fail_stage)
+
+    report = await runner.run(_journal(PHASE_STAGING))
+
+    assert report.failed is True
+    assert report.journal is not None
+    assert report.journal.phase == PHASE_STAGING
+    assert "stage failed" in (report.journal.error or "")
 
 
 @pytest.mark.asyncio

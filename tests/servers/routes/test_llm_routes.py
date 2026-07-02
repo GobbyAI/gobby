@@ -93,6 +93,10 @@ def client(server_with_llm: MagicMock) -> TestClient:
     return TestClient(app)
 
 
+def test_finish_reason_returns_unmapped_stop_reason() -> None:
+    assert llm_module._finish_reason_from_stop_reason("content_filter") == "content_filter"
+
+
 def test_llm_status_returns_registry_snapshot(client: TestClient) -> None:
     response = client.get("/api/llm/status")
 

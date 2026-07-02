@@ -129,6 +129,17 @@ def _tool_search_output(payload: dict[str, Any]) -> Any:
     return {key: value for key, value in payload.items() if key not in {"type", "id", "call_id"}}
 
 
+def _dedupe_pending_tool_search_ids(values: Iterable[str]) -> deque[str]:
+    pending: deque[str] = deque()
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        pending.append(value)
+        seen.add(value)
+    return pending
+
+
 class CodexTranscriptParser(BaseTranscriptParser):
     """
     Parses JSONL transcript files from Codex.
@@ -153,7 +164,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if not isinstance(raw_queue, list):
             self._pending_tool_search_use_ids.clear()
             return
-        self._pending_tool_search_use_ids = deque(
+        self._pending_tool_search_use_ids = _dedupe_pending_tool_search_ids(
             item for item in raw_queue if isinstance(item, str) and item
         )
 
@@ -301,7 +312,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         if payload_type == "tool_search_call":
             call_id = _tool_search_use_id(payload) or f"tool-search-{index}"
-            self._pending_tool_search_use_ids.append(call_id)
+            if call_id not in self._pending_tool_search_use_ids:
+                self._pending_tool_search_use_ids.append(call_id)
             name = "tool_search"
             tool_input = _parse_tool_search_input(payload)
         elif payload_type == "web_search_call":

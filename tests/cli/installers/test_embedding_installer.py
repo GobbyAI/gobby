@@ -406,6 +406,31 @@ class TestInstallEmbeddingOverrides:
         assert mock_health.call_args.kwargs["expected_dim"] == 1024
         assert mock_persist.call_args.kwargs["dim"] == 1024
 
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
+    @patch("gobby.cli.installers.embedding._setup_lmstudio")
+    def test_catalog_model_override_probe_failure_returns_actionable_error(
+        self,
+        mock_setup: MagicMock,
+        mock_probe: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="lmstudio",
+            catalog_key="nomic-v1.5-f16",
+            model_override="custom-embedding-model",
+        )
+
+        assert result["success"] is False
+        assert result["error"] == (
+            "Could not probe embedding dim from http://localhost:1234/v1 "
+            "for model custom-embedding-model. Pass --embedding-dim explicitly."
+        )
+        mock_setup.assert_not_called()
+        mock_probe.assert_called_once_with(
+            model="custom-embedding-model",
+            api_base="http://localhost:1234/v1",
+            api_key=None,
+        )
+
 
 class TestProbeEmbeddingDim:
     """Dim probe error boundaries."""

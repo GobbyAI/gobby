@@ -268,7 +268,13 @@ class ClaudeToolChatAdapter:
         server, allowed_tools = build_repo_mcp_server(runtime)
         provider = self._provider_factory(binding)
         model = request.model or next(iter(binding.models), None)
-        max_turns = request.limits.max_turns or request.max_turns or 60
+        max_turns = (
+            request.limits.max_turns
+            if request.limits.max_turns is not None
+            else request.max_turns
+            if request.max_turns is not None
+            else 60
+        )
         result = await provider.generate_agentic(
             system_prompt=request.system_prompt,
             prompt=request.prompt,

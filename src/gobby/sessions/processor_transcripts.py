@@ -21,6 +21,11 @@ from gobby.sessions.transcripts.base import ParsedMessage
 logger = logging.getLogger(__name__)
 
 
+def _parser_source(parser: object | None) -> str | None:
+    source = getattr(parser, "cli_name", None)
+    return source if isinstance(source, str) else None
+
+
 class ProcessorTranscriptMixin:
     def _extract_native_titles(
         self: ProcessorHost, session_id: str, messages: list[ParsedMessage]
@@ -48,9 +53,7 @@ class ProcessorTranscriptMixin:
                     raw_title = title_msg.content
                     source = title_msg.source
                     if source is None:
-                        parser = self._parsers.get(session_id)
-                        parser_source = getattr(parser, "cli_name", None)
-                        source = parser_source if isinstance(parser_source, str) else None
+                        source = _parser_source(self._parsers.get(session_id))
                     title = normalize_native_title(raw_title, source=source)
                     if title:
                         self.session_manager.update_title(
@@ -124,10 +127,9 @@ class ProcessorTranscriptMixin:
         if not parser:
             return
 
-        source = getattr(parser, "cli_name", None)
         parsed_records = normalize_transcript_records(
             parser.parse_lines(new_lines, start_index=last_index + 1),
-            source if isinstance(source, str) else None,
+            _parser_source(parser),
         )
         parsed_messages: list[ParsedMessage] = [
             r for r in parsed_records if isinstance(r, ParsedMessage)
@@ -264,12 +266,11 @@ class ProcessorTranscriptMixin:
             )
             return
 
-        source = getattr(parser, "cli_name", None)
         all_messages = [
             r
             for r in normalize_transcript_records(
                 parser.parse_session_json(data),
-                source if isinstance(source, str) else None,
+                _parser_source(parser),
             )
             if isinstance(r, ParsedMessage)
         ]

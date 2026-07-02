@@ -87,7 +87,7 @@ def find_web_dir(
             return configured_path
 
     try:
-        cwd = Path.cwd()
+        cwd = cast(Path, deps.Path.cwd())
     except OSError as exc:
         deps.logger.debug("Could not resolve cwd for web UI discovery: %s", exc)
     else:

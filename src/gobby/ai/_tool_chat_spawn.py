@@ -576,7 +576,9 @@ class GrokSpawnToolChatAdapter:
         max_turns = (
             request.limits.max_turns
             if request.limits.max_turns is not None
-            else (request.max_turns or 30)
+            else request.max_turns
+            if request.max_turns is not None
+            else 30
         )
         command = [
             self._resolve_command_path(),

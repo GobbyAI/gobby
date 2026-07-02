@@ -6,6 +6,7 @@ by integration tests.
 """
 
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1355,6 +1356,46 @@ class TestProcessJsonSession:
         assert "session-1" in processor._last_mtime
 
     @pytest.mark.asyncio
+    async def test_process_json_session_passes_parser_source_to_normalizer(
+        self,
+        mock_db,
+        tmp_path,
+    ) -> None:
+        import json
+
+        processor = SessionMessageProcessor(mock_db)
+        transcript = tmp_path / "session.json"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "sessionId": "abc",
+                    "messages": [
+                        {
+                            "id": "1",
+                            "timestamp": "2024-01-01T10:00:00Z",
+                            "type": "user",
+                            "content": "Hello",
+                        },
+                    ],
+                }
+            )
+        )
+        processor.register_session("session-1", str(transcript), source="qwen")
+        seen_sources: list[str | None] = []
+
+        def normalize(records: Iterable[object], source: str | None) -> list[object]:
+            seen_sources.append(source)
+            return list(records)
+
+        with patch(
+            "gobby.sessions.processor_transcripts.normalize_transcript_records",
+            side_effect=normalize,
+        ):
+            await processor._process_json_session("session-1", str(transcript))
+
+        assert seen_sources == ["qwen"]
+
+    @pytest.mark.asyncio
     async def test_process_json_session_skips_unchanged(self, mock_db, tmp_path) -> None:
         """Should skip processing when file hasn't changed (mtime check)."""
         import json
@@ -1717,6 +1758,26 @@ class TestExtractNativeTitles:
             )
         ]
         result = processor._extract_native_titles("sid", messages)
+
+        assert result == []
+        session_manager.update_title.assert_called_once_with(
+            "sid", "check gobby logs for tmux warnings", title_source="native"
+        )
+
+    def test_title_without_message_source_uses_parser_source(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = ""
+        session.title_source = ""
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+        processor._parsers["sid"] = MagicMock(cli_name="claude")
+
+        result = processor._extract_native_titles(
+            "sid",
+            [self._make_title_msg("check-gobby-logs-for-tmux-warnings")],
+        )
 
         assert result == []
         session_manager.update_title.assert_called_once_with(

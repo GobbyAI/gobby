@@ -80,6 +80,33 @@ def _mock_shutdown_source_writes(request: pytest.FixtureRequest):
         yield
 
 
+class _FacadePath:
+    def __init__(self, cwd: Path) -> None:
+        self._cwd = cwd
+
+    def __call__(self, *parts: str | os.PathLike[str]) -> Path:
+        return Path(*parts)
+
+    def cwd(self) -> Path:
+        return self._cwd
+
+
+def _facade_with_cwd(cwd: Path) -> MagicMock:
+    deps = MagicMock()
+    deps.Path = _FacadePath(cwd)
+    deps.logger = MagicMock()
+    return deps
+
+
+def _make_source_web(root: Path) -> Path:
+    (root / "pyproject.toml").write_text('[project]\nname = "gobby"\n')
+    (root / "src" / "gobby" / "install" / "shared").mkdir(parents=True)
+    web_dir = root / "web"
+    web_dir.mkdir(exist_ok=True)
+    (web_dir / "package.json").write_text("{}")
+    return web_dir
+
+
 # --- get_gobby_home ---
 
 
@@ -173,7 +200,7 @@ def test_find_web_dir_config_missing(tmp_path: Path) -> None:
     fake_pkg.parent.mkdir(parents=True)
     fake_pkg.write_text("")
     with (
-        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path)),
         patch.object(gobby, "__file__", str(fake_pkg)),
     ):
         result = find_web_dir(config)
@@ -192,7 +219,7 @@ def test_find_web_dir_ignores_cwd(tmp_path: Path) -> None:
     fake_pkg.write_text("")
 
     with (
-        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path)),
         patch.object(gobby, "__file__", str(fake_pkg)),
     ):
         result = find_web_dir(None)
@@ -213,7 +240,7 @@ def test_find_web_dir_detects_source_checkout_web(tmp_path: Path) -> None:
     fake_pkg.write_text("")
 
     with (
-        patch("gobby.cli.utils_ui.Path.cwd", return_value=tmp_path),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path)),
         patch.object(gobby, "__file__", str(fake_pkg)),
     ):
         result = find_web_dir(None, require_source=True)
@@ -230,7 +257,7 @@ def test_find_web_dir_none(tmp_path: Path) -> None:
     fake_pkg.parent.mkdir(parents=True)
     fake_pkg.write_text("")
     with (
-        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path)),
         patch.object(gobby, "__file__", str(fake_pkg)),
     ):
         result = find_web_dir(None)
@@ -270,7 +297,7 @@ def test_find_web_dir_dev_mode_rejects_dist_only(tmp_path: Path) -> None:
     config.ui.mode = "dev"
 
     with (
-        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path.parent),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path.parent)),
         patch.object(gobby, "__file__", str(fake_pkg)),
     ):
         result = find_web_dir(config)
@@ -288,7 +315,7 @@ def test_find_web_dir_require_source_rejects_dist_only(tmp_path: Path) -> None:
     config = MagicMock()
     config.ui.web_dir = str(pkg_web)
 
-    with patch("gobby.cli.utils.Path.cwd", return_value=tmp_path.parent):
+    with patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path.parent)):
         result = find_web_dir(config, require_source=True)
     assert result is None
 
@@ -1410,18 +1437,20 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
 
     pid_file = tmp_path / "ui.pid"
     pid_file.write_text(json.dumps({"pid": 12345, "started_at": 100.0}))
+    web_dir = _make_source_web(tmp_path)
 
     # Process alive check: True initially, False in loop (breaks), False post-loop
     alive_calls = iter([True, False, False])
     mock_parent = MagicMock()
     mock_parent.children.return_value = []
     mock_parent.cmdline.return_value = ["npm", "run", "dev"]
-    mock_parent.cwd.return_value = str(Path.cwd() / "web")
+    mock_parent.cwd.return_value = str(web_dir)
     mock_parent.create_time.return_value = 100.0
     deps = MagicMock()
     deps.get_gobby_home.return_value = tmp_path
     deps._is_process_alive.side_effect = lambda pid: next(alive_calls, False)
     deps.logger = MagicMock()
+    deps.Path = _FacadePath(tmp_path)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1447,6 +1476,7 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
 
     pid_file = tmp_path / "ui.pid"
     pid_file.write_text(json.dumps({"pid": 12345, "started_at": 100.0}))
+    web_dir = _make_source_web(tmp_path)
 
     # Process never dies gracefully — need enough True responses for
     # initial check + 50 loop iterations + final alive check
@@ -1458,12 +1488,13 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
     mock_parent = MagicMock()
     mock_parent.children.return_value = [mock_child]
     mock_parent.cmdline.return_value = ["npm", "run", "dev"]
-    mock_parent.cwd.return_value = str(Path.cwd() / "web")
+    mock_parent.cwd.return_value = str(web_dir)
     mock_parent.create_time.return_value = 100.0
     deps = MagicMock()
     deps.get_gobby_home.return_value = tmp_path
     deps._is_process_alive.side_effect = lambda pid: next(alive_iter, False)
     deps.logger = MagicMock()
+    deps.Path = _FacadePath(tmp_path)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1496,6 +1527,7 @@ def test_stop_ui_server_process_lookup_error(tmp_path: Path) -> None:
     deps.get_gobby_home.return_value = tmp_path
     deps._is_process_alive.return_value = True
     deps.logger = MagicMock()
+    deps.Path = _FacadePath(tmp_path)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1519,6 +1551,7 @@ def test_stop_ui_server_generic_exception(tmp_path: Path) -> None:
     deps.get_gobby_home.return_value = tmp_path
     deps._is_process_alive.return_value = True
     deps.logger = MagicMock()
+    deps.Path = _FacadePath(tmp_path)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1922,7 +1955,7 @@ def test_find_web_dir_import_error(tmp_path: Path) -> None:
     from gobby.cli.utils import find_web_dir
 
     with (
-        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(tmp_path)),
         patch.dict("sys.modules", {"gobby": None}),
     ):
         result = find_web_dir(None)
@@ -1941,7 +1974,7 @@ def test_find_web_dir_package_path(tmp_path: Path) -> None:
     mock_gobby.__file__ = str(tmp_path / "__init__.py")
 
     with (
-        patch("gobby.cli.utils.Path.cwd", return_value=Path("/nonexistent")),
+        patch("gobby.cli.utils_ui.facade", return_value=_facade_with_cwd(Path("/nonexistent"))),
         patch.dict("sys.modules", {"gobby": mock_gobby}),
     ):
         result = find_web_dir(None)

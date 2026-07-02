@@ -304,6 +304,23 @@ async def test_claude_adapter_constrains_tools_and_maps_result() -> None:
     assert result.stop_reason == "completed"
 
 
+async def test_claude_adapter_preserves_explicit_zero_max_turns() -> None:
+    provider = _FakeClaudeProvider()
+    adapter = ClaudeToolChatAdapter(provider_factory=lambda _binding: provider)
+    request = ToolChatRequest(
+        prompt="Document the auth module.",
+        tool_policy=ToolPolicy(cli="gcode", tools=("search",)),
+        project_path="/repo",
+        max_turns=12,
+        limits=ToolLoopLimits(max_turns=0),
+    )
+
+    await adapter.chat(request, _claude_binding())
+
+    assert provider.kwargs is not None
+    assert provider.kwargs["max_turns"] == 0
+
+
 @pytest.mark.asyncio
 async def test_repo_mcp_tool_handler_executes_then_denies(
     monkeypatch: pytest.MonkeyPatch,

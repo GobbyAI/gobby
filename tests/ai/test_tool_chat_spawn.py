@@ -626,6 +626,17 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "gobby-index" not in prompt
 
 
+def test_grok_build_command_preserves_explicit_zero_max_turns() -> None:
+    adapter = GrokSpawnToolChatAdapter(command_path="grok")
+
+    command = adapter._build_command(
+        _request(max_turns=12, limits=ToolLoopLimits(max_turns=0)),
+        model=None,
+    )
+
+    assert command[command.index("--max-turns") + 1] == "0"
+
+
 @pytest.mark.asyncio
 async def test_grok_adapter_captures_narrative_from_json(
     monkeypatch: pytest.MonkeyPatch,

@@ -19,6 +19,22 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name, default)
 
 
+def _task_value(task: Any, name: str, default: Any = None) -> Any:
+    task_dict = _task_dict(task)
+    if name in task_dict:
+        return task_dict[name]
+    return default
+
+
+def _task_dict(task: Any) -> dict[str, Any]:
+    if isinstance(task, dict):
+        return task
+    if callable(getattr(task, "to_dict", None)):
+        task_dict = task.to_dict()
+        return task_dict if isinstance(task_dict, dict) else {}
+    return {}
+
+
 def _plain(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
@@ -41,7 +57,7 @@ def _task_ref_from_seq(task: Any, seq_num: Any) -> str:
 
 def task_state_payload(task: Any) -> dict[str, Any]:
     """Return compact task state for MCP list/search/card payloads."""
-    state = serialize_task_state(task)
+    state = serialize_task_state(_task_dict(task))
     return {
         "current_stage": state.get("current_stage"),
         "is_closed": state.get("is_closed", False),
@@ -54,18 +70,17 @@ def task_state_payload(task: Any) -> dict[str, Any]:
 
 def task_discovery_payload(task: Any) -> dict[str, Any]:
     """Return compact task row for cheap discovery tools."""
-    task_dict = task.to_dict() if callable(getattr(task, "to_dict", None)) else {}
-    seq_num = task_dict.get("seq_num", _field(task, "seq_num"))
+    seq_num = _task_value(task, "seq_num")
     return {
         "ref": _task_ref_from_seq(task, seq_num),
-        "id": task_dict.get("id", _field(task, "id")),
+        "id": _task_value(task, "id"),
         "seq_num": seq_num,
-        "title": task_dict.get("title", _field(task, "title")),
-        "task_type": task_dict.get("task_type", _field(task, "task_type")),
-        "category": task_dict.get("category", _field(task, "category")),
-        "priority": task_dict.get("priority", _field(task, "priority")),
-        "path_cache": task_dict.get("path_cache", _field(task, "path_cache")),
-        "updated_at": task_dict.get("updated_at", _field(task, "updated_at")),
+        "title": _task_value(task, "title"),
+        "task_type": _task_value(task, "task_type"),
+        "category": _task_value(task, "category"),
+        "priority": _task_value(task, "priority"),
+        "path_cache": _task_value(task, "path_cache"),
+        "updated_at": _task_value(task, "updated_at"),
         "state": task_state_payload(task),
     }
 
@@ -114,41 +129,28 @@ def task_summary_payload(
     task: Any, dependencies: dict[str, list[dict[str, Any]]]
 ) -> dict[str, Any]:
     """Return actionable get_task(brief=True) task card."""
-    task_dict = task.to_dict() if callable(getattr(task, "to_dict", None)) else {}
-    seq_num = task_dict.get("seq_num", _field(task, "seq_num"))
+    seq_num = _task_value(task, "seq_num")
     return {
         "ref": _task_ref_from_seq(task, seq_num),
-        "id": task_dict.get("id", _field(task, "id")),
+        "id": _task_value(task, "id"),
         "seq_num": seq_num,
-        "title": task_dict.get("title", _field(task, "title")),
-        "task_type": task_dict.get("task_type", _field(task, "task_type")),
-        "category": task_dict.get("category", _field(task, "category")),
-        "priority": task_dict.get("priority", _field(task, "priority")),
-        "path_cache": task_dict.get("path_cache", _field(task, "path_cache")),
-        "description": task_dict.get("description", _field(task, "description")),
-        "validation_criteria": task_dict.get(
-            "validation_criteria",
-            _field(task, "validation_criteria"),
-        ),
-        "labels": task_dict.get("labels", _field(task, "labels")),
-        "parent_task_id": task_dict.get("parent_task_id", _field(task, "parent_task_id")),
-        "created_at": task_dict.get("created_at", _field(task, "created_at")),
-        "updated_at": task_dict.get("updated_at", _field(task, "updated_at")),
+        "title": _task_value(task, "title"),
+        "task_type": _task_value(task, "task_type"),
+        "category": _task_value(task, "category"),
+        "priority": _task_value(task, "priority"),
+        "path_cache": _task_value(task, "path_cache"),
+        "description": _task_value(task, "description"),
+        "validation_criteria": _task_value(task, "validation_criteria"),
+        "labels": _task_value(task, "labels"),
+        "parent_task_id": _task_value(task, "parent_task_id"),
+        "created_at": _task_value(task, "created_at"),
+        "updated_at": _task_value(task, "updated_at"),
         "state": task_state_payload(task),
         "dependencies": dependencies,
-        "allow_automation": task_dict.get(
-            "allow_automation",
-            _field(task, "allow_automation", False),
-        ),
-        "unattended": task_dict.get("unattended", _field(task, "unattended", False)),
-        "isolation": _plain(task_dict.get("isolation", _field(task, "isolation"))),
-        "assigned_agent": task_dict.get("assigned_agent", _field(task, "assigned_agent")),
-        "implementation_domain": task_dict.get(
-            "implementation_domain",
-            _field(task, "implementation_domain"),
-        ),
-        "additional_skills": task_dict.get(
-            "additional_skills",
-            _field(task, "additional_skills"),
-        ),
+        "allow_automation": _task_value(task, "allow_automation", False),
+        "unattended": _task_value(task, "unattended", False),
+        "isolation": _plain(_task_value(task, "isolation")),
+        "assigned_agent": _task_value(task, "assigned_agent"),
+        "implementation_domain": _task_value(task, "implementation_domain"),
+        "additional_skills": _task_value(task, "additional_skills"),
     }

@@ -1543,6 +1543,34 @@ class TestCodexTranscriptParser:
         assert isinstance(result, ParsedMessage)
         assert result.tool_use_id == "call-first"
 
+    def test_tool_search_windowed_hydration_replay_dedupes_pending_ids(
+        self, parser: CodexTranscriptParser
+    ) -> None:
+        call_line = self._tool_search_call(
+            {"query": "first"},
+            call_id="call-first",
+            response_id="tsc-1",
+        )
+        parser.parse_line(call_line, 1)
+        state = parser.snapshot_state()
+        resumed = CodexTranscriptParser()
+        resumed.hydrate_state(state)
+
+        resumed.parse_line(call_line, 1)
+        first_result = resumed.parse_line(
+            self._tool_search_output({"tools_count": 1}, call_id=None),
+            2,
+        )
+        fallback_result = resumed.parse_line(
+            self._tool_search_output({"tools_count": 0}, call_id=None),
+            3,
+        )
+
+        assert isinstance(first_result, ParsedMessage)
+        assert isinstance(fallback_result, ParsedMessage)
+        assert first_result.tool_use_id == "call-first"
+        assert fallback_result.tool_use_id == "tool-search-3"
+
     def test_tool_search_explicit_out_of_order_output_removes_pending_id(
         self, parser: CodexTranscriptParser
     ) -> None:

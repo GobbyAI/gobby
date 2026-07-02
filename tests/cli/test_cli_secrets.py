@@ -59,11 +59,12 @@ def test_migrate_dry_run_prints_report(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "api_key: would_migrate" in result.output
 
 
-def test_rekey_passphrase_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rekey_passphrase_uses_new_env(monkeypatch: pytest.MonkeyPatch) -> None:
     store = MagicMock()
     store.current_kek_posture.side_effect = [POSTURE_KEY_FILE, POSTURE_SCRYPT_PASSPHRASE]
     monkeypatch.setattr(secrets_module, "_SecretStoreContext", lambda: _StoreContext(store))
-    monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
+    monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "current horse")
+    monkeypatch.setenv(secrets_module.NEW_SECRET_KEK_PASSPHRASE_ENV, "replacement horse")
 
     result = CliRunner().invoke(
         secrets_module.secrets,
@@ -74,7 +75,7 @@ def test_rekey_passphrase_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     store.set_kek_posture.assert_called_once_with(
         POSTURE_SCRYPT_PASSPHRASE,
-        passphrase="correct horse",
+        passphrase="replacement horse",
     )
     assert "key-file -> scrypt-passphrase" in result.output
 

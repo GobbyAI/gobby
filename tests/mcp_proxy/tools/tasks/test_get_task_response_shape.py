@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks._formatters import task_discovery_payload
+from gobby.mcp_proxy.tools.tasks._formatters import task_discovery_payload, task_summary_payload
 
 pytestmark = pytest.mark.unit
 
@@ -40,3 +40,27 @@ def test_task_discovery_ref_uses_seq_num_from_dict() -> None:
 
     assert payload["seq_num"] == 17424
     assert payload["ref"] == "#17424"
+
+
+def test_task_summary_uses_to_dict_payload_fields() -> None:
+    task = SimpleNamespace(
+        to_dict=lambda: {
+            "id": "03940009-0faa-4d80-9b96-289df7f44431",
+            "seq_num": 17425,
+            "title": "Apply summary fixes",
+            "task_type": "bug",
+            "category": "code",
+            "priority": 1,
+            "validation_criteria": "Summary payload uses to_dict fields.",
+            "allow_automation": True,
+        },
+    )
+
+    payload = task_summary_payload(task, dependencies={})
+
+    assert payload["ref"] == "#17425"
+    assert payload["id"] == "03940009-0faa-4d80-9b96-289df7f44431"
+    assert payload["title"] == "Apply summary fixes"
+    assert payload["validation_criteria"] == "Summary payload uses to_dict fields."
+    assert payload["allow_automation"] is True
+    assert payload["state"]["is_closed"] is False

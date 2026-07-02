@@ -161,13 +161,7 @@ def install_embedding(
         elif model_override is not None or api_base_override is not None:
             probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=embedding_api_key)
             if probed is None:
-                return {
-                    "success": False,
-                    "error": (
-                        f"Could not probe embedding dim from {api_base or 'default endpoint'} "
-                        f"for model {model}. Pass --embedding-dim explicitly."
-                    ),
-                }
+                return {"success": False, "error": _dim_probe_error(model, api_base)}
             dim = probed
         else:
             dim = catalog_spec.dim
@@ -192,13 +186,7 @@ def install_embedding(
                     dim,
                 )
             elif probed is None:
-                return {
-                    "success": False,
-                    "error": (
-                        f"Could not probe embedding dim from {api_base or 'default endpoint'} "
-                        f"for model {model}. Pass --embedding-dim explicitly."
-                    ),
-                }
+                return {"success": False, "error": _dim_probe_error(model, api_base)}
         else:
             dim = cfg["dim"]
 
@@ -529,6 +517,13 @@ def _probe_embedding_dim(
         return asyncio.run(_probe())
     logger.warning("Cannot run dim probe: already in event loop")
     return None
+
+
+def _dim_probe_error(model: str, api_base: str | None) -> str:
+    return (
+        f"Could not probe embedding dim from {api_base or 'default endpoint'} "
+        f"for model {model}. Pass --embedding-dim explicitly."
+    )
 
 
 def _health_check_embedding(
