@@ -45,7 +45,7 @@ def _make_blocking_rule(manager: LocalWorkflowDefinitionManager) -> str:
 def _make_bash_event() -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="session-rule-disable",
+        session_id="11111111-1111-4111-8111-111111111111",
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={"tool_name": "Bash", "tool_input": {"command": "echo hi"}},
@@ -59,9 +59,13 @@ async def test_disable_rule_takes_effect_on_next_event_in_process(db: HubDatabas
     engine = RuleEngine(db)
     event = _make_bash_event()
 
-    first = await engine.evaluate(event, session_id="session-rule-disable", variables={})
+    first = await engine.evaluate(
+        event, session_id="11111111-1111-4111-8111-111111111111", variables={}
+    )
     manager.update(rule_id, enabled=False)
-    second = await engine.evaluate(event, session_id="session-rule-disable", variables={})
+    second = await engine.evaluate(
+        event, session_id="11111111-1111-4111-8111-111111111111", variables={}
+    )
 
     assert first.decision == "block"
     assert second.decision == "allow"
@@ -78,9 +82,13 @@ async def test_disable_rule_takes_effect_across_processes(
     engine = RuleEngine(db)
     event = _make_bash_event()
 
-    first = await engine.evaluate(event, session_id="session-rule-disable", variables={})
+    first = await engine.evaluate(
+        event, session_id="11111111-1111-4111-8111-111111111111", variables={}
+    )
     _disable_rule_in_child_process(postgres_database_url, postgres_schema, rule_id)
-    second = await engine.evaluate(event, session_id="session-rule-disable", variables={})
+    second = await engine.evaluate(
+        event, session_id="11111111-1111-4111-8111-111111111111", variables={}
+    )
 
     assert first.decision == "block"
     assert second.decision == "allow"

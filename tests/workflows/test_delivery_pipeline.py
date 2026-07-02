@@ -19,12 +19,19 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
+# Session/project id columns are native uuid in PostgreSQL; synthetic ids like
+# PLATFORM_SESSION_ID would fail with `invalid input syntax for type uuid`.
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+EXTERNAL_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+IGNORED_SESSION_ID = "33333333-3333-4333-8333-333333333333"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
     temp_db.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-        ("proj-delivery", "delivery-pipeline"),
+        (PROJECT_ID, "delivery-pipeline"),
     )
     return temp_db
 
@@ -85,7 +92,9 @@ def _variables(**overrides: Any) -> dict[str, Any]:
     return variables
 
 
-def _event(session_id: str = "ext-X", platform_session_id: str = "plat-Y") -> HookEvent:
+def _event(
+    session_id: str = EXTERNAL_SESSION_ID, platform_session_id: str = PLATFORM_SESSION_ID
+) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=session_id,
@@ -123,12 +132,12 @@ def test_is_empty_inject_payload_shapes() -> None:
 def test_empty_delivery_no_mutation(engine: RuleEngine, db: HubDatabase) -> None:
     result = engine._format_delivery_result(
         {"success": True, "messages": [], "count": 0},
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert result is None
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
 
 def test_memory_recall_delivery_payload_formats_and_tracks_ids(
@@ -137,29 +146,29 @@ def test_memory_recall_delivery_payload_formats_and_tracks_ids(
 ) -> None:
     result = engine._format_delivery_result(
         {"messages": [_memory_recall_message([_memory("m1")])], "count": 1},
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert result is not None
     assert "content-sentinel-m1" in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
 
 
 def test_memory_recall_delivery_does_not_touch_existing_injected_ids(
     engine: RuleEngine,
     db: HubDatabase,
 ) -> None:
-    _set_injected(db, "plat-Y", ["m1"])
+    _set_injected(db, PLATFORM_SESSION_ID, ["m1"])
 
     result = engine._format_delivery_result(
         {"messages": [_memory_recall_message([_memory("m1")])], "count": 1},
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert result is None
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
 
 
 def test_mixed_memory_recall_and_plain_messages_formats_both(
@@ -174,20 +183,20 @@ def test_mixed_memory_recall_and_plain_messages_formats_both(
             ],
             "count": 2,
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert result is not None
     assert "content-sentinel-m1" in result
     assert "plain-msg-sentinel" in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
 
 
 def test_malformed_message_content_falls_through(engine: RuleEngine) -> None:
     result = engine._format_delivery_result(
         {"messages": [_plain_message("{not-json plain-malformed-sentinel")], "count": 1},
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
@@ -206,9 +215,11 @@ async def _append_id(db: HubDatabase, session_id: str, mid: str) -> None:
 
 @pytest.mark.asyncio
 async def test_concurrent_append_race_safe(db: HubDatabase) -> None:
-    await asyncio.gather(_append_id(db, "plat-Y", "m1"), _append_id(db, "plat-Y", "m2"))
+    await asyncio.gather(
+        _append_id(db, PLATFORM_SESSION_ID, "m1"), _append_id(db, PLATFORM_SESSION_ID, "m2")
+    )
 
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1", "m2"]
 
 
 def test_memory_recall_delivery_accepts_daemon_producer_independent_of_sender(
@@ -223,14 +234,14 @@ def test_memory_recall_delivery_accepts_daemon_producer_independent_of_sender(
             ],
             "count": 2,
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert result is not None
     assert "content-sentinel-m-recall" in result
     assert "plain-sentinel" in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m-recall"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m-recall"]
 
 
 @pytest.mark.asyncio
@@ -255,12 +266,12 @@ async def test_session_key_uses_platform_session_id(
     )
     engine = RuleEngine(db, mcp_dispatcher=dispatcher)
 
-    response = await engine.evaluate(_event(), session_id="ignored", variables={})
+    response = await engine.evaluate(_event(), session_id=IGNORED_SESSION_ID, variables={})
 
     assert response.context is not None
     assert "content-sentinel-m1" in response.context
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
-    assert "injected_memory_ids" not in _vars(db, "ext-X")
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
+    assert "injected_memory_ids" not in _vars(db, EXTERNAL_SESSION_ID)
 
 
 def test_stale_memory_recall_delivery_payloads_ignored(
@@ -281,7 +292,7 @@ def test_stale_memory_recall_delivery_payloads_ignored(
             ],
             "count": 8,
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
@@ -294,7 +305,7 @@ def test_stale_memory_recall_delivery_payloads_ignored(
     assert "content-sentinel-legacy" not in result
     assert "content-sentinel-malformed" not in result
     assert "content-sentinel-disabled" not in result
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["fresh"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["fresh"]
 
 
 def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
@@ -311,14 +322,14 @@ def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
             ],
             "count": 2,
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         variables,
     )
 
     assert result is not None
     assert "content-sentinel-unverified" not in result
     assert "plain-msg-unverified-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
 
 def test_disabled_memory_recall_delivery_payload_dropped_beside_plain_message(
@@ -333,37 +344,40 @@ def test_disabled_memory_recall_delivery_payload_dropped_beside_plain_message(
             ],
             "count": 2,
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert result is not None
     assert "content-sentinel-disabled" not in result
     assert "plain-msg-disabled-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
 
 def test_search_memories_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:
     first = engine._format_search_memories_result(
         {"memories": [_memory("m1")]},
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
     assert first is not None
     assert "content-sentinel-m1" in first
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
 
     second = engine._format_search_memories_result(
         {"memories": [_memory("m1"), _memory("m2")]},
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert second is not None
     assert "content-sentinel-m1" not in second
     assert "content-sentinel-m2" in second
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
-    assert engine._format_search_memories_result({"memories": []}, "plat-Y", _variables()) is None
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1", "m2"]
+    assert (
+        engine._format_search_memories_result({"memories": []}, PLATFORM_SESSION_ID, _variables())
+        is None
+    )
 
 
 def test_search_memories_formatter_skips_review_lessons_before_tracking(
@@ -377,14 +391,14 @@ def test_search_memories_formatter_skips_review_lessons_before_tracking(
                 _memory("m1"),
             ]
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert formatted is not None
     assert "content-sentinel-review-raw" not in formatted
     assert "content-sentinel-m1" in formatted
-    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
 
 
 def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:
@@ -399,13 +413,13 @@ def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> N
                 }
             ]
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert first is not None
     assert "pattern-a" in first
-    assert _vars(db, "plat-Y")["injected_review_lesson_ids"] == ["lesson-1"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_review_lesson_ids"] == ["lesson-1"]
 
     second = engine._format_review_lessons_result(
         {
@@ -424,14 +438,14 @@ def test_review_lesson_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> N
                 },
             ]
         },
-        "plat-Y",
+        PLATFORM_SESSION_ID,
         _variables(),
     )
 
     assert second is not None
     assert "pattern-a" not in second
     assert "pattern-b" in second
-    assert _vars(db, "plat-Y")["injected_review_lesson_ids"] == ["lesson-1", "lesson-2"]
+    assert _vars(db, PLATFORM_SESSION_ID)["injected_review_lesson_ids"] == ["lesson-1", "lesson-2"]
 
 
 @pytest.mark.asyncio
@@ -455,7 +469,7 @@ async def test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op(
     )
     engine = RuleEngine(db, mcp_dispatcher=dispatcher)
 
-    response = await engine.evaluate(_event(), session_id="ignored", variables={})
+    response = await engine.evaluate(_event(), session_id=IGNORED_SESSION_ID, variables={})
 
     assert response.context is None
     assert response.metadata.get("mcp_calls", []) == []

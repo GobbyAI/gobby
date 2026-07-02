@@ -72,8 +72,10 @@ class StageStateView(BaseModel):
     reviewer_agent: str | None
     entered_at: str | None
     entered_by_session_id: str | None
+    entered_by_actor: str | None = None
     completed_at: str | None
     completed_by_session_id: str | None
+    completed_by_actor: str | None = None
     completed_commit_sha: str | None
     work_attempt_count: int
     review_round_count: int

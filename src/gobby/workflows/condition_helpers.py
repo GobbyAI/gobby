@@ -771,7 +771,8 @@ def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
         return False
 
     task_closed = is_task_complete(task)
-    subtasks = task_manager.list_tasks(parent_task_id=task_id)
+    resolved_task_id = getattr(task, "id", task_id)
+    subtasks = task_manager.list_tasks(parent_task_id=resolved_task_id)
 
     if not subtasks:
         if not task_closed:

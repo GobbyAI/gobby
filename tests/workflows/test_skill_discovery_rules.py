@@ -30,6 +30,10 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -205,13 +209,13 @@ class TestDiscoverSkillHubsOnTurnStart:
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"prompt": "hi"},
         )
 
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.context is not None
         assert skill_fetch_directive("loading-skills") in response.context
@@ -233,13 +237,13 @@ class TestDiscoverSkillHubsOnTurnStart:
         engine = RuleEngine(db, mcp_dispatcher=dispatcher)
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"prompt": "hi"},
         )
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("skill_discovery_instructions_shown") is None
 
@@ -315,14 +319,14 @@ class TestBrevityRules:
         variables = self._turn_variables(loaded=True)
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"prompt": "fix this"},
         )
 
-        first = await engine.evaluate(event, session_id="sess-1", variables=variables)
-        second = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert first.context is not None
         assert second.context is not None
@@ -336,13 +340,13 @@ class TestBrevityRules:
         variables = self._turn_variables(loaded=False)
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"prompt": " Normal Mode "},
         )
 
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["brevity_disabled"] is True
         assert response.context is None or "brevity" not in response.context.lower()
@@ -354,26 +358,26 @@ class TestBrevityRules:
         variables = self._turn_variables(loaded=True)
         turn_end = HookEvent(
             event_type=HookEventType.AFTER_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.QWEN,
             timestamp=datetime.now(UTC),
             data={"response": "In summary, the fix is applied."},
         )
 
-        await engine.evaluate(turn_end, session_id="sess-1", variables=variables)
+        await engine.evaluate(turn_end, session_id=SESSION_ID, variables=variables)
 
         assert variables["brevity_last_violation"] == "In summary"
         assert variables["brevity_last_violation_rule"] == "banned literal phrase"
 
         turn_start = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"prompt": "next"},
         )
 
-        response = await engine.evaluate(turn_start, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(turn_start, session_id=SESSION_ID, variables=variables)
 
         assert response.context is not None
         assert "Brevity drift detected last turn" in response.context
@@ -388,13 +392,13 @@ class TestBrevityRules:
         variables = self._turn_variables(loaded=True, disabled=True)
         event = HookEvent(
             event_type=HookEventType.AFTER_AGENT,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.QWEN,
             timestamp=datetime.now(UTC),
             data={"response": "In summary, the fix is applied."},
         )
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert "brevity_last_violation" not in variables
 
@@ -2850,7 +2854,7 @@ class TestCodeIndexNavigationRules:
     def _event(event_type: HookEventType, data: dict[str, Any]) -> HookEvent:
         return HookEvent(
             event_type=event_type,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data=data,
@@ -2887,7 +2891,7 @@ class TestCodeIndexNavigationRules:
             },
         )
 
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables=variables)
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -2910,7 +2914,7 @@ class TestCodeIndexNavigationRules:
 
         response = await RuleEngine(db).evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=self._variables(loaded=True),
         )
 
@@ -2939,7 +2943,7 @@ class TestCodeIndexNavigationRules:
 
             response = await RuleEngine(db).evaluate(
                 event,
-                session_id="sess-1",
+                session_id=SESSION_ID,
                 variables=self._variables(loaded=loaded),
             )
 
@@ -2958,7 +2962,7 @@ class TestCodeIndexNavigationRules:
         assert event.data["canonical_code_navigation_repo_scope"] is True
         response = await RuleEngine(db).evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=self._variables(loaded=True),
         )
 
@@ -2989,8 +2993,8 @@ class TestCodeIndexNavigationRules:
             },
         )
 
-        allowed = await RuleEngine(db).evaluate(before, session_id="sess-1", variables=variables)
-        await RuleEngine(db).evaluate(after, session_id="sess-1", variables=variables)
+        allowed = await RuleEngine(db).evaluate(before, session_id=SESSION_ID, variables=variables)
+        await RuleEngine(db).evaluate(after, session_id=SESSION_ID, variables=variables)
 
         assert allowed.decision == "allow"
         assert variables["code_index_navigation_used_this_turn"] is True
@@ -3022,7 +3026,7 @@ class TestCodeIndexNavigationRules:
 
         assert event.data["canonical_code_index_navigation"] is True
 
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables=variables)
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert "consecutive-tool-block" not in (response.reason or "")
@@ -3037,7 +3041,7 @@ class TestCodeIndexNavigationRules:
         variables = self._variables(loaded=True, used=True)
         event = self._event(HookEventType.BEFORE_AGENT, {"prompt": "continue"})
 
-        await RuleEngine(db).evaluate(event, session_id="sess-1", variables=variables)
+        await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["code_index_navigation_used_this_turn"] is False
 
@@ -3073,8 +3077,8 @@ class TestCodeIndexNavigationRules:
             },
         )
 
-        broad_response = await engine.evaluate(broad, session_id="sess-1", variables=variables)
-        narrow_response = await engine.evaluate(narrow, session_id="sess-1", variables=variables)
+        broad_response = await engine.evaluate(broad, session_id=SESSION_ID, variables=variables)
+        narrow_response = await engine.evaluate(narrow, session_id=SESSION_ID, variables=variables)
 
         assert broad_response.decision == "block"
         assert broad_response.reason is not None
@@ -3092,12 +3096,12 @@ class TestCodeIndexNavigationRules:
 
         search_response = await engine.evaluate(
             self._normalized_bash_event("cd dir && rg pattern src"),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=variables,
         )
         read_response = await engine.evaluate(
             self._normalized_bash_event("cd dir; cat app.py"),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=variables,
         )
 
@@ -3111,7 +3115,7 @@ class TestCodeIndexNavigationRules:
 
         response = await RuleEngine(db).evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=self._variables(loaded=True),
         )
 
@@ -3136,12 +3140,12 @@ class TestCodeIndexNavigationRules:
 
         blocked = await RuleEngine(db).evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=self._variables(loaded=True, used=False),
         )
         allowed = await RuleEngine(db).evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=self._variables(loaded=True, used=True),
         )
 

@@ -25,6 +25,11 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -350,11 +355,11 @@ def _make_hook_event(
         data["tool_input"] = tool_input
     return HookEvent(
         event_type=event_type,
-        session_id="test-session-ext",
+        session_id=EXTERNAL_SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": "test-session"},
+        metadata={"_platform_session_id": SESSION_ID},
     )
 
 
@@ -383,7 +388,7 @@ class TestRuleEngineIntegration:
         """BEFORE_AGENT should emit auto-discover mcp_call when servers_listed is false."""
         variables: dict = {}
         event = _make_hook_event(HookEventType.BEFORE_AGENT)
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
         mcp_calls = (result.metadata or {}).get("mcp_calls", [])
         assert len(mcp_calls) == 1
@@ -397,7 +402,7 @@ class TestRuleEngineIntegration:
         """BEFORE_AGENT should not emit auto-discover when servers_listed is true."""
         variables: dict = {"servers_listed": True}
         event = _make_hook_event(HookEventType.BEFORE_AGENT)
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
         mcp_calls = (result.metadata or {}).get("mcp_calls", [])
         assert len(mcp_calls) == 0
@@ -411,7 +416,7 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "block"
         assert "list_tools" in result.reason
 
@@ -427,7 +432,7 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -440,7 +445,7 @@ class TestRuleEngineIntegration:
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
             source=SessionSource.PIPELINE,
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -459,7 +464,7 @@ class TestRuleEngineIntegration:
                 "arguments": {"title": "test"},
             },
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "block"
         assert "get_tool_schema" in result.reason
 
@@ -479,7 +484,7 @@ class TestRuleEngineIntegration:
                 "arguments": {"keys": "pwd\n"},
             },
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -498,7 +503,7 @@ class TestRuleEngineIntegration:
                 "arguments": {},
             },
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.parametrize("mcp_tool", ["create_task", "add_label", "update_task"])
@@ -518,7 +523,7 @@ class TestRuleEngineIntegration:
                 "arguments": {"title": "test"},
             },
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -538,7 +543,7 @@ class TestRuleEngineIntegration:
             },
             source=SessionSource.PIPELINE,
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -565,7 +570,7 @@ class TestRuleEngineIntegration:
             },
             source=SessionSource.CODEX,
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -585,7 +590,7 @@ class TestRuleEngineIntegration:
             tool_input={"server_name": "gobby-tasks-ops", "tool_name": "get_expansion_run"},
             source=SessionSource.CODEX,
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
@@ -604,7 +609,7 @@ class TestRuleEngineIntegration:
                 "arguments": {"server_name": "gobby-tasks"},
             },
         )
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
     @pytest.mark.parametrize("mcp_tool", ["create_task", "add_label", "update_task"])
@@ -620,7 +625,7 @@ class TestRuleEngineIntegration:
             HookEventType.AFTER_TOOL,
             tool_name="mcp__gobby__list_mcp_servers",
         )
-        result = await engine.evaluate(after_list_servers, "test-session", variables)
+        result = await engine.evaluate(after_list_servers, SESSION_ID, variables)
         assert result.decision == "allow"
         assert variables.get("servers_listed") is True
 
@@ -630,7 +635,7 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__list_tools",
             tool_input={"server_name": "gobby-tasks"},
         )
-        result = await engine.evaluate(after_list_tools, "test-session", variables)
+        result = await engine.evaluate(after_list_tools, SESSION_ID, variables)
         assert result.decision == "allow"
         assert "gobby-tasks" in variables.get("listed_servers", [])
 
@@ -640,7 +645,7 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": mcp_tool},
         )
-        result = await engine.evaluate(after_schema, "test-session", variables)
+        result = await engine.evaluate(after_schema, SESSION_ID, variables)
         assert result.decision == "allow"
         assert f"gobby-tasks:{mcp_tool}" in variables.get("unlocked_tools", [])
 
@@ -656,7 +661,7 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server": "gobby-tasks", "tool": "add_label"},
         )
-        result = await engine.evaluate(after_schema, "test-session", variables)
+        result = await engine.evaluate(after_schema, SESSION_ID, variables)
         assert result.decision == "allow"
         assert "gobby-tasks:add_label" in variables.get("unlocked_tools", [])
 
@@ -679,7 +684,7 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
-        result = await engine.evaluate(schema_event, "test-session", variables)
+        result = await engine.evaluate(schema_event, SESSION_ID, variables)
         assert result.decision == "block"
 
         # Step 2: Simulate list_tools completing (tracking rule fires)
@@ -688,11 +693,11 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__list_tools",
             tool_input={"server_name": "gobby-tasks"},
         )
-        await engine.evaluate(after_list_tools, "test-session", variables)
+        await engine.evaluate(after_list_tools, SESSION_ID, variables)
         assert "gobby-tasks" in variables.get("listed_servers", [])
 
         # Step 3: get_tool_schema now allowed (server listed)
-        result = await engine.evaluate(schema_event, "test-session", variables)
+        result = await engine.evaluate(schema_event, SESSION_ID, variables)
         assert result.decision == "allow"
 
         # Step 4: call_tool blocked (schema not looked up)
@@ -705,7 +710,7 @@ class TestRuleEngineIntegration:
                 "arguments": {"title": "test"},
             },
         )
-        result = await engine.evaluate(call_event, "test-session", variables)
+        result = await engine.evaluate(call_event, SESSION_ID, variables)
         assert result.decision == "block"
 
         # Step 5: Simulate get_tool_schema completing (tracking rule fires)
@@ -714,9 +719,9 @@ class TestRuleEngineIntegration:
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
-        await engine.evaluate(after_schema, "test-session", variables)
+        await engine.evaluate(after_schema, SESSION_ID, variables)
         assert "gobby-tasks:create_task" in variables.get("unlocked_tools", [])
 
         # Step 6: call_tool now allowed (schema was looked up)
-        result = await engine.evaluate(call_event, "test-session", variables)
+        result = await engine.evaluate(call_event, SESSION_ID, variables)
         assert result.decision == "allow"

@@ -36,14 +36,21 @@ fn resolved_call_targets(
         "SELECT callee_symbol_id, callee_target_kind FROM code_calls
          WHERE project_id = $1 AND file_path = $2 AND callee_name = $3
          ORDER BY line, callee_symbol_id",
-        &[&project_id, &file_path, &callee_name],
+        &[
+            &crate::common::uuid_param(project_id),
+            &file_path,
+            &callee_name,
+        ],
     )
     .expect("read code_calls rows")
     .into_iter()
     .filter_map(|row| {
         let kind: String = row.get("callee_target_kind");
-        let symbol_id: String = row.get("callee_symbol_id");
-        (kind == "symbol" && !symbol_id.is_empty()).then_some(symbol_id)
+        let symbol_id: Option<uuid::Uuid> = row.get("callee_symbol_id");
+        match symbol_id {
+            Some(symbol_id) if kind == "symbol" => Some(symbol_id.to_string()),
+            _ => None,
+        }
     })
     .collect()
 }

@@ -80,7 +80,7 @@ async def test_get_memory(memory_manager):
     assert retrieved.content == "Test memory"
 
     # Non-existent memory
-    assert memory_manager.get_memory("nonexistent-id") is None
+    assert memory_manager.get_memory(str(uuid.uuid4())) is None
 
 
 @pytest.mark.asyncio

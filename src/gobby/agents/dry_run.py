@@ -236,7 +236,9 @@ async def evaluate_spawn(
 
                 ctx = get_project_context()
                 proj_id = ctx.get("id", "") if ctx else ""
-                existing = storage.get_by_branch(proj_id, computed_branch)
+                # worktrees/clones.project_id is a native uuid column; binding ""
+                # raises, so only check for an existing branch with a real project.
+                existing = storage.get_by_branch(proj_id, computed_branch) if proj_id else None
                 if existing:
                     result.items.append(
                         EvaluationItem(

@@ -26,7 +26,10 @@ class TestHubDatabase:
         assert row["name"] == "test"
 
     def test_fetchone_returns_none_for_no_results(self, temp_db: HubDatabase) -> None:
-        row = temp_db.fetchone("SELECT * FROM projects WHERE id = %s", ("missing",))
+        row = temp_db.fetchone(
+            "SELECT * FROM projects WHERE id = %s",
+            ("00000000-0000-0000-0000-0000000000ff",),
+        )
 
         assert row is None
 

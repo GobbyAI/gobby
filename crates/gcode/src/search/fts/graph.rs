@@ -25,6 +25,19 @@ fn exact_symbol_matches_result(
         "id" | "qualified_name" | "name" => column,
         _ => return Ok(Vec::new()),
     };
+    // Both project_id and the id column are native uuid; non-uuid inputs
+    // cannot match any row.
+    let Ok(project_id) = db::id_param(project_id) else {
+        return Ok(Vec::new());
+    };
+    let input_uuid = if column == "id" {
+        match db::id_param(input) {
+            Ok(id) => Some(id),
+            Err(_) => return Ok(Vec::new()),
+        }
+    } else {
+        None
+    };
     let sql = format!(
         "SELECT {columns}
          FROM code_symbols
@@ -32,7 +45,12 @@ fn exact_symbol_matches_result(
          ORDER BY file_path ASC, line_start ASC
          LIMIT $3"
     );
-    let rows = conn.query(&sql, &[&project_id, &input, &(limit as i64)])?;
+    let limit = limit as i64;
+    let rows = if let Some(id) = input_uuid {
+        conn.query(&sql, &[&project_id, &id, &limit])?
+    } else {
+        conn.query(&sql, &[&project_id, &input, &limit])?
+    };
     let mut symbols = Vec::new();
     for row in &rows {
         match Symbol::from_row(row) {

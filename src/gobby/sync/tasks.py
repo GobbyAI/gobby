@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -614,7 +615,9 @@ class TaskSyncManager:
                     if not issue_num:
                         continue
 
-                    task_id = f"gh-{issue_num}"
+                    # Deterministic id keyed on the issue URL: re-imports upsert
+                    # the same row (tasks.id is a native uuid column).
+                    task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{repo_url}/issues/{issue_num}"))
                     title = issue.get("title", "Untitled Issue")
                     body = issue.get("body") or ""
                     desc = f"{body}\n\nSource: {repo_url}/issues/{issue_num}".strip()

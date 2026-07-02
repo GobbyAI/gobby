@@ -11,6 +11,11 @@ from gobby.storage.workflow_definitions import (
 
 pytestmark = pytest.mark.unit
 
+# projects.id and workflow_definitions.id/project_id are native uuid columns;
+# synthetic ids must be valid UUID strings.
+PROJECT_ID = "11111111-1111-1111-1111-111111111111"
+UNKNOWN_ID = "99999999-9999-9999-9999-999999999999"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -178,7 +183,7 @@ def test_get_by_id(manager: LocalWorkflowDefinitionManager) -> None:
 def test_get_nonexistent_raises(manager: LocalWorkflowDefinitionManager) -> None:
     """Test that getting a nonexistent definition raises ValueError."""
     with pytest.raises(ValueError, match="not found"):
-        manager.get("nonexistent-id")
+        manager.get(UNKNOWN_ID)
 
 
 # =============================================================================
@@ -204,7 +209,7 @@ def test_get_by_name_project_scoped(
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
 
     # Create global version
@@ -214,15 +219,15 @@ def test_get_by_name_project_scoped(
     manager.create(
         name="scoped-wf",
         definition_json=SAMPLE_DEFINITION,
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         description="project-scoped",
     )
 
     # With project_id, should return project-scoped
-    result = manager.get_by_name("scoped-wf", project_id="proj-1")
+    result = manager.get_by_name("scoped-wf", project_id=PROJECT_ID)
     assert result is not None
     assert result.description == "project-scoped"
-    assert result.project_id == "proj-1"
+    assert result.project_id == PROJECT_ID
 
 
 def test_get_by_name_fallback_to_global(
@@ -232,12 +237,12 @@ def test_get_by_name_fallback_to_global(
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
 
     manager.create(name="fallback-wf", definition_json=SAMPLE_DEFINITION, description="global")
 
-    result = manager.get_by_name("fallback-wf", project_id="proj-1")
+    result = manager.get_by_name("fallback-wf", project_id=PROJECT_ID)
     assert result is not None
     assert result.description == "global"
     assert result.project_id is None
@@ -324,7 +329,7 @@ def test_delete(manager: LocalWorkflowDefinitionManager) -> None:
 
 def test_delete_nonexistent(manager: LocalWorkflowDefinitionManager) -> None:
     """Test deleting a nonexistent definition returns False."""
-    assert manager.delete("nonexistent-id") is False
+    assert manager.delete(UNKNOWN_ID) is False
 
 
 # =============================================================================
@@ -385,14 +390,14 @@ def test_list_all_filter_project(db: HubDatabase, manager: LocalWorkflowDefiniti
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
 
     # Create a global workflow (project_id=NULL)
     manager.create(name="global-wf", definition_json=SAMPLE_DEFINITION)
-    manager.create(name="proj-wf", definition_json=SAMPLE_DEFINITION, project_id="proj-1")
+    manager.create(name="proj-wf", definition_json=SAMPLE_DEFINITION, project_id=PROJECT_ID)
 
-    results = manager.list_all(project_id="proj-1")
+    results = manager.list_all(project_id=PROJECT_ID)
     names = {w.name for w in results}
 
     # Should include project-scoped AND global
@@ -532,7 +537,7 @@ def test_duplicate(manager: LocalWorkflowDefinitionManager) -> None:
 def test_duplicate_nonexistent_raises(manager: LocalWorkflowDefinitionManager) -> None:
     """Test that duplicating a nonexistent definition raises ValueError."""
     with pytest.raises(ValueError, match="not found"):
-        manager.duplicate("nonexistent-id", "new-name")
+        manager.duplicate(UNKNOWN_ID, "new-name")
 
 
 # =============================================================================
@@ -550,16 +555,16 @@ def test_move_to_project(db: HubDatabase, manager: LocalWorkflowDefinitionManage
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
 
     row = manager.create(name="move-test", definition_json=SAMPLE_DEFINITION)
     assert row.source == "installed"
     assert row.project_id is None
 
-    moved = manager.move_to_project(row.id, "proj-1")
+    moved = manager.move_to_project(row.id, PROJECT_ID)
     assert moved.source == "project"
-    assert moved.project_id == "proj-1"
+    assert moved.project_id == PROJECT_ID
 
 
 def test_move_to_global(db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
@@ -567,17 +572,17 @@ def test_move_to_global(db: HubDatabase, manager: LocalWorkflowDefinitionManager
     db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
 
     row = manager.create(
         name="move-global-test",
         definition_json=SAMPLE_DEFINITION,
         source="project",
-        project_id="proj-1",
+        project_id=PROJECT_ID,
     )
     assert row.source == "project"
-    assert row.project_id == "proj-1"
+    assert row.project_id == PROJECT_ID
 
     moved = manager.move_to_global(row.id)
     assert moved.source == "installed"

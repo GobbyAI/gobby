@@ -19,13 +19,21 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
+# Session/project/instance id columns are native uuid in PostgreSQL; synthetic
+# ids like S1 would fail with `invalid input syntax for type uuid`.
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+S1 = "11111111-1111-4111-8111-111111111111"
+S2 = "22222222-2222-4222-8222-222222222222"
+INST_1 = "33333333-3333-4333-8333-333333333333"
+INST_2 = "44444444-4444-4444-8444-444444444444"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
-        ("proj1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     yield database
 
@@ -35,7 +43,7 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
         "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, f"ext-{session_id}", "machine-1", "claude", "proj1"),
+        (session_id, f"ext-{session_id}", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -71,7 +79,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._dispatch_session_summaries_fn = None
         self._call_tool = None
         self._get_machine_id = MagicMock(return_value="machine-1")
-        self._resolve_project_id = MagicMock(return_value="proj1")
+        self._resolve_project_id = MagicMock(return_value=PROJECT_ID)
         self._handler_map = {}
 
 
@@ -93,49 +101,49 @@ def _save_instance(
 
 
 def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDatabase) -> None:
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     instance_manager = WorkflowInstanceManager(db)
     _save_instance(
         instance_manager,
-        instance_id="inst-1",
-        session_id="s1",
+        instance_id=INST_1,
+        session_id=S1,
         workflow_name="plan-adversary-steps",
     )
 
     handler = _SessionEndHandler(db)
 
     with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        response = handler.handle_session_end(_make_event("s1"))
+        response = handler.handle_session_end(_make_event(S1))
 
     assert response.decision == "allow"
-    assert instance_manager.get_active_instances("s1") == []
+    assert instance_manager.get_active_instances(S1) == []
 
 
 def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) -> None:
-    _ensure_session(db, "s1")
-    _ensure_session(db, "s2")
+    _ensure_session(db, S1)
+    _ensure_session(db, S2)
     instance_manager = WorkflowInstanceManager(db)
     _save_instance(
         instance_manager,
-        instance_id="inst-1",
-        session_id="s1",
+        instance_id=INST_1,
+        session_id=S1,
         workflow_name="plan-adversary-steps",
     )
     _save_instance(
         instance_manager,
-        instance_id="inst-2",
-        session_id="s2",
+        instance_id=INST_2,
+        session_id=S2,
         workflow_name="developer",
     )
 
     handler = _SessionEndHandler(db)
 
     with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        response = handler.handle_session_end(_make_event("s1"))
+        response = handler.handle_session_end(_make_event(S1))
 
     assert response.decision == "allow"
-    assert instance_manager.get_active_instances("s1") == []
+    assert instance_manager.get_active_instances(S1) == []
 
-    remaining = instance_manager.get_active_instances("s2")
+    remaining = instance_manager.get_active_instances(S2)
     assert len(remaining) == 1
     assert remaining[0].workflow_name == "developer"

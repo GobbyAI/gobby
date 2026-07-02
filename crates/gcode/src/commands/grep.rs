@@ -150,7 +150,8 @@ fn load_indexed_chunks(
     let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
     let rows = match &ctx.index_scope {
         ProjectIndexScope::Single => {
-            let mut params: Vec<&(dyn ToSql + Sync)> = vec![&ctx.project_id, &tombstone_language];
+            let project_id = db::id_param(&ctx.project_id)?;
+            let mut params: Vec<&(dyn ToSql + Sync)> = vec![&project_id, &tombstone_language];
             let mut conditions = vec![
                 "c.project_id = $1".to_string(),
                 "cf.language != $2".to_string(),
@@ -178,8 +179,10 @@ fn load_indexed_chunks(
             parent_project_id,
             ..
         } => {
+            let overlay_project_id = db::id_param(overlay_project_id)?;
+            let parent_project_id = db::id_param(parent_project_id)?;
             let mut params: Vec<&(dyn ToSql + Sync)> =
-                vec![overlay_project_id, parent_project_id, &tombstone_language];
+                vec![&overlay_project_id, &parent_project_id, &tombstone_language];
             let mut conditions = vec![
                 "cf.language != $3".to_string(),
                 "(

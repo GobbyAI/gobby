@@ -546,7 +546,8 @@ async def resume_interrupted_pipelines(
         loader: WorkflowLoader for loading pipeline definitions.
         executor: PipelineExecutor instance.
         execution_manager: LocalPipelineExecutionManager instance.
-        project_id: Current project ID.
+        project_id: Current project ID (unused; each execution resumes under
+            its own stored project_id).
 
     Returns:
         List of execution IDs that were successfully re-queued.
@@ -582,13 +583,15 @@ async def resume_interrupted_pipelines(
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Malformed inputs_json for execution {execution.id}: {e}")
 
-        # Re-queue as background task with existing execution_id (resume path)
+        # Re-queue as background task with existing execution_id (resume path).
+        # Use the execution's own project_id (NOT NULL uuid) rather than the
+        # daemon's current project — never bind "" against uuid columns.
         task = asyncio.create_task(
             _execute_pipeline_background(
                 executor,
                 pipeline,
                 inputs,
-                project_id or "",
+                execution.project_id,
                 execution.id,
                 execution.pipeline_name,
                 session_id=execution.session_id,

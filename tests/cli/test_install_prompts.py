@@ -219,7 +219,7 @@ class TestPromptHubApiKeys:
             "already_configured": 0,
             "unresolved": [],
         }
-        patched_deps["db_cls"].assert_called_once_with(apply_migrations=False)
+        patched_deps["db_cls"].assert_called_once_with()
 
     def test_uses_injected_db_and_secret_store(self, patched_deps) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
@@ -372,6 +372,7 @@ class TestInstallCommandSharedStores:
                 embedding_provider="lmstudio",
                 embedding_model=None,
                 embedding_dim=None,
+                secret_kek_posture="key-file",
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )
@@ -427,11 +428,12 @@ class TestInstallCommandSharedStores:
                 embedding_provider=None,
                 embedding_model=None,
                 embedding_dim=None,
+                secret_kek_posture="key-file",
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )
 
-        mock_db_cls.assert_called_once_with(apply_migrations=False)
+        mock_db_cls.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
@@ -499,11 +501,12 @@ class TestInstallCommandSharedStores:
                 embedding_provider="lmstudio",
                 embedding_model=None,
                 embedding_dim=None,
+                secret_kek_posture="key-file",
                 no_interactive_flag=True,
                 working_dir=tmp_path,
             )
 
-        mock_db_cls.assert_called_once_with(apply_migrations=False)
+        mock_db_cls.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         assert mock_embedding.call_args.kwargs["api_base_override"] == "http://lan:1234/v1"
         assert "embedding_api_key" not in mock_embedding.call_args.kwargs

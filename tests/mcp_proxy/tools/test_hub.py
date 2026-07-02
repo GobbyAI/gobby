@@ -14,6 +14,14 @@ from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
+PROJECT_ALPHA = "99999999-9999-4999-8999-999999999991"
+PROJECT_BETA = "99999999-9999-4999-8999-999999999992"
+ACTIVE_DB_PROJECT = "99999999-9999-4999-8999-999999999993"
+REAL_PROJECT = "99999999-9999-4999-8999-999999999994"
+SESS_1 = "99999999-9999-4999-8999-9999999999a1"
+SESS_2 = "99999999-9999-4999-8999-9999999999a2"
+SESS_3 = "99999999-9999-4999-8999-9999999999a3"
+
 
 def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
     current = task_manager.stage_states.current_stage(task_id)
@@ -47,21 +55,21 @@ def populated_hub_db(temp_hub_db):
         INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
         VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        ("project-alpha", "Project Alpha", "/path/alpha", None),
+        (PROJECT_ALPHA, "Project Alpha", "/path/alpha", None),
     )
     db.execute(
         """
         INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
         VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        ("project-beta", "Project Beta", "/path/beta", None),
+        (PROJECT_BETA, "Project Beta", "/path/beta", None),
     )
 
     task_manager = LocalTaskManager(db)
-    task_manager.create_task("project-alpha", "Task 1", task_type="task", priority=1)
-    task2 = task_manager.create_task("project-alpha", "Task 2", task_type="task", priority=2)
+    task_manager.create_task(PROJECT_ALPHA, "Task 1", task_type="task", priority=1)
+    task2 = task_manager.create_task(PROJECT_ALPHA, "Task 2", task_type="task", priority=2)
     task_manager.close_task(task2.id)
-    task3 = task_manager.create_task("project-beta", "Task 3", task_type="feature", priority=1)
+    task3 = task_manager.create_task(PROJECT_BETA, "Task 3", task_type="feature", priority=1)
     _start_current_stage(task_manager, task3.id)
 
     # Insert test sessions with correct columns
@@ -70,21 +78,21 @@ def populated_hub_db(temp_hub_db):
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        ("sess-1", "project-alpha", "ext-1", "claude", "machine-1", "active"),
+        (SESS_1, PROJECT_ALPHA, "ext-1", "claude", "machine-1", "active"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        ("sess-2", "project-beta", "ext-2", "gemini", "machine-1", "ended"),
+        (SESS_2, PROJECT_BETA, "ext-2", "gemini", "machine-1", "ended"),
     )
     db.execute(
         """
         INSERT INTO sessions (id, project_id, external_id, source, machine_id, status, created_at, updated_at)
         VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
-        ("sess-3", "project-alpha", "ext-3", "claude", "machine-2", "ended"),
+        (SESS_3, PROJECT_ALPHA, "ext-3", "claude", "machine-2", "ended"),
     )
 
     return db
@@ -100,7 +108,7 @@ class TestListAllProjects:
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
             VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("active-db-project", "Active DB", "/path/active", None),
+            (ACTIVE_DB_PROJECT, "Active DB", "/path/active", None),
         )
         registry = create_hub_registry(db=non_local_hub_db)
         tool = registry.get_tool("list_all_projects")
@@ -108,7 +116,7 @@ class TestListAllProjects:
         result = asyncio.run(tool())
 
         assert result["success"] is True
-        assert any(project["project_id"] == "active-db-project" for project in result["projects"])
+        assert any(project["project_id"] == ACTIVE_DB_PROJECT for project in result["projects"])
 
     def test_list_all_projects_returns_names_and_paths(self, populated_hub_db) -> None:
         """Test that list_all_projects returns project names and repo paths."""
@@ -133,8 +141,8 @@ class TestListAllProjects:
         result = asyncio.run(tool())
 
         assert result["success"] is True
-        alpha = next(p for p in result["projects"] if p["project_id"] == "project-alpha")
-        beta = next(p for p in result["projects"] if p["project_id"] == "project-beta")
+        alpha = next(p for p in result["projects"] if p["project_id"] == PROJECT_ALPHA)
+        beta = next(p for p in result["projects"] if p["project_id"] == PROJECT_BETA)
 
         assert alpha["name"] == "Project Alpha"
         assert alpha["repo_path"] == "/path/alpha"
@@ -149,14 +157,14 @@ class TestListAllProjects:
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
             VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("real-project", "my-app", "/path/app", None),
+            (REAL_PROJECT, "my-app", "/path/app", None),
         )
         db.execute(
             """
             INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at)
             VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            ("system-1", "_orphaned_test", None, None),
+            ("99999999-9999-4999-8999-9999999999b1", "_orphaned_test", None, None),
         )
 
         registry = create_hub_registry(db=db)

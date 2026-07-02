@@ -141,7 +141,7 @@ class TestSoftDelete:
         self, project_manager: LocalProjectManager
     ) -> None:
         """Soft-deleting a nonexistent project returns False."""
-        result = project_manager.soft_delete("nonexistent-id")
+        result = project_manager.soft_delete("00000000-0000-0000-0000-0000000000ff")
         assert result is False
 
     def test_soft_delete_idempotent(self, project_manager: LocalProjectManager) -> None:

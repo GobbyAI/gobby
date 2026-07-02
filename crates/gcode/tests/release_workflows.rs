@@ -198,7 +198,7 @@ fn release_workflows_use_github_cli_release_creation() {
 
 #[test]
 fn ci_workflow_pins_taiki_install_actions_by_sha() {
-    let workflow = include_str!("../../../.github/workflows/ci.yml");
+    let workflow = include_str!("../../../.github/workflows/rust-ci.yml");
 
     assert_eq!(
         workflow.matches("taiki-e/install-action@nextest").count(),
@@ -224,7 +224,7 @@ fn ci_workflow_pins_taiki_install_actions_by_sha() {
 
 #[test]
 fn ci_workflow_pins_core_actions_by_sha() {
-    let workflow = include_str!("../../../.github/workflows/ci.yml");
+    let workflow = include_str!("../../../.github/workflows/rust-ci.yml");
 
     assert_eq!(
         workflow
@@ -267,7 +267,7 @@ fn ci_workflow_pins_core_actions_by_sha() {
 
 #[test]
 fn ci_workflow_runs_gcode_graph_standalone_with_backends() {
-    let workflow = include_str!("../../../.github/workflows/ci.yml");
+    let workflow = include_str!("../../../.github/workflows/rust-ci.yml");
 
     assert!(workflow.contains("gcode-graph-standalone:"));
     assert!(workflow.contains("image: falkordb/falkordb:latest"));

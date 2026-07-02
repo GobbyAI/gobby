@@ -207,9 +207,7 @@ class _QueryMixin:
         )
 
         if exclude_subagents:
-            conditions.append(
-                "(parent_session_id IS NULL OR parent_session_id = '') AND agent_depth = 0"
-            )
+            conditions.append("parent_session_id IS NULL AND agent_depth = 0")
 
         if cursor_updated_at is not None and cursor_id is not None:
             conditions.append("(updated_at < %s OR (updated_at = %s AND id < %s))")

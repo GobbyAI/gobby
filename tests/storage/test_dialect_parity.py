@@ -16,6 +16,14 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _ISO_TS = "2026-01-01T00:00:00Z"
 
+# projects.id is a native uuid column; these are fixed-but-arbitrary UUIDs so
+# ordering assertions stay deterministic.
+_PROJ_UPSERT_ORIGINAL = "11111111-1111-4111-8111-111111111111"
+_PROJ_UPSERT_DUPLICATE = "22222222-2222-4222-8222-222222222222"
+_PROJ_RETURNING = "33333333-3333-4333-8333-333333333333"
+_PROJ_TS = "44444444-4444-4444-8444-444444444444"
+_PROJ_UNIQUE = "55555555-5555-4555-8555-555555555555"
+
 
 def _source(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
@@ -391,7 +399,7 @@ def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
     with db.transaction() as txn:
         txn.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("p-upsert-original", "parity-upsert"),
+            (_PROJ_UPSERT_ORIGINAL, "parity-upsert"),
         )
 
     with db.transaction() as txn:
@@ -400,7 +408,7 @@ def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
             INSERT INTO projects (id, name) VALUES (%s, %s)
             ON CONFLICT (name) DO NOTHING
             """,
-            ("p-upsert-duplicate", "parity-upsert"),
+            (_PROJ_UPSERT_DUPLICATE, "parity-upsert"),
         )
 
     with db.transaction() as txn:
@@ -409,7 +417,7 @@ def test_upsert_on_conflict_do_nothing_dialect_parity(hub_db: Any) -> None:
             ("parity-upsert",),
         ).fetchall()
 
-    assert [row["id"] for row in rows] == ["p-upsert-original"]
+    assert [row["id"] for row in rows] == [_PROJ_UPSERT_ORIGINAL]
 
 
 def test_returning_clause_dialect_parity(hub_db: Any) -> None:
@@ -423,12 +431,12 @@ def test_returning_clause_dialect_parity(hub_db: Any) -> None:
             VALUES (%s, %s)
             RETURNING id
             """,
-            ("proj-returning", "parity-returning"),
+            (_PROJ_RETURNING, "parity-returning"),
         )
         row = cursor.fetchone()
 
     assert row is not None
-    assert row["id"] == "proj-returning"
+    assert row["id"] == _PROJ_RETURNING
 
 
 def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
@@ -469,11 +477,11 @@ def test_timestamp_default_is_timezone_aware_utc_parity(hub_db: Any) -> None:
     with db.transaction() as txn:
         txn.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-ts", "parity-ts"),
+            (_PROJ_TS, "parity-ts"),
         )
         row = txn.execute(
             "SELECT created_at FROM projects WHERE id = %s",
-            ("proj-ts",),
+            (_PROJ_TS,),
         ).fetchone()
 
     after = datetime.datetime.now(datetime.UTC)
@@ -530,13 +538,13 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
     with db.transaction() as txn:
         txn.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-unique", "proj-unique"),
+            (_PROJ_UNIQUE, "proj-unique"),
         )
         _insert_skill(
             txn,
             skill_id="skl-unique-c",
             name="parity-unique-null",
-            project_id="proj-unique",
+            project_id=_PROJ_UNIQUE,
             source="installed",
             metadata_json=None,
         )

@@ -14,6 +14,7 @@ import psycopg
 from gobby.hooks.events import HookEvent
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.workflows.enforcement.blocking import (
     claimed_task_source_code_write,
     get_touched_file_paths,
@@ -179,7 +180,7 @@ class TemplatingMixin:
 
     def _has_pending_messages(self, session_id: str) -> bool:
         """Index probe: are there any undelivered messages for this session?"""
-        if not session_id:
+        if not is_session_uuid(session_id):
             return False
         row = self.db.fetchone(
             "SELECT 1 FROM inter_session_messages "
@@ -190,7 +191,7 @@ class TemplatingMixin:
 
     def _pending_message_count(self, session_id: str) -> int:
         """O(n) count of undelivered messages — only called when a block fires."""
-        if not session_id:
+        if not is_session_uuid(session_id):
             return 0
         row = self.db.fetchone(
             "SELECT COUNT(*) AS cnt FROM inter_session_messages "

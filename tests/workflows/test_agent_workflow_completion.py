@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -26,6 +27,11 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
+# Session/project/instance id columns are native uuid in PostgreSQL; synthetic
+# ids like AGENT_SESSION_ID would fail with `invalid input syntax for type uuid`.
+AGENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXPANSION_QA_AGENT_PATH = (
     PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/expansion-qa.yaml"
@@ -45,21 +51,21 @@ def _create_session(db: HubDatabase, session_id: str) -> None:
         VALUES (%s, %s, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO NOTHING
         """,
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", "project-1"),
+        (session_id, "ext-1", "machine-1", "claude", PROJECT_ID),
     )
 
 
 def _register_agent_workflow(
     db: HubDatabase,
     *,
-    session_id: str = "agent-session",
+    session_id: str = AGENT_SESSION_ID,
     workflow_name: str = "plan-adversary-steps",
     review_tool: str = "approve_review",
     review_success_handlers: list[dict[str, object]] | None = None,
@@ -114,7 +120,7 @@ def _register_agent_workflow(
     )
     instance_manager.save_instance(
         WorkflowInstance(
-            id=f"inst-{session_id}-{workflow_name}",
+            id=str(uuid.uuid4()),
             session_id=session_id,
             workflow_name=workflow_name,
             enabled=True,
@@ -130,7 +136,7 @@ def _register_agent_workflow(
 def _register_qa_reviewer_workflow(
     db: HubDatabase,
     *,
-    session_id: str = "agent-session",
+    session_id: str = AGENT_SESSION_ID,
 ) -> WorkflowInstanceManager:
     _create_session(db, session_id)
     manager = LocalWorkflowDefinitionManager(db)
@@ -167,7 +173,7 @@ def _register_qa_reviewer_workflow(
     )
     instance_manager.save_instance(
         WorkflowInstance(
-            id=f"inst-{session_id}-{workflow_name}",
+            id=str(uuid.uuid4()),
             session_id=session_id,
             workflow_name=workflow_name,
             enabled=True,
@@ -183,7 +189,7 @@ def _register_qa_reviewer_workflow(
 def _register_expansion_qa_workflow(
     db: HubDatabase,
     *,
-    session_id: str = "agent-session",
+    session_id: str = AGENT_SESSION_ID,
 ) -> WorkflowInstanceManager:
     _create_session(db, session_id)
     instance_manager = WorkflowInstanceManager(db)
@@ -192,7 +198,7 @@ def _register_expansion_qa_workflow(
     workflow_name = register_agent_step_workflow(agent_body, db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id=f"inst-{session_id}-{workflow_name}",
+            id=str(uuid.uuid4()),
             session_id=session_id,
             workflow_name=workflow_name,
             enabled=True,
@@ -207,7 +213,7 @@ def _register_expansion_qa_workflow(
 
 def _after_tool_event(
     *,
-    session_id: str = "agent-session",
+    session_id: str = AGENT_SESSION_ID,
     source: SessionSource = SessionSource.CLAUDE,
     mcp_server: str = "gobby-tasks-ops",
     mcp_tool: str = "approve_review",
@@ -262,7 +268,7 @@ class TestAgentWorkflowCompletion:
         variables: dict[str, object] = {}
 
         response = await engine.evaluate(
-            _after_tool_event(), session_id="agent-session", variables=variables
+            _after_tool_event(), session_id=AGENT_SESSION_ID, variables=variables
         )
 
         assert variables["step_workflow_complete"] is True
@@ -307,11 +313,11 @@ class TestAgentWorkflowCompletion:
                     "validation_override_reason": "holistic_qa approved by holistic-reviewer",
                 },
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "holistic-reviewer")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "holistic-reviewer")
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
@@ -333,7 +339,7 @@ class TestAgentWorkflowCompletion:
         variables: dict[str, object] = {}
 
         response = await engine.evaluate(
-            _after_tool_event(), session_id="agent-session", variables=variables
+            _after_tool_event(), session_id=AGENT_SESSION_ID, variables=variables
         )
 
         assert variables["step_workflow_complete"] is True
@@ -377,11 +383,11 @@ class TestAgentWorkflowCompletion:
         )
         response = await engine.evaluate(
             failed_event,
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "plan-adversary-steps")
         assert instance is not None
         assert instance.current_step == "review"
         assert instance.variables["review_complete"] is False
@@ -399,11 +405,11 @@ class TestAgentWorkflowCompletion:
         )
         response = await engine.evaluate(
             success_event,
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "plan-adversary-steps")
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
@@ -453,9 +459,9 @@ class TestAgentWorkflowCompletion:
             },
         )
 
-        response = await engine.evaluate(event, session_id="agent-session", variables=variables)
+        response = await engine.evaluate(event, session_id=AGENT_SESSION_ID, variables=variables)
 
-        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "plan-adversary-steps")
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
@@ -485,11 +491,11 @@ class TestAgentWorkflowCompletion:
                 mcp_tool="run_expansion_qa_coverage",
                 tool_output={"success": True, "result": {"review_action": verdict_tool}},
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "expansion-qa-steps")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "expansion-qa-steps")
         assert instance is not None
         assert instance.current_step == "qa_check"
         assert instance.variables["coverage_result_saved"] is True
@@ -501,11 +507,11 @@ class TestAgentWorkflowCompletion:
                 mcp_tool="save_expansion_qa_result",
                 tool_output={"success": True},
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "expansion-qa-steps")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "expansion-qa-steps")
         assert instance is not None
         assert instance.current_step == "qa_check"
         assert instance.variables["qa_result_saved"] is True
@@ -519,11 +525,11 @@ class TestAgentWorkflowCompletion:
                 tool_arguments={"stage_name": "expansion"},
                 tool_output={"success": True},
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        assert instance_manager.get_instance("agent-session", "expansion-qa-steps") is None
+        assert instance_manager.get_instance(AGENT_SESSION_ID, "expansion-qa-steps") is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True
         assert "qa_check -> terminate" in (verdict_response.context or "")
@@ -565,11 +571,11 @@ class TestAgentWorkflowCompletion:
                     },
                 },
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "qa-reviewer-steps")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "qa-reviewer-steps")
         assert instance is not None
         assert instance.current_step == "terminate"
         assert instance.variables["review_complete"] is True
@@ -593,7 +599,7 @@ class TestAgentWorkflowCompletion:
 
         # No end_agent_run tool call is issued in this test; workflow termination
         # must still wake the parent wait path immediately.
-        await engine.evaluate(_after_tool_event(), session_id="agent-session", variables={})
+        await engine.evaluate(_after_tool_event(), session_id=AGENT_SESSION_ID, variables={})
 
         result = await completion_registry.wait("run-123", timeout=0.1)
         assert result["status"] == "success"
@@ -611,26 +617,26 @@ class TestAgentWorkflowCompletion:
             VALUES (%s, %s, CURRENT_TIMESTAMP)
             ON CONFLICT (id) DO NOTHING
             """,
-            ("project-1", "test-project"),
+            (PROJECT_ID, "test-project"),
         )
         sessions = SessionManager(db)
         parent = sessions.register(
             external_id="dispatcher-launcher-project-1",
             machine_id="machine-1",
             source="dispatcher_launcher",
-            project_id="project-1",
+            project_id=PROJECT_ID,
             title="Dispatcher Launcher",
         )
         child = sessions.register(
             external_id="child-session",
             machine_id="machine-1",
             source="codex",
-            project_id="project-1",
+            project_id=PROJECT_ID,
             parent_session_id=parent.id,
             agent_depth=1,
         )
         task = LocalTaskManager(db).create_task(
-            project_id="project-1",
+            project_id=PROJECT_ID,
             title="Workflow-owned task",
         )
         mutex = TaskDispatchMutexManager(db)
@@ -722,11 +728,11 @@ class TestAgentWorkflowCompletion:
                 mcp_tool="verify_in_worktree",
                 tool_arguments={"final": False},
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "merge-orchestrator-test")
         assert instance is not None
         assert instance.current_step == "review"
         assert instance.variables["review_complete"] is False
@@ -738,10 +744,10 @@ class TestAgentWorkflowCompletion:
                 mcp_tool="verify_in_worktree",
                 tool_arguments={"final": True},
             ),
-            session_id="agent-session",
+            session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "merge-orchestrator-test")
         assert instance is None
         assert variables["review_complete"] is True

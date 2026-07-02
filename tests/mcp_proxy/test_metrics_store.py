@@ -12,6 +12,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+PROJECT_1 = "88888888-8888-4888-8888-888888888881"
+PROJECT_2 = "88888888-8888-4888-8888-888888888882"
+PG_RECORD_CALL_PROJECT = "88888888-8888-4888-8888-888888888883"
+PG_DAILY_AGGREGATE_PROJECT = "88888888-8888-4888-8888-888888888884"
+
 
 @pytest.fixture
 def metrics_store(temp_db: "HubDatabase") -> ToolMetricsStore:
@@ -22,14 +27,14 @@ def metrics_store(temp_db: "HubDatabase") -> ToolMetricsStore:
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
         VALUES (%s, %s, %s, NOW(), NOW())
         """,
-        ("proj-1", "Test Project 1", "/tmp/test1"),
+        (PROJECT_1, "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
         VALUES (%s, %s, %s, NOW(), NOW())
         """,
-        ("proj-2", "Test Project 2", "/tmp/test2"),
+        (PROJECT_2, "Test Project 2", "/tmp/test2"),
     )
     return ToolMetricsStore(temp_db)
 
@@ -53,12 +58,12 @@ class TestToolMetricsStore:
         metrics_store.record_call(
             server_name="test-server",
             tool_name="test_tool",
-            project_id="proj-1",
+            project_id=PROJECT_1,
             latency_ms=100.0,
             success=True,
         )
 
-        rows = metrics_store.get_metrics(project_id="proj-1")
+        rows = metrics_store.get_metrics(project_id=PROJECT_1)
         assert len(rows) == 1
         assert rows[0]["call_count"] == 1
         assert rows[0]["success_count"] == 1
@@ -68,11 +73,11 @@ class TestToolMetricsStore:
     def test_record_multiple_calls(self, metrics_store: ToolMetricsStore) -> None:
         """Test multiple calls increment correctly."""
         for _ in range(3):
-            metrics_store.record_call("s1", "t1", "proj-1", 100.0, True)
+            metrics_store.record_call("s1", "t1", PROJECT_1, 100.0, True)
         for _ in range(2):
-            metrics_store.record_call("s1", "t1", "proj-1", 200.0, False)
+            metrics_store.record_call("s1", "t1", PROJECT_1, 200.0, False)
 
-        rows = metrics_store.get_metrics(project_id="proj-1")
+        rows = metrics_store.get_metrics(project_id=PROJECT_1)
         assert len(rows) == 1
         assert rows[0]["call_count"] == 5
         assert rows[0]["success_count"] == 3
@@ -81,18 +86,18 @@ class TestToolMetricsStore:
 
     def test_get_metrics_filters(self, metrics_store: ToolMetricsStore) -> None:
         """Test filtering metrics."""
-        metrics_store.record_call("s1", "t1", "proj-1", 100.0)
-        metrics_store.record_call("s2", "t2", "proj-2", 100.0)
+        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0)
+        metrics_store.record_call("s2", "t2", PROJECT_2, 100.0)
 
-        assert len(metrics_store.get_metrics(project_id="proj-1")) == 1
+        assert len(metrics_store.get_metrics(project_id=PROJECT_1)) == 1
         assert len(metrics_store.get_metrics(server_name="s1")) == 1
         assert len(metrics_store.get_metrics(tool_name="t2")) == 1
 
     def test_get_top_tools(self, metrics_store: ToolMetricsStore) -> None:
         """Test get_top_tools."""
-        metrics_store.record_call("s1", "popular", "proj-1", 100.0)
-        metrics_store.record_call("s1", "popular", "proj-1", 100.0)
-        metrics_store.record_call("s1", "rare", "proj-1", 100.0)
+        metrics_store.record_call("s1", "popular", PROJECT_1, 100.0)
+        metrics_store.record_call("s1", "popular", PROJECT_1, 100.0)
+        metrics_store.record_call("s1", "rare", PROJECT_1, 100.0)
 
         top = metrics_store.get_top_tools(limit=1)
         assert len(top) == 1
@@ -100,16 +105,16 @@ class TestToolMetricsStore:
 
     def test_get_tool_success_rate(self, metrics_store: ToolMetricsStore) -> None:
         """Test get_tool_success_rate."""
-        metrics_store.record_call("s1", "t1", "proj-1", 100.0, True)
-        metrics_store.record_call("s1", "t1", "proj-1", 100.0, False)
+        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0, True)
+        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0, False)
 
-        rate = metrics_store.get_tool_success_rate("s1", "t1", "proj-1")
+        rate = metrics_store.get_tool_success_rate("s1", "t1", PROJECT_1)
         assert rate == 0.5
 
     def test_get_failing_tools(self, metrics_store: ToolMetricsStore) -> None:
         """Test get_failing_tools."""
-        metrics_store.record_call("s1", "fail", "proj-1", 100.0, False)
-        metrics_store.record_call("s1", "ok", "proj-1", 100.0, True)
+        metrics_store.record_call("s1", "fail", PROJECT_1, 100.0, False)
+        metrics_store.record_call("s1", "ok", PROJECT_1, 100.0, True)
 
         failing = metrics_store.get_failing_tools(threshold=0.5)
         assert len(failing) == 1
@@ -117,8 +122,8 @@ class TestToolMetricsStore:
 
     def test_reset_metrics(self, metrics_store: ToolMetricsStore) -> None:
         """Test resetting metrics."""
-        metrics_store.record_call("s1", "t1", "proj-1", 100.0)
-        deleted = metrics_store.reset_metrics(project_id="proj-1")
+        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0)
+        deleted = metrics_store.reset_metrics(project_id=PROJECT_1)
         assert deleted == 1
         assert len(metrics_store.get_metrics()) == 0
 
@@ -136,13 +141,13 @@ class TestToolMetricsStore:
                 last_called_at, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, 10, 8, 2, 1000.0, 100.0, %s, %s, %s)
             """,
-            ("tm-old", "proj-1", "s1", "t1", old_time, old_time, old_time),
+            ("tm-old", PROJECT_1, "s1", "t1", old_time, old_time, old_time),
         )
 
         aggregated = metrics_store.aggregate_to_daily(retention_days=7)
         assert aggregated == 1
 
-        daily = metrics_store.get_daily_metrics(project_id="proj-1")
+        daily = metrics_store.get_daily_metrics(project_id=PROJECT_1)
         assert len(daily) == 1
         assert daily[0]["call_count"] == 10
 
@@ -157,7 +162,7 @@ class TestPostgresToolMetricsStore:
     pytestmark = pytest.mark.integration
 
     def test_record_call_upsert_merges_existing_row(self, postgres_db: "HubDatabase") -> None:
-        project_id = "proj-pg-record-call"
+        project_id = PG_RECORD_CALL_PROJECT
         _insert_postgres_project(postgres_db, project_id)
         store = ToolMetricsStore(postgres_db)
 
@@ -183,7 +188,7 @@ class TestPostgresToolMetricsStore:
     def test_aggregate_to_daily_upsert_merges_existing_row(
         self, postgres_db: "HubDatabase"
     ) -> None:
-        project_id = "proj-pg-daily-aggregate"
+        project_id = PG_DAILY_AGGREGATE_PROJECT
         _insert_postgres_project(postgres_db, project_id)
         store = ToolMetricsStore(postgres_db)
         old_time = datetime(2020, 1, 2, 12, tzinfo=UTC).isoformat()

@@ -17,7 +17,7 @@ class CloneRegistryContext:
 
     clone_storage: LocalCloneManager
     git_manager: CloneGitManager | None
-    project_id: str
+    project_id: str | None
     task_manager: LocalTaskManager | None = None
 
     def resolve_task_id(self, ref: str) -> str:

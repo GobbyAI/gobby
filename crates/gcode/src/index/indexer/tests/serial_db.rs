@@ -53,12 +53,12 @@ fn parsed_reindex_preserves_unchanged_symbol_summaries_and_clears_changed_symbol
     let changed_summary = "clear stale daemon summary";
     conn.execute(
         "UPDATE code_symbols SET summary = $1 WHERE id = $2",
-        &[&unchanged_summary, &unchanged.id],
+        &[&unchanged_summary, &test_uuid_param(&unchanged.id)],
     )
     .expect("set unchanged summary");
     conn.execute(
         "UPDATE code_symbols SET summary = $1 WHERE id = $2",
-        &[&changed_summary, &changed.id],
+        &[&changed_summary, &test_uuid_param(&changed.id)],
     )
     .expect("set changed summary");
 
@@ -118,7 +118,7 @@ fn postgres_sink_seeds_project_row_before_file_facts() {
     let root_path_from_db: String = conn
         .query_one(
             "SELECT root_path FROM code_indexed_projects WHERE id = $1",
-            &[&project_id],
+            &[&test_uuid_param(&project_id)],
         )
         .expect("select seeded project row")
         .get(0);
@@ -142,7 +142,15 @@ fn unique_test_project_id(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
         .as_nanos();
-    format!("{prefix}-{}-{nanos}", std::process::id())
+    uuid::Uuid::new_v5(
+        &crate::models::CODE_INDEX_UUID_NAMESPACE,
+        format!("{prefix}-{}-{nanos}", std::process::id()).as_bytes(),
+    )
+    .to_string()
+}
+
+fn test_uuid_param(id: &str) -> uuid::Uuid {
+    db::id_param(id).expect("test id is a uuid")
 }
 
 struct SummaryPreservationCleanup {
@@ -162,6 +170,7 @@ fn cleanup_summary_preservation_project(
     conn: &mut postgres::Client,
     project_id: &str,
 ) -> anyhow::Result<()> {
+    let project_id = db::id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
@@ -273,7 +282,7 @@ fn test_symbol(
 fn symbol_summary(conn: &mut postgres::Client, symbol_id: &str) -> Option<String> {
     conn.query_one(
         "SELECT summary FROM code_symbols WHERE id = $1",
-        &[&symbol_id],
+        &[&test_uuid_param(symbol_id)],
     )
     .expect("query symbol summary")
     .try_get(0)
@@ -285,7 +294,11 @@ fn symbol_count(conn: &mut postgres::Client, project_id: &str, rel: &str, symbol
         "SELECT COUNT(*)::BIGINT
          FROM code_symbols
          WHERE project_id = $1 AND file_path = $2 AND id = $3",
-        &[&project_id, &rel, &symbol_id],
+        &[
+            &test_uuid_param(project_id),
+            &rel,
+            &test_uuid_param(symbol_id),
+        ],
     )
     .expect("query symbol count")
     .try_get(0)

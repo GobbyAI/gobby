@@ -308,6 +308,7 @@ fn indexed_file_states(
     project_id: &str,
 ) -> anyhow::Result<HashMap<String, IndexedFileState>> {
     let mut files = HashMap::new();
+    let project_id = db::id_param(project_id)?;
     for row in conn.query(
         "SELECT file_path, content_hash, language
          FROM code_indexed_files

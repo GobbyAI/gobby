@@ -12,8 +12,10 @@ _OPERATION_STATE_OMITS = frozenset(
     {
         "entered_at",
         "entered_by_session_id",
+        "entered_by_actor",
         "completed_at",
         "completed_by_session_id",
+        "completed_by_actor",
         "completed_commit_sha",
     }
 )

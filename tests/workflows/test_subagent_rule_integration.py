@@ -21,6 +21,11 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.integration
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -53,11 +58,11 @@ def _make_hook_event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session-ext",
+        session_id=EXTERNAL_SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": tool_name},
-        metadata={"_platform_session_id": "test-session"},
+        metadata={"_platform_session_id": SESSION_ID},
     )
 
 
@@ -69,7 +74,7 @@ class TestSubagentRuleIntegration:
         """TaskCreate should be blocked when not subagent and no task claimed."""
         variables: dict = {"is_subagent": False}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "block"
         assert "gobby task" in (result.reason or "").lower()
@@ -79,7 +84,7 @@ class TestSubagentRuleIntegration:
         """TaskCreate should be blocked when neither is_subagent nor task_claimed is set."""
         variables: dict = {}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "block"
 
@@ -88,7 +93,7 @@ class TestSubagentRuleIntegration:
         """TaskCreate should be allowed when is_subagent is True."""
         variables: dict = {"is_subagent": True}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "allow"
 
@@ -98,7 +103,7 @@ class TestSubagentRuleIntegration:
         variables: dict = {"is_subagent": False, "task_claimed": True}
         for tool in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList"):
             event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
-            result = await engine.evaluate(event, "test-session", variables)
+            result = await engine.evaluate(event, SESSION_ID, variables)
             assert result.decision == "allow", f"{tool} should be allowed with task claimed"
 
     @pytest.mark.asyncio
@@ -106,7 +111,7 @@ class TestSubagentRuleIntegration:
         """TodoWrite should be blocked regardless of task_claimed."""
         variables: dict = {"is_subagent": False, "task_claimed": True}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TodoWrite")
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "block"
 
@@ -116,7 +121,7 @@ class TestSubagentRuleIntegration:
         variables: dict = {"is_subagent": True}
         for tool in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TodoWrite"):
             event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
-            result = await engine.evaluate(event, "test-session", variables)
+            result = await engine.evaluate(event, SESSION_ID, variables)
             assert result.decision == "allow", f"{tool} should be allowed for subagent"
 
     @pytest.mark.asyncio
@@ -126,17 +131,17 @@ class TestSubagentRuleIntegration:
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
 
         # Blocked when unclaimed
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "block"
 
         # Allowed when claimed
         variables["task_claimed"] = True
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "allow"
 
         # Blocked again when unclaimed
         variables["task_claimed"] = False
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
         assert result.decision == "block"
 
     @pytest.mark.asyncio
@@ -144,7 +149,7 @@ class TestSubagentRuleIntegration:
         """reset-subagent-flag should set is_subagent=False on turn_start."""
         variables: dict = {"is_subagent": True}
         event = _make_hook_event(HookEventType.BEFORE_AGENT)
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "allow"
         # The set_variable effect should have mutated variables in-place
@@ -155,7 +160,7 @@ class TestSubagentRuleIntegration:
         """reset-subagent-flag should not fire when is_subagent is already False."""
         variables: dict = {"is_subagent": False}
         event = _make_hook_event(HookEventType.BEFORE_AGENT)
-        result = await engine.evaluate(event, "test-session", variables)
+        result = await engine.evaluate(event, SESSION_ID, variables)
 
         assert result.decision == "allow"
         assert variables["is_subagent"] is False

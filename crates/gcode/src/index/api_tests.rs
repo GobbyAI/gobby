@@ -1,7 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db;
-use crate::models::{CallRelation, ImportRelation, IndexedFile, IndexedProject, Symbol};
+use crate::models::{
+    CODE_INDEX_UUID_NAMESPACE, CallRelation, ImportRelation, IndexedFile, IndexedProject, Symbol,
+};
 
 use super::api;
 
@@ -111,12 +113,13 @@ mod serial_db {
         );
         assert_eq!(vector_sync_state(&mut conn, &project_id, rel), (true, true));
 
+        let file_uuid = db::id_param(&file.id).expect("indexed-file id is a uuid");
         conn.execute(
             "UPDATE code_indexed_files
          SET graph_synced = true,
              graph_sync_attempted_at = NOW()
          WHERE id = $1",
-            &[&file.id],
+            &[&file_uuid],
         )
         .expect("mark projections synced");
 
@@ -136,7 +139,7 @@ mod serial_db {
                     vector_sync_attempted_at IS NULL
              FROM code_indexed_files
              WHERE id = $1",
-                &[&file.id],
+                &[&file_uuid],
             )
             .expect("load indexed file row");
         let content_hash: String = row.get(0);
@@ -190,7 +193,7 @@ mod serial_db {
         );
 
         let call = CallRelation::new(
-            "caller-symbol-id".to_string(),
+            Symbol::make_id(&project_id, rel, "caller", "function", 0),
             "read_to_string".to_string(),
             rel.to_string(),
             7,
@@ -201,17 +204,18 @@ mod serial_db {
             1
         );
 
+        let project_uuid = db::id_param(&project_id).expect("test project id is a uuid");
         let import_count: i64 = conn
             .query_one(
                 "SELECT COUNT(*) FROM code_imports WHERE project_id = $1",
-                &[&project_id],
+                &[&project_uuid],
             )
             .expect("count imports")
             .get(0);
         let call_count: i64 = conn
             .query_one(
                 "SELECT COUNT(*) FROM code_calls WHERE project_id = $1",
-                &[&project_id],
+                &[&project_uuid],
             )
             .expect("count calls")
             .get(0);
@@ -294,7 +298,7 @@ fn test_symbol(
 fn symbol_summary(conn: &mut postgres::Client, symbol_id: &str) -> Option<String> {
     conn.query_one(
         "SELECT summary FROM code_symbols WHERE id = $1",
-        &[&symbol_id],
+        &[&db::id_param(symbol_id).expect("test symbol id is a uuid")],
     )
     .expect("load symbol summary")
     .get(0)
@@ -310,7 +314,10 @@ fn vector_sync_state(
             "SELECT vectors_synced, vector_sync_attempted_at IS NOT NULL AS attempted
              FROM code_indexed_files
              WHERE project_id = $1 AND file_path = $2",
-            &[&project_id, &file_path],
+            &[
+                &db::id_param(project_id).expect("test project id is a uuid"),
+                &file_path,
+            ],
         )
         .expect("load vector sync state");
     (row.get("vectors_synced"), row.get("attempted"))
@@ -321,7 +328,11 @@ fn unique_test_project_id(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
         .as_nanos();
-    format!("{prefix}-{nanos}")
+    uuid::Uuid::new_v5(
+        &CODE_INDEX_UUID_NAMESPACE,
+        format!("{prefix}-{nanos}").as_bytes(),
+    )
+    .to_string()
 }
 
 struct ProjectCleanup {
@@ -338,6 +349,7 @@ impl Drop for ProjectCleanup {
 }
 
 fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
+    let project_id = db::id_param(project_id)?;
     conn.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],

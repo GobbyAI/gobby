@@ -433,6 +433,7 @@ fn load_leading_chunks(
         } => vec![overlay_project_id.clone(), parent_project_id.clone()],
     };
     for project_id in project_ids {
+        let project_id = crate::db::id_param(&project_id)?;
         let rows = conn.query(
             "SELECT file_path,
                     line_start::BIGINT AS line_start,

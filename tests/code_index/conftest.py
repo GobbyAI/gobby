@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,6 +14,12 @@ pytestmark = pytest.mark.unit
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+# The code_* tables use native uuid identity columns, so test ids must be
+# valid UUID strings. These are deterministic (uuid5) like the real indexer's.
+PROJECT_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/project-1"))
+PROJECT_ID_2 = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/project-2"))
+MISSING_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/missing"))
 
 
 @pytest.fixture
@@ -64,7 +71,7 @@ def main() -> None:
 @pytest.fixture
 def sample_symbols() -> list[Symbol]:
     """Pre-built Symbol objects for unit tests."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     language = "python"
 

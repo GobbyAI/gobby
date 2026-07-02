@@ -132,17 +132,20 @@ fn db_resolves_seeded_cpp_candidate_file_to_symbol_id() {
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
     cleanup_project(&mut conn, CPP_DB_LOCAL_PROJECT_ID).expect("cleanup C++ DB project");
     let _cleanup = ProjectCleanup::new(&env.database_url, CPP_DB_LOCAL_PROJECT_ID);
-    conn.batch_execute(
+    // UUIDv5(CODE_INDEX_UUID_NAMESPACE, <legacy label>) fixture ids.
+    const CPP_DB_HELPER_FILE_ID: &str = "e6e16be2-5a6a-5bb6-b050-d1c2b02b7af0"; // graph-standalone-cpp-db-helper-file
+    const CPP_DB_HELPER_ID: &str = "d9a664f0-2a4f-50d6-98d2-8ae87aaefc71"; // graph-standalone-cpp-db-helper
+    conn.batch_execute(&format!(
         "INSERT INTO code_indexed_projects
             (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
          VALUES
-            ('graph-standalone-cpp-db-local', '/tmp/graph-standalone-cpp-db', 1, 1, NOW(), 0);
+            ('{CPP_DB_LOCAL_PROJECT_ID}', '/tmp/graph-standalone-cpp-db', 1, 1, NOW(), 0);
 
          INSERT INTO code_indexed_files
             (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
              graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
          VALUES
-            ('graph-standalone-cpp-db-helper-file', 'graph-standalone-cpp-db-local',
+            ('{CPP_DB_HELPER_FILE_ID}', '{CPP_DB_LOCAL_PROJECT_ID}',
              'include/helper.hpp', 'cpp', 'hash-cpp-helper', 1, 53, false, true, NULL, NOW());
 
          INSERT INTO code_symbols
@@ -150,10 +153,10 @@ fn db_resolves_seeded_cpp_candidate_file_to_symbol_id() {
              line_start, line_end, signature, docstring, parent_symbol_id, content_hash,
              summary, created_at, updated_at)
          VALUES
-            ('graph-standalone-cpp-db-helper', 'graph-standalone-cpp-db-local',
+            ('{CPP_DB_HELPER_ID}', '{CPP_DB_LOCAL_PROJECT_ID}',
              'include/helper.hpp', 'helper', 'helper', 'function', 'cpp', 14, 52,
-             3, 5, 'inline int helper()', NULL, NULL, 'hash-cpp-helper', NULL, NOW(), NOW());",
-    )
+             3, 5, 'inline int helper()', NULL, NULL, 'hash-cpp-helper', NULL, NOW(), NOW());"
+    ))
     .expect("seed C++ DB rows");
 
     let target_files = vec!["include/helper.hpp".to_string()];
@@ -166,7 +169,7 @@ fn db_resolves_seeded_cpp_candidate_file_to_symbol_id() {
     .expect("resolve seeded C++ local callee");
     assert_eq!(
         resolved.as_deref(),
-        Some("graph-standalone-cpp-db-helper"),
+        Some(CPP_DB_HELPER_ID),
         "seeded C++ candidate file should resolve to the indexed symbol id"
     );
 }

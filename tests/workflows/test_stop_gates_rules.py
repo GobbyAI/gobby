@@ -27,6 +27,10 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -134,7 +138,7 @@ class TestStopAttemptsPlumbing:
         variables: dict[str, object] = {}
 
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("stop_attempts") == 1
 
@@ -145,7 +149,7 @@ class TestStopAttemptsPlumbing:
         variables: dict[str, object] = {"stop_attempts": 3}
 
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("stop_attempts") == 4
 
@@ -156,7 +160,7 @@ class TestStopAttemptsPlumbing:
         variables: dict[str, object] = {"stop_attempts": 5}
 
         event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("stop_attempts") == 0
 
@@ -170,7 +174,7 @@ class TestStopAttemptsPlumbing:
         }
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "allow"
         assert variables.get("stop_attempts") == 3
@@ -185,7 +189,7 @@ class TestStopAttemptsPlumbing:
         }
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert variables.get("stop_attempts") == 2
@@ -213,13 +217,13 @@ class TestManualCompactionTurnEndBypass:
         variables = _claimed_task_variables()
 
         precompact = _make_event(HookEventType.PRE_COMPACT, data=precompact_data)
-        precompact_response = await engine.evaluate(precompact, "sess-1", variables)
+        precompact_response = await engine.evaluate(precompact, SESSION_ID, variables)
 
         assert precompact_response.decision == "allow"
         assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is True
 
         stop = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop, "sess-1", variables)
+        response = await engine.evaluate(stop, SESSION_ID, variables)
 
         assert response.decision == "allow"
         assert variables.get("stop_attempts") == 0
@@ -235,18 +239,18 @@ class TestManualCompactionTurnEndBypass:
         variables = _claimed_task_variables()
 
         precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
-        await engine.evaluate(precompact, "sess-1", variables)
+        await engine.evaluate(precompact, SESSION_ID, variables)
         assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is True
 
         compact_stop = _make_event(HookEventType.STOP)
-        compact_response = await engine.evaluate(compact_stop, "sess-1", variables)
+        compact_response = await engine.evaluate(compact_stop, SESSION_ID, variables)
 
         assert compact_response.decision == "allow"
         assert variables.get("stop_attempts") == 0
         assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
 
         normal_stop = _make_event(HookEventType.STOP)
-        normal_response = await engine.evaluate(normal_stop, "sess-1", variables)
+        normal_response = await engine.evaluate(normal_stop, SESSION_ID, variables)
 
         assert normal_response.decision == "block"
         assert "require-task-close" in (normal_response.reason or "")
@@ -278,13 +282,13 @@ class TestManualCompactionTurnEndBypass:
         variables = _claimed_task_variables()
 
         precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
-        await engine.evaluate(precompact, "sess-1", variables)
+        await engine.evaluate(precompact, SESSION_ID, variables)
 
         after_agent = _make_event(
             HookEventType.AFTER_AGENT,
             source=SessionSource.QWEN,
         )
-        response = await engine.evaluate(after_agent, "sess-1", variables)
+        response = await engine.evaluate(after_agent, SESSION_ID, variables)
 
         assert response.decision == "allow"
         assert variables.get("stop_attempts") == 0
@@ -309,12 +313,12 @@ class TestManualCompactionTurnEndBypass:
         variables = _claimed_task_variables()
 
         precompact = _make_event(HookEventType.PRE_COMPACT, data=precompact_data)
-        await engine.evaluate(precompact, "sess-1", variables)
+        await engine.evaluate(precompact, SESSION_ID, variables)
 
         assert COMPACT_TURN_END_BYPASS_PENDING not in variables
 
         stop = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop, "sess-1", variables)
+        response = await engine.evaluate(stop, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert "require-task-close" in (response.reason or "")
@@ -327,16 +331,16 @@ class TestManualCompactionTurnEndBypass:
         variables = _claimed_task_variables()
 
         precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
-        await engine.evaluate(precompact, "sess-1", variables)
+        await engine.evaluate(precompact, SESSION_ID, variables)
         assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is True
 
         before_agent = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(before_agent, "sess-1", variables)
+        await engine.evaluate(before_agent, SESSION_ID, variables)
 
         assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
 
         stop = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop, "sess-1", variables)
+        response = await engine.evaluate(stop, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert "require-task-close" in (response.reason or "")
@@ -418,7 +422,7 @@ class TestRequireTaskClose:
             HookEventType.AFTER_AGENT,
             source=SessionSource.QWEN,
         )
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert "require-task-close" in (response.reason or "")
@@ -498,7 +502,7 @@ class TestRequireStepCompletion:
         }
 
         event = _make_event(HookEventType.AFTER_AGENT)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "allow"
         assert variables["stop_attempts"] == 1
@@ -517,7 +521,7 @@ class TestRequireStepCompletion:
         }
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert 'submit_for_review(stage_name="planning")' in (response.reason or "")
@@ -537,7 +541,7 @@ class TestBeforeAgentResetsPlumbing:
         variables: dict[str, object] = {"tool_block_pending": True}
 
         event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("tool_block_pending") is False
 
@@ -555,7 +559,7 @@ class TestBeforeAgentResetsPlumbing:
         }
 
         event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables["tool_block_pending"] is False
         assert variables["stop_attempts"] == 0
@@ -574,7 +578,7 @@ def _make_event(
     """Helper to create HookEvent for rule engine tests."""
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -598,7 +602,7 @@ class TestToolBlockPendingPlumbing:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Edit", "is_error": True},
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("tool_block_pending") is True
 
@@ -613,7 +617,7 @@ class TestToolBlockPendingPlumbing:
             data={"tool_name": "Edit"},
             metadata={"is_failure": True},
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("tool_block_pending") is True
 
@@ -627,7 +631,7 @@ class TestToolBlockPendingPlumbing:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Read"},
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("tool_block_pending") is False
 
@@ -638,7 +642,7 @@ class TestToolBlockPendingPlumbing:
         variables: dict[str, object] = {"tool_block_pending": True}
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert "tool just failed" in response.reason.lower()
@@ -650,7 +654,7 @@ class TestToolBlockPendingPlumbing:
         variables: dict[str, object] = {"tool_block_pending": True}
 
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("tool_block_pending") is False
 
@@ -661,7 +665,7 @@ class TestToolBlockPendingPlumbing:
         variables: dict[str, object] = {}
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "allow"
 
@@ -676,12 +680,12 @@ class TestToolBlockPendingPlumbing:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Edit", "is_error": True},
         )
-        await engine.evaluate(fail_event, "sess-1", variables)
+        await engine.evaluate(fail_event, SESSION_ID, variables)
         assert variables.get("tool_block_pending") is True
 
         # 2. Stop is blocked (and self-clears)
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, "sess-1", variables)
+        response = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert response.decision == "block"
         assert variables.get("tool_block_pending") is False
 
@@ -690,10 +694,10 @@ class TestToolBlockPendingPlumbing:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Read"},
         )
-        await engine.evaluate(ok_event, "sess-1", variables)
+        await engine.evaluate(ok_event, SESSION_ID, variables)
 
         # 4. Stop is allowed
-        response = await engine.evaluate(stop_event, "sess-1", variables)
+        response = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert response.decision == "allow"
 
 
@@ -716,12 +720,12 @@ class TestBashErrorStopGate:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Bash", "is_error": True, "tool_output": "Exit code: 1"},
         )
-        await engine.evaluate(fail_event, "sess-1", variables)
+        await engine.evaluate(fail_event, SESSION_ID, variables)
         assert variables.get("tool_block_pending") is True
 
         # 2. Stop is blocked
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, "sess-1", variables)
+        response = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert response.decision == "block"
         assert "tool just failed" in response.reason.lower()
 
@@ -735,10 +739,10 @@ class TestBashErrorStopGate:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Bash"},
         )
-        await engine.evaluate(ok_event, "sess-1", variables)
+        await engine.evaluate(ok_event, SESSION_ID, variables)
 
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, "sess-1", variables)
+        response = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -752,12 +756,12 @@ class TestBashErrorStopGate:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Bash", "is_error": True},
         )
-        await engine.evaluate(fail_event, "sess-1", variables)
+        await engine.evaluate(fail_event, SESSION_ID, variables)
         assert variables.get("tool_block_pending") is True
 
         # 2. Stop blocked (self-clears)
         stop_event = _make_event(HookEventType.STOP)
-        r1 = await engine.evaluate(stop_event, "sess-1", variables)
+        r1 = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert r1.decision == "block"
 
         # 3. Bash succeeds
@@ -765,10 +769,10 @@ class TestBashErrorStopGate:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Bash"},
         )
-        await engine.evaluate(ok_event, "sess-1", variables)
+        await engine.evaluate(ok_event, SESSION_ID, variables)
 
         # 4. Stop allowed
-        r2 = await engine.evaluate(stop_event, "sess-1", variables)
+        r2 = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert r2.decision == "allow"
 
 
@@ -789,7 +793,7 @@ class TestForceAllowStop:
         }
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "allow"
 
@@ -800,7 +804,7 @@ class TestForceAllowStop:
         variables: dict[str, object] = {"force_allow_stop": True}
 
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("force_allow_stop") is False
 
@@ -816,14 +820,14 @@ class TestForceAllowStop:
         event = _make_event(HookEventType.STOP)
 
         # First stop — force allowed
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
         assert response.decision == "allow"
 
         # Re-set tool_block_pending (force_allow_stop is cleared now)
         variables["tool_block_pending"] = True
 
         # Second stop — normal blocking applies
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
         assert response.decision == "block"
 
     @pytest.mark.asyncio
@@ -840,7 +844,7 @@ class TestForceAllowStop:
                 "tool_output": "Error: You are out of usage for this billing period.",
             },
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("force_allow_stop") is True
 
@@ -858,7 +862,7 @@ class TestForceAllowStop:
                 "tool_output": "429 Too Many Requests: rate limit exceeded",
             },
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("force_allow_stop") is True
 
@@ -876,7 +880,7 @@ class TestForceAllowStop:
                 "tool_output": "Error: old_string not found in file",
             },
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("force_allow_stop") is not True
 
@@ -895,12 +899,12 @@ class TestForceAllowStop:
                 "tool_output": "quota exceeded — upgrade your plan",
             },
         )
-        await engine.evaluate(fail_event, "sess-1", variables)
+        await engine.evaluate(fail_event, SESSION_ID, variables)
         assert variables.get("force_allow_stop") is True
 
         # 2. Stop is allowed (bypasses tool_block_pending too)
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, "sess-1", variables)
+        response = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert response.decision == "allow"
         assert variables.get("force_allow_stop") is False
 
@@ -931,7 +935,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        response1 = await engine.evaluate(event1, "sess-1", variables)
+        response1 = await engine.evaluate(event1, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 1
         # Not escalated yet — passes through to rule evaluation
         # (no rules installed, so it allows)
@@ -945,7 +949,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        response2 = await engine.evaluate(event2, "sess-1", variables)
+        response2 = await engine.evaluate(event2, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 2
         assert response2.decision == "allow"
 
@@ -956,7 +960,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        response3 = await engine.evaluate(event3, "sess-1", variables)
+        response3 = await engine.evaluate(event3, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 3
         assert response3.decision == "allow"
 
@@ -967,7 +971,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        response4 = await engine.evaluate(event4, "sess-1", variables)
+        response4 = await engine.evaluate(event4, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 4
         assert response4.decision == "block"
         assert response4.reason is not None
@@ -997,7 +1001,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Read"},
         )
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("consecutive_tool_blocks") == 0
         assert variables.get("_last_blocked_tool") == "TodoWrite"
@@ -1030,7 +1034,7 @@ class TestConsecutiveBlockScoping:
             },
             source=SessionSource.PIPELINE,
         )
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "allow"
         assert variables.get("consecutive_tool_blocks") == 0
@@ -1056,7 +1060,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Edit"},
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 0
 
         # Simulate Edit being blocked by a rule (updates last_blocked)
@@ -1067,7 +1071,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Edit"},
         )
-        await engine.evaluate(event2, "sess-1", variables)
+        await engine.evaluate(event2, SESSION_ID, variables)
         assert variables.get("consecutive_tool_blocks") == 1
 
     @pytest.mark.asyncio
@@ -1084,7 +1088,7 @@ class TestConsecutiveBlockScoping:
         }
 
         event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("_last_blocked_tool") == ""
         assert variables.get("_last_blocked_rule_name") == ""
@@ -1107,7 +1111,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Read"},
         )
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("_last_blocked_tool") == ""
         assert variables.get("_last_blocked_rule_name") == ""
@@ -1148,7 +1152,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
         assert variables.get("tool_block_pending") is not True
@@ -1190,7 +1194,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        blocked = await engine.evaluate(blocked_event, "sess-1", variables)
+        blocked = await engine.evaluate(blocked_event, SESSION_ID, variables)
         assert blocked.decision == "block"
         assert variables.get("_last_blocked_tool") == "TodoWrite"
         assert variables.get("_last_blocked_rule_name") == "block-todowrite-stop-test"
@@ -1200,7 +1204,7 @@ class TestConsecutiveBlockScoping:
         assert variables.get("tool_block_pending") is not True
 
         stop_event = _make_event(HookEventType.STOP)
-        stop = await engine.evaluate(stop_event, "sess-1", variables)
+        stop = await engine.evaluate(stop_event, SESSION_ID, variables)
 
         assert stop.decision == "allow"
         assert "tool-failure-recovery" not in (stop.reason or "")
@@ -1244,7 +1248,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
-        r1 = await engine.evaluate(todo_event, "sess-1", variables)
+        r1 = await engine.evaluate(todo_event, SESSION_ID, variables)
         assert r1.decision == "block"
         assert variables.get("_last_blocked_tool") == "TodoWrite"
         assert variables.get("_last_blocked_rule_name") == "block-todowrite-test"
@@ -1257,7 +1261,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Edit"},
         )
-        r2 = await engine.evaluate(edit_event, "sess-1", variables)
+        r2 = await engine.evaluate(edit_event, SESSION_ID, variables)
         assert r2.decision == "allow"
         assert variables.get("consecutive_tool_blocks") == 0
         assert variables.get("_last_blocked_tool") == "TodoWrite"
@@ -1268,7 +1272,7 @@ class TestConsecutiveBlockScoping:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Read"},
         )
-        r3 = await engine.evaluate(read_event, "sess-1", variables)
+        r3 = await engine.evaluate(read_event, SESSION_ID, variables)
         assert r3.decision == "allow"
         assert variables.get("_last_blocked_tool") == "TodoWrite"
         assert variables.get("_last_blocked_rule_name") == "block-todowrite-test"
@@ -1282,7 +1286,7 @@ class TestConsecutiveBlockScoping:
 def _make_task(
     task_id: str,
     status: str = "in_progress",
-    claimed_by_session_id: str | None = "sess-1",
+    claimed_by_session_id: str | None = SESSION_ID,
 ):
     """Create a minimal Task dataclass for reconciliation tests."""
     from gobby.storage.tasks import Task
@@ -1325,7 +1329,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {},
         }
-        reconcile_claimed_tasks(variables, "sess-1")
+        reconcile_claimed_tasks(variables, SESSION_ID)
 
         assert variables["task_claimed"] is False
 
@@ -1337,7 +1341,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": False,
             "claimed_tasks": {},
         }
-        reconcile_claimed_tasks(variables, "sess-1")
+        reconcile_claimed_tasks(variables, SESSION_ID)
 
         assert variables["task_claimed"] is False
         assert variables["claimed_tasks"] == {}
@@ -1355,7 +1359,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#10"},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is False
         assert variables["claimed_tasks"] == {}
@@ -1375,7 +1379,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#10"},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is False
         assert variables["claimed_tasks"] == {}
@@ -1394,7 +1398,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#10"},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is False
         assert variables["claimed_tasks"] == {}
@@ -1407,14 +1411,14 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
         task_manager.get_task.return_value = _make_task(
-            "uuid-1", status="in_progress", claimed_by_session_id="sess-1"
+            "uuid-1", status="in_progress", claimed_by_session_id=SESSION_ID
         )
 
         variables: dict[str, object] = {
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#10"},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-1": "#10"}
@@ -1429,14 +1433,14 @@ class TestClaimedTaskReconciliation:
         task_manager.get_task.return_value = _make_task(
             "uuid-review",
             status="needs_review",
-            claimed_by_session_id="sess-1",
+            claimed_by_session_id=SESSION_ID,
         )
 
         variables: dict[str, object] = {
             "task_claimed": True,
             "claimed_tasks": {"uuid-review": "#11"},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-review": "#11"}
@@ -1548,10 +1552,10 @@ class TestClaimedTaskReconciliation:
         def get_task_side_effect(task_id):
             if task_id == "uuid-valid":
                 return _make_task(
-                    "uuid-valid", status="in_progress", claimed_by_session_id="sess-1"
+                    "uuid-valid", status="in_progress", claimed_by_session_id=SESSION_ID
                 )
             elif task_id == "uuid-closed":
-                return _make_task("uuid-closed", status="closed", claimed_by_session_id="sess-1")
+                return _make_task("uuid-closed", status="closed", claimed_by_session_id=SESSION_ID)
             else:
                 raise TaskNotFoundError("gone")
 
@@ -1565,7 +1569,7 @@ class TestClaimedTaskReconciliation:
                 "uuid-deleted": "#3",
             },
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-valid": "#1"}
@@ -1578,7 +1582,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#10"},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=None)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=None)
 
         # Should not modify — can't verify without DB
         assert variables["task_claimed"] is True
@@ -1591,7 +1595,7 @@ class TestClaimedTaskReconciliation:
         from gobby.workflows.observers import reconcile_claimed_tasks
 
         task_manager = MagicMock()
-        db_task = _make_task("uuid-db", status="in_progress", claimed_by_session_id="sess-1")
+        db_task = _make_task("uuid-db", status="in_progress", claimed_by_session_id=SESSION_ID)
         db_task.seq_num = 42
         task_manager.list_tasks.return_value = [db_task]
 
@@ -1599,13 +1603,13 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-db": "#42"}
         task_manager.list_tasks.assert_called_once()
         call_kwargs = task_manager.list_tasks.call_args.kwargs
-        assert call_kwargs["claimed_by_session_id"] == "sess-1"
+        assert call_kwargs["claimed_by_session_id"] == SESSION_ID
         assert set(call_kwargs["current_stage_state"]) == set(ACTIVE_STAGE_STATES)
 
     def test_reconcile_rebuilds_with_no_seq_num(self) -> None:
@@ -1618,7 +1622,7 @@ class TestClaimedTaskReconciliation:
         db_task = _make_task(
             "abcdef12-3456-7890-abcd-ef1234567890",
             status="in_progress",
-            claimed_by_session_id="sess-1",
+            claimed_by_session_id=SESSION_ID,
         )
         db_task.seq_num = None
         task_manager.list_tasks.return_value = [db_task]
@@ -1627,7 +1631,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"abcdef12-3456-7890-abcd-ef1234567890": "abcdef12"}
@@ -1640,7 +1644,7 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
         db_task = _make_task(
-            "uuid-review-db", status="needs_review", claimed_by_session_id="sess-1"
+            "uuid-review-db", status="needs_review", claimed_by_session_id=SESSION_ID
         )
         db_task.seq_num = 77
         task_manager.list_tasks.return_value = [db_task]
@@ -1649,7 +1653,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-review-db": "#77"}
@@ -1667,7 +1671,7 @@ class TestClaimedTaskReconciliation:
             "task_claimed": True,
             "claimed_tasks": {},
         }
-        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=task_manager)
 
         assert variables["task_claimed"] is False
         assert variables["claimed_tasks"] == {}
@@ -1688,7 +1692,7 @@ class TestForceAllowStopWithTaskClaimed:
         }
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         # force_allow_stop should be cleared but NOT set override_decision
         assert variables.get("force_allow_stop") is False
@@ -1708,7 +1712,7 @@ class TestForceAllowStopWithTaskClaimed:
         }
 
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, "sess-1", variables)
+        response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "allow"
         assert variables.get("force_allow_stop") is False
@@ -1724,11 +1728,11 @@ class TestForceAllowStopWithTaskClaimed:
         }
 
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
 
         assert variables.get("force_allow_stop") is False
 
         # Second stop — force_allow_stop is gone, no double-clearing
         variables["force_allow_stop"] = False
-        await engine.evaluate(event, "sess-1", variables)
+        await engine.evaluate(event, SESSION_ID, variables)
         assert variables.get("force_allow_stop") is False

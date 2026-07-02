@@ -115,7 +115,7 @@ def _service(
     vector_results: list[tuple[str, float]] | None = None,
     vector_store: Any = None,
     storage: Any = None,
-    keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]] | None = None,
+    keyword_search: Callable[..., list[tuple[str, float]]] | None = None,
     search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     falkordb_graph_search: bool = False,
 ) -> SearchService:
@@ -127,7 +127,7 @@ def _service(
         vector_store=vector_store or _VectorStore(vector_results or []),  # type: ignore[arg-type]
         embed_fn=_embed,
         kg_service=object() if falkordb_graph_search else None,  # type: ignore[arg-type]
-        keyword_search=keyword_search or (lambda query, limit, project_id: []),
+        keyword_search=keyword_search or (lambda query, limit, project_id, include_global=True: []),
         config=MemoryConfig(),
         falkordb_graph_search=falkordb_graph_search,
         falkordb_graph_min_score=0.0,
@@ -279,7 +279,9 @@ async def test_search_with_graph_propagates_keyword_cancellation() -> None:
         falkordb_graph_search=True,
     )
 
-    async def cancelled_keyword(_query: str, _limit: int, _project_id: str | None) -> list[str]:
+    async def cancelled_keyword(
+        _query: str, _limit: int, _project_id: str | None, include_global: bool = True
+    ) -> list[str]:
         raise asyncio.CancelledError()
 
     service._keyword_ranked = cancelled_keyword  # type: ignore[method-assign]
@@ -304,7 +306,9 @@ async def test_search_with_graph_propagates_keyword_cancellation() -> None:
 async def test_qdrant_keyword_search_propagates_keyword_cancellation() -> None:
     service = _service(["semantic"], vector_results=[("semantic", 0.9)])
 
-    async def cancelled_keyword(_query: str, _limit: int, _project_id: str | None) -> list[str]:
+    async def cancelled_keyword(
+        _query: str, _limit: int, _project_id: str | None, include_global: bool = True
+    ) -> list[str]:
         raise asyncio.CancelledError()
 
     service._keyword_ranked = cancelled_keyword  # type: ignore[method-assign]
@@ -533,7 +537,7 @@ def _fallback_service(
         vector_store=None,
         embed_fn=None,
         kg_service=None,
-        keyword_search=lambda query, limit, project_id: keyword_results,
+        keyword_search=lambda query, limit, project_id, include_global=True: keyword_results,
         config=MemoryConfig(),
         falkordb_graph_search=False,
         falkordb_graph_min_score=0.0,

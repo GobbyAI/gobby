@@ -18,6 +18,10 @@ from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -37,7 +41,7 @@ def _make_event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -128,7 +132,7 @@ class TestMCPRewriteNesting:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
         assert response.modified_input is not None
@@ -167,7 +171,7 @@ class TestMCPRewriteNesting:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
         assert response.modified_input is not None
@@ -206,7 +210,7 @@ class TestMCPRewriteNesting:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.modified_input is not None
         inner = response.modified_input["arguments"]
@@ -236,7 +240,7 @@ class TestStripSkipValidation:
 
         engine = RuleEngine(db)
         response = await engine.evaluate(
-            event, session_id="sess-1", variables={"task_has_commits": True}
+            event, session_id=SESSION_ID, variables={"task_has_commits": True}
         )
 
         assert response.decision == "allow"
@@ -263,7 +267,7 @@ class TestStripSkipValidation:
 
         engine = RuleEngine(db)
         response = await engine.evaluate(
-            event, session_id="sess-1", variables={"task_has_commits": False}
+            event, session_id=SESSION_ID, variables={"task_has_commits": False}
         )
 
         assert response.decision == "allow"
@@ -289,7 +293,7 @@ class TestStripSkipValidation:
 
         engine = RuleEngine(db)
         response = await engine.evaluate(
-            event, session_id="sess-1", variables={"task_has_commits": True}
+            event, session_id=SESSION_ID, variables={"task_has_commits": True}
         )
 
         assert response.decision == "allow"
@@ -393,7 +397,9 @@ class TestRequireUvBlockRule:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
@@ -414,7 +420,9 @@ class TestRequireUvBlockRule:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
@@ -435,7 +443,9 @@ class TestRequireUvBlockRule:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "allow"
         assert response.modified_input is None
@@ -455,7 +465,9 @@ class TestRequireUvBlockRule:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
@@ -476,7 +488,9 @@ class TestRequireUvBlockRule:
         )
 
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "allow"
         assert response.modified_input is None
@@ -508,7 +522,7 @@ class TestPermissionResponseEffects:
         engine = RuleEngine(db)
         response = await engine.evaluate(
             _make_event(data={"tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={},
         )
 
@@ -533,7 +547,7 @@ class TestPermissionResponseEffects:
         engine = RuleEngine(db)
         response = await engine.evaluate(
             _make_event(data={"tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={},
         )
 

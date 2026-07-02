@@ -58,7 +58,7 @@ class CodeIndexSummaryStorageMixin:
         if not symbols:
             return 0
         now = datetime.now(UTC).isoformat()
-        placeholders = ",".join("(%s, %s)" for _ in symbols)
+        placeholders = ",".join("(%s::uuid, %s)" for _ in symbols)
         params = [value for symbol in symbols for value in symbol]
         with self.db.transaction() as conn:
             cursor = conn.execute(

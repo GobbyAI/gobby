@@ -558,9 +558,11 @@ class WorkflowHookHandler:
 
                     normalize_tool_fields(event.data)
 
-                # Load session-scoped variables (canonical store)
+                # Load session-scoped variables (canonical store).
+                # session_id may be "" for session-less events; session_variables.session_id
+                # is a native uuid column, so skip the lookup instead of binding "".
                 variables: dict[str, Any] = {}
-                if self._session_var_manager:
+                if self._session_var_manager and session_id:
                     try:
                         variables = dict(self._session_var_manager.get_variables(session_id))
                     except Exception as e:
@@ -744,8 +746,9 @@ class WorkflowHookHandler:
                     eval_context=eval_context,
                 )
 
-                # Persist all variables changed by observers OR rule effects
-                if self._session_var_manager:
+                # Persist all variables changed by observers OR rule effects.
+                # Skip when session_id is "" — session_variables.session_id is uuid.
+                if self._session_var_manager and session_id:
                     changed = {
                         k: v for k, v in variables.items() if k not in pre_eval or pre_eval[k] != v
                     }

@@ -13,6 +13,13 @@ from gobby.tasks.state_semantics import (
 
 pytestmark = pytest.mark.unit
 
+# tasks.id and projects.id are native uuid columns; synthetic ids must be
+# valid UUID strings.
+PROJECT_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+PROJECT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+NEW_UNIQUE_TASK_ID = "44444444-4444-4444-4444-444444444444"
+UNKNOWN_TASK_ID = "99999999-9999-9999-9999-999999999999"
+
 
 @pytest.fixture
 def dep_manager(temp_db):
@@ -107,16 +114,16 @@ class TestLocalTaskManager:
     def test_get_task_rejects_foreign_project_uuid(self, task_manager, temp_db) -> None:
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-a", "Project A"),
+            (PROJECT_A, "Project A"),
         )
         temp_db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-            ("proj-b", "Project B"),
+            (PROJECT_B, "Project B"),
         )
-        foreign_task = task_manager.create_task(project_id="proj-b", title="Task B")
+        foreign_task = task_manager.create_task(project_id=PROJECT_B, title="Task B")
 
         with pytest.raises(ValueError, match="not found in project"):
-            task_manager.get_task(foreign_task.id, project_id="proj-a")
+            task_manager.get_task(foreign_task.id, project_id=PROJECT_A)
 
     def test_update_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
@@ -245,10 +252,10 @@ class TestLocalTaskManager:
         # Patch where it's used, not where it's re-exported.
         with patch(
             "gobby.storage.tasks._creation.generate_task_id",
-            side_effect=[existing_task.id, "gt-newunique"],
+            side_effect=[existing_task.id, NEW_UNIQUE_TASK_ID],
         ) as mock_gen:
             new_task = task_manager.create_task(project_id=project_id, title="New Task")
-            assert new_task.id == "gt-newunique"
+            assert new_task.id == NEW_UNIQUE_TASK_ID
             # Should have called it twice (initial attempt + retry)
             # Actually create_task calls generate_task_id in a loop, passing salt.
             # Side_effect replaces the return value of ALL calls.
@@ -648,35 +655,22 @@ class TestLocalTaskManager:
         assert len(tasks) >= 1
         assert t1.id in [t.id for t in tasks]
 
-    @pytest.mark.parametrize(
-        ("prefix", "literal_id", "unintended_id"),
-        [
-            ("abc_", "abc_def", "abcXdef"),
-            ("abc%", "abc%def", "abcXYZdef"),
-        ],
-    )
+    @pytest.mark.parametrize("wildcard", ["_", "%"])
     def test_find_tasks_by_prefix_escapes_like_wildcards(
         self,
         task_manager: LocalTaskManager,
         project_id: str,
-        prefix: str,
-        literal_id: str,
-        unintended_id: str,
+        wildcard: str,
     ) -> None:
-        first = task_manager.create_task(project_id, "Literal Wildcard Task")
-        second = task_manager.create_task(project_id, "Potential Wildcard Match")
-        task_manager.db.execute(
-            "UPDATE tasks SET id = %s WHERE id = %s",
-            (literal_id, first.id),
-        )
-        task_manager.db.execute(
-            "UPDATE tasks SET id = %s WHERE id = %s",
-            (unintended_id, second.id),
-        )
+        task = task_manager.create_task(project_id, "Potential Wildcard Match")
 
-        results = task_manager.find_tasks_by_prefix(prefix)
+        # tasks.id is a native uuid column, so ids contain only hex digits and
+        # dashes — a prefix containing a LIKE wildcard can never match
+        # literally. Unescaped, "_" would match the task's next character and
+        # "%" would match any suffix; both would wrongly return the task.
+        prefix = task.id[:3] + wildcard
 
-        assert [task.id for task in results] == [literal_id]
+        assert task_manager.find_tasks_by_prefix(prefix) == []
 
     def test_find_task_by_prefix_rejects_empty_before_like_lookup(
         self, task_manager: LocalTaskManager, project_id: str
@@ -1497,7 +1491,7 @@ class TestLocalTaskManager:
     def test_close_task_not_found_raises(self, task_manager) -> None:
         """Test closing non-existent task raises error."""
         with pytest.raises(ValueError, match="not found"):
-            task_manager.close_task("gt-nonexistent")
+            task_manager.close_task(UNKNOWN_TASK_ID)
 
     # =========================================================================
     # Update Task Additional Tests
@@ -1543,7 +1537,7 @@ class TestLocalTaskManager:
 
     def test_delete_nonexistent_task_returns_false(self, task_manager) -> None:
         """Test deleting non-existent task returns False."""
-        result = task_manager.delete_task("gt-nonexistent")
+        result = task_manager.delete_task(UNKNOWN_TASK_ID)
         assert result is False
 
     # =========================================================================
@@ -2248,7 +2242,7 @@ class TestPathCacheComputation:
 
     def test_compute_path_cache_task_not_found(self, task_manager) -> None:
         """Test path computation for non-existent task."""
-        path = task_manager.compute_path_cache("nonexistent-id")
+        path = task_manager.compute_path_cache(UNKNOWN_TASK_ID)
         assert path is None
 
     def test_compute_path_cache_handles_null_seq_num(

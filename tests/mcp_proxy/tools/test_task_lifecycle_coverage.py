@@ -208,9 +208,15 @@ class TestCloseTask:
 
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
-        ) as mock_vcr:
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+            ) as mock_vcr,
+            # close_task archives the linked plan when an epic closes as
+            # completed/obsolete; patch at the source module (close_task imports
+            # it locally) so LocalPlanManager doesn't run against the mock db.
+            patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as mock_epic_terminal,
+        ):
             result = await registry.call(
                 "close_task",
                 {"task_id": parent.id, "changes_summary": "All subtasks completed"},
@@ -221,6 +227,7 @@ class TestCloseTask:
         assert "error" not in result
         assert result.get("success", True) is not False
         mock_task_manager.close_task.assert_called_once()
+        mock_epic_terminal.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_epic_open_children_blocked(self, mock_task_manager, mock_sync_manager):
@@ -257,9 +264,15 @@ class TestCloseTask:
 
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
-        ) as mock_vcr:
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+            ) as mock_vcr,
+            # close_task archives the linked plan when an epic closes as
+            # completed/obsolete; patch at the source module (close_task imports
+            # it locally) so LocalPlanManager doesn't run against the mock db.
+            patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as mock_epic_terminal,
+        ):
             result = await registry.call(
                 "close_task",
                 {"task_id": epic.id},
@@ -270,6 +283,7 @@ class TestCloseTask:
         assert "error" not in result
         assert result.get("success", True) is not False
         mock_task_manager.close_task.assert_called_once()
+        mock_epic_terminal.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_commit_requirements_fail(self, mock_task_manager, mock_sync_manager):

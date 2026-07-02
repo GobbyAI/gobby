@@ -78,7 +78,7 @@ pub(super) fn collect_projects() -> anyhow::Result<Vec<IndexedProject>> {
 
 pub(super) fn indexed_project_from_row(row: &postgres::Row) -> anyhow::Result<IndexedProject> {
     Ok(IndexedProject {
-        id: row.try_get("id")?,
+        id: db::id_string(row, "id")?,
         root_path: row.try_get("root_path")?,
         total_files: row.try_get::<_, i64>("total_files")? as usize,
         total_symbols: row.try_get::<_, i64>("total_symbols")? as usize,

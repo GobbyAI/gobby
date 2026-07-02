@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def create_clones_registry(
     clone_storage: LocalCloneManager,
     git_manager: CloneGitManager | None,
-    project_id: str,
+    project_id: str | None,
     task_manager: LocalTaskManager | None = None,
 ) -> InternalToolRegistry:
     """
@@ -29,7 +29,7 @@ def create_clones_registry(
     Args:
         clone_storage: Clone storage manager for CRUD operations
         git_manager: Git manager for clone operations (None when no git repo detected)
-        project_id: Default project ID for new clones
+        project_id: Default project ID for new clones (None when no project context)
         task_manager: Task manager for resolving task references (#N -> UUID)
 
     Returns:

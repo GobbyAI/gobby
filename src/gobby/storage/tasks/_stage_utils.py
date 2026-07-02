@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.session_resolution import is_session_uuid
 
 
 def _now() -> str:
@@ -17,7 +18,7 @@ def _session_exists(
     conn: HubDatabase | Transaction,
     session_id: str | None,
 ) -> bool:
-    if not session_id:
+    if not is_session_uuid(session_id):
         return False
     row = conn.execute("SELECT 1 FROM sessions WHERE id = %s", (session_id,)).fetchone()
     return row is not None
@@ -134,6 +135,7 @@ def _complete_terminal_delivery_stage_for_close(
            SET state = 'done',
                completed_at = COALESCE(completed_at, %s),
                completed_by_session_id = COALESCE(completed_by_session_id, %s),
+               completed_by_actor = COALESCE(completed_by_actor, %s),
                completed_commit_sha = COALESCE(completed_commit_sha, %s),
                updated_at = %s
          WHERE task_id = %s
@@ -143,6 +145,7 @@ def _complete_terminal_delivery_stage_for_close(
         (
             now,
             completed_by_session_id,
+            "session" if completed_by_session_id else "system",
             completion_commit_sha,
             now,
             task_id,

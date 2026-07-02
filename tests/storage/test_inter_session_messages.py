@@ -6,6 +6,8 @@ Tests cover:
 - InterSessionMessageManager CRUD operations
 """
 
+import uuid
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -532,7 +534,7 @@ class TestInterSessionMessageManagerGetMessage:
         from gobby.storage.inter_session_messages import InterSessionMessageManager
 
         manager = InterSessionMessageManager(temp_db)
-        result = manager.get_message("non-existent-id")
+        result = manager.get_message(str(uuid.uuid4()))
         assert result is None
 
 
@@ -651,7 +653,7 @@ class TestInterSessionMessageManagerListMessages:
         from gobby.storage.inter_session_messages import InterSessionMessageManager
 
         mgr = InterSessionMessageManager(temp_db)
-        msgs = mgr.list_messages("nonexistent-session", direction="all")
+        msgs = mgr.list_messages(str(uuid.uuid4()), direction="all")
         assert msgs == []
 
     def test_invalid_direction_raises_clear_error(self, setup) -> None:

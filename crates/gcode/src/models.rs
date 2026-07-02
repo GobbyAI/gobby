@@ -173,8 +173,8 @@ impl Symbol {
     /// and timestamp fields are cast to stable Rust-readable types.
     pub fn from_row(row: &Row) -> anyhow::Result<Self> {
         Ok(Self {
-            id: row.try_get("id")?,
-            project_id: row.try_get("project_id")?,
+            id: row.try_get::<_, Uuid>("id")?.to_string(),
+            project_id: row.try_get::<_, Uuid>("project_id")?.to_string(),
             file_path: row.try_get("file_path")?,
             name: row.try_get("name")?,
             qualified_name: row.try_get("qualified_name")?,
@@ -186,7 +186,9 @@ impl Symbol {
             line_end: i64_to_usize(row.try_get("line_end")?, "line_end")?,
             signature: row.try_get("signature")?,
             docstring: row.try_get("docstring")?,
-            parent_symbol_id: row.try_get("parent_symbol_id")?,
+            parent_symbol_id: row
+                .try_get::<_, Option<Uuid>>("parent_symbol_id")?
+                .map(|id| id.to_string()),
             content_hash: row
                 .try_get::<_, Option<String>>("content_hash")?
                 .unwrap_or_default(),

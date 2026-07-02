@@ -185,12 +185,12 @@ class MemoryRepository:
         escape_clause = " ESCAPE '" + backslash + "'"
         if project_id:
             sql = (
-                "SELECT * FROM memories WHERE id LIKE %s"
+                "SELECT * FROM memories WHERE id::text LIKE %s"
                 + escape_clause
                 + " AND (project_id = %s OR project_id IS NULL) LIMIT %s"
             )
             rows = self._db.fetchall(sql, (like_value, project_id, limit))
         else:
-            sql = "SELECT * FROM memories WHERE id LIKE %s" + escape_clause + " LIMIT %s"
+            sql = "SELECT * FROM memories WHERE id::text LIKE %s" + escape_clause + " LIMIT %s"
             rows = self._db.fetchall(sql, (like_value, limit))
         return [Memory.from_row(row) for row in rows]

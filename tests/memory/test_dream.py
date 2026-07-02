@@ -1721,21 +1721,25 @@ async def test_service_uses_platform_truth_for_global_and_current_daemon_project
 
 @pytest.mark.asyncio
 async def test_service_uses_project_truth_only_for_non_daemon_project(tmp_path: Path) -> None:
+    # Repo-path resolution goes through LocalProjectManager.get, which returns
+    # None for non-uuid project ids, so these must be valid-format UUIDs.
+    current_project_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    other_project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
     db = _FakeDreamDB()
     current_repo = tmp_path / "current"
     other_repo = tmp_path / "other"
     _write_truth_digest(current_repo, _complete_digest_payload(service="Current sidecar"))
     _write_truth_digest(other_repo, _complete_digest_payload(service="Other sidecar"))
-    db.projects["current-project"] = _project_row("current-project", current_repo)
-    db.projects["other-project"] = _project_row("other-project", other_repo)
+    db.projects[current_project_id] = _project_row(current_project_id, current_repo)
+    db.projects[other_project_id] = _project_row(other_project_id, other_repo)
     db.memories = {
-        "other": {**_row("other", "Other project memory"), "project_id": "other-project"}
+        "other": {**_row("other", "Other project memory"), "project_id": other_project_id}
     }
 
     digest = await _capture_service_truth_digest(
         db,
-        DreamRunOptions(dry_run=True, project_id="other-project", include_global=False),
-        current_project_id="current-project",
+        DreamRunOptions(dry_run=True, project_id=other_project_id, include_global=False),
+        current_project_id=current_project_id,
     )
 
     assert "Other sidecar (frontend)" in digest
@@ -1745,15 +1749,17 @@ async def test_service_uses_project_truth_only_for_non_daemon_project(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_service_current_project_id_none_selects_no_daemon_project(tmp_path: Path) -> None:
+    # Must be a valid-format UUID so LocalProjectManager.get resolves the repo path.
+    project_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
     db = _FakeDreamDB()
     repo_path = tmp_path / "repo"
     _write_truth_digest(repo_path, _complete_digest_payload(service="Repo sidecar"))
-    db.projects["proj-1"] = _project_row("proj-1", repo_path)
-    db.memories = {"m1": _row("m1", "Project memory")}
+    db.projects[project_id] = _project_row(project_id, repo_path)
+    db.memories = {"m1": {**_row("m1", "Project memory"), "project_id": project_id}}
 
     digest = await _capture_service_truth_digest(
         db,
-        DreamRunOptions(dry_run=True, project_id="proj-1", include_global=False),
+        DreamRunOptions(dry_run=True, project_id=project_id, include_global=False),
         current_project_id=None,
     )
 

@@ -511,7 +511,7 @@ pub(crate) fn validate_parent_code_index(
             "SELECT EXISTS(
                 SELECT 1 FROM code_indexed_files WHERE project_id = $1
             )",
-            &[parent_project_id],
+            &[&db::id_param(parent_project_id)?],
         )
         .and_then(|row| row.try_get::<_, bool>(0))?;
 

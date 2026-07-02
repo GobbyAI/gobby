@@ -1,4 +1,5 @@
 import inspect
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -10,12 +11,17 @@ from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
+# projects.id is a native uuid column.
+PROJECT_ID = str(uuid.uuid4())
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase):
     database = temp_db
     with database.transaction() as conn:
-        conn.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("p1", "test_project"))
+        conn.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "test_project")
+        )
     return database
 
 
@@ -31,7 +37,7 @@ def run_manager(db):
 
 @pytest.fixture
 def parent_task(task_manager):
-    return task_manager.create_task(project_id="p1", title="Parent expansion task")
+    return task_manager.create_task(project_id=PROJECT_ID, title="Parent expansion task")
 
 
 def test_apply_result_case_condition_binds_boolean_for_postgres() -> None:
@@ -44,7 +50,7 @@ def test_apply_result_case_condition_binds_boolean_for_postgres() -> None:
 def test_append_log_creates_first_entry(run_manager, parent_task) -> None:
     run = run_manager.create(
         parent_task_id=parent_task.id,
-        project_id="p1",
+        project_id=PROJECT_ID,
         triggering_session_id=None,
         input_source="task",
     )
@@ -60,7 +66,7 @@ def test_append_log_creates_first_entry(run_manager, parent_task) -> None:
 def test_append_log_is_atomic_against_stale_reads(run_manager, parent_task) -> None:
     run = run_manager.create(
         parent_task_id=parent_task.id,
-        project_id="p1",
+        project_id=PROJECT_ID,
         triggering_session_id=None,
         input_source="task",
     )

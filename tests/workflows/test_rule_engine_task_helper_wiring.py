@@ -30,7 +30,7 @@ def _sync_bundled(db: HubDatabase) -> None:
 def _make_event() -> HookEvent:
     return HookEvent(
         event_type=HookEventType.STOP,
-        session_id="test-session",
+        session_id="11111111-1111-4111-8111-111111111111",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={},
@@ -59,7 +59,7 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
     engine = RuleEngine(db, task_manager=task_manager)
     response = await engine.evaluate(
         _make_event(),
-        session_id="sess-1",
+        session_id="11111111-1111-4111-8111-111111111111",
         variables={
             "_agent_type": "default",
             "mode_level": 0,

@@ -1,11 +1,17 @@
 """Tests for the LocalProjectManager storage layer."""
 
+import uuid
+
 import pytest
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.projects import LocalProjectManager, Project
 
 pytestmark = pytest.mark.unit
+
+# projects.id is a native uuid column; a valid-but-unknown UUID exercises the
+# "nonexistent project" paths without tripping the uuid cast.
+MISSING_PROJECT_ID = str(uuid.uuid4())
 
 
 class TestProject:
@@ -86,7 +92,7 @@ class TestLocalProjectManager:
 
     def test_get_nonexistent_project(self, project_manager: LocalProjectManager) -> None:
         """Test getting a nonexistent project returns None."""
-        result = project_manager.get("nonexistent-id")
+        result = project_manager.get(MISSING_PROJECT_ID)
         assert result is None
 
     def test_get_by_name(self, project_manager: LocalProjectManager) -> None:
@@ -182,7 +188,7 @@ class TestLocalProjectManager:
 
     def test_update_nonexistent(self, project_manager: LocalProjectManager) -> None:
         """Test updating nonexistent project returns None."""
-        result = project_manager.update("nonexistent-id", name="new-name")
+        result = project_manager.update(MISSING_PROJECT_ID, name="new-name")
         assert result is None
 
     def test_update_no_fields(self, project_manager: LocalProjectManager) -> None:
@@ -217,5 +223,5 @@ class TestLocalProjectManager:
 
     def test_delete_nonexistent(self, project_manager: LocalProjectManager) -> None:
         """Test deleting nonexistent project returns False."""
-        result = project_manager.delete("nonexistent-id")
+        result = project_manager.delete(MISSING_PROJECT_ID)
         assert result is False

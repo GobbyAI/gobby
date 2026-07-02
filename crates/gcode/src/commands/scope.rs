@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use postgres::Client;
 
 use crate::config::Context;
+use crate::db;
 use crate::visibility;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,13 +84,13 @@ pub(crate) fn other_project_for_path(
             "SELECT id, root_path FROM code_indexed_projects
              WHERE id != $1 AND root_path != ''
              ORDER BY root_path",
-            &[&ctx.project_id],
+            &[&db::id_param(&ctx.project_id).ok()?],
         )
         .ok()?;
 
     for row in rows {
         let project = ProjectMatch {
-            id: row.try_get("id").ok()?,
+            id: db::id_string(&row, "id").ok()?,
             root_path: row.try_get("root_path").ok()?,
         };
         let root = PathBuf::from(&project.root_path);
@@ -120,13 +121,13 @@ fn indexed_project_for_file_path(
              WHERE f.file_path = $1 AND f.project_id != $2
              ORDER BY p.root_path
              LIMIT 1",
-        &[&file_path, &current_project_id],
+        &[&file_path, &db::id_param(current_project_id).ok()?],
     )
     .ok()
     .flatten()
     .and_then(|row| {
         Some(ProjectMatch {
-            id: row.try_get("id").ok()?,
+            id: db::id_string(&row, "id").ok()?,
             root_path: row.try_get("root_path").ok()?,
         })
     })

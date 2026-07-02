@@ -61,7 +61,7 @@ class StageStateSchema:
             conn.execute(
                 """
                 CREATE TABLE task_stage_states (
-                    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
                     stage_name TEXT NOT NULL
                         REFERENCES task_stages_registry(name) ON DELETE RESTRICT,
                     position INTEGER NOT NULL,
@@ -72,18 +72,20 @@ class StageStateSchema:
                     review_policy TEXT NOT NULL DEFAULT 'none'
                         CHECK (review_policy IN ('none','required','optional')),
                     reviewer_agent TEXT,
-                    entered_at TEXT,
-                    entered_by_session_id TEXT,
-                    completed_at TEXT,
-                    completed_by_session_id TEXT,
+                    entered_at TIMESTAMPTZ,
+                    entered_by_session_id UUID,
+                    entered_by_actor TEXT,
+                    completed_at TIMESTAMPTZ,
+                    completed_by_session_id UUID,
+                    completed_by_actor TEXT,
                     completed_commit_sha TEXT,
                     work_attempt_count INTEGER NOT NULL DEFAULT 0,
                     review_round_count INTEGER NOT NULL DEFAULT 0,
                     max_work_attempts INTEGER,
                     max_review_rounds INTEGER,
-                    artifact_refs TEXT,
+                    artifact_refs JSONB,
                     notes TEXT,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (task_id, stage_name)
                 )
                 """
@@ -97,12 +99,16 @@ class StageStateSchema:
                     """
                     INSERT INTO task_stage_states (
                         task_id, stage_name, position, state, review_policy, reviewer_agent,
-                        entered_at, entered_by_session_id, completed_at,
-                        completed_by_session_id, completed_commit_sha, work_attempt_count,
+                        entered_at, entered_by_session_id, entered_by_actor, completed_at,
+                        completed_by_session_id, completed_by_actor, completed_commit_sha,
+                        work_attempt_count,
                         review_round_count, max_work_attempts, max_review_rounds,
                         artifact_refs, notes, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
                     """,
                     (
                         row["task_id"],
@@ -113,8 +119,10 @@ class StageStateSchema:
                         row.get("reviewer_agent") or registry.reviewer_agent,
                         row.get("entered_at"),
                         row.get("entered_by_session_id"),
+                        row.get("entered_by_actor"),
                         row.get("completed_at"),
                         row.get("completed_by_session_id"),
+                        row.get("completed_by_actor"),
                         row.get("completed_commit_sha"),
                         work_attempt_count or 0,
                         row.get("review_round_count", 0) or 0,

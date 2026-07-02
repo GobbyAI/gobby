@@ -1,5 +1,7 @@
 """Task lookup and hydration helpers."""
 
+import uuid
+
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import resolve_task_reference
@@ -10,6 +12,14 @@ from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 def _escape_like_prefix(prefix: str) -> str:
     """Escape SQL LIKE wildcard characters in an ID prefix."""
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _is_task_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Task:
@@ -28,6 +38,8 @@ def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Ta
             task_id = resolved_id
         except TaskNotFoundError as e:
             raise ValueError(str(e)) from e
+    elif not _is_task_uuid(task_id):
+        raise ValueError(f"Task {task_id} not found")
 
     if project_id:
         row = db.fetchone(
@@ -52,15 +64,16 @@ def find_task_by_prefix(db: HubDatabase, prefix: str) -> Task | None:
     if not prefix:
         return None
 
-    row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (prefix,))
-    if row:
-        task = Task.from_row(row)
-        hydrate_task_stage_state(db, [task])
-        hydrate_task_blocking_state(db, [task])
-        return task
+    if _is_task_uuid(prefix):
+        row = db.fetchone("SELECT * FROM tasks WHERE id = %s", (prefix,))
+        if row:
+            task = Task.from_row(row)
+            hydrate_task_stage_state(db, [task])
+            hydrate_task_blocking_state(db, [task])
+            return task
 
     rows = db.fetchall(
-        "SELECT * FROM tasks WHERE id LIKE %s ESCAPE '\\'",
+        "SELECT * FROM tasks WHERE id::text LIKE %s ESCAPE '\\'",
         (f"{_escape_like_prefix(prefix)}%",),
     )
     if len(rows) == 1:
@@ -78,7 +91,7 @@ def find_tasks_by_prefix(db: HubDatabase, prefix: str) -> list[Task]:
         return []
 
     rows = db.fetchall(
-        "SELECT * FROM tasks WHERE id LIKE %s ESCAPE '\\'",
+        "SELECT * FROM tasks WHERE id::text LIKE %s ESCAPE '\\'",
         (f"{_escape_like_prefix(prefix)}%",),
     )
     tasks = [Task.from_row(row) for row in rows]

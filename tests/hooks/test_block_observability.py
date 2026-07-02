@@ -22,6 +22,13 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
+# sessions.id, projects.id, workflow_definitions.id, and workflow_instances.id
+# are native uuid columns.
+SESSION_ID = "abababab-0000-4000-8000-000000000001"
+PROJECT_ID = "abababab-0000-4000-8000-000000000002"
+RULE_ID = "abababab-0000-4000-8000-000000000003"
+INSTANCE_ID = "abababab-0000-4000-8000-000000000004"
+
 
 @pytest.fixture
 def db(hub_db: HubDatabase) -> HubDatabase:
@@ -46,7 +53,7 @@ def instance_mgr(db: HubDatabase) -> WorkflowInstanceManager:
 def _make_event(
     *,
     event_type: HookEventType,
-    session_id: str = "test-session",
+    session_id: str = SESSION_ID,
     data: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> HookEvent:
@@ -60,21 +67,21 @@ def _make_event(
     )
 
 
-def _create_session_row(db: HubDatabase, session_id: str = "test-session") -> None:
+def _create_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, created_at)
         VALUES (%s, %s, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO NOTHING
         """,
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", "project-1"),
+        (session_id, "ext-1", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -102,7 +109,7 @@ def _insert_block_rule(
         )
         VALUES (%s, %s, 'rule', %s, %s, 'test')
         """,
-        (f"rule-{name}", name, json.dumps(definition), True),
+        (RULE_ID, name, json.dumps(definition), True),
     )
 
 
@@ -111,7 +118,7 @@ def _setup_step_workflow(
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
     *,
-    session_id: str = "test-session",
+    session_id: str = SESSION_ID,
 ) -> None:
     _create_session_row(db, session_id)
     definition: dict[str, Any] = {
@@ -136,7 +143,7 @@ def _setup_step_workflow(
     from gobby.workflows.definitions import WorkflowInstance
 
     instance = WorkflowInstance(
-        id=f"inst-{session_id}-step-observability",
+        id=INSTANCE_ID,
         session_id=session_id,
         workflow_name="step-observability",
         enabled=True,
@@ -191,14 +198,14 @@ async def test_rule_block_reason_and_log_are_structured(
     event = _make_event(event_type=HookEventType.STOP)
 
     with caplog.at_level(logging.INFO):
-        response = await engine.evaluate(event, session_id="test-session", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
     assert response.decision == "block"
     assert response.reason
     assert "Blocked by rule" not in response.reason
     assert "Rule enforced by Gobby: [test-empty-block-reason]" in response.reason
     assert any(
-        "BLOCK session=test-session event=stop tool=- source=rule "
+        f"BLOCK session={SESSION_ID} event=stop tool=- source=rule "
         "rule=test-empty-block-reason reason=Rule enforced by Gobby: "
         "[test-empty-block-reason]" in message
         for message in _block_messages(caplog)
@@ -224,12 +231,12 @@ async def test_step_enforcement_block_logs_structured_reason(
     )
 
     with caplog.at_level(logging.INFO):
-        response = await engine.evaluate(event, session_id="test-session", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
     assert response.decision == "block"
     assert response.reason
     assert any(
-        "BLOCK session=test-session event=before_tool tool=Write "
+        f"BLOCK session={SESSION_ID} event=before_tool tool=Write "
         "source=step-enforcement rule=step-tool-enforcement" in message
         for message in _block_messages(caplog)
     )
@@ -262,7 +269,7 @@ def test_webhook_block_reason_and_log_are_structured(
     assert response.reason
     assert response.reason != "Blocked by webhook"
     assert any(
-        "BLOCK session=test-session event=before_tool tool=Read "
+        f"BLOCK session={SESSION_ID} event=before_tool tool=Read "
         "source=webhook rule=webhook-dispatch" in message
         for message in _block_messages(caplog)
     )

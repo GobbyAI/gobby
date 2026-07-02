@@ -143,6 +143,11 @@ fn table_columns(sql: &str) -> Vec<&str> {
         if line.is_empty() || line == ")" {
             continue;
         }
+        if line.starts_with("CONSTRAINT") {
+            // A named table constraint: the UNIQUE/CHECK body follows on the
+            // next line and is handled by the branch below.
+            continue;
+        }
         if line.starts_with("UNIQUE") {
             in_table_constraint = !line.contains(')');
             continue;

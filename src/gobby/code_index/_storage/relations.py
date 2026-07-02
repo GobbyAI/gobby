@@ -65,7 +65,9 @@ class CodeIndexRelationStorageMixin:
                     (
                         project_id,
                         c.caller_symbol_id,
-                        c.callee_symbol_id or "",
+                        # callee_symbol_id is a nullable uuid column; external
+                        # calls carry NULL (uniqueness is NULLS NOT DISTINCT).
+                        c.callee_symbol_id,
                         c.callee_name,
                         c.callee_target_kind,
                         c.callee_external_module or "",

@@ -10,13 +10,24 @@ from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
+# Session/project/instance id columns are native uuid in PostgreSQL; synthetic
+# ids like S1 would fail with `invalid input syntax for type uuid`.
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+S1 = "11111111-1111-4111-8111-111111111111"
+S2 = "22222222-2222-4222-8222-222222222222"
+INST_1 = "33333333-3333-4333-8333-333333333333"
+INST_2 = "44444444-4444-4444-8444-444444444444"
+INST_3 = "55555555-5555-4555-8555-555555555555"
+INST_4 = "66666666-6666-4666-8666-666666666666"
+NONEXISTENT_SESSION_ID = "77777777-7777-4777-8777-777777777777"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
     database = temp_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
-        ("proj1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     yield database
 
@@ -26,7 +37,7 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
         "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, f"ext-{session_id}", "machine-1", "claude", "proj1"),
+        (session_id, f"ext-{session_id}", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -35,22 +46,22 @@ def test_save_and_get_instance(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
     instance = WorkflowInstance(
-        id="inst-1",
-        session_id="s1",
+        id=INST_1,
+        session_id=S1,
         workflow_name="auto-task",
         priority=25,
         current_step="work",
     )
     mgr.save_instance(instance)
 
-    result = mgr.get_instance("s1", "auto-task")
+    result = mgr.get_instance(S1, "auto-task")
     assert result is not None
-    assert result.id == "inst-1"
-    assert result.session_id == "s1"
+    assert result.id == INST_1
+    assert result.session_id == S1
     assert result.workflow_name == "auto-task"
     assert result.priority == 25
     assert result.current_step == "work"
@@ -62,7 +73,7 @@ def test_get_instance_not_found(db: HubDatabase) -> None:
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     mgr = WorkflowInstanceManager(db)
-    result = mgr.get_instance("nonexistent", "nonexistent")
+    result = mgr.get_instance(NONEXISTENT_SESSION_ID, "nonexistent")
     assert result is None
 
 
@@ -71,13 +82,13 @@ def test_save_instance_upsert(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
     # Create
     instance = WorkflowInstance(
-        id="inst-1",
-        session_id="s1",
+        id=INST_1,
+        session_id=S1,
         workflow_name="auto-task",
         current_step="work",
         step_action_count=0,
@@ -89,7 +100,7 @@ def test_save_instance_upsert(db: HubDatabase) -> None:
     instance.step_action_count = 5
     mgr.save_instance(instance)
 
-    result = mgr.get_instance("s1", "auto-task")
+    result = mgr.get_instance(S1, "auto-task")
     assert result is not None
     assert result.current_step == "complete"
     assert result.step_action_count == 5
@@ -100,14 +111,14 @@ def test_get_active_instances(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
     # Create 3 instances with different priorities and enabled states
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-1",
-            session_id="s1",
+            id=INST_1,
+            session_id=S1,
             workflow_name="session-lifecycle",
             enabled=True,
             priority=10,
@@ -115,8 +126,8 @@ def test_get_active_instances(db: HubDatabase) -> None:
     )
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-2",
-            session_id="s1",
+            id=INST_2,
+            session_id=S1,
             workflow_name="developer",
             enabled=True,
             priority=20,
@@ -124,8 +135,8 @@ def test_get_active_instances(db: HubDatabase) -> None:
     )
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-3",
-            session_id="s1",
+            id=INST_3,
+            session_id=S1,
             workflow_name="auto-task",
             enabled=True,
             priority=25,
@@ -133,15 +144,15 @@ def test_get_active_instances(db: HubDatabase) -> None:
     )
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-4",
-            session_id="s1",
+            id=INST_4,
+            session_id=S1,
             workflow_name="disabled-wf",
             enabled=False,
             priority=5,
         )
     )
 
-    active = mgr.get_active_instances("s1")
+    active = mgr.get_active_instances(S1)
     assert len(active) == 3  # Disabled one excluded
     assert active[0].workflow_name == "session-lifecycle"  # priority=10
     assert active[1].workflow_name == "developer"  # priority=20
@@ -153,7 +164,7 @@ def test_get_active_instances_empty(db: HubDatabase) -> None:
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     mgr = WorkflowInstanceManager(db)
-    result = mgr.get_active_instances("nonexistent")
+    result = mgr.get_active_instances(NONEXISTENT_SESSION_ID)
     assert result == []
 
 
@@ -162,22 +173,22 @@ def test_delete_instance(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-1",
-            session_id="s1",
+            id=INST_1,
+            session_id=S1,
             workflow_name="auto-task",
         )
     )
 
-    assert mgr.get_instance("s1", "auto-task") is not None
+    assert mgr.get_instance(S1, "auto-task") is not None
 
-    mgr.delete_instance("s1", "auto-task")
+    mgr.delete_instance(S1, "auto-task")
 
-    assert mgr.get_instance("s1", "auto-task") is None
+    assert mgr.get_instance(S1, "auto-task") is None
 
 
 def test_delete_instance_nonexistent(db: HubDatabase) -> None:
@@ -185,8 +196,8 @@ def test_delete_instance_nonexistent(db: HubDatabase) -> None:
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     mgr = WorkflowInstanceManager(db)
-    mgr.delete_instance("nonexistent", "nonexistent")
-    assert mgr.get_instance("nonexistent", "nonexistent") is None
+    mgr.delete_instance(NONEXISTENT_SESSION_ID, "nonexistent")
+    assert mgr.get_instance(NONEXISTENT_SESSION_ID, "nonexistent") is None
 
 
 def test_delete_instances_for_session(db: HubDatabase) -> None:
@@ -194,37 +205,37 @@ def test_delete_instances_for_session(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
-    _ensure_session(db, "s2")
+    _ensure_session(db, S1)
+    _ensure_session(db, S2)
     mgr = WorkflowInstanceManager(db)
 
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-1",
-            session_id="s1",
+            id=INST_1,
+            session_id=S1,
             workflow_name="auto-task",
         )
     )
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-2",
-            session_id="s1",
+            id=INST_2,
+            session_id=S1,
             workflow_name="developer",
         )
     )
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-3",
-            session_id="s2",
+            id=INST_3,
+            session_id=S2,
             workflow_name="plan-adversary-steps",
         )
     )
 
-    deleted_count = mgr.delete_instances_for_session("s1")
+    deleted_count = mgr.delete_instances_for_session(S1)
 
     assert deleted_count == 2
-    assert mgr.get_active_instances("s1") == []
-    remaining = mgr.get_active_instances("s2")
+    assert mgr.get_active_instances(S1) == []
+    remaining = mgr.get_active_instances(S2)
     assert len(remaining) == 1
     assert remaining[0].workflow_name == "plan-adversary-steps"
 
@@ -234,27 +245,27 @@ def test_set_enabled(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-1",
-            session_id="s1",
+            id=INST_1,
+            session_id=S1,
             workflow_name="auto-task",
             enabled=True,
         )
     )
 
     # Disable
-    mgr.set_enabled("s1", "auto-task", False)
-    result = mgr.get_instance("s1", "auto-task")
+    mgr.set_enabled(S1, "auto-task", False)
+    result = mgr.get_instance(S1, "auto-task")
     assert result is not None
     assert result.enabled is False
 
     # Re-enable
-    mgr.set_enabled("s1", "auto-task", True)
-    result = mgr.get_instance("s1", "auto-task")
+    mgr.set_enabled(S1, "auto-task", True)
+    result = mgr.get_instance(S1, "auto-task")
     assert result is not None
     assert result.enabled is True
 
@@ -264,8 +275,8 @@ def test_set_enabled_nonexistent(db: HubDatabase) -> None:
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
     mgr = WorkflowInstanceManager(db)
-    mgr.set_enabled("nonexistent", "nonexistent", True)
-    assert mgr.get_instance("nonexistent", "nonexistent") is None
+    mgr.set_enabled(NONEXISTENT_SESSION_ID, "nonexistent", True)
+    assert mgr.get_instance(NONEXISTENT_SESSION_ID, "nonexistent") is None
 
 
 def test_multiple_sessions_isolated(db: HubDatabase) -> None:
@@ -273,29 +284,29 @@ def test_multiple_sessions_isolated(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
-    _ensure_session(db, "s2")
+    _ensure_session(db, S1)
+    _ensure_session(db, S2)
     mgr = WorkflowInstanceManager(db)
 
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-1",
-            session_id="s1",
+            id=INST_1,
+            session_id=S1,
             workflow_name="auto-task",
             variables={"key": "session1"},
         )
     )
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-2",
-            session_id="s2",
+            id=INST_2,
+            session_id=S2,
             workflow_name="auto-task",
             variables={"key": "session2"},
         )
     )
 
-    s1_inst = mgr.get_instance("s1", "auto-task")
-    s2_inst = mgr.get_instance("s2", "auto-task")
+    s1_inst = mgr.get_instance(S1, "auto-task")
+    s2_inst = mgr.get_instance(S2, "auto-task")
 
     assert s1_inst is not None
     assert s2_inst is not None
@@ -308,7 +319,7 @@ def test_save_instance_preserves_variables(db: HubDatabase) -> None:
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager
 
-    _ensure_session(db, "s1")
+    _ensure_session(db, S1)
     mgr = WorkflowInstanceManager(db)
 
     variables = {
@@ -318,14 +329,14 @@ def test_save_instance_preserves_variables(db: HubDatabase) -> None:
     }
     mgr.save_instance(
         WorkflowInstance(
-            id="inst-1",
-            session_id="s1",
+            id=INST_1,
+            session_id=S1,
             workflow_name="auto-task",
             variables=variables,
         )
     )
 
-    result = mgr.get_instance("s1", "auto-task")
+    result = mgr.get_instance(S1, "auto-task")
     assert result is not None
     assert result.variables == variables
     assert result.variables["nested"]["list"] == [1, 2, 3]

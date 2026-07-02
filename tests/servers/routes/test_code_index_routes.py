@@ -29,11 +29,14 @@ from gobby.servers.routes.code_index import create_code_index_router
 
 pytestmark = pytest.mark.unit
 
+# projects.id and code_* ids are native uuid columns; use a valid UUID string.
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+
 
 def _make_symbol(symbol_id: str = "sym-1", name: str = "handler") -> Symbol:
     return Symbol(
         id=symbol_id,
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         file_path="src/app.py",
         name=name,
         qualified_name=name,
@@ -47,7 +50,7 @@ def _make_symbol(symbol_id: str = "sym-1", name: str = "handler") -> Symbol:
     )
 
 
-def _make_project_row(project_id: str = "proj-1", name: str = "gobby") -> dict[str, Any]:
+def _make_project_row(project_id: str = PROJECT_ID, name: str = "gobby") -> dict[str, Any]:
     return {
         "id": project_id,
         "name": name,
@@ -75,11 +78,11 @@ def mock_server() -> MagicMock:
         return_value={"nodes": [], "links": [], "center": "sym-1"}
     )
     code_indexer.graph_path = AsyncMock(return_value={"path": [], "summary": {"depth": 2}})
-    code_indexer.clear_graph = AsyncMock(return_value={"success": True, "project_id": "proj-1"})
+    code_indexer.clear_graph = AsyncMock(return_value={"success": True, "project_id": PROJECT_ID})
     code_indexer.rebuild_graph = AsyncMock(
-        return_value={"success": True, "project_id": "proj-1", "files_processed": 0, "errors": []}
+        return_value={"success": True, "project_id": PROJECT_ID, "files_processed": 0, "errors": []}
     )
-    code_indexer.invalidate = AsyncMock(return_value={"status": "ok", "project_id": "proj-1"})
+    code_indexer.invalidate = AsyncMock(return_value={"status": "ok", "project_id": PROJECT_ID})
     code_indexer.storage = MagicMock()
     code_indexer.storage.search_symbols_fts = MagicMock(return_value=[])
     code_indexer.storage.search_symbols_by_name = MagicMock(return_value=[_make_symbol()])
@@ -102,10 +105,10 @@ def test_graph_overview_requires_project_id(client: TestClient) -> None:
 
 
 def test_graph_overview_returns_data(client: TestClient, mock_server: MagicMock) -> None:
-    response = client.get("/api/code-index/graph", params={"project_id": "proj-1", "limit": 25})
+    response = client.get("/api/code-index/graph", params={"project_id": PROJECT_ID, "limit": 25})
     assert response.status_code == 200
     mock_server.services.code_indexer.graph_overview.assert_awaited_once_with(
-        "proj-1",
+        PROJECT_ID,
         limit=25,
     )
 
@@ -117,14 +120,14 @@ def test_codewiki_refresh_schedules_trigger(client: TestClient, mock_server: Mag
 
     response = client.post(
         "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+        json={"root_path": "/repo", "project_id": PROJECT_ID, "ai": "daemon"},
     )
 
     assert response.status_code == 202
     assert response.json()["accepted"] is True
     trigger.request_refresh.assert_called_once_with(
         root_path="/repo",
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         out_dir=None,
         ai="daemon",
         scopes=["crates", "web", "src"],
@@ -147,7 +150,7 @@ def test_codewiki_refresh_runs_trigger_through_db_bridge(
 
     response = client.post(
         "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+        json={"root_path": "/repo", "project_id": PROJECT_ID, "ai": "daemon"},
     )
 
     assert response.status_code == 202
@@ -159,7 +162,7 @@ def test_codewiki_refresh_runs_trigger_through_db_bridge(
             (),
             {
                 "root_path": "/repo",
-                "project_id": "proj-1",
+                "project_id": PROJECT_ID,
                 "out_dir": None,
                 "ai": "daemon",
                 "scopes": ["crates", "web", "src"],
@@ -259,7 +262,7 @@ def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
     with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.code_index"):
         response = client.post(
             "/api/code-index/codewiki/refresh",
-            json={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+            json={"root_path": "/repo", "project_id": PROJECT_ID, "ai": "daemon"},
             headers={"x-request-id": "req-1"},
         )
 
@@ -272,7 +275,7 @@ def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
     assert record.path == "/api/code-index/codewiki/refresh"
     assert record.request_id == "req-1"
     assert record.root_path == "/repo"
-    assert record.project_id == "proj-1"
+    assert record.project_id == PROJECT_ID
     assert record.ai == "daemon"
     assert record.error == "unexpected disk failure"
 
@@ -280,11 +283,11 @@ def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get(
         "/api/code-index/graph/file/src/app.py",
-        params={"project_id": "proj-1"},
+        params={"project_id": PROJECT_ID},
     )
     assert response.status_code == 200
     mock_server.services.code_indexer.graph_file.assert_awaited_once_with(
-        "proj-1",
+        PROJECT_ID,
         "src/app.py",
     )
 
@@ -301,7 +304,7 @@ def test_graph_route_returns_400_for_invalid_gcode_input(
 
     response = client.get(
         "/api/code-index/graph/file/-src/app.py",
-        params={"project_id": "proj-1"},
+        params={"project_id": PROJECT_ID},
     )
 
     assert response.status_code == 400
@@ -313,11 +316,11 @@ def test_graph_route_returns_400_for_invalid_gcode_input(
 def test_graph_symbol_neighbors_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get(
         "/api/code-index/graph/symbol/sym-1/neighbors",
-        params={"project_id": "proj-1", "limit": 10},
+        params={"project_id": PROJECT_ID, "limit": 10},
     )
     assert response.status_code == 200
     mock_server.services.code_indexer.graph_symbol_neighbors.assert_awaited_once_with(
-        "proj-1",
+        PROJECT_ID,
         "sym-1",
         limit=10,
     )
@@ -326,11 +329,11 @@ def test_graph_symbol_neighbors_delegates(client: TestClient, mock_server: Magic
 def test_blast_radius_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get(
         "/api/code-index/graph/blast-radius",
-        params={"project_id": "proj-1", "symbol_id": "sym-1", "depth": 2, "limit": 20},
+        params={"project_id": PROJECT_ID, "symbol_id": "sym-1", "depth": 2, "limit": 20},
     )
     assert response.status_code == 200
     mock_server.services.code_indexer.graph_blast_radius.assert_awaited_once_with(
-        "proj-1",
+        PROJECT_ID,
         symbol_id="sym-1",
         file_path=None,
         depth=2,
@@ -342,7 +345,7 @@ def test_graph_path_delegates(client: TestClient, mock_server: MagicMock) -> Non
     response = client.get(
         "/api/code-index/graph/path",
         params={
-            "project_id": "proj-1",
+            "project_id": PROJECT_ID,
             "symbol_a": "from-symbol",
             "symbol_b": "to-symbol",
             "max_depth": 8,
@@ -350,7 +353,7 @@ def test_graph_path_delegates(client: TestClient, mock_server: MagicMock) -> Non
     )
     assert response.status_code == 200
     mock_server.services.code_indexer.graph_path.assert_awaited_once_with(
-        "proj-1",
+        PROJECT_ID,
         "from-symbol",
         "to-symbol",
         max_depth=8,
@@ -359,7 +362,7 @@ def test_graph_path_delegates(client: TestClient, mock_server: MagicMock) -> Non
 
 def test_search_falls_back_to_name_search(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get(
-        "/api/code-index/graph/search", params={"project_id": "proj-1", "q": "handler"}
+        "/api/code-index/graph/search", params={"project_id": PROJECT_ID, "q": "handler"}
     )
     assert response.status_code == 200
     data = response.json()
@@ -367,14 +370,14 @@ def test_search_falls_back_to_name_search(client: TestClient, mock_server: Magic
     assert data["results"][0]["type"] == "function"
     mock_server.services.code_indexer.storage.search_symbols_fts.assert_called_once_with(
         "handler",
-        "proj-1",
+        PROJECT_ID,
         kind=None,
         file_path=None,
         limit=25,
     )
     mock_server.services.code_indexer.storage.search_symbols_by_name.assert_called_once_with(
         "handler",
-        "proj-1",
+        PROJECT_ID,
         kind=None,
         file_path=None,
         limit=25,
@@ -384,25 +387,25 @@ def test_search_falls_back_to_name_search(client: TestClient, mock_server: Magic
 def test_blast_radius_validates_exclusive_target(client: TestClient) -> None:
     response = client.get(
         "/api/code-index/graph/blast-radius",
-        params={"project_id": "proj-1", "symbol_id": "sym-1", "file_path": "src/app.py"},
+        params={"project_id": PROJECT_ID, "symbol_id": "sym-1", "file_path": "src/app.py"},
     )
     assert response.status_code == 400
 
 
 def test_clear_graph_delegates(client: TestClient, mock_server: MagicMock) -> None:
-    response = client.post("/api/code-index/graph/clear", params={"project_id": "proj-1"})
+    response = client.post("/api/code-index/graph/clear", params={"project_id": PROJECT_ID})
     assert response.status_code == 200
-    mock_server.services.code_indexer.clear_graph.assert_awaited_once_with("proj-1")
+    mock_server.services.code_indexer.clear_graph.assert_awaited_once_with(PROJECT_ID)
 
 
 def test_rebuild_graph_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.post(
         "/api/code-index/graph/rebuild",
-        params={"project_id": "proj-1", "limit": 50},
+        params={"project_id": PROJECT_ID, "limit": 50},
     )
     assert response.status_code == 200
     mock_server.services.code_indexer.rebuild_graph.assert_awaited_once_with(
-        "proj-1",
+        PROJECT_ID,
         limit=50,
     )
 
@@ -413,7 +416,7 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
 
     storage = MagicMock()
     storage.get_project_stats.return_value = IndexedProject(
-        id="proj-1",
+        id=PROJECT_ID,
         root_path="/repo",
         total_files=0,
         total_symbols=0,
@@ -442,7 +445,7 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
     app.include_router(create_code_index_router(server))
     test_client = TestClient(app)
 
-    response = test_client.post("/api/code-index/invalidate", json={"project_id": "proj-1"})
+    response = test_client.post("/api/code-index/invalidate", json={"project_id": PROJECT_ID})
 
     assert response.status_code == 207
     body = response.json()
@@ -452,14 +455,14 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
         "error": "down",
         "pending_retry": True,
     }
-    storage.mark_prune_dirty.assert_called_once_with("proj-1", "/repo", "invalidate")
+    storage.mark_prune_dirty.assert_called_once_with(PROJECT_ID, "/repo", "invalidate")
     storage.record_projection_cleanup_failure.assert_not_called()
 
 
 def test_clear_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:
     mock_server.services.code_indexer.clear_graph = AsyncMock(side_effect=RuntimeError("boom"))
 
-    response = client.post("/api/code-index/graph/clear", params={"project_id": "proj-1"})
+    response = client.post("/api/code-index/graph/clear", params={"project_id": PROJECT_ID})
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Code graph request failed"
@@ -468,7 +471,7 @@ def test_clear_graph_returns_500_on_exception(client: TestClient, mock_server: M
 def test_rebuild_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:
     mock_server.services.code_indexer.rebuild_graph = AsyncMock(side_effect=RuntimeError("boom"))
 
-    response = client.post("/api/code-index/graph/rebuild", params={"project_id": "proj-1"})
+    response = client.post("/api/code-index/graph/rebuild", params={"project_id": PROJECT_ID})
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Code graph request failed"
@@ -479,7 +482,7 @@ def test_clear_graph_preserves_http_exception(client: TestClient, mock_server: M
         side_effect=HTTPException(status_code=418, detail="teapot")
     )
 
-    response = client.post("/api/code-index/graph/clear", params={"project_id": "proj-1"})
+    response = client.post("/api/code-index/graph/clear", params={"project_id": PROJECT_ID})
 
     assert response.status_code == 418
     assert response.json()["detail"] == "teapot"
@@ -490,7 +493,7 @@ def test_rebuild_graph_preserves_http_exception(client: TestClient, mock_server:
         side_effect=HTTPException(status_code=422, detail="bad rebuild request")
     )
 
-    response = client.post("/api/code-index/graph/rebuild", params={"project_id": "proj-1"})
+    response = client.post("/api/code-index/graph/rebuild", params={"project_id": PROJECT_ID})
 
     assert response.status_code == 422
     assert response.json()["detail"] == "bad rebuild request"
@@ -504,7 +507,7 @@ def test_graph_route_returns_503_when_gateway_unavailable(
         side_effect=GcodeUnavailableError("gcode is not installed")
     )
 
-    response = client.get("/api/code-index/graph", params={"project_id": "proj-1"})
+    response = client.get("/api/code-index/graph", params={"project_id": PROJECT_ID})
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Code graph not available"
@@ -520,7 +523,7 @@ def test_graph_route_returns_503_when_graph_disabled(
 
     response = client.get(
         "/api/code-index/graph/file/src/app.py",
-        params={"project_id": "proj-1"},
+        params={"project_id": PROJECT_ID},
     )
 
     assert response.status_code == 503
@@ -537,7 +540,7 @@ def test_graph_route_returns_404_when_project_root_missing(
 
     response = client.get(
         "/api/code-index/graph/symbol/sym-1/neighbors",
-        params={"project_id": "proj-1"},
+        params={"project_id": PROJECT_ID},
     )
 
     assert response.status_code == 404
@@ -556,7 +559,7 @@ def test_graph_route_returns_404_when_gcode_project_missing(
     )
     mock_server.services.code_indexer.graph_overview = AsyncMock(side_effect=error)
 
-    response = client.get("/api/code-index/graph", params={"project_id": "proj-1"})
+    response = client.get("/api/code-index/graph", params={"project_id": PROJECT_ID})
 
     assert response.status_code == 404
     assert response.json()["detail"] == str(error)
@@ -572,7 +575,7 @@ def test_graph_route_returns_500_when_gcode_command_fails(
 
     response = client.get(
         "/api/code-index/graph/blast-radius",
-        params={"project_id": "proj-1", "file_path": "src/app.py"},
+        params={"project_id": PROJECT_ID, "file_path": "src/app.py"},
     )
 
     assert response.status_code == 500

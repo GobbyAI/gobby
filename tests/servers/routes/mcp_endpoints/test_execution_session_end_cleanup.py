@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+# projects.id is a native uuid column; use a valid UUID string.
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+
 
 _PLAN_ADVERSARY_TERMINATE_WORKFLOW = {
     "name": "plan-adversary-steps",
@@ -50,7 +53,7 @@ def db(hub_db: HubDatabase) -> HubDatabase:
     database = hub_db
     database.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
-        ("proj1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     return database
 
@@ -60,7 +63,7 @@ def _insert_session(
     *,
     session_id: str,
     external_id: str,
-    project_id: str = "proj1",
+    project_id: str = PROJECT_ID,
 ) -> None:
     db.execute(
         """
@@ -99,7 +102,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._dispatch_session_summaries_fn = None
         self._call_tool = None
         self._get_machine_id = MagicMock(return_value="machine-1")
-        self._resolve_project_id = MagicMock(return_value="proj1")
+        self._resolve_project_id = MagicMock(return_value=PROJECT_ID)
         self._handler_map = {}
 
 
@@ -151,7 +154,8 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     instance_manager = WorkflowInstanceManager(db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id="inst-child-terminate",
+            # workflow_instances.id is a native uuid column.
+            id=str(uuid.uuid4()),
             session_id=child_session_id,
             workflow_name="plan-adversary-steps",
             enabled=True,

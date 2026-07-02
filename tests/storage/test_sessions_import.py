@@ -33,7 +33,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "session_id: 'str') -> 'None'",
     "clear_had_edits": "(self, session_id: 'str') -> 'None'",
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
-    "source: 'str | None' = None) -> 'int'",
+    "source: 'str | None' = None, machine_id: 'str | None' = None) -> 'int'",
     "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
     "create_web_chat_session": "(self, *, machine_id: 'str', project_id: 'str', "
     "source: 'str', title: 'str | None' = None, model: 'str | None' = None, "
@@ -70,7 +70,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "is_ancestor": "(self, ancestor_id: 'str', descendant_id: 'str') -> 'bool'",
     "list": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, limit: 'int' = 100, "
-    "exclude_subagents: 'bool' = False, cursor_updated_at: 'str | None' = None, "
+    "exclude_subagents: 'bool' = False, machine_id: 'str | None' = None, "
+    "cursor_updated_at: 'str | None' = None, "
     "cursor_id: 'str | None' = None, sources: 'Sequence[str] | None' = None, "
     "statuses: 'Sequence[str] | None' = None, modes: 'Sequence[str] | None' = None, "
     "models: 'Sequence[str] | None' = None, session_seq_min: 'int | None' = None, "
@@ -107,7 +108,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "terminal_context: 'dict[str, Any] | None' = None, "
     "workflow_name: 'str | None' = None, session_type: 'str' = 'terminal', "
     "is_local: 'bool' = False, sandbox_enabled: 'bool | None' = None, "
-    "sandbox_policy_hash: 'str | None' = None) -> 'Session'",
+    "sandbox_policy_hash: 'str | None' = None, "
+    "title_source: 'str | None' = None) -> 'Session'",
     "register_session": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
     "project_id: 'str | None', parent_session_id: 'str | None' = None, "
     "transcript_path: 'str | None' = None, title: 'str | None' = None, "

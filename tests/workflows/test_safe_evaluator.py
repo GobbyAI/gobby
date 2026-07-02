@@ -90,6 +90,9 @@ class TestTaskTreeComplete:
 
     def test_returns_false_when_subtask_open(self, mock_task_manager: MagicMock) -> None:
         parent = _make_task(closed=True)
+        # _is_tree_complete resolves subtasks via the task row's own id
+        # (list_tasks(parent_task_id=task.id)), so the mock id must match the ref.
+        parent.id = "task-123"
         child = _make_task()
         child.id = "child-1"
 

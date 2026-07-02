@@ -175,6 +175,7 @@ def restore_stage_pipeline_retry(
                SET state = 'ready',
                    entered_at = NULL,
                    entered_by_session_id = NULL,
+                   entered_by_actor = NULL,
                    artifact_refs = NULL,
                    notes = NULL,
                    work_attempt_count = CASE

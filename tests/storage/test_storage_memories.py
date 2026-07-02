@@ -10,6 +10,14 @@ from gobby.storage.memories_models import Memory, visibility_predicate
 
 pytestmark = pytest.mark.unit
 
+# projects.id, sessions.id, and memories.id/project_id/source_session_id are
+# native uuid columns; synthetic ids must be valid UUID strings.
+PROJECT_1 = "11111111-1111-1111-1111-111111111111"
+PROJECT_2 = "22222222-2222-2222-2222-222222222222"
+SESSION_1 = "33333333-3333-3333-3333-333333333333"
+UNKNOWN_MEMORY_ID = "99999999-9999-9999-9999-999999999999"
+UNKNOWN_PROJECT_ID = "88888888-8888-8888-8888-888888888888"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase):
@@ -60,8 +68,8 @@ def test_update_memory(memory_manager) -> None:
 
 
 def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
-    db.execute("INSERT INTO projects (id, name) VALUES ('p1', 'Project 1')")
-    created = memory_manager.create_memory(content="Universal", project_id="p1")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    created = memory_manager.create_memory(content="Universal", project_id=PROJECT_1)
 
     promoted = memory_manager.rescope_memory(created.id, None)
 
@@ -78,18 +86,18 @@ def test_delete_memory(memory_manager) -> None:
 
 def test_list_memories(memory_manager, db) -> None:
     # Seed projects for foreign keys
-    db.execute("INSERT INTO projects (id, name) VALUES ('p1', 'Project 1')")
-    db.execute("INSERT INTO projects (id, name) VALUES ('p2', 'Project 2')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
 
     memory_manager.create_memory(content="Global", project_id=None)
-    memory_manager.create_memory(content="Project A", project_id="p1")
-    memory_manager.create_memory(content="Project B", project_id="p2")
+    memory_manager.create_memory(content="Project A", project_id=PROJECT_1)
+    memory_manager.create_memory(content="Project B", project_id=PROJECT_2)
 
     # List all global + project A
     # Wait, implementation logic: (project_id = ? OR project_id IS NULL)
 
-    # 1. List with project_id="p1"
-    memories = memory_manager.list_memories(project_id="p1")
+    # 1. List with project_id=PROJECT_1
+    memories = memory_manager.list_memories(project_id=PROJECT_1)
     contents = {m.content for m in memories}
     assert "Global" in contents
     assert "Project A" in contents
@@ -205,58 +213,58 @@ def test_update_memory_rejects_content_mutation(memory_manager) -> None:
 
 def test_create_memory_dedup_scopes_to_project(memory_manager, db) -> None:
     """Same content can be stored independently per project scope."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
 
-    memory1 = memory_manager.create_memory(content="Scoped dedup test", project_id="proj1")
-    memory2 = memory_manager.create_memory(content="Scoped dedup test", project_id="proj2")
+    memory1 = memory_manager.create_memory(content="Scoped dedup test", project_id=PROJECT_1)
+    memory2 = memory_manager.create_memory(content="Scoped dedup test", project_id=PROJECT_2)
     memory3 = memory_manager.create_memory(content="Scoped dedup test", project_id=None)
-    memory4 = memory_manager.create_memory(content="Scoped dedup test", project_id="proj1")
+    memory4 = memory_manager.create_memory(content="Scoped dedup test", project_id=PROJECT_1)
 
     assert memory1.id != memory2.id
     assert memory1.id != memory3.id
     assert memory2.id != memory3.id
     assert memory4.id == memory1.id
-    assert memory1.project_id == "proj1"
-    assert memory2.project_id == "proj2"
+    assert memory1.project_id == PROJECT_1
+    assert memory2.project_id == PROJECT_2
     assert memory3.project_id is None
 
 
 def test_source_session_proximity_dedup_scopes_to_project(memory_manager, db) -> None:
     """Same-session proximity dedup does not cross project boundaries."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
-    _insert_session(db, "session-1", "proj1")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
+    _insert_session(db, SESSION_1, PROJECT_1)
 
     first = memory_manager.create_memory(
         content="Same-session scoped memory",
-        project_id="proj1",
-        source_session_id="session-1",
+        project_id=PROJECT_1,
+        source_session_id=SESSION_1,
     )
     second = memory_manager.create_memory(
         content="Same-session scoped memory",
-        project_id="proj2",
-        source_session_id="session-1",
+        project_id=PROJECT_2,
+        source_session_id=SESSION_1,
     )
 
     assert second.id != first.id
-    assert second.project_id == "proj2"
+    assert second.project_id == PROJECT_2
 
 
 def test_source_session_proximity_dedup_ignores_deleted(memory_manager, db) -> None:
     """Deleted memories do not satisfy source-session proximity dedup."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj-session', 'Session Project')")
-    _insert_session(db, "session-1", "proj-session")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Session Project"))
+    _insert_session(db, SESSION_1, PROJECT_1)
 
     created = memory_manager.create_memory(
         content="Deleted same-session memory",
-        source_session_id="session-1",
+        source_session_id=SESSION_1,
     )
     assert memory_manager.delete_memory(created.id)
 
     revived = memory_manager.create_memory(
         content="Deleted same-session memory",
-        source_session_id="session-1",
+        source_session_id=SESSION_1,
     )
     row = db.fetchone("SELECT deleted_at FROM memories WHERE id = %s", (created.id,))
 
@@ -269,19 +277,19 @@ def test_memory_exists(memory_manager) -> None:
     """Test memory_exists method."""
     memory = memory_manager.create_memory(content="Exists test")
     assert memory_manager.memory_exists(memory.id) is True
-    assert memory_manager.memory_exists("mm-nonexistent") is False
+    assert memory_manager.memory_exists(UNKNOWN_MEMORY_ID) is False
 
 
 def test_mark_pending_graphs_scopes_to_project(memory_manager, db) -> None:
     """Project-scoped resets should only affect memories in that project."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
 
-    mem_proj1 = memory_manager.create_memory(content="Project 1 memory", project_id="proj1")
-    mem_proj2 = memory_manager.create_memory(content="Project 2 memory", project_id="proj2")
+    mem_proj1 = memory_manager.create_memory(content="Project 1 memory", project_id=PROJECT_1)
+    mem_proj2 = memory_manager.create_memory(content="Project 2 memory", project_id=PROJECT_2)
     mem_global = memory_manager.create_memory(content="Global memory", project_id=None)
 
-    updated = memory_manager.mark_pending_graphs("proj1")
+    updated = memory_manager.mark_pending_graphs(PROJECT_1)
 
     assert updated == 1
     rows = db.fetchall(
@@ -296,11 +304,11 @@ def test_mark_pending_graphs_scopes_to_project(memory_manager, db) -> None:
 
 def test_mark_pending_graphs_without_project_resets_all(memory_manager, db) -> None:
     """Global resets should mark every memory as pending KG processing."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
 
-    mem_proj1 = memory_manager.create_memory(content="Reset all project 1", project_id="proj1")
-    mem_proj2 = memory_manager.create_memory(content="Reset all project 2", project_id="proj2")
+    mem_proj1 = memory_manager.create_memory(content="Reset all project 1", project_id=PROJECT_1)
+    mem_proj2 = memory_manager.create_memory(content="Reset all project 2", project_id=PROJECT_2)
     mem_global = memory_manager.create_memory(content="Reset all global", project_id=None)
 
     updated = memory_manager.mark_pending_graphs()
@@ -323,18 +331,18 @@ def test_list_all_ids_applies_offset_without_limit(memory_manager, monkeypatch) 
 
 def test_content_exists_with_project(memory_manager, db) -> None:
     """Test content_exists method with project_id."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
 
-    memory_manager.create_memory(content="Project content", project_id="proj1")
+    memory_manager.create_memory(content="Project content", project_id=PROJECT_1)
 
     # Same content with same project should exist
-    assert memory_manager.content_exists("Project content", project_id="proj1") is True
+    assert memory_manager.content_exists("Project content", project_id=PROJECT_1) is True
 
     # Same content with different project should not exist in that project scope
-    assert memory_manager.content_exists("Project content", project_id="other-proj") is False
+    assert memory_manager.content_exists("Project content", project_id=UNKNOWN_PROJECT_ID) is False
 
     # Different content should not exist
-    assert memory_manager.content_exists("Other content", project_id="proj1") is False
+    assert memory_manager.content_exists("Other content", project_id=PROJECT_1) is False
 
 
 def test_content_exists_without_project(memory_manager) -> None:
@@ -374,13 +382,13 @@ def test_update_memory_no_changes(memory_manager) -> None:
 
 def test_update_memory_not_found(memory_manager) -> None:
     """Test update_memory raises error for non-existent memory."""
-    with pytest.raises(ValueError, match="Memory mm-nonexistent not found"):
-        memory_manager.update_memory("mm-nonexistent", tags=["updated"])
+    with pytest.raises(ValueError, match=f"Memory {UNKNOWN_MEMORY_ID} not found"):
+        memory_manager.update_memory(UNKNOWN_MEMORY_ID, tags=["updated"])
 
 
 def test_delete_memory_not_found(memory_manager) -> None:
     """Test delete_memory returns False for non-existent memory."""
-    result = memory_manager.delete_memory("mm-nonexistent")
+    result = memory_manager.delete_memory(UNKNOWN_MEMORY_ID)
     assert result is False
 
 
@@ -441,13 +449,13 @@ def test_update_access_stats(memory_manager) -> None:
 
 def test_search_memories_with_project(memory_manager, db) -> None:
     """Test search_memories with project_id filter."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj-search', 'Search Project')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Search Project"))
 
-    memory_manager.create_memory(content="Project-specific fox", project_id="proj-search")
+    memory_manager.create_memory(content="Project-specific fox", project_id=PROJECT_1)
     memory_manager.create_memory(content="Global fox", project_id=None)
 
     # Search with project filter should find both project-specific and global
-    results = memory_manager.search_memories(query_text="fox", project_id="proj-search")
+    results = memory_manager.search_memories(query_text="fox", project_id=PROJECT_1)
     assert len(results) == 2
 
 
@@ -483,8 +491,8 @@ def test_search_memories_escapes_wildcards(memory_manager) -> None:
 
 def test_get_memory_not_found(memory_manager) -> None:
     """Test get_memory raises ValueError for non-existent memory."""
-    with pytest.raises(ValueError, match="Memory mm-nonexistent not found"):
-        memory_manager.get_memory("mm-nonexistent")
+    with pytest.raises(ValueError, match=f"Memory {UNKNOWN_MEMORY_ID} not found"):
+        memory_manager.get_memory(UNKNOWN_MEMORY_ID)
 
 
 def test_memory_from_row_with_null_tags(memory_manager) -> None:
@@ -517,52 +525,49 @@ def test_memory_from_row_accepts_jsonb_tags_list() -> None:
 
 def test_create_memory_with_all_fields(memory_manager, db) -> None:
     """Test creating a memory with all optional fields set."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj-full', 'Full Project')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Full Project"))
     # Insert a valid session to satisfy foreign key constraint
-    db.execute(
-        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at) "
-        "VALUES ('sess-123', 'ext-123', 'machine-1', 'claude', 'proj-full', CURRENT_TIMESTAMP)"
-    )
+    _insert_session(db, SESSION_1, PROJECT_1)
 
     memory = memory_manager.create_memory(
         content="Full memory",
         memory_type="context",
-        project_id="proj-full",
+        project_id=PROJECT_1,
         source_type="agent",
-        source_session_id="sess-123",
+        source_session_id=SESSION_1,
         tags=["tag1", "tag2", "tag3"],
     )
 
     assert memory.content == "Full memory"
     assert memory.memory_type == "context"
-    assert memory.project_id == "proj-full"
+    assert memory.project_id == PROJECT_1
     assert memory.source_type == "agent"
-    assert memory.source_session_id == "sess-123"
+    assert memory.source_session_id == SESSION_1
     assert memory.tags == ["tag1", "tag2", "tag3"]
 
 
 def test_list_memories_combined_filters(memory_manager, db) -> None:
     """Test list_memories with multiple filters combined."""
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj-combo', 'Combo Project')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Combo Project"))
 
     memory_manager.create_memory(
         content="Fact one",
         memory_type="fact",
-        project_id="proj-combo",
+        project_id=PROJECT_1,
     )
     memory_manager.create_memory(
         content="Fact two",
         memory_type="fact",
-        project_id="proj-combo",
+        project_id=PROJECT_1,
     )
     memory_manager.create_memory(
         content="Preference one",
         memory_type="preference",
-        project_id="proj-combo",
+        project_id=PROJECT_1,
     )
 
     # Filter by project and type
-    results = memory_manager.list_memories(project_id="proj-combo", memory_type="fact")
+    results = memory_manager.list_memories(project_id=PROJECT_1, memory_type="fact")
     assert len(results) == 2
     assert all(r.memory_type == "fact" for r in results)
 
@@ -801,18 +806,20 @@ def test_prune_runs_drops_aged_runs_and_cascades_snapshots(db) -> None:
     # project_id is left NULL — memory_dream_runs.project_id carries an FK to projects.
     aged = store.create_run(project_id=None, dry_run=False, options={})
     fresh = store.create_run(project_id=None, dry_run=False, options={})
+    aged_memory_id = str(uuid.uuid4())
+    fresh_memory_id = str(uuid.uuid4())
     store.record_applied_snapshot(
         run_id=aged,
-        memory_id="m-aged",
+        memory_id=aged_memory_id,
         action="delete",
-        before_data={"id": "m-aged"},
+        before_data={"id": aged_memory_id},
         after_data=None,
     )
     store.record_applied_snapshot(
         run_id=fresh,
-        memory_id="m-fresh",
+        memory_id=fresh_memory_id,
         action="review",
-        before_data={"id": "m-fresh"},
+        before_data={"id": fresh_memory_id},
         after_data=None,
     )
 
@@ -863,24 +870,24 @@ def test_list_dream_candidates_limit(memory_manager) -> None:
 
 
 def test_list_dream_candidates_project_and_global_scope(memory_manager, db) -> None:
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
-    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
     cutoff = datetime.now(UTC).isoformat()
 
     glob = memory_manager.create_memory(content="global fact", project_id=None)
-    proj1 = memory_manager.create_memory(content="project one fact", project_id="proj1")
-    proj2 = memory_manager.create_memory(content="project two fact", project_id="proj2")
+    proj1 = memory_manager.create_memory(content="project one fact", project_id=PROJECT_1)
+    proj2 = memory_manager.create_memory(content="project two fact", project_id=PROJECT_2)
 
     def ids(**kw) -> set[str]:
         page = memory_manager.list_dream_candidates(limit=50, redream_cutoff=cutoff, **kw)
         return {m.id for m in page}
 
     # Project + global (default include_global=True).
-    assert ids(project_id="proj1") == {glob.id, proj1.id}
+    assert ids(project_id=PROJECT_1) == {glob.id, proj1.id}
     # Project only.
-    assert ids(project_id="proj1", include_global=False) == {proj1.id}
+    assert ids(project_id=PROJECT_1, include_global=False) == {proj1.id}
     # Global-only ignores project scope and returns only NULL-scoped rows.
-    assert ids(project_id="proj1", include_global=False, global_only=True) == {glob.id}
+    assert ids(project_id=PROJECT_1, include_global=False, global_only=True) == {glob.id}
     # No project filter sweeps every row.
     assert {glob.id, proj1.id, proj2.id} <= ids()
 

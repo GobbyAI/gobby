@@ -21,6 +21,10 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+# Valid-format UUID that doesn't exist in the database (id-based routes hit a
+# uuid column, so nonexistent-id probes must be uuid-shaped).
+UNKNOWN_ID = "99999999-9999-4999-8999-999999999999"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -325,7 +329,7 @@ class TestUpdateDefinition:
 
     def test_update_not_found(self, client: TestClient) -> None:
         response = client.put(
-            "/api/agents/definitions/nonexistent-id",
+            f"/api/agents/definitions/{UNKNOWN_ID}",
             json={"description": "X"},
         )
         assert response.status_code == 404
@@ -382,7 +386,7 @@ class TestDeleteDefinition:
         assert response.json()["deleted"] is True
 
     def test_delete_not_found(self, client: TestClient) -> None:
-        response = client.delete("/api/agents/definitions/nonexistent-id")
+        response = client.delete(f"/api/agents/definitions/{UNKNOWN_ID}")
         assert response.status_code == 404
 
     def test_delete_idempotent(self, client: TestClient) -> None:
@@ -527,7 +531,7 @@ class TestRestoreDefinition:
 
     def test_restore_not_found(self, client: TestClient) -> None:
         """Restoring a nonexistent definition returns 404."""
-        response = client.post("/api/agents/definitions/nonexistent-id/restore")
+        response = client.post(f"/api/agents/definitions/{UNKNOWN_ID}/restore")
         assert response.status_code == 404
 
 
@@ -590,7 +594,7 @@ class TestPatchRules:
     def test_patch_rules_not_found(self, client: TestClient) -> None:
         """Patching rules on nonexistent definition returns 404."""
         response = client.patch(
-            "/api/agents/definitions/nonexistent-id/rules",
+            f"/api/agents/definitions/{UNKNOWN_ID}/rules",
             json={"add": ["rule-a"]},
         )
         assert response.status_code == 404
@@ -663,7 +667,7 @@ class TestPatchRuleSelectors:
     def test_patch_selectors_not_found(self, client: TestClient) -> None:
         """Patching selectors on nonexistent definition returns 404."""
         response = client.patch(
-            "/api/agents/definitions/nonexistent-id/rule-selectors",
+            f"/api/agents/definitions/{UNKNOWN_ID}/rule-selectors",
             json={"add_include": ["tag:a"]},
         )
         assert response.status_code == 404
@@ -743,7 +747,7 @@ class TestPatchVariables:
     def test_patch_variables_not_found(self, client: TestClient) -> None:
         """Patching variables on nonexistent definition returns 404."""
         response = client.patch(
-            "/api/agents/definitions/nonexistent-id/variables",
+            f"/api/agents/definitions/{UNKNOWN_ID}/variables",
             json={"set": {"key": "val"}},
         )
         assert response.status_code == 404

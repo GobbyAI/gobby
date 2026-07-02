@@ -1,4 +1,27 @@
-"""PostgreSQL hub migrations."""
+"""PostgreSQL hub migrations.
+
+Authoring rules for new migration files (enforced in part by
+tests/storage/test_migration_contract.py):
+
+1. Every migration must apply cleanly against BOTH an existing populated
+   pre-migration schema AND a fresh baseline that already contains the
+   change (fresh installs replay all on-disk migrations on top of the
+   current baseline). Statements that only type-check against one shape
+   (e.g. a text-expression UPDATE on a column the baseline already made
+   uuid) must be wrapped in a column-type-guarded PL/pgSQL ``DO`` block —
+   PL/pgSQL only type-checks statements it actually reaches.
+2. Any data-dependent cast (``ALTER ... TYPE UUID USING col::UUID`` and
+   friends) must be preceded by a preflight ``DO`` block that scans for
+   uncastable values and ``RAISE EXCEPTION`` with the offending
+   column names and counts. A bare cast failure reports only the value —
+   preflights make the failure diagnosable and, critically, they fail on
+   POPULATED databases that migration tests (which run against fresh,
+   empty schemas) can never exercise. Migration 304's bare
+   ``caller_symbol_id::UUID`` cast took the daemon down twice for exactly
+   this reason; 305 carries the reference preflight pattern.
+3. Optional text-uuid columns that used ``''`` sentinels convert with
+   ``USING NULLIF(col::TEXT, '')::UUID`` after dropping NOT NULL.
+"""
 
 from __future__ import annotations
 

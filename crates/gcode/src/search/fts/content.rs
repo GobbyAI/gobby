@@ -6,8 +6,8 @@ use crate::models::ContentSearchHit;
 use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
-    PgParam, bm25_score_expr, param_refs, push_param, push_path_filter, sanitize_pg_search_query,
-    trusted_row_id,
+    PgParam, bm25_score_expr, param_refs, push_id_param, push_param, push_path_filter,
+    sanitize_pg_search_query, trusted_row_id,
 };
 
 fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
@@ -43,7 +43,7 @@ pub fn search_content(
 
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
-    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let project_placeholder = push_id_param(&mut params, project_id);
     let mut conditions = vec![
         format!("c.content @@@ {query_placeholder}"),
         format!("c.project_id = {project_placeholder}"),
@@ -140,7 +140,7 @@ pub fn search_content_visible(
 fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
     match &ctx.index_scope {
         ProjectIndexScope::Single => {
-            let project_placeholder = push_param(params, ctx.project_id.clone());
+            let project_placeholder = push_id_param(params, &ctx.project_id);
             let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
             format!(
                 "SELECT file_path, project_id
@@ -154,8 +154,8 @@ fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
             parent_project_id,
             ..
         } => {
-            let overlay_placeholder = push_param(params, overlay_project_id.clone());
-            let parent_placeholder = push_param(params, parent_project_id.clone());
+            let overlay_placeholder = push_id_param(params, overlay_project_id);
+            let parent_placeholder = push_id_param(params, parent_project_id);
             let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
             format!(
                 "SELECT file_path, project_id

@@ -17,6 +17,10 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+# chat_attachments.id is a native uuid column; use valid UUID strings.
+ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+UNSAFE_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"
+
 
 def test_delete_messages_removes_message_bound_attachment_file(
     temp_db: HubDatabase,
@@ -39,7 +43,7 @@ def test_delete_messages_removes_message_bound_attachment_file(
     attachment_path.write_text("uploaded")
     attachment = chat_attachments.create_attachment(
         temp_db,
-        attachment_id="attachment-1",
+        attachment_id=ATTACHMENT_ID,
         project_id=PERSONAL_PROJECT_ID,
         draft_id=None,
         filename=attachment_path.name,
@@ -81,7 +85,7 @@ def test_delete_messages_skips_attachment_paths_outside_managed_storage(
     attachment_path.write_text("uploaded")
     attachment = chat_attachments.create_attachment(
         temp_db,
-        attachment_id="attachment-unsafe",
+        attachment_id=UNSAFE_ATTACHMENT_ID,
         project_id=PERSONAL_PROJECT_ID,
         draft_id=None,
         filename=attachment_path.name,

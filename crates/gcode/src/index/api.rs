@@ -6,6 +6,7 @@ pub use crate::index::indexer::{
     UnsupportedFileType, index_files, project_changed_since,
 };
 
+use crate::db::{id_param, id_params, opt_id_param};
 use crate::models::{
     CallRelation, ContentChunk, ImportRelation, IndexedFile, IndexedProject, Symbol,
 };
@@ -52,9 +53,10 @@ pub fn delete_file_facts(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<()> {
+    let project_uuid = id_param(project_id)?;
     conn.execute(
         "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
-        &[&project_id, &file_path],
+        &[&project_uuid, &file_path],
     )?;
     delete_file_non_symbol_facts(conn, project_id, file_path)
 }
@@ -64,6 +66,7 @@ pub fn delete_file_non_symbol_facts(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<()> {
+    let project_id = id_param(project_id)?;
     conn.execute(
         "DELETE FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
         &[&project_id, &file_path],
@@ -89,18 +92,19 @@ pub fn delete_stale_file_symbols(
     file_path: &str,
     current_symbol_ids: &[String],
 ) -> anyhow::Result<usize> {
+    let project_id = id_param(project_id)?;
     let deleted = if current_symbol_ids.is_empty() {
         conn.execute(
             "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
             &[&project_id, &file_path],
         )?
     } else {
-        let current_symbol_ids = current_symbol_ids.to_vec();
+        let current_symbol_ids = id_params(current_symbol_ids)?;
         conn.execute(
             "DELETE FROM code_symbols
              WHERE project_id = $1
                AND file_path = $2
-               AND NOT (id = ANY($3::text[]))",
+               AND NOT (id = ANY($3::uuid[]))",
             &[&project_id, &file_path, &current_symbol_ids],
         )?
     };
@@ -112,6 +116,7 @@ pub fn file_facts_exist(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     let row = conn.query_one(
         "SELECT
             EXISTS(SELECT 1 FROM code_indexed_files WHERE project_id = $1 AND file_path = $2)
@@ -126,11 +131,14 @@ pub fn file_facts_exist(
 
 pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyhow::Result<usize> {
     for chunk in symbols.chunks(SYMBOL_UPSERT_BATCH_SIZE) {
-        let ids = chunk.iter().map(|sym| sym.id.clone()).collect::<Vec<_>>();
+        let ids = chunk
+            .iter()
+            .map(|sym| id_param(&sym.id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let project_ids = chunk
             .iter()
-            .map(|sym| sym.project_id.clone())
-            .collect::<Vec<_>>();
+            .map(|sym| id_param(&sym.project_id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let file_paths = chunk
             .iter()
             .map(|sym| sym.file_path.clone())
@@ -171,8 +179,8 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
             .collect::<Vec<_>>();
         let parent_symbol_ids = chunk
             .iter()
-            .map(|sym| sym.parent_symbol_id.clone())
-            .collect::<Vec<_>>();
+            .map(|sym| opt_id_param(sym.parent_symbol_id.as_deref().unwrap_or("")))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let content_hashes = chunk
             .iter()
             .map(|sym| sym.content_hash.clone())
@@ -197,10 +205,10 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
                 parent_symbol_id, content_hash, summary,
                 NOW(), NOW()
             FROM unnest(
-                $1::text[], $2::text[], $3::text[], $4::text[],
+                $1::uuid[], $2::uuid[], $3::text[], $4::text[],
                 $5::text[], $6::text[], $7::text[], $8::int4[],
                 $9::int4[], $10::int4[], $11::int4[], $12::text[],
-                $13::text[], $14::text[], $15::text[], $16::text[]
+                $13::text[], $14::uuid[], $15::text[], $16::text[]
             ) AS t(
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
@@ -257,8 +265,8 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
             vector_sync_attempted_at=NULL,
             indexed_at=NOW()",
         &[
-            &file.id,
-            &file.project_id,
+            &id_param(&file.id)?,
+            &id_param(&file.project_id)?,
             &file.file_path,
             &file.language,
             &file.content_hash,
@@ -274,6 +282,7 @@ pub fn upsert_project_seed(
     project_id: &str,
     root_path: &std::path::Path,
 ) -> anyhow::Result<()> {
+    let project_id = id_param(project_id)?;
     let root_path = root_path.to_string_lossy().to_string();
     conn.execute(
         "INSERT INTO code_indexed_projects (
@@ -303,8 +312,8 @@ pub fn upsert_content_chunks(
                 line_start=excluded.line_start,
                 line_end=excluded.line_end",
             &[
-                &chunk.id,
-                &chunk.project_id,
+                &id_param(&chunk.id)?,
+                &id_param(&chunk.project_id)?,
                 &chunk.file_path,
                 &to_i32(chunk.chunk_index),
                 &to_i32(chunk.line_start),
@@ -334,7 +343,7 @@ pub fn upsert_project_stats(
             index_duration_ms=excluded.index_duration_ms,
             updated_at=NOW()",
         &[
-            &project.id,
+            &id_param(&project.id)?,
             &project.root_path,
             &to_i32(project.total_files),
             &to_i32(project.total_symbols),
@@ -350,6 +359,7 @@ pub fn upsert_imports(
     file_path: &str,
     imports: &[ImportRelation],
 ) -> anyhow::Result<usize> {
+    let project_id = id_param(project_id)?;
     conn.execute(
         "DELETE FROM code_imports WHERE project_id = $1 AND source_file = $2",
         &[&project_id, &file_path],
@@ -372,9 +382,10 @@ pub fn upsert_calls(
     file_path: &str,
     calls: &[CallRelation],
 ) -> anyhow::Result<usize> {
+    let project_uuid = id_param(project_id)?;
     conn.execute(
         "DELETE FROM code_calls WHERE project_id = $1 AND file_path = $2",
-        &[&project_id, &file_path],
+        &[&project_uuid, &file_path],
     )?;
     let mut rows_affected = 0usize;
     for call in calls {
@@ -388,6 +399,12 @@ fn insert_call(
     project_id: &str,
     call: &CallRelation,
 ) -> anyhow::Result<usize> {
+    let project_id = id_param(project_id)?;
+    // The domain "" sentinel (module-scope caller, absent callee) becomes NULL
+    // in the nullable uuid columns; `code_calls_unique_call_target` is declared
+    // NULLS NOT DISTINCT, so ON CONFLICT dedup still applies to NULL targets.
+    let caller_symbol_id = opt_id_param(&call.caller_symbol_id)?;
+    let callee_symbol_id = opt_id_param(call.callee_symbol_id.as_deref().unwrap_or(""))?;
     let rows = conn.execute(
         "INSERT INTO code_calls
          (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
@@ -399,8 +416,8 @@ fn insert_call(
          ) DO NOTHING",
         &[
             &project_id,
-            &call.caller_symbol_id,
-            &call.callee_symbol_id.as_deref().unwrap_or(""),
+            &caller_symbol_id,
+            &callee_symbol_id,
             &call.callee_name,
             &call.callee_target_kind.as_str(),
             &call.callee_external_module.as_deref().unwrap_or(""),
@@ -421,14 +438,20 @@ pub fn promote_local_import_call(
     original: &CallRelation,
     resolved: &CallRelation,
 ) -> anyhow::Result<()> {
+    let project_uuid = id_param(project_id)?;
+    // Pending local_import rows never carry a callee, and NULL caller means
+    // module scope, so both uuid predicates are NULL-aware.
+    let caller_symbol_id = opt_id_param(&original.caller_symbol_id)?;
     conn.execute(
         "DELETE FROM code_calls
-         WHERE project_id = $1 AND caller_symbol_id = $2 AND callee_symbol_id = ''
+         WHERE project_id = $1
+           AND caller_symbol_id IS NOT DISTINCT FROM $2
+           AND callee_symbol_id IS NULL
            AND callee_name = $3 AND callee_target_kind = 'local_import'
            AND callee_external_module = $4 AND file_path = $5 AND line = $6",
         &[
-            &project_id,
-            &original.caller_symbol_id,
+            &project_uuid,
+            &caller_symbol_id,
             &original.callee_name,
             &original.callee_external_module.as_deref().unwrap_or(""),
             &original.file_path,

@@ -16,6 +16,9 @@ from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
+# Valid-format UUID that doesn't exist in the database.
+UNKNOWN_SESSION_ID = "99999999-9999-4999-8999-999999999999"
+
 
 class TestSessionEndpoints:
     """Tests for session endpoints."""
@@ -44,7 +47,7 @@ class TestSessionEndpoints:
 
     def test_get_session_not_found(self, client: TestClient) -> None:
         """Test getting nonexistent session returns 404."""
-        response = client.get("/api/sessions/nonexistent-uuid")
+        response = client.get(f"/api/sessions/{UNKNOWN_SESSION_ID}")
         assert response.status_code == 404
 
     def test_find_current_session_missing_fields(self, client: TestClient) -> None:
@@ -87,7 +90,7 @@ class TestSessionEndpoints:
         response = client.post(
             "/api/sessions/update_status",
             json={
-                "session_id": "nonexistent-uuid",
+                "session_id": UNKNOWN_SESSION_ID,
                 "status": "paused",
             },
         )
@@ -125,7 +128,7 @@ class TestSessionEndpoints:
         response = client.post(
             "/api/sessions/update_summary",
             json={
-                "session_id": "nonexistent-uuid",
+                "session_id": UNKNOWN_SESSION_ID,
                 "summary_path": "/path/to/summary.md",
             },
         )

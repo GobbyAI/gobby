@@ -110,6 +110,8 @@ class StageState:
     artifact_refs: dict[str, str] | None
     notes: str | None
     updated_at: str
+    entered_by_actor: str | None = None
+    completed_by_actor: str | None = None
     display_name: str | None = None
     display_label: str | None = None
     category: str | None = None

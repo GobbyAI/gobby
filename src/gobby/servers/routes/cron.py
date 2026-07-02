@@ -99,10 +99,15 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
     @router.post("/jobs")
     async def create_job(request: CreateCronJobRequest) -> dict[str, Any]:
         """Create a new cron job."""
+        from gobby.storage.projects import PERSONAL_PROJECT_ID
+
         try:
             storage = _get_storage()
+            # cron_jobs.project_id is a NOT NULL uuid column; fall back to the
+            # personal project (same as the MCP create_cron_job tool) instead of
+            # binding "" from the request default.
             job = storage.create_job(
-                project_id=request.project_id,
+                project_id=request.project_id or PERSONAL_PROJECT_ID,
                 name=request.name,
                 schedule_type=request.schedule_type,
                 action_type=request.action_type,

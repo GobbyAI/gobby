@@ -24,8 +24,13 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-PROJECT_ID = "test-project"
-SESSION_ID = "sess-test-001"
+# Project/session/task id columns are native uuid in PostgreSQL; synthetic ids
+# like "test-project" would fail with `invalid input syntax for type uuid`.
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+DEAD_AGENT_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+STOPPED_SESSION_ID = "33333333-3333-4333-8333-333333333333"
+STALE_REVIEW_SESSION_ID = "44444444-4444-4444-8444-444444444444"
 
 
 def _seed_db(db: HubDatabase) -> None:
@@ -257,7 +262,7 @@ async def test_pipeline_heartbeat_cron_keeps_schedule_after_stale_task_recovery(
 ) -> None:
     """A recovered stale claim counts as work and does not park the row."""
     _seed_db(temp_db)
-    _create_in_progress_task(task_manager, claimed_by_session_id="sess-does-not-exist")
+    _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
     storage = CronJobStorage(temp_db)
     job = _create_pipeline_heartbeat_job(storage)
     original_next_run = job.next_run_at
@@ -306,7 +311,7 @@ def heartbeat_with_tasks(
 def _create_in_progress_task(
     task_manager: LocalTaskManager,
     project_id: str = PROJECT_ID,
-    claimed_by_session_id: str = "agent-dead",
+    claimed_by_session_id: str = DEAD_AGENT_SESSION_ID,
     max_work_attempts: int | None = None,
 ) -> str:
     """Create a task with an in-progress current stage and an owner."""
@@ -433,7 +438,7 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         task_type="task",
         project_id=PROJECT_ID,
     )
-    stale_session_id = "review-stale-session"
+    stale_session_id = STALE_REVIEW_SESSION_ID
     _seed_session(task_manager.db, stale_session_id)
     task_manager.db.execute(
         "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
@@ -608,7 +613,7 @@ async def test_inactive_session_task_recovered(
 ) -> None:
     """In-progress task assigned to an inactive session returns to ready."""
     _seed_db(temp_db)
-    task_id = _create_in_progress_task(task_manager, claimed_by_session_id="sess-does-not-exist")
+    task_id = _create_in_progress_task(task_manager, claimed_by_session_id=STOPPED_SESSION_ID)
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 1

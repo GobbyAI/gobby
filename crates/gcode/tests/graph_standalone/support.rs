@@ -6,35 +6,43 @@ pub(super) use serde_json::Value;
 pub(super) use std::fs;
 pub(super) use std::process::{Command, Output};
 
-pub(super) const TEST_PROJECT_ID: &str = "graph-standalone-project";
-pub(super) const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
-pub(super) const NO_PHANTOM_PROJECT_ID: &str = "graph-standalone-no-phantom";
-pub(super) const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
-pub(super) const JS_DEFAULT_LOCAL_PROJECT_ID: &str = "graph-standalone-js-default-local";
-pub(super) const CPP_LOCAL_PROJECT_ID: &str = "graph-standalone-cpp-local";
-pub(super) const CPP_DB_LOCAL_PROJECT_ID: &str = "graph-standalone-cpp-db-local";
-pub(super) const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";
-pub(super) const RUST_LOCAL_PROJECT_ID: &str = "graph-standalone-rust-local";
-pub(super) const RUST_TUPLE_LOCAL_PROJECT_ID: &str = "graph-standalone-rust-tuple-local";
-pub(super) const CSHARP_LOCAL_PROJECT_ID: &str = "graph-standalone-csharp-local";
-pub(super) const KOTLIN_LOCAL_PROJECT_ID: &str = "graph-standalone-kotlin-local";
-pub(super) const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";
-pub(super) const PHP_LOCAL_PROJECT_ID: &str = "graph-standalone-php-local";
-pub(super) const SWIFT_LOCAL_PROJECT_ID: &str = "graph-standalone-swift-local";
-pub(super) const DART_LOCAL_PROJECT_ID: &str = "graph-standalone-dart-local";
-pub(super) const ELIXIR_LOCAL_PROJECT_ID: &str = "graph-standalone-elixir-local";
-pub(super) const BASH_LOCAL_PROJECT_ID: &str = "graph-standalone-bash-local";
-pub(super) const SCALA_LOCAL_PROJECT_ID: &str = "graph-standalone-scala-local";
-pub(super) const LUA_LOCAL_PROJECT_ID: &str = "graph-standalone-lua-local";
-pub(super) const OBJC_LOCAL_PROJECT_ID: &str = "graph-standalone-objc-local";
+// Fixture ids are UUIDv5(CODE_INDEX_UUID_NAMESPACE, <legacy label>) because the
+// hub stores every code_* id column as native uuid. The legacy label is kept in
+// the trailing comment for greppability.
+pub(super) const TEST_PROJECT_ID: &str = "285bdd28-41b4-5acb-878b-6e72cf276dd1"; // graph-standalone-project
+pub(super) const LOCAL_IMPORT_PROJECT_ID: &str = "b75024f9-b106-5eac-86f1-f35805f97dbe"; // graph-standalone-local-import
+pub(super) const NO_PHANTOM_PROJECT_ID: &str = "9865ea81-c9bb-5edc-8de6-895686366ae6"; // graph-standalone-no-phantom
+pub(super) const GO_LOCAL_PROJECT_ID: &str = "acd54de2-7205-5fb0-a6c6-20570f333d26"; // graph-standalone-go-local
+pub(super) const JS_DEFAULT_LOCAL_PROJECT_ID: &str = "3395e8e7-92ca-504f-876c-552a46f195c9"; // graph-standalone-js-default-local
+pub(super) const CPP_LOCAL_PROJECT_ID: &str = "683a03e5-7426-5c46-8e5a-3044389e9e56"; // graph-standalone-cpp-local
+pub(super) const CPP_DB_LOCAL_PROJECT_ID: &str = "636a88e5-5cb1-5f3d-91e0-29c1af3d1a71"; // graph-standalone-cpp-db-local
+pub(super) const JAVA_LOCAL_PROJECT_ID: &str = "75cc2ce2-af55-591b-93ad-376b7f1c1a81"; // graph-standalone-java-local
+pub(super) const RUST_LOCAL_PROJECT_ID: &str = "6f9f3805-07fa-5a2f-ab94-b98cb174ce0e"; // graph-standalone-rust-local
+pub(super) const RUST_TUPLE_LOCAL_PROJECT_ID: &str = "c34315ca-8611-52fb-a4fb-e273ccb73652"; // graph-standalone-rust-tuple-local
+pub(super) const CSHARP_LOCAL_PROJECT_ID: &str = "622f74a4-d013-52d2-93e7-fa9ec0776e6a"; // graph-standalone-csharp-local
+pub(super) const KOTLIN_LOCAL_PROJECT_ID: &str = "154cac87-2e35-52d1-806d-154211fa5612"; // graph-standalone-kotlin-local
+pub(super) const RUBY_LOCAL_PROJECT_ID: &str = "6d1edeec-02cb-531e-a7eb-d930ff9d6f2f"; // graph-standalone-ruby-local
+pub(super) const PHP_LOCAL_PROJECT_ID: &str = "d97f0d47-e417-54c6-b52b-3bc48100f30f"; // graph-standalone-php-local
+pub(super) const SWIFT_LOCAL_PROJECT_ID: &str = "9f8b024f-9424-528d-9197-b096913810a4"; // graph-standalone-swift-local
+pub(super) const DART_LOCAL_PROJECT_ID: &str = "7a9a47b9-49c9-5d3a-b06e-8da103312767"; // graph-standalone-dart-local
+pub(super) const ELIXIR_LOCAL_PROJECT_ID: &str = "5683049f-7e07-5479-94f0-4cdf7efeace1"; // graph-standalone-elixir-local
+pub(super) const BASH_LOCAL_PROJECT_ID: &str = "673400f5-f379-5763-bac1-87d48039dc4c"; // graph-standalone-bash-local
+pub(super) const SCALA_LOCAL_PROJECT_ID: &str = "e633c8d2-5b69-58c4-b90d-33cad75e61d1"; // graph-standalone-scala-local
+pub(super) const LUA_LOCAL_PROJECT_ID: &str = "2e331312-0310-5f3f-bad2-29a7c9560428"; // graph-standalone-lua-local
+pub(super) const OBJC_LOCAL_PROJECT_ID: &str = "da1e1c4b-7fe3-50c8-9d00-ee9a4716718f"; // graph-standalone-objc-local
 pub(super) const TEST_FILE: &str = "src/lib.rs";
 pub(super) const CONTENT_ONLY_FILE: &str = "docs/content.txt";
 pub(super) const CROSS_CRATE_CALLER_FILE: &str = "crates/app/src/lib.rs";
 pub(super) const CROSS_CRATE_CALLEE_FILE: &str = "crates/core/src/lib.rs";
-pub(super) const CALLER_ID: &str = "graph-standalone-caller";
-pub(super) const CALLEE_ID: &str = "graph-standalone-callee";
-pub(super) const CROSS_CRATE_CALLER_ID: &str = "graph-standalone-cross-crate-caller";
-pub(super) const CROSS_CRATE_CALLEE_ID: &str = "graph-standalone-cross-crate-callee";
+pub(super) const CALLER_ID: &str = "47fc1394-cd88-52c2-a32b-81f7d4d03ec8"; // graph-standalone-caller
+pub(super) const CALLEE_ID: &str = "63dfaaf8-2110-5dd8-859b-43f89fbf8c0e"; // graph-standalone-callee
+pub(super) const CROSS_CRATE_CALLER_ID: &str = "1507e898-6103-5a15-83b7-6ac30bd1305e"; // graph-standalone-cross-crate-caller
+pub(super) const CROSS_CRATE_CALLEE_ID: &str = "5b150a61-ddd2-59b8-99d1-fcc3d08975c6"; // graph-standalone-cross-crate-callee
+const TEST_FILE_ID: &str = "e5faf0b1-769c-552a-a427-6b59e645ce0f"; // graph-standalone-file
+const CONTENT_FILE_ID: &str = "455cbd58-c740-585a-aa3a-165d0b798b48"; // graph-standalone-content-file
+const CROSS_CRATE_CALLER_FILE_ID: &str = "3df4d985-06e2-59bb-a3fb-ff77d812ff08"; // graph-standalone-cross-crate-caller-file
+const CROSS_CRATE_CALLEE_FILE_ID: &str = "74950bb1-1175-5dcf-844c-91566f0cc73c"; // graph-standalone-cross-crate-callee-file
+const CONTENT_CHUNK_ID: &str = "1b1e54a0-b042-5de5-8b45-3ed12b15a701"; // graph-standalone-content-chunk-0
 
 pub(super) struct StandaloneEnv {
     pub(super) database_url: String,
@@ -124,64 +132,66 @@ pub(super) fn graph_synced(conn: &mut Client, file_path: &str) -> bool {
         "SELECT graph_synced
          FROM code_indexed_files
          WHERE project_id = $1 AND file_path = $2",
-        &[&TEST_PROJECT_ID, &file_path],
+        &[&crate::common::uuid_param(TEST_PROJECT_ID), &file_path],
     )
     .expect("read graph_synced")
     .get(0)
 }
 
 pub(super) fn seed_temporary_content_import(conn: &mut Client) {
+    let project_id = crate::common::uuid_param(TEST_PROJECT_ID);
     conn.execute(
         "INSERT INTO code_imports (project_id, source_file, target_module)
          VALUES ($1, $2, 'temporary.stale.module')",
-        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+        &[&project_id, &CONTENT_ONLY_FILE],
     )
     .expect("insert temporary content import");
     conn.execute(
         "UPDATE code_indexed_files
          SET graph_synced = false, graph_sync_attempted_at = NULL
          WHERE project_id = $1 AND file_path = $2",
-        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+        &[&project_id, &CONTENT_ONLY_FILE],
     )
     .expect("mark content file graph stale");
 }
 
 pub(super) fn clear_temporary_content_import(conn: &mut Client) {
+    let project_id = crate::common::uuid_param(TEST_PROJECT_ID);
     conn.execute(
         "DELETE FROM code_imports
          WHERE project_id = $1 AND source_file = $2",
-        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+        &[&project_id, &CONTENT_ONLY_FILE],
     )
     .expect("delete temporary content import");
     conn.execute(
         "UPDATE code_indexed_files
          SET graph_synced = false, graph_sync_attempted_at = NULL
          WHERE project_id = $1 AND file_path = $2",
-        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+        &[&project_id, &CONTENT_ONLY_FILE],
     )
     .expect("mark content file graph stale after import removal");
 }
 
 pub(super) fn seed_project(conn: &mut Client) {
     cleanup_project(conn, TEST_PROJECT_ID).expect("cleanup graph rows");
-    conn.batch_execute(
+    conn.batch_execute(&format!(
         "INSERT INTO code_indexed_projects
             (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
          VALUES
-            ('graph-standalone-project', '/tmp/graph-standalone', 4, 4, NOW(), 0);
+            ('{TEST_PROJECT_ID}', '/tmp/graph-standalone', 4, 4, NOW(), 0);
 
          INSERT INTO code_indexed_files
             (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
              graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
          VALUES
-            ('graph-standalone-file', 'graph-standalone-project', 'src/lib.rs', 'rust',
+            ('{TEST_FILE_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'rust',
              'hash-1', 2, 54, false, true, NULL, NOW()),
-            ('graph-standalone-content-file', 'graph-standalone-project', 'docs/content.txt', 'text',
+            ('{CONTENT_FILE_ID}', '{TEST_PROJECT_ID}', 'docs/content.txt', 'text',
              'hash-content', 0, 35, false, true, NULL, NOW()),
-            ('graph-standalone-cross-crate-caller-file', 'graph-standalone-project',
+            ('{CROSS_CRATE_CALLER_FILE_ID}', '{TEST_PROJECT_ID}',
              'crates/app/src/lib.rs', 'rust', 'hash-cross-caller', 1, 38, false, true, NULL,
              NOW()),
-            ('graph-standalone-cross-crate-callee-file', 'graph-standalone-project',
+            ('{CROSS_CRATE_CALLEE_FILE_ID}', '{TEST_PROJECT_ID}',
              'crates/core/src/lib.rs', 'rust', 'hash-cross-callee', 1, 24, false, true, NULL,
              NOW());
 
@@ -189,7 +199,7 @@ pub(super) fn seed_project(conn: &mut Client) {
             (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
              created_at)
          VALUES
-            ('graph-standalone-content-chunk-0', 'graph-standalone-project', 'docs/content.txt',
+            ('{CONTENT_CHUNK_ID}', '{TEST_PROJECT_ID}', 'docs/content.txt',
              0, 1, 1, 'plain prose without code graph facts', 'text', NOW());
 
          INSERT INTO code_symbols
@@ -197,32 +207,32 @@ pub(super) fn seed_project(conn: &mut Client) {
              line_start, line_end, signature, docstring, parent_symbol_id, content_hash,
              summary, created_at, updated_at)
          VALUES
-            ('graph-standalone-caller', 'graph-standalone-project', 'src/lib.rs', 'caller',
+            ('{CALLER_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'caller',
              'crate::caller', 'function', 'rust', 0, 28, 1, 1, 'pub fn caller()', NULL, NULL,
              'hash-1', NULL, NOW(), NOW()),
-            ('graph-standalone-callee', 'graph-standalone-project', 'src/lib.rs', 'callee',
+            ('{CALLEE_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'callee',
              'crate::callee', 'function', 'rust', 29, 47, 2, 2, 'pub fn callee()', NULL, NULL,
              'hash-1', NULL, NOW(), NOW()),
-            ('graph-standalone-cross-crate-caller', 'graph-standalone-project',
+            ('{CROSS_CRATE_CALLER_ID}', '{TEST_PROJECT_ID}',
              'crates/app/src/lib.rs', 'app_entry', 'app::app_entry', 'function', 'rust', 0, 38,
              1, 3, 'pub fn app_entry()', NULL, NULL, 'hash-cross-caller', NULL, NOW(), NOW()),
-            ('graph-standalone-cross-crate-callee', 'graph-standalone-project',
+            ('{CROSS_CRATE_CALLEE_ID}', '{TEST_PROJECT_ID}',
              'crates/core/src/lib.rs', 'core_leaf', 'core::core_leaf', 'function', 'rust', 0, 24,
              1, 1, 'pub fn core_leaf()', NULL, NULL, 'hash-cross-callee', NULL, NOW(), NOW());
 
          INSERT INTO code_imports (project_id, source_file, target_module)
-         VALUES ('graph-standalone-project', 'src/lib.rs', 'std');
+         VALUES ('{TEST_PROJECT_ID}', 'src/lib.rs', 'std');
 
          INSERT INTO code_calls
             (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
              callee_external_module, file_path, line)
         VALUES
-            ('graph-standalone-project', 'graph-standalone-caller', 'graph-standalone-callee',
+            ('{TEST_PROJECT_ID}', '{CALLER_ID}', '{CALLEE_ID}',
              'callee', 'symbol', '', 'src/lib.rs', 1),
-            ('graph-standalone-project', 'graph-standalone-cross-crate-caller',
-             'graph-standalone-cross-crate-callee', 'core_leaf', 'symbol', '',
-             'crates/app/src/lib.rs', 2);",
-    )
+            ('{TEST_PROJECT_ID}', '{CROSS_CRATE_CALLER_ID}',
+             '{CROSS_CRATE_CALLEE_ID}', 'core_leaf', 'symbol', '',
+             'crates/app/src/lib.rs', 2);"
+    ))
     .expect("seed graph rows");
 }
 
@@ -322,10 +332,11 @@ pub(super) fn required_symbol_id(
 ) -> String {
     conn.query_one(
         "SELECT id FROM code_symbols WHERE project_id = $1 AND file_path = $2 AND name = $3",
-        &[&project_id, &file_path, &name],
+        &[&crate::common::uuid_param(project_id), &file_path, &name],
     )
     .unwrap_or_else(|err| panic!("symbol {file_path}:{name} not indexed: {err}"))
-    .get::<_, String>(0)
+    .get::<_, uuid::Uuid>(0)
+    .to_string()
 }
 
 pub(super) fn resolved_call_target(
@@ -338,19 +349,26 @@ pub(super) fn resolved_call_target(
         .query_opt(
             "SELECT callee_symbol_id, callee_target_kind FROM code_calls
              WHERE project_id = $1 AND file_path = $2 AND callee_name = $3",
-            &[&project_id, &file_path, &callee_name],
+            &[
+                &crate::common::uuid_param(project_id),
+                &file_path,
+                &callee_name,
+            ],
         )
         .expect("read code_calls row")?;
     let kind: String = row.get("callee_target_kind");
-    let callee_symbol_id: String = row.get("callee_symbol_id");
-    (kind == "symbol" && !callee_symbol_id.is_empty()).then_some(callee_symbol_id)
+    let callee_symbol_id: Option<uuid::Uuid> = row.get("callee_symbol_id");
+    match callee_symbol_id {
+        Some(callee_symbol_id) if kind == "symbol" => Some(callee_symbol_id.to_string()),
+        _ => None,
+    }
 }
 
 pub(super) fn pending_local_import_count(conn: &mut Client, project_id: &str) -> i64 {
     conn.query_one(
         "SELECT COUNT(*) FROM code_calls
          WHERE project_id = $1 AND callee_target_kind = 'local_import'",
-        &[&project_id],
+        &[&crate::common::uuid_param(project_id)],
     )
     .expect("count local_import rows")
     .get::<_, i64>(0)

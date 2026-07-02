@@ -111,6 +111,7 @@ def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
         (302, "machines_registry"),
         (303, "secret_key_material"),
         (304, "uuid_identity_columns"),
+        (305, "uuid_completion"),
     ]
 
 

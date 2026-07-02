@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from gobby.storage.sessions import SessionManager
@@ -35,6 +37,8 @@ def _insert_task(
     created_in: str | None = None,
     closed_in: str | None = None,
 ) -> None:
+    # ``task_id`` is a human-readable label; tasks.id is a native uuid column,
+    # so the row id itself is generated here.
     session_manager.db.execute(
         """
         INSERT INTO tasks (
@@ -45,7 +49,7 @@ def _insert_task(
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            task_id,
+            str(uuid.uuid4()),
             sample_project["id"],
             f"Task {task_id}",
             seq_num,

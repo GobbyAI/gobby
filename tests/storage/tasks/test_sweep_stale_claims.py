@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -15,6 +16,10 @@ from tests.storage.tasks._stage_test_helpers import (
 
 pytestmark = pytest.mark.unit
 
+SESS_DEAD = str(uuid.uuid4())
+SESS_LIVE = str(uuid.uuid4())
+SESS_PAUSED = str(uuid.uuid4())
+
 
 def _make_session(temp_db, sample_project, session_id: str, status: str) -> None:
     now = datetime.now(UTC).isoformat()
@@ -25,7 +30,7 @@ def _make_session(temp_db, sample_project, session_id: str, status: str) -> None
         """,
         (
             session_id,
-            f"ext-{session_id}",
+            f"ext-{session_id[:8]}",
             "machine-test",
             "claude",
             sample_project["id"],
@@ -65,8 +70,8 @@ def _claim(temp_db, task_id: str) -> str | None:
 
 
 def test_sweep_reclaims_task_claimed_by_inactive_session(temp_db, sample_project) -> None:
-    _make_session(temp_db, sample_project, "sess-dead", "expired")
-    task = _claimed_task(temp_db, sample_project, claimed_by="sess-dead")
+    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
+    task = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
@@ -81,11 +86,11 @@ def test_sweep_reclaims_task_claimed_by_inactive_session(temp_db, sample_project
 def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
     temp_db, sample_project
 ) -> None:
-    _make_session(temp_db, sample_project, "sess-dead", "expired")
+    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
     task = _claimed_task(
         temp_db,
         sample_project,
-        claimed_by="sess-dead",
+        claimed_by=SESS_DEAD,
         allow_automation=False,
     )
 
@@ -100,12 +105,12 @@ def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
 
 
 def test_sweep_keeps_task_claimed_by_active_session(temp_db, sample_project) -> None:
-    _make_session(temp_db, sample_project, "sess-live", "active")
-    task = _claimed_task(temp_db, sample_project, claimed_by="sess-live")
+    _make_session(temp_db, sample_project, SESS_LIVE, "active")
+    task = _claimed_task(temp_db, sample_project, claimed_by=SESS_LIVE)
 
     sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
-    assert _claim(temp_db, task.id) == "sess-live"
+    assert _claim(temp_db, task.id) == SESS_LIVE
     candidate_ids = {
         t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
     }
@@ -115,18 +120,18 @@ def test_sweep_keeps_task_claimed_by_active_session(temp_db, sample_project) -> 
 def test_sweep_keeps_task_claimed_by_paused_session(temp_db, sample_project) -> None:
     # A paused session is idle but alive (e.g. an interactive session
     # between turns); its claim must not be reclaimed.
-    _make_session(temp_db, sample_project, "sess-paused", "paused")
-    task = _claimed_task(temp_db, sample_project, claimed_by="sess-paused")
+    _make_session(temp_db, sample_project, SESS_PAUSED, "paused")
+    task = _claimed_task(temp_db, sample_project, claimed_by=SESS_PAUSED)
 
     sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
-    assert _claim(temp_db, task.id) == "sess-paused"
+    assert _claim(temp_db, task.id) == SESS_PAUSED
 
 
 def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None:
-    _make_session(temp_db, sample_project, "sess-dead", "expired")
-    closed = _claimed_task(temp_db, sample_project, claimed_by="sess-dead")
-    escalated = _claimed_task(temp_db, sample_project, claimed_by="sess-dead")
+    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
+    closed = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
+    escalated = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     now = datetime.now(UTC).isoformat()
     temp_db.execute("UPDATE tasks SET closed_at = %s WHERE id = %s", (now, closed.id))
     temp_db.execute(
@@ -136,5 +141,5 @@ def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None
 
     sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
-    assert _claim(temp_db, closed.id) == "sess-dead"
-    assert _claim(temp_db, escalated.id) == "sess-dead"
+    assert _claim(temp_db, closed.id) == SESS_DEAD
+    assert _claim(temp_db, escalated.id) == SESS_DEAD

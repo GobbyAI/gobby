@@ -114,7 +114,11 @@ fn unique_test_project_id(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
         .as_nanos();
-    format!("{prefix}-{}-{nanos}", std::process::id())
+    uuid::Uuid::new_v5(
+        &crate::models::CODE_INDEX_UUID_NAMESPACE,
+        format!("{prefix}-{}-{nanos}", std::process::id()).as_bytes(),
+    )
+    .to_string()
 }
 
 struct ProjectCleanup {
@@ -131,6 +135,7 @@ impl Drop for ProjectCleanup {
 }
 
 fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
+    let project_id = db::id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
@@ -179,6 +184,7 @@ fn indexed_file_count(conn: &mut postgres::Client, project_id: &str, rel: &str) 
 }
 
 fn count_rows(conn: &mut postgres::Client, sql: &str, project_id: &str, rel: &str) -> i64 {
+    let project_id = db::id_param(project_id).expect("test project id is a uuid");
     conn.query_one(sql, &[&project_id, &rel])
         .expect("count rows")
         .try_get(0)

@@ -212,13 +212,16 @@ class TestWorkflowLoader:
             workflow_type="workflow",
         )
 
-        # Load without project path
+        # Load without project scope
         await loader.load_workflow("project_workflow")
-        # Load with project path
-        await loader.load_workflow("project_workflow", project_path="/project/a")
+        # Load with project scope. load_workflow binds this value against the
+        # uuid workflow_definitions.project_id column, so it must be a valid
+        # project id, not a filesystem path.
+        scoped_project_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        await loader.load_workflow("project_workflow", project_path=scoped_project_id)
 
         assert "global:project_workflow" in loader._cache
-        assert "/project/a:project_workflow" in loader._cache
+        assert f"{scoped_project_id}:project_workflow" in loader._cache
 
     @pytest.mark.asyncio
     async def test_clear_cache_forces_reload(

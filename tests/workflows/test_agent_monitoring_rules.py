@@ -18,6 +18,10 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def manager(temp_db: HubDatabase) -> LocalWorkflowDefinitionManager:
@@ -39,7 +43,7 @@ def _event(
 ) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=data,
@@ -97,7 +101,7 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
             },
         )
 
-        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+        response = await RuleEngine(temp_db).evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
 
@@ -142,7 +146,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
         response = await RuleEngine(temp_db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"is_spawned_agent": True},
         )
 
@@ -164,7 +168,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
         response = await RuleEngine(temp_db).evaluate(
             _event(data),
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"is_spawned_agent": True},
         )
 
@@ -188,7 +192,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
             metadata={"session_type": "web_chat"},
         )
 
-        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+        response = await RuleEngine(temp_db).evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -210,7 +214,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
         response = await RuleEngine(temp_db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"is_spawned_agent": True, "loaded_skills": ["build-coordinator"]},
         )
 
@@ -230,7 +234,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
             }
         )
 
-        response = await RuleEngine(temp_db).evaluate(event, session_id="sid", variables={})
+        response = await RuleEngine(temp_db).evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
 
@@ -251,7 +255,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
         response = await RuleEngine(temp_db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"is_spawned_agent": True},
         )
 
@@ -273,7 +277,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
 
         response = await RuleEngine(temp_db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"loaded_skills": ["code-index"]},
         )
 

@@ -31,7 +31,7 @@ fn cargo_features_define_public_boundary() {
         r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]"#,
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
-        r#"postgres = { version = "0.19", optional = true }"#,
+        r#"postgres = { version = "0.19", optional = true, features = ["with-uuid-1"] }"#,
         r#"postgres-types = { version = "0.2", optional = true }"#,
         r#"postgres-openssl = { version = "0.5", optional = true }"#,
         r#"openssl = { version = "0.10", features = ["vendored"] }"#,

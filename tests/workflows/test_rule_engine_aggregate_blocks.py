@@ -18,6 +18,10 @@ from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -32,7 +36,7 @@ def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 def _make_event() -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": "Edit", "tool_input": {"file_path": "example.py"}},
@@ -79,7 +83,7 @@ class TestAggregateBlocks:
             priority=10,
         )
 
-        response = await RuleEngine(db).evaluate(_make_event(), session_id="sess-1", variables={})
+        response = await RuleEngine(db).evaluate(_make_event(), session_id=SESSION_ID, variables={})
 
         assert response.decision == "block"
         assert response.reason == (
@@ -110,7 +114,7 @@ class TestAggregateBlocks:
             priority=10,
         )
 
-        response = await RuleEngine(db).evaluate(_make_event(), session_id="sess-1", variables={})
+        response = await RuleEngine(db).evaluate(_make_event(), session_id=SESSION_ID, variables={})
 
         assert response.reason == "Rule enforced by Gobby: [solo-gate]\nOnly gate"
 
@@ -137,7 +141,7 @@ class TestAggregateBlocks:
         variables: dict[str, Any] = {}
 
         response = await RuleEngine(db).evaluate(
-            _make_event(), session_id="sess-1", variables=variables
+            _make_event(), session_id=SESSION_ID, variables=variables
         )
 
         assert response.reason == "Rule enforced by Gobby: [first-gate]\nFirst gate"
@@ -169,7 +173,7 @@ class TestAggregateBlocks:
         variables: dict[str, Any] = {}
 
         response = await RuleEngine(db).evaluate(
-            _make_event(), session_id="sess-1", variables=variables
+            _make_event(), session_id=SESSION_ID, variables=variables
         )
 
         assert variables["first_ran"] is True
@@ -209,9 +213,9 @@ class TestAggregateBlocks:
         variables: dict[str, Any] = {}
         engine = RuleEngine(db)
 
-        first = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        first = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
         variables["mandatory_skill_loaded"] = True
-        second = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        second = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
 
         assert first.reason == (
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
@@ -242,8 +246,8 @@ class TestAggregateBlocks:
         variables: dict[str, Any] = {}
         engine = RuleEngine(db)
 
-        first = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
-        second = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        first = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
+        second = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
 
         assert first.reason == "Rule enforced by Gobby: [context7-gate]\nOptional context7 nudge"
         assert variables["context7_nudge_fired"] is True
@@ -268,8 +272,8 @@ class TestAggregateBlocks:
         variables: dict[str, Any] = {}
         engine = RuleEngine(db)
 
-        first = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
-        second = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        first = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
+        second = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
 
         assert "1. [first-gate] First gate" in (first.reason or "")
         assert second.reason is not None
@@ -296,9 +300,9 @@ class TestAggregateBlocks:
         variables: dict[str, Any] = {}
         engine = RuleEngine(db)
 
-        first = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        first = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
         variables["skip_first"] = True
-        second = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        second = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
 
         assert "aggregated:2-gates" in (first.reason or "")
         assert second.reason == "Rule enforced by Gobby: [second-gate]\nSecond gate"

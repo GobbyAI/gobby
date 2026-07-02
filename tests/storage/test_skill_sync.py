@@ -312,7 +312,11 @@ class TestSoftDelete:
         assert "dead" in all_names
 
 
-def _create_test_project(db: HubDatabase, project_id: str = "test-proj") -> str:
+# projects.id is a native uuid column; synthetic project ids must be valid UUIDs.
+TEST_PROJECT_ID = "11111111-1111-1111-1111-111111111111"
+
+
+def _create_test_project(db: HubDatabase, project_id: str = TEST_PROJECT_ID) -> str:
     """Insert a test project row to satisfy FK constraints."""
     with db.transaction() as conn:
         conn.execute(

@@ -17,8 +17,10 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.unit
 
-PLATFORM_SESSION_ID = "platform-claude-session"
-EXTERNAL_SESSION_ID = "external-claude-session"
+# Session id columns are native uuid in PostgreSQL; synthetic ids would fail
+# with `invalid input syntax for type uuid`.
+PLATFORM_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 
 PROGRESSIVE_DISCOVERY_RULES = {
     "require-server-listed-for-schema",

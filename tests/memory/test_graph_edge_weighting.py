@@ -381,7 +381,9 @@ async def test_traversal_orders_neighbors_by_weight_in_python() -> None:
     falkor = RecordingFalkor(_neighbor_responder(rows))
     reader = _reader(falkor)
 
-    result = await reader._find_related_entity_keys(["seed"], max_hops=1, limit=20, project_id=None)
+    result = await reader._find_related_entity_keys(
+        ["seed"], max_hops=1, limit=20, project_id=None, include_global=True
+    )
 
     # Ordering is by edge weight DESC in both the Cypher candidate pull and Python cap.
     assert result == ["high", "mid", "low"]
@@ -401,7 +403,9 @@ async def test_traversal_unweighted_edges_use_neutral_weight() -> None:
     falkor = RecordingFalkor(_neighbor_responder(rows))
     reader = _reader(falkor)
 
-    result = await reader._find_related_entity_keys(["seed"], max_hops=1, limit=20, project_id=None)
+    result = await reader._find_related_entity_keys(
+        ["seed"], max_hops=1, limit=20, project_id=None, include_global=True
+    )
 
     assert result == ["alpha", "beta"]
 
@@ -515,6 +519,7 @@ async def test_cluster_expansion_bounds_fanout_and_excludes_seed_related_and_noi
         ["seed"],
         ["related"],
         project_id="project-1",
+        include_global=True,
     )
 
     assert cluster_keys == ["candidate"]

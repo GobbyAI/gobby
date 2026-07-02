@@ -17,6 +17,10 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 CLAUDE_MEMORY_RULES = {
     "block-claude-memory-read",
     "block-claude-memory-search",
@@ -160,7 +164,9 @@ class TestRequireUvRule:
         )
         engine = RuleEngine(db)
 
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "allow"
         assert response.modified_input is None
@@ -175,7 +181,9 @@ class TestRequireUvRule:
         event = _make_bash_event("python script.py", source=SessionSource.CODEX)
         engine = RuleEngine(db)
 
-        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+        response = await engine.evaluate(
+            event, session_id=SESSION_ID, variables={"require_uv": True}
+        )
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
@@ -223,7 +231,7 @@ def _make_normalized_bash_event(command: str) -> HookEvent:
     normalize_tool_fields(data)
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data,
@@ -255,7 +263,7 @@ class TestClaudeMemoryHygieneRules:
         _sync_bundled(db)
         event = _make_normalized_bash_event("cat .claude/memory/project.md")
 
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -266,7 +274,7 @@ class TestClaudeMemoryHygieneRules:
         _sync_bundled(db)
         event = _make_normalized_bash_event("rg project .claude/memory")
 
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -279,7 +287,7 @@ class TestClaudeMemoryHygieneRules:
 
         response = await RuleEngine(db).evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={"task_claimed": True},
         )
 
@@ -292,7 +300,7 @@ def _make_bash_event(command: str, source: SessionSource = SessionSource.CLAUDE)
     """Create a before_tool HookEvent with command nested in tool_input (like real adapters)."""
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data={"tool_name": "Bash", "tool_input": {"command": command}},
@@ -303,7 +311,7 @@ def _make_shell_alias_event(tool_name: str, command: str) -> HookEvent:
     """Create a before_tool HookEvent for shell aliases."""
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": tool_name, "tool_input": {"command": command}},
@@ -382,7 +390,7 @@ class TestRequireUvShouldBlock:
         engine = RuleEngine(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "Bash", "command": "python script.py"},

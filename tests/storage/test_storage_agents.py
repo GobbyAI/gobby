@@ -1,5 +1,6 @@
 """Tests for the LocalAgentRunManager storage layer."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -905,7 +906,7 @@ class TestLocalAgentRunManager:
         self, agent_manager: LocalAgentRunManager
     ) -> None:
         """Test updating child session on nonexistent run returns None."""
-        result = agent_manager.update_child_session("nonexistent-id", "child-123")
+        result = agent_manager.update_child_session("nonexistent-id", str(uuid.uuid4()))
         assert result is None
 
     def test_update_sdk_session_id(

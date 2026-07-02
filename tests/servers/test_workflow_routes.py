@@ -13,6 +13,10 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+# Valid-format UUIDs that don't exist in the database.
+UNKNOWN_ID = "99999999-9999-4999-8999-999999999999"
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+
 SAMPLE_DEFINITION = json.dumps(
     {
         "name": "test-workflow",
@@ -133,7 +137,7 @@ def test_get_workflow_by_id(client: TestClient, manager: LocalWorkflowDefinition
 
 def test_get_workflow_not_found(client: TestClient) -> None:
     """Test getting a nonexistent workflow returns 404."""
-    resp = client.get("/api/workflows/nonexistent-id")
+    resp = client.get(f"/api/workflows/{UNKNOWN_ID}")
     assert resp.status_code == 404
 
 
@@ -198,7 +202,7 @@ def test_update_workflow(client: TestClient, manager: LocalWorkflowDefinitionMan
 def test_update_workflow_not_found(client: TestClient) -> None:
     """Test updating a nonexistent workflow returns 404."""
     resp = client.put(
-        "/api/workflows/nonexistent-id",
+        f"/api/workflows/{UNKNOWN_ID}",
         json={"description": "Updated"},
     )
     assert resp.status_code == 404
@@ -233,7 +237,7 @@ def test_delete_workflow(client: TestClient, manager: LocalWorkflowDefinitionMan
 
 def test_delete_workflow_not_found(client: TestClient) -> None:
     """Test deleting a nonexistent workflow returns 404."""
-    resp = client.delete("/api/workflows/nonexistent-id")
+    resp = client.delete(f"/api/workflows/{UNKNOWN_ID}")
     assert resp.status_code == 404
 
 
@@ -286,7 +290,7 @@ def test_export_yaml(client: TestClient, manager: LocalWorkflowDefinitionManager
 
 def test_export_yaml_not_found(client: TestClient) -> None:
     """Test exporting a nonexistent workflow returns 404."""
-    resp = client.get("/api/workflows/nonexistent-id/export")
+    resp = client.get(f"/api/workflows/{UNKNOWN_ID}/export")
     assert resp.status_code == 404
 
 
@@ -318,7 +322,7 @@ def test_duplicate_workflow(client: TestClient, manager: LocalWorkflowDefinition
 def test_duplicate_not_found(client: TestClient) -> None:
     """Test duplicating a nonexistent workflow returns 404."""
     resp = client.post(
-        "/api/workflows/nonexistent-id/duplicate",
+        f"/api/workflows/{UNKNOWN_ID}/duplicate",
         json={"new_name": "copy"},
     )
     assert resp.status_code == 404
@@ -345,7 +349,7 @@ def test_toggle_enabled(client: TestClient, manager: LocalWorkflowDefinitionMana
 
 def test_toggle_not_found(client: TestClient) -> None:
     """Test toggling a nonexistent workflow returns 404."""
-    resp = client.put("/api/workflows/nonexistent-id/toggle")
+    resp = client.put(f"/api/workflows/{UNKNOWN_ID}/toggle")
     assert resp.status_code == 404
 
 
@@ -360,25 +364,25 @@ def test_move_to_project(
     """Test moving a definition to project scope."""
     temp_db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
     row = manager.create(name="move-proj-test", definition_json=SAMPLE_DEFINITION)
 
     resp = client.post(
         f"/api/workflows/{row.id}/move-to-project",
-        json={"project_id": "proj-1"},
+        json={"project_id": PROJECT_ID},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["definition"]["source"] == "project"
-    assert data["definition"]["project_id"] == "proj-1"
+    assert data["definition"]["project_id"] == PROJECT_ID
 
 
 def test_move_to_project_not_found(client: TestClient) -> None:
     """Test moving a nonexistent definition returns 404."""
     resp = client.post(
-        "/api/workflows/nonexistent-id/move-to-project",
-        json={"project_id": "proj-1"},
+        f"/api/workflows/{UNKNOWN_ID}/move-to-project",
+        json={"project_id": PROJECT_ID},
     )
     assert resp.status_code == 404
 
@@ -394,13 +398,13 @@ def test_move_to_global(
     """Test moving a definition to global scope."""
     temp_db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-        ("proj-1", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
     row = manager.create(
         name="move-global-test",
         definition_json=SAMPLE_DEFINITION,
         source="project",
-        project_id="proj-1",
+        project_id=PROJECT_ID,
     )
 
     resp = client.post(f"/api/workflows/{row.id}/move-to-global")
@@ -412,5 +416,5 @@ def test_move_to_global(
 
 def test_move_to_global_not_found(client: TestClient) -> None:
     """Test moving a nonexistent definition returns 404."""
-    resp = client.post("/api/workflows/nonexistent-id/move-to-global")
+    resp = client.post(f"/api/workflows/{UNKNOWN_ID}/move-to-global")
     assert resp.status_code == 404

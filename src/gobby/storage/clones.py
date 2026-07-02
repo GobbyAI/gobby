@@ -417,12 +417,12 @@ class LocalCloneManager:
         """
         return self.update(clone_id, agent_session_id=None)
 
-    def count_by_status(self, project_id: str) -> dict[str, int]:
+    def count_by_status(self, project_id: str | None) -> dict[str, int]:
         """
         Get count of clones by status for a project.
 
         Args:
-            project_id: Project ID
+            project_id: Project ID (None matches no rows)
 
         Returns:
             Dict mapping status to count
@@ -440,7 +440,7 @@ class LocalCloneManager:
 
     def find_stale(
         self,
-        project_id: str,
+        project_id: str | None,
         hours: int = 24,
         limit: int = 50,
     ) -> list[Clone]:
@@ -451,7 +451,7 @@ class LocalCloneManager:
         older than the threshold.
 
         Args:
-            project_id: Project ID
+            project_id: Project ID (None matches no rows)
             hours: Hours of inactivity threshold
             limit: Maximum number of results
 
@@ -522,7 +522,7 @@ class LocalCloneManager:
 
     def cleanup_stale(
         self,
-        project_id: str,
+        project_id: str | None,
         hours: int = 24,
         dry_run: bool = True,
     ) -> list[Clone]:
@@ -530,7 +530,7 @@ class LocalCloneManager:
         Mark stale clones for cleanup.
 
         Args:
-            project_id: Project ID
+            project_id: Project ID (None matches no rows)
             hours: Hours of inactivity threshold
             dry_run: If True, just return candidates without updating
 

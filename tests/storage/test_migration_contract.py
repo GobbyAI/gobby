@@ -214,7 +214,36 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "302_machines_registry.postgres.sql",
         "303_secret_key_material.postgres.sql",
         "304_uuid_identity_columns.postgres.sql",
+        "305_uuid_completion.postgres.sql",
     ]
+
+
+def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
+    """Data-dependent uuid casts must preflight-scan for uncastable values.
+
+    Migration tests run against fresh, empty schemas, so a bare
+    ``ALTER ... TYPE UUID USING col::UUID`` that chokes on populated data is
+    invisible to CI — migration 304 took the daemon down twice this way.
+    Any migration performing uuid casts must include a preflight DO block
+    that RAISEs with the offending columns before the first cast.
+    304 is grandfathered: it is already applied to every populated hub it
+    will ever see and is removed at the next baseline flatten.
+    """
+    migrations_dir = SRC_ROOT / "storage" / "migrations"
+    grandfathered = {304}
+
+    for path in sorted(migrations_dir.glob("*.sql")):
+        version = int(path.name.split("_", 1)[0])
+        if version in grandfathered:
+            continue
+        content = path.read_text(encoding="utf-8")
+        if "TYPE UUID USING" not in content:
+            continue
+        assert "RAISE EXCEPTION" in content and "preflight" in content.lower(), (
+            f"{path.name} performs uuid casts without a preflight guard; "
+            "add a DO block that scans for uncastable values and RAISEs "
+            "with the offending column names (see 305_uuid_completion)"
+        )
 
 
 def test_postgres_baseline_version_is_flattened_to_297() -> None:
@@ -225,7 +254,7 @@ def test_postgres_baseline_version_is_flattened_to_297() -> None:
     # post-baseline migrations ship above 297, so
     # latest_known_version reflects the migration file.
     assert module.BASELINE_VERSION == 297
-    assert module.latest_known_version() == 304
+    assert module.latest_known_version() == 305
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -242,6 +271,8 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
         "comms_identities": ("session_id", "project_id"),
         "comms_messages": ("session_id",),
         "comms_routing_rules": ("project_id", "session_id"),
+        "session_variables": ("session_id",),
+        "rule_overrides": ("session_id",),
     }.items():
         table_sql = _table_definition(baseline, table_name)
         for column_name in columns:
@@ -269,12 +300,19 @@ def test_postgres_baseline_keeps_allowlisted_textual_ids() -> None:
         "comms_identities": ("id", "channel_id"),
         "comms_messages": ("id", "channel_id", "identity_id", "platform_message_id"),
         "secret_key_material": ("id",),
-        "session_variables": ("session_id",),
         "spans": ("trace_id", "span_id", "parent_span_id"),
     }.items():
         table_sql = _table_definition(baseline, table_name)
         for column_name in columns:
             _assert_column_type(table_sql, column_name, "TEXT")
+
+    # task_stage_states is declared with indentation the _table_definition
+    # helper cannot terminate; assert its actor columns by containment.
+    _assert_contains_all(
+        "task_stage_states actor columns",
+        baseline,
+        ("entered_by_actor TEXT", "completed_by_actor TEXT"),
+    )
 
 
 def test_unmodeled_observation_hash_v2_purge_migration() -> None:

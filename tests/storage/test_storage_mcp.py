@@ -13,6 +13,19 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
+# mcp_servers.id and tools.id are native uuid columns; synthetic row ids must
+# be valid UUID strings.
+LEGACY_PROJECT_CONTEXT7_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
+LEGACY_CHROME_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
+LEGACY_CHROME_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
+GLOBAL_CHROME_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa4"
+LEGACY_CONTEXT7_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5"
+LEGACY_CONTEXT7_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa6"
+GLOBAL_CONTEXT7_SERVER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa7"
+GLOBAL_CONTEXT7_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa8"
+MIXED_CASE_TOOL_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa9"
+UNKNOWN_SERVER_ID = "99999999-9999-9999-9999-999999999999"
+
 
 class TestMCPServer:
     """Tests for MCPServer dataclass."""
@@ -871,7 +884,7 @@ class TestLocalMCPManager:
         mcp_manager: LocalMCPManager,
     ) -> None:
         """Test getting nonexistent server by ID returns None."""
-        result = mcp_manager.get_server_by_id("nonexistent-uuid")
+        result = mcp_manager.get_server_by_id(UNKNOWN_SERVER_ID)
         assert result is None
 
     def test_list_all_servers(
@@ -968,7 +981,7 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "legacy-project-context7",
+                LEGACY_PROJECT_CONTEXT7_ID,
                 "context7",
                 sample_project["id"],
                 "stdio",
@@ -1214,7 +1227,7 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "legacy-chrome-server",
+                LEGACY_CHROME_SERVER_ID,
                 "chrome-devtools",
                 sample_project["id"],
                 "stdio",
@@ -1236,8 +1249,8 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "legacy-chrome-tool",
-                "legacy-chrome-server",
+                LEGACY_CHROME_TOOL_ID,
+                LEGACY_CHROME_SERVER_ID,
                 "inspect_page",
                 "Inspect the current page",
                 json.dumps({"type": "object"}),
@@ -1257,7 +1270,7 @@ class TestLocalMCPManager:
 
         legacy_row = temp_db.fetchone(
             "SELECT * FROM mcp_servers WHERE id = %s",
-            ("legacy-chrome-server",),
+            (LEGACY_CHROME_SERVER_ID,),
         )
         assert legacy_row is None
 
@@ -1282,7 +1295,7 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "global-chrome-server",
+                GLOBAL_CHROME_SERVER_ID,
                 "chrome-devtools",
                 GLOBAL_PROJECT_ID,
                 "stdio",
@@ -1314,7 +1327,7 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "legacy-context7-server",
+                LEGACY_CONTEXT7_SERVER_ID,
                 "context7",
                 sample_project["id"],
                 "stdio",
@@ -1329,8 +1342,8 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "legacy-context7-search",
-                "legacy-context7-server",
+                LEGACY_CONTEXT7_TOOL_ID,
+                LEGACY_CONTEXT7_SERVER_ID,
                 "search_docs",
                 "Search docs",
                 json.dumps({"type": "object"}),
@@ -1345,7 +1358,7 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "global-context7-server",
+                GLOBAL_CONTEXT7_SERVER_ID,
                 "context7",
                 GLOBAL_PROJECT_ID,
                 "stdio",
@@ -1360,8 +1373,8 @@ class TestLocalMCPManager:
             VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "global-context7-resolve",
-                "global-context7-server",
+                GLOBAL_CONTEXT7_TOOL_ID,
+                GLOBAL_CONTEXT7_SERVER_ID,
                 "resolve_doc",
                 "Resolve doc",
                 json.dumps({"type": "object"}),
@@ -1377,7 +1390,7 @@ class TestLocalMCPManager:
 
         legacy_row = temp_db.fetchone(
             "SELECT * FROM mcp_servers WHERE id = %s",
-            ("legacy-context7-server",),
+            (LEGACY_CONTEXT7_SERVER_ID,),
         )
         assert legacy_row is None
 
@@ -1686,7 +1699,7 @@ class TestRefreshToolsIncremental:
             VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
-                "mixed-case-tool",
+                MIXED_CASE_TOOL_ID,
                 server.id,
                 "Read_File",
                 "kept",

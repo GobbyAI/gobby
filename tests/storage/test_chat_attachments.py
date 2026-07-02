@@ -16,11 +16,22 @@ from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
+# chat_attachments.id is uuid; conversation_id/message_id/draft_id stay TEXT
+# (client-side identifiers by design).
+ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000001"
+OLD_UNBOUND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000002"
+FRESH_UNBOUND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000003"
+BOUND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000004"
+HISTORICALLY_BOUND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000005"
+CONVERSATION_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000006"
+MESSAGE_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000007"
+OTHER_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000008"
+
 
 def _create_attachment(
     temp_db: HubDatabase,
     tmp_path: Path,
-    attachment_id: str = "attachment-1",
+    attachment_id: str = ATTACHMENT_ID,
 ) -> str:
     path = tmp_path / f"{attachment_id}.txt"
     path.write_text("queued")
@@ -151,7 +162,7 @@ def test_create_attachment_fetches_created_row_inside_transaction(
     with patch.object(temp_db, "transaction", wraps=temp_db.transaction) as transaction:
         record = chat_attachments.create_attachment(
             temp_db,
-            attachment_id="attachment-1",
+            attachment_id=ATTACHMENT_ID,
             project_id=PERSONAL_PROJECT_ID,
             draft_id="draft-1",
             filename="attachment.txt",
@@ -160,7 +171,7 @@ def test_create_attachment_fetches_created_row_inside_transaction(
             local_path=str(tmp_path / "attachment.txt"),
         )
 
-    assert record.id == "attachment-1"
+    assert record.id == ATTACHMENT_ID
     transaction.assert_called_once()
 
 
@@ -206,10 +217,10 @@ def test_delete_stale_unbound_attachments_deletes_only_never_bound_old_rows(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    old_unbound = _create_attachment(temp_db, tmp_path, "old-unbound")
-    fresh_unbound = _create_attachment(temp_db, tmp_path, "fresh-unbound")
-    bound = _create_attachment(temp_db, tmp_path, "bound")
-    historically_bound = _create_attachment(temp_db, tmp_path, "historically-bound")
+    old_unbound = _create_attachment(temp_db, tmp_path, OLD_UNBOUND_ID)
+    fresh_unbound = _create_attachment(temp_db, tmp_path, FRESH_UNBOUND_ID)
+    bound = _create_attachment(temp_db, tmp_path, BOUND_ID)
+    historically_bound = _create_attachment(temp_db, tmp_path, HISTORICALLY_BOUND_ID)
     cutoff = datetime.now(UTC) - timedelta(hours=24)
     old = cutoff - timedelta(minutes=1)
     fresh = cutoff + timedelta(minutes=1)
@@ -261,9 +272,9 @@ def test_delete_attachments_for_conversations_removes_conversation_and_message_l
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    conversation_attachment = _create_attachment(temp_db, tmp_path, "conversation-attachment")
-    message_attachment = _create_attachment(temp_db, tmp_path, "message-attachment")
-    other_attachment = _create_attachment(temp_db, tmp_path, "other-attachment")
+    conversation_attachment = _create_attachment(temp_db, tmp_path, CONVERSATION_ATTACHMENT_ID)
+    message_attachment = _create_attachment(temp_db, tmp_path, MESSAGE_ATTACHMENT_ID)
+    other_attachment = _create_attachment(temp_db, tmp_path, OTHER_ATTACHMENT_ID)
     message_id = chat_messages.save_message(
         temp_db,
         conversation_id="conv-1",

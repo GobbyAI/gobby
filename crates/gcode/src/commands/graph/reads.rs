@@ -693,10 +693,15 @@ mod tests {
             .expect("cleanup graph resolution project");
     }
 
+    fn test_project_uuid(project_id: &str) -> uuid::Uuid {
+        crate::db::id_param(project_id).expect("graph resolution test project id is a uuid")
+    }
+
     fn try_cleanup_graph_resolution_project(
         conn: &mut Client,
         project_id: &str,
     ) -> Result<(), postgres::Error> {
+        let project_id = test_project_uuid(project_id);
         let mut tx = conn.transaction()?;
         for table in GRAPH_RESOLUTION_CHILD_TABLES {
             let sql = format!("DELETE FROM {table} WHERE project_id = $1");
@@ -715,13 +720,15 @@ mod tests {
             "INSERT INTO code_indexed_projects
                 (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
              VALUES ($1, $2, 0, 0, NOW(), 0)",
-            &[&project_id, &root_path],
+            &[&test_project_uuid(project_id), &root_path],
         )
         .expect("insert graph resolution project");
     }
 
     fn insert_file(conn: &mut Client, project_id: &str, file_path: &str, symbol_count: i32) {
-        let id = format!("{project_id}:{file_path}");
+        let id = crate::db::id_param(&crate::models::IndexedFile::make_id(project_id, file_path))
+            .expect("indexed-file id is a uuid");
+        let project_id = test_project_uuid(project_id);
         let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &symbol_count];
         conn.execute(
             "INSERT INTO code_indexed_files
@@ -741,6 +748,8 @@ mod tests {
         name: &str,
         line_start: i32,
     ) {
+        let id = crate::db::id_param(id).expect("graph resolution symbol id is a uuid");
+        let project_id = test_project_uuid(project_id);
         let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &name, &line_start];
         conn.execute(
             "INSERT INTO code_symbols

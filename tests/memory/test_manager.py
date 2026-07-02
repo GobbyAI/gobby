@@ -23,6 +23,12 @@ from gobby.storage.memories import LocalMemoryManager, Memory
 
 pytestmark = pytest.mark.unit
 
+# Valid-format UUID constants for uuid-typed columns (projects.id, sessions.id,
+# memories.id) — synthetic slugs like "proj-123" are rejected by PostgreSQL.
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+SESSION_ID = "22222222-2222-4222-8222-222222222222"
+MISSING_MEMORY_ID = "99999999-9999-4999-8999-999999999999"
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -143,13 +149,13 @@ class TestCreateMemory:
         """Test memory creation with all parameters."""
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("proj-123", "test-project", "/tmp/test"),
+            (PROJECT_ID, "test-project", "/tmp/test"),
         )
         now = datetime.now(UTC).isoformat()
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at)
                VALUES (%s, %s, %s, %s, %s, %s)""",
-            ("sess-123", "ext-123", "machine-123", "claude", "proj-123", now),
+            (SESSION_ID, "ext-123", "machine-123", "claude", PROJECT_ID, now),
         )
 
         manager = MemoryManager(db=db, config=memory_config)
@@ -158,14 +164,14 @@ class TestCreateMemory:
             memory_type="preference",
             project_id=None,
             source_type="user",
-            source_session_id="sess-123",
+            source_session_id=SESSION_ID,
             tags=["ui", "theme"],
         )
 
         assert memory.content == "User prefers dark theme"
         assert memory.memory_type == "preference"
         assert memory.source_type == "user"
-        assert memory.source_session_id == "sess-123"
+        assert memory.source_session_id == SESSION_ID
         assert memory.tags == ["ui", "theme"]
 
     @pytest.mark.asyncio
@@ -223,13 +229,13 @@ class TestFixNullProjectIds:
         """Repairing project IDs notifies storage and refreshes secondary indexes."""
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("proj-123", "test-project", "/tmp/test"),
+            (PROJECT_ID, "test-project", "/tmp/test"),
         )
         now = datetime.now(UTC).isoformat()
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at)
                VALUES (%s, %s, %s, %s, %s, %s)""",
-            ("sess-123", "ext-123", "machine-123", "claude", "proj-123", now),
+            (SESSION_ID, "ext-123", "machine-123", "claude", PROJECT_ID, now),
         )
 
         manager = MemoryManager(db=db, config=memory_config)
@@ -237,7 +243,7 @@ class TestFixNullProjectIds:
             content="Needs project assignment",
             project_id=None,
             source_type="agent",
-            source_session_id="sess-123",
+            source_session_id=SESSION_ID,
         )
         listener_calls: list[str] = []
         manager.storage.add_change_listener(lambda: listener_calls.append("changed"))
@@ -255,12 +261,12 @@ class TestFixNullProjectIds:
         assert result.fixable == 1
         assert result.fixed == 1
         assert updated is not None
-        assert updated.project_id == "proj-123"
+        assert updated.project_id == PROJECT_ID
         assert listener_calls == ["changed"]
         embed.assert_awaited_once_with(
             memory.id,
             "Needs project assignment",
-            payload={"project_id": "proj-123"},
+            payload={"project_id": PROJECT_ID},
         )
         assert graph_row["graph_processed"] in (False, 0)
 
@@ -459,7 +465,7 @@ class TestDeleteMemory:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_memory(self, memory_manager) -> None:
         """Test deleting a non-existent memory returns False."""
-        result = await memory_manager.delete_memory("mm-nonexistent")
+        result = await memory_manager.delete_memory(MISSING_MEMORY_ID)
         assert result is False
 
 
@@ -548,7 +554,7 @@ class TestGetMemory:
 
     def test_get_memory_not_found(self, memory_manager) -> None:
         """Test getting a non-existent memory returns None."""
-        result = memory_manager.get_memory("mm-nonexistent")
+        result = memory_manager.get_memory(MISSING_MEMORY_ID)
 
         assert result is None
 
@@ -582,7 +588,7 @@ class TestUpdateMemory:
     async def test_update_memory_not_found_raises(self, memory_manager):
         """Test updating non-existent memory raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
-            await memory_manager.update_memory("mm-nonexistent", tags=["new"])
+            await memory_manager.update_memory(MISSING_MEMORY_ID, tags=["new"])
 
 
 # =============================================================================
@@ -709,7 +715,7 @@ class TestSearchMemoriesAsContext:
 
         await manager.create_memory(content="Global memory")
 
-        context = await manager.search_memories_as_context(project_id="proj-123")
+        context = await manager.search_memories_as_context(project_id=PROJECT_ID)
 
         assert isinstance(context, str)
 
@@ -808,11 +814,11 @@ class TestLifecycleService:
             embed_fn=mock_embed,
         )
         manager._dedup_service = None
-        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("proj-1", "Project 1"))
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
 
         memory = await manager._lifecycle_service.create_memory(
             content="Lifecycle service memory",
-            project_id="proj-1",
+            project_id=PROJECT_ID,
         )
         updated = await manager._lifecycle_service.update_memory(
             memory.id,
@@ -891,7 +897,7 @@ class TestADeleteMemory:
     @pytest.mark.asyncio
     async def test_adelete_nonexistent(self, memory_manager) -> None:
         """adelete_memory returns False for nonexistent memory."""
-        result = await memory_manager.adelete_memory("mm-nonexistent")
+        result = await memory_manager.adelete_memory(MISSING_MEMORY_ID)
         assert result is False
 
 
@@ -914,7 +920,7 @@ class TestAGetMemory:
     @pytest.mark.asyncio
     async def test_aget_nonexistent(self, memory_manager) -> None:
         """aget_memory returns None for nonexistent memory."""
-        result = await memory_manager.aget_memory("mm-nonexistent")
+        result = await memory_manager.aget_memory(MISSING_MEMORY_ID)
         assert result is None
 
 

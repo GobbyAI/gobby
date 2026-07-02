@@ -28,6 +28,12 @@ from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+SESSION_A_ID = "22222222-2222-4222-8222-222222222222"
+SESSION_B_ID = "33333333-3333-4333-8333-333333333333"
+
 
 class TestWorkflowHookHandlerInit:
     """Tests for WorkflowHookHandler initialization."""
@@ -374,7 +380,7 @@ class TestEdgeCases:
         for event_type in HookEventType:
             event = HookEvent(
                 event_type=event_type,
-                session_id="test-session",
+                session_id=SESSION_ID,
                 source=SessionSource.CLAUDE,
                 timestamp=datetime.now(),
                 data={},
@@ -389,7 +395,7 @@ class TestEdgeCases:
         for source in SessionSource:
             event = HookEvent(
                 event_type=HookEventType.SESSION_START,
-                session_id="test-session",
+                session_id=SESSION_ID,
                 source=source,
                 timestamp=datetime.now(),
                 data={},
@@ -677,7 +683,7 @@ class TestVariablePersistence:
             (str(uuid4()), name, json.dumps(definition), True),
         )
 
-    def _make_stop_event(self, session_id: str = "test-session") -> HookEvent:
+    def _make_stop_event(self, session_id: str = SESSION_ID) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.STOP,
             session_id=session_id,
@@ -688,7 +694,7 @@ class TestVariablePersistence:
 
     def _make_after_agent_event(
         self,
-        session_id: str = "test-session",
+        session_id: str = SESSION_ID,
         source: SessionSource = SessionSource.QWEN,
     ) -> HookEvent:
         return HookEvent(
@@ -712,7 +718,7 @@ class TestVariablePersistence:
         await handler._evaluate_rules(event)
 
         # Variable should be persisted to session_variables
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("my_counter") == 1
 
     @pytest.mark.asyncio
@@ -729,7 +735,7 @@ class TestVariablePersistence:
         # Evaluate 3 times
         for i in range(3):
             await handler._evaluate_rules(event)
-            variables = session_var_manager.get_variables("test-session")
+            variables = session_var_manager.get_variables(SESSION_ID)
             assert variables.get("custom_counter") == i + 1, (
                 f"After evaluation {i + 1}, custom_counter should be {i + 1}"
             )
@@ -768,7 +774,7 @@ class TestVariablePersistence:
         assert response.decision == "allow"
 
         # Set the flag via SessionVariableManager (simulating MCP set_session_variable)
-        session_var_manager.set_variable("test-session", "my_flag", True)
+        session_var_manager.set_variable(SESSION_ID, "my_flag", True)
 
         # Now should block
         response = await handler._evaluate_rules(event)
@@ -812,12 +818,12 @@ class TestVariablePersistence:
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
             },
-            metadata={"_platform_session_id": "test-session"},
+            metadata={"_platform_session_id": SESSION_ID},
         )
 
         await handler._evaluate_rules(event)
 
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("task_claimed") is True
         assert "task-uuid-observer" in variables.get("claimed_tasks", {})
         assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
@@ -842,12 +848,12 @@ class TestVariablePersistence:
                 "tool_output": {"output": "passed", "exitCode": 0},
             },
             cwd="/repo",
-            metadata={"_platform_session_id": "test-session"},
+            metadata={"_platform_session_id": SESSION_ID},
         )
 
         await handler._evaluate_rules(event)
 
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("verification_evidence_recorded") is True
         evidence = variables.get("verification_evidence")
         assert isinstance(evidence, list)
@@ -870,7 +876,7 @@ class TestVariablePersistence:
         )
 
         session_var_manager.merge_variables(
-            "test-session",
+            SESSION_ID,
             {
                 "task_claimed": True,
                 "claimed_tasks": {},
@@ -880,7 +886,7 @@ class TestVariablePersistence:
         event = self._make_after_agent_event()
         await handler._evaluate_rules(event)
 
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
 
@@ -896,7 +902,7 @@ class TestVariablePersistence:
         review_task.id = "task-uuid-review"
         review_task.seq_num = 123
         review_task.status = "needs_review"
-        review_task.claimed_by_session_id = "test-session"
+        review_task.claimed_by_session_id = SESSION_ID
         mock_task_manager.list_tasks.return_value = [review_task]
 
         rule_engine = RuleEngine(db=db)
@@ -906,7 +912,7 @@ class TestVariablePersistence:
         )
 
         session_var_manager.merge_variables(
-            "test-session",
+            SESSION_ID,
             {
                 "task_claimed": True,
                 "claimed_tasks": {},
@@ -916,7 +922,7 @@ class TestVariablePersistence:
         event = self._make_after_agent_event()
         await handler._evaluate_rules(event)
 
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("task_claimed") is True
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
@@ -945,7 +951,7 @@ class TestVariablePersistence:
                 },
                 "item_id": "tool-item-1",
             },
-            metadata={"_platform_session_id": "test-session"},
+            metadata={"_platform_session_id": SESSION_ID},
         )
         after_event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
@@ -964,7 +970,7 @@ class TestVariablePersistence:
                     },
                 },
             },
-            metadata={"_platform_session_id": "test-session"},
+            metadata={"_platform_session_id": SESSION_ID},
         )
 
         before_response = await handler._evaluate_rules(before_event)
@@ -1028,12 +1034,12 @@ class TestVariablePersistence:
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
             },
-            metadata={"_platform_session_id": "test-session"},
+            metadata={"_platform_session_id": SESSION_ID},
         )
 
         await handler._evaluate_rules(event)
 
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         # Observer change
         assert variables.get("task_claimed") is True
         # Rule change
@@ -1069,7 +1075,7 @@ class TestBaselineDirtyFilesSubtraction:
     def handler(self, rule_engine):
         return WorkflowHookHandler(rule_engine=rule_engine)
 
-    def _make_event(self, session_id: str = "test-session") -> HookEvent:
+    def _make_event(self, session_id: str = SESSION_ID) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=session_id,
@@ -1104,7 +1110,7 @@ class TestBaselineDirtyFilesSubtraction:
         """Should not block when all dirty files are in the baseline."""
         mock_get_dirty.return_value = DirtyFiles({"file_a.py", "file_b.py"}, set())
         session_var_manager.set_variable(
-            "test-session", "baseline_dirty_files", ["file_a.py", "file_b.py"]
+            SESSION_ID, "baseline_dirty_files", ["file_a.py", "file_b.py"]
         )
         self._insert_block_on_dirty_rule(db)
 
@@ -1121,7 +1127,7 @@ class TestBaselineDirtyFilesSubtraction:
         """Should allow when files beyond baseline exist but session has no edits."""
         mock_get_dirty.return_value = DirtyFiles({"file_a.py", "file_b.py", "new_file.py"}, set())
         session_var_manager.set_variable(
-            "test-session", "baseline_dirty_files", ["file_a.py", "file_b.py"]
+            SESSION_ID, "baseline_dirty_files", ["file_a.py", "file_b.py"]
         )
         self._insert_block_on_dirty_rule(db)
 
@@ -1169,7 +1175,7 @@ class TestBaselineDirtyFilesSubtraction:
     ) -> None:
         """Should block only when session's own edited files are dirty."""
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py", "c.py"}, set())
-        session_var_manager.set_variable("test-session", "session_edited_files", ["c.py"])
+        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["c.py"])
         self._insert_block_on_dirty_rule(db)
 
         event = self._make_event()
@@ -1185,7 +1191,7 @@ class TestBaselineDirtyFilesSubtraction:
     ) -> None:
         """Should allow when session's edited files are not dirty (committed)."""
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
-        session_var_manager.set_variable("test-session", "session_edited_files", ["c.py"])
+        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["c.py"])
         self._insert_block_on_dirty_rule(db)
 
         event = self._make_event()
@@ -1202,7 +1208,7 @@ class TestBaselineDirtyFilesSubtraction:
         """Should block when session edited a file that was already in baseline."""
         mock_get_dirty.return_value = DirtyFiles({"a.py"}, set())
         session_var_manager.merge_variables(
-            "test-session",
+            SESSION_ID,
             {
                 "baseline_dirty_files": ["a.py"],
                 "session_edited_files": ["a.py"],
@@ -1225,17 +1231,17 @@ class TestBaselineDirtyFilesSubtraction:
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
 
         # Session A edited a.py, Session B edited b.py
-        session_var_manager.set_variable("session-a", "session_edited_files", ["a.py"])
-        session_var_manager.set_variable("session-b", "session_edited_files", ["b.py"])
+        session_var_manager.set_variable(SESSION_A_ID, "session_edited_files", ["a.py"])
+        session_var_manager.set_variable(SESSION_B_ID, "session_edited_files", ["b.py"])
         self._insert_block_on_dirty_rule(db)
 
         # Session A should be blocked (a.py dirty & in its edits)
-        event_a = self._make_event(session_id="session-a")
+        event_a = self._make_event(session_id=SESSION_A_ID)
         response_a = await handler._evaluate_rules(event_a)
         assert response_a.decision == "block"
 
         # Session B should be blocked (b.py dirty & in its edits)
-        event_b = self._make_event(session_id="session-b")
+        event_b = self._make_event(session_id=SESSION_B_ID)
         response_b = await handler._evaluate_rules(event_b)
         assert response_b.decision == "block"
 
@@ -1248,15 +1254,15 @@ class TestBaselineDirtyFilesSubtraction:
         mock_get_dirty.return_value = DirtyFiles({"a.py", "b.py"}, set())
 
         # Session A edited a.py only
-        session_var_manager.set_variable("session-a", "session_edited_files", ["a.py"])
+        session_var_manager.set_variable(SESSION_A_ID, "session_edited_files", ["a.py"])
         # Session B edited b.py only
-        session_var_manager.set_variable("session-b", "session_edited_files", ["b.py"])
+        session_var_manager.set_variable(SESSION_B_ID, "session_edited_files", ["b.py"])
         self._insert_block_on_dirty_rule(db)
 
         # Now check: if we ONLY look at session-a's files,
         # and a.py gets committed (removed from dirty), session-a should allow
         mock_get_dirty.return_value = DirtyFiles({"b.py"}, set())
-        event_a = self._make_event(session_id="session-a")
+        event_a = self._make_event(session_id=SESSION_A_ID)
         response_a = await handler._evaluate_rules(event_a)
         assert response_a.decision == "allow"  # a.py committed, b.py is not session-a's
 
@@ -1273,7 +1279,7 @@ class TestBaselineDirtyFilesSubtraction:
         await handler._evaluate_rules(event)
 
         # Baseline should be persisted
-        variables = session_var_manager.get_variables("test-session")
+        variables = session_var_manager.get_variables(SESSION_ID)
         assert set(variables.get("baseline_dirty_files", [])) == {"pre_existing.py", "other.py"}
         assert variables.get("session_edited_files") == []
 
@@ -1307,7 +1313,7 @@ class TestBaselineDirtyFilesSubtraction:
         """Untracked files not created by this session should not trigger has_dirty_files."""
         # Untracked screenshots/docs that existed before session
         mock_get_dirty.return_value = DirtyFiles(set(), {"screenshot.png", "plan.md"})
-        session_var_manager.set_variable("test-session", "session_edited_files", ["src/main.py"])
+        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["src/main.py"])
         self._insert_block_on_dirty_rule(db)
 
         event = self._make_event()
@@ -1323,7 +1329,7 @@ class TestBaselineDirtyFilesSubtraction:
     ) -> None:
         """Untracked files created by this session should trigger has_dirty_files."""
         mock_get_dirty.return_value = DirtyFiles(set(), {"new_module.py"})
-        session_var_manager.set_variable("test-session", "session_edited_files", ["new_module.py"])
+        session_var_manager.set_variable(SESSION_ID, "session_edited_files", ["new_module.py"])
         self._insert_block_on_dirty_rule(db)
 
         event = self._make_event()
@@ -1339,7 +1345,7 @@ class TestBaselineDirtyFilesSubtraction:
     ) -> None:
         """Untracked files should not trigger has_dirty_files without session edits."""
         mock_get_dirty.return_value = DirtyFiles(set(), {"random_file.txt"})
-        session_var_manager.set_variable("test-session", "baseline_dirty_files", [])
+        session_var_manager.set_variable(SESSION_ID, "baseline_dirty_files", [])
         self._insert_block_on_dirty_rule(db)
 
         event = self._make_event()
@@ -1363,7 +1369,7 @@ class TestStopFailsClosedOnVariableLoadError:
 
         return RuleEngine(db=db)
 
-    def _make_stop_event(self, session_id: str = "test-session") -> HookEvent:
+    def _make_stop_event(self, session_id: str = SESSION_ID) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.STOP,
             session_id=session_id,
@@ -1372,7 +1378,7 @@ class TestStopFailsClosedOnVariableLoadError:
             data={},
         )
 
-    def _make_tool_event(self, session_id: str = "test-session") -> HookEvent:
+    def _make_tool_event(self, session_id: str = SESSION_ID) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             session_id=session_id,

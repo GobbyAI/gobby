@@ -1,6 +1,7 @@
 use anyhow::bail;
 use postgres::GenericClient;
 
+use super::ids::{id_param, id_string, opt_id_string};
 use crate::models::{CallRelation, CallTargetKind, ImportRelation, Symbol};
 use crate::utils::i64_to_usize;
 
@@ -16,6 +17,7 @@ pub fn list_indexed_file_paths(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<Vec<String>> {
+    let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT file_path FROM code_indexed_files WHERE project_id = $1 ORDER BY file_path",
         &[&project_id],
@@ -29,6 +31,7 @@ pub fn indexed_project_exists(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     Ok(conn
         .query_opt(
             "SELECT 1 FROM code_indexed_projects WHERE id = $1",
@@ -59,6 +62,7 @@ pub fn indexed_file_exists(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     Ok(conn
         .query_opt(
             "SELECT 1 FROM code_indexed_files
@@ -73,6 +77,7 @@ pub fn mark_graph_sync_attempted(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     let updated = conn.execute(
         "UPDATE code_indexed_files
          SET graph_synced = false, graph_sync_attempted_at = NOW()
@@ -87,6 +92,7 @@ pub fn mark_graph_synced(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     let updated = conn.execute(
         "UPDATE code_indexed_files
          SET graph_synced = true, graph_sync_attempted_at = NOW()
@@ -100,6 +106,7 @@ pub fn reset_graph_sync_for_project(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<u64> {
+    let project_id = id_param(project_id)?;
     Ok(conn.execute(
         "UPDATE code_indexed_files
          SET graph_synced = false, graph_sync_attempted_at = NULL
@@ -113,6 +120,7 @@ pub fn mark_vector_sync_attempted(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     let updated = conn.execute(
         "UPDATE code_indexed_files
          SET vectors_synced = false, vector_sync_attempted_at = NOW()
@@ -127,6 +135,7 @@ pub fn mark_vectors_synced(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
     let updated = conn.execute(
         "UPDATE code_indexed_files
          SET vectors_synced = true, vector_sync_attempted_at = NOW()
@@ -140,6 +149,7 @@ pub fn mark_project_vector_sync_attempted(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<u64> {
+    let project_id = id_param(project_id)?;
     Ok(conn.execute(
         "UPDATE code_indexed_files
          SET vectors_synced = false, vector_sync_attempted_at = NOW()
@@ -152,6 +162,7 @@ pub fn mark_project_vectors_synced(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<u64> {
+    let project_id = id_param(project_id)?;
     Ok(conn.execute(
         "UPDATE code_indexed_files
          SET vectors_synced = true, vector_sync_attempted_at = NOW()
@@ -169,6 +180,7 @@ pub fn file_vectors_synced(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<Option<bool>> {
+    let project_id = id_param(project_id)?;
     let synced = conn
         .query_opt(
             "SELECT vectors_synced
@@ -185,6 +197,7 @@ pub fn reset_vectors_sync_for_project(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<u64> {
+    let project_id = id_param(project_id)?;
     Ok(conn.execute(
         "UPDATE code_indexed_files
          SET vectors_synced = false, vector_sync_attempted_at = NULL
@@ -198,6 +211,7 @@ fn read_imports_for_file(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<Vec<ImportRelation>> {
+    let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT source_file, target_module
          FROM code_imports
@@ -220,6 +234,7 @@ fn read_symbols_for_file(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<Vec<Symbol>> {
+    let project_id = id_param(project_id)?;
     let query = format!(
         "SELECT {} FROM code_symbols s
          WHERE s.project_id = $1 AND s.file_path = $2
@@ -235,6 +250,7 @@ fn read_calls_for_file(
     project_id: &str,
     file_path: &str,
 ) -> anyhow::Result<Vec<CallRelation>> {
+    let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT caller_symbol_id, callee_symbol_id, callee_name,
                 callee_target_kind, callee_external_module, file_path, line::BIGINT AS line
@@ -248,11 +264,11 @@ fn read_calls_for_file(
 
 fn call_relation_from_row(row: &postgres::Row) -> anyhow::Result<CallRelation> {
     let target_kind: String = row.try_get("callee_target_kind")?;
-    let callee_symbol_id: String = row.try_get("callee_symbol_id")?;
     let callee_external_module: String = row.try_get("callee_external_module")?;
     Ok(CallRelation {
-        caller_symbol_id: row.try_get("caller_symbol_id")?,
-        callee_symbol_id: non_empty(callee_symbol_id),
+        // NULL caller means module scope; the domain keeps the "" sentinel.
+        caller_symbol_id: opt_id_string(row, "caller_symbol_id")?.unwrap_or_default(),
+        callee_symbol_id: opt_id_string(row, "callee_symbol_id")?,
         callee_name: row.try_get("callee_name")?,
         callee_target_kind: call_target_kind_from_str(&target_kind)?,
         callee_external_module: non_empty(callee_external_module),
@@ -272,6 +288,7 @@ pub fn read_local_import_calls(
     if file_paths.is_empty() {
         return Ok(Vec::new());
     }
+    let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT caller_symbol_id, callee_symbol_id, callee_name,
                 callee_target_kind, callee_external_module, file_path, line::BIGINT AS line
@@ -288,6 +305,7 @@ pub fn read_project_local_import_calls(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<Vec<CallRelation>> {
+    let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT caller_symbol_id, callee_symbol_id, callee_name,
                 callee_target_kind, callee_external_module, file_path, line::BIGINT AS line
@@ -321,6 +339,7 @@ pub fn resolve_local_callee_symbol_id(
     if target_files.is_empty() || name.is_empty() {
         return Ok(None);
     }
+    let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT id, kind, parent_symbol_id
          FROM code_symbols
@@ -332,9 +351,9 @@ pub fn resolve_local_callee_symbol_id(
     let candidates: Vec<LocalCalleeCandidate> = rows
         .iter()
         .map(|row| {
-            let id: String = row.try_get("id")?;
+            let id = id_string(row, "id")?;
             let kind: String = row.try_get("kind")?;
-            let parent_symbol_id: Option<String> = row.try_get("parent_symbol_id")?;
+            let parent_symbol_id = opt_id_string(row, "parent_symbol_id")?;
             Ok::<_, anyhow::Error>(LocalCalleeCandidate {
                 id,
                 kind,
@@ -354,6 +373,7 @@ pub fn resolve_default_import_symbol_id(
     if target_files.is_empty() {
         return Ok(None);
     }
+    let project_id = id_param(project_id)?;
     let target_kinds = ["function", "class", "type"];
     let rows = conn.query(
         "SELECT id, kind, parent_symbol_id
@@ -368,9 +388,9 @@ pub fn resolve_default_import_symbol_id(
     let candidates: Vec<LocalCalleeCandidate> = rows
         .iter()
         .map(|row| {
-            let id: String = row.try_get("id")?;
+            let id = id_string(row, "id")?;
             let kind: String = row.try_get("kind")?;
-            let parent_symbol_id: Option<String> = row.try_get("parent_symbol_id")?;
+            let parent_symbol_id = opt_id_string(row, "parent_symbol_id")?;
             Ok::<_, anyhow::Error>(LocalCalleeCandidate {
                 id,
                 kind,

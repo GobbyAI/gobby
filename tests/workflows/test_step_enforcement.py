@@ -5,6 +5,7 @@ enforcement and step transitions via on_mcp_success handlers.
 """
 
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -19,6 +20,11 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+# Session/project/instance id columns are native uuid in PostgreSQL; synthetic
+# ids like SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 @pytest.fixture
@@ -54,7 +60,7 @@ AGENT_BLOCKED_TOOLS = [
 
 def _check_agent_tool(tool_name: str, variables: dict[str, Any]) -> HookResponse | None:
     event = _make_event(data={"tool_name": tool_name})
-    return RuleEngine(MagicMock())._check_agent_tool_enforcement(event, "test-session", variables)
+    return RuleEngine(MagicMock())._check_agent_tool_enforcement(event, SESSION_ID, variables)
 
 
 def _make_event(
@@ -64,7 +70,7 @@ def _make_event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -137,18 +143,18 @@ _DEVELOPER_WORKFLOW = {
 }
 
 
-def _create_session(db: "HubDatabase", session_id: str = "test-session") -> None:
+def _create_session(db: "HubDatabase", session_id: str = SESSION_ID) -> None:
     """Create a minimal session row to satisfy foreign key constraints."""
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", "project-1"),
+        (session_id, "ext-1", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -156,7 +162,7 @@ def _setup_step_workflow(
     db: "HubDatabase",
     manager: LocalWorkflowDefinitionManager,
     instance_mgr: WorkflowInstanceManager,
-    session_id: str = "test-session",
+    session_id: str = SESSION_ID,
     current_step: str = "claim",
     workflow_data: dict[str, Any] | None = None,
 ) -> None:
@@ -177,7 +183,7 @@ def _setup_step_workflow(
     from gobby.workflows.definitions import WorkflowInstance
 
     instance = WorkflowInstance(
-        id=f"inst-{session_id}-{defn.name}",
+        id=str(uuid.uuid4()),
         session_id=session_id,
         workflow_name=defn.name,
         enabled=True,
@@ -255,7 +261,7 @@ class TestStepToolBlocking:
         event = _make_event(data={"tool_name": "mcp__gobby__call_tool"})
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -271,7 +277,7 @@ class TestStepToolBlocking:
         event = _make_event(data={"tool_name": "Edit"})
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
         assert response.reason is not None
         assert "step-enforcement" in response.reason
@@ -332,7 +338,7 @@ class TestStepToolBlocking:
 
         response = await engine.evaluate(
             _make_event(data={"tool_name": tool_name}),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables={},
         )
 
@@ -357,7 +363,7 @@ class TestStepToolBlocking:
         event = _make_event(data={"tool_name": "Edit"})
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -385,7 +391,7 @@ class TestStepToolBlocking:
         event = _make_event(data={"tool_name": "Write"})
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
         assert response.reason is not None
         assert "blocked" in response.reason.lower()
@@ -409,7 +415,7 @@ class TestStepToolBlocking:
         ]:
             event = _make_event(data={"tool_name": tool})
             variables: dict[str, Any] = {}
-            response = await engine.evaluate(event, session_id="test-session", variables=variables)
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
             assert response.decision == "allow", f"Discovery tool {tool} should pass"
 
     @pytest.mark.asyncio
@@ -423,7 +429,7 @@ class TestStepToolBlocking:
         event = _make_event(data={"tool_name": "Edit"})
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
 
@@ -452,7 +458,7 @@ class TestStepMCPToolBlocking:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -476,7 +482,7 @@ class TestStepMCPToolBlocking:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
         assert response.reason is not None
         assert "gobby-tasks:close_task" in response.reason
@@ -529,7 +535,7 @@ class TestStepMCPToolBlocking:
             }
         )
 
-        response = await engine.evaluate(event, session_id="test-session", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -558,7 +564,7 @@ class TestStepMCPToolBlocking:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
     @pytest.mark.asyncio
@@ -582,7 +588,7 @@ class TestStepMCPToolBlocking:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -617,7 +623,7 @@ class TestStepMCPToolBlocking:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
 
@@ -647,10 +653,10 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         # Check the instance was updated
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.variables.get("task_claimed") is True
 
@@ -676,9 +682,9 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "implement"
         # Transition notification should be in the response context
@@ -710,9 +716,9 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "claim"  # No transition
 
@@ -738,9 +744,9 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "terminate"
         assert instance.variables.get("review_submitted") is True
@@ -771,9 +777,9 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "terminate"
         assert instance.variables.get("review_submitted") is True
@@ -803,9 +809,9 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "implement"  # No change
 
@@ -831,7 +837,7 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         # No transition means no transition context
         assert response.context is None or "Step transition" not in response.context
 
@@ -887,7 +893,7 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.context is not None
         assert "working" in response.context
@@ -940,9 +946,9 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "skill-gate-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "skill-gate-workflow")
         assert instance is not None
         assert instance.variables.get("skill_loaded") is False
 
@@ -958,9 +964,9 @@ class TestStepTransitions:
             },
         )
 
-        await engine.evaluate(matching_event, session_id="test-session", variables=variables)
+        await engine.evaluate(matching_event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "skill-gate-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "skill-gate-workflow")
         assert instance is not None
         assert instance.variables.get("skill_loaded") is True
 
@@ -986,7 +992,7 @@ class TestStepTransitions:
         """
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         # Confirm the instance starts with task_claimed=False.
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.variables.get("task_claimed") is False
 
@@ -1008,9 +1014,9 @@ class TestStepTransitions:
             },
         )
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         # Must stay in claim: instance.variables wins over session vars.
         assert instance.current_step == "claim"
@@ -1046,9 +1052,9 @@ class TestStepTransitions:
             },
         )
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "developer-workflow")
         assert instance is not None
         assert instance.current_step == "implement"
         assert instance.variables.get("task_claimed") is True
@@ -1109,9 +1115,9 @@ class TestStepTransitions:
             },
         )
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "session-var-gated")
+        instance = instance_mgr.get_instance(SESSION_ID, "session-var-gated")
         assert instance is not None
         assert instance.current_step == "done"
 
@@ -1145,7 +1151,7 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow", (
             f"send_keys must bypass terminate's narrow allow-list; "
@@ -1174,7 +1180,7 @@ class TestStepTransitions:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow", (
             f"capture_output must bypass terminate's narrow allow-list; "
@@ -1250,9 +1256,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
         assert instance is not None
         # merge_complete should NOT be set (on_mcp_success was skipped)
         assert instance.variables.get("merge_complete") is False
@@ -1282,9 +1288,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         # Transition to resolve_conflicts should fire
@@ -1315,9 +1321,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("merge_complete") is True
         assert instance.variables.get("has_conflicts") is False
@@ -1351,9 +1357,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         assert instance.current_step == "resolve_conflicts"
@@ -1382,9 +1388,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
         assert instance is not None
         # Without tool_output, should fall through to on_mcp_success
         assert instance.variables.get("merge_complete") is True
@@ -1415,9 +1421,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         assert instance.current_step == "resolve_conflicts"
@@ -1473,9 +1479,9 @@ class TestToolOutputRouting:
         )
         variables: dict[str, Any] = {}
 
-        await engine.evaluate(event, session_id="test-session", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-when-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-when-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is False
 
@@ -1494,9 +1500,9 @@ class TestToolOutputRouting:
             },
         )
 
-        await engine.evaluate(matching_event, session_id="test-session", variables=variables)
+        await engine.evaluate(matching_event, session_id=SESSION_ID, variables=variables)
 
-        instance = instance_mgr.get_instance("test-session", "merge-when-workflow")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-when-workflow")
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
 
@@ -1526,7 +1532,7 @@ class TestStepEnforcementAfterTransition:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
     @pytest.mark.asyncio
@@ -1550,7 +1556,7 @@ class TestStepEnforcementAfterTransition:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1572,7 +1578,7 @@ class TestStepEnforcementAfterTransition:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1590,7 +1596,7 @@ class TestStepEnforcementAfterTransition:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1608,7 +1614,7 @@ class TestStepEnforcementAfterTransition:
         )
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
 
@@ -1678,9 +1684,9 @@ class TestStepBeforeMcpHandlers:
         variables: dict[str, Any] = {}
 
         for expected_count in (1, 2, 3):
-            response = await engine.evaluate(event, session_id="test-session", variables=variables)
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
             assert response.decision == "allow"
-            instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+            instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
             assert instance is not None
             assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
 
@@ -1695,17 +1701,17 @@ class TestStepBeforeMcpHandlers:
             }
         )
         response = await engine.evaluate(
-            other_conflict_event, session_id="test-session", variables=variables
+            other_conflict_event, session_id=SESSION_ID, variables=variables
         )
 
         assert response.decision == "allow"
 
-        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert response.reason is not None
         assert "retry cap reached" in response.reason
-        instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 3
         assert instance.variables["merge_resolve_attempts"].count("mc-two") == 1
@@ -1795,17 +1801,15 @@ class TestStepBeforeMcpHandlers:
 
         variables: dict[str, Any] = {}
 
-        response = await engine.evaluate(
-            before_event, session_id="test-session", variables=variables
-        )
+        response = await engine.evaluate(before_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
         await engine.evaluate(
             after_event({"success": False, "retry_later": True}),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables=variables,
         )
-        instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 0
 
@@ -1816,27 +1820,25 @@ class TestStepBeforeMcpHandlers:
         ):
             response = await engine.evaluate(
                 before_event,
-                session_id="test-session",
+                session_id=SESSION_ID,
                 variables=variables,
             )
             assert response.decision == "allow"
             await engine.evaluate(
                 after_event(output),
-                session_id="test-session",
+                session_id=SESSION_ID,
                 variables=variables,
             )
-            instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+            instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
             assert instance is not None
             assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
 
-        response = await engine.evaluate(
-            before_event, session_id="test-session", variables=variables
-        )
+        response = await engine.evaluate(before_event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert response.reason is not None
         assert "retry cap reached" in response.reason
-        instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+        instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
         assert instance is not None
         assert instance.variables["merge_resolve_attempts"].count("mc-one") == 3
 
@@ -1902,7 +1904,7 @@ class TestStepBeforeMcpHandlers:
         for expected_count in (1, 2, 3):
             response = await engine.evaluate(
                 _make_event(data=event_data),
-                session_id="test-session",
+                session_id=SESSION_ID,
                 variables=variables,
             )
             assert response.decision == "allow"
@@ -1912,18 +1914,18 @@ class TestStepBeforeMcpHandlers:
                     data=event_data,
                     metadata={"_mcp_proxy_duplicate_before_tool": True},
                 ),
-                session_id="test-session",
+                session_id=SESSION_ID,
                 variables=variables,
             )
             assert duplicate_response.decision == "allow"
 
-            instance = instance_mgr.get_instance("test-session", "merge-retry-test")
+            instance = instance_mgr.get_instance(SESSION_ID, "merge-retry-test")
             assert instance is not None
             assert instance.variables["merge_resolve_attempts"].count("mc-one") == expected_count
 
         response = await engine.evaluate(
             _make_event(data=event_data),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables=variables,
         )
 

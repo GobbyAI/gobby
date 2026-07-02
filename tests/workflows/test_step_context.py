@@ -22,8 +22,13 @@ def test_get_active_step_workflow_context_propagates_db_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Synchronous DB driver failures propagate without duplicate local logging."""
+    # A valid uuid session id is required to get past the is_session_uuid
+    # guard so the lookup actually reaches the (failing) database.
     with pytest.raises(sqlite3.DatabaseError):
-        get_active_step_workflow_context(_FailingDb(), "session-1")  # type: ignore[arg-type]
+        get_active_step_workflow_context(
+            _FailingDb(),  # type: ignore[arg-type]
+            "11111111-1111-4111-8111-111111111111",
+        )
 
     assert not caplog.records
 

@@ -32,7 +32,7 @@ serde_json = "1"
 serde_yaml = { package = "yaml_serde", version = "0.10.4" }
 thiserror = "2"
 
-postgres = { version = "0.19", optional = true }
+postgres = { version = "0.19", optional = true, features = ["with-uuid-1"] }
 postgres-types = { version = "0.2", optional = true }
 # PostgreSQL TLS still uses postgres-openssl/native-tls connectors.
 postgres-openssl = { version = "0.5", optional = true }

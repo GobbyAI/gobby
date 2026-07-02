@@ -742,7 +742,7 @@ CREATE INDEX idx_workflow_instances_session ON workflow_instances(session_id);
 CREATE INDEX idx_workflow_instances_enabled ON workflow_instances(session_id, enabled);
 
 CREATE TABLE session_variables (
-    session_id TEXT PRIMARY KEY,
+    session_id UUID PRIMARY KEY,
     variables JSONB DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -959,22 +959,6 @@ CREATE INDEX idx_ism_undelivered ON inter_session_messages(to_session, delivered
 
 CREATE INDEX idx_ism_completion_lookup ON inter_session_messages(to_session, message_type)
     WHERE metadata_json IS NOT NULL;
-
-CREATE TABLE agent_commands (
-    id TEXT PRIMARY KEY,
-    from_session TEXT NOT NULL,
-    to_session TEXT NOT NULL,
-    command_text TEXT NOT NULL,
-    allowed_tools JSONB,
-    allowed_mcp_tools JSONB,
-    exit_condition TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    started_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ
-);
-
-CREATE INDEX idx_agent_commands_to_session ON agent_commands(to_session, status);
 
 CREATE TABLE skills (
     id TEXT PRIMARY KEY,
@@ -1329,7 +1313,7 @@ ALTER TABLE workflow_definitions
 
 CREATE TABLE rule_overrides (
     id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
+    session_id UUID NOT NULL,
     rule_name TEXT NOT NULL,
     enabled BOOLEAN NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1512,7 +1496,7 @@ CREATE INDEX idx_ci_file ON code_imports(project_id, source_file);
 CREATE TABLE code_calls (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     project_id UUID NOT NULL,
-    caller_symbol_id UUID NOT NULL,
+    caller_symbol_id UUID,
     callee_symbol_id UUID,
     callee_name TEXT NOT NULL,
     callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
@@ -2061,8 +2045,10 @@ CREATE TABLE task_stage_states (
                 reviewer_agent TEXT,
                 entered_at TIMESTAMPTZ,
                 entered_by_session_id UUID,
+                entered_by_actor TEXT,
                 completed_at TIMESTAMPTZ,
                 completed_by_session_id UUID,
+                completed_by_actor TEXT,
                 completed_commit_sha TEXT,
                 work_attempt_count INTEGER NOT NULL DEFAULT 0,
                 review_round_count INTEGER NOT NULL DEFAULT 0,

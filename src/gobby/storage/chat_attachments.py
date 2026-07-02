@@ -387,7 +387,7 @@ def delete_attachments_for_conversations(
               FROM chat_attachments
              WHERE conversation_id IN ({placeholders})
                 OR message_id IN (
-                    SELECT id
+                    SELECT id::text
                       FROM chat_messages
                      WHERE conversation_id IN ({placeholders})
                 )

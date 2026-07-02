@@ -27,6 +27,11 @@ from gobby.workflows.observers import detect_mcp_call
 
 pytestmark = pytest.mark.integration
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like SESSION_ID
+# would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
 
 # Mirrors the bundled task-creation schema gate.
 _REQUIRE_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
@@ -112,7 +117,7 @@ async def test_synthesized_before_tool_blocks_for_task_creation_skill(
     engine = RuleEngine(db)
     variables: dict[str, object] = {}
 
-    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    response = await engine.evaluate(hook_event, session_id=SESSION_ID, variables=variables)
 
     assert response.decision == "block"
     assert (
@@ -137,7 +142,7 @@ async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_pr
         HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             source=SessionSource.CODEX,
-            session_id="external-sid",
+            session_id=EXTERNAL_SESSION_ID,
             timestamp=datetime.now(UTC),
             data={
                 "tool_name": "mcp__gobby__call_tool",
@@ -146,10 +151,10 @@ async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_pr
                 "mcp_server": "gobby-skills",
                 "mcp_tool": "get_skill",
             },
-            metadata={"_platform_session_id": "sid"},
+            metadata={"_platform_session_id": SESSION_ID},
         ),
         variables,
-        "sid",
+        SESSION_ID,
     )
 
     tool_event = ParsedToolEvent(
@@ -173,7 +178,7 @@ async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_pr
     assert hook_event is not None
 
     engine = RuleEngine(db)
-    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    response = await engine.evaluate(hook_event, session_id=SESSION_ID, variables=variables)
 
     assert variables["loaded_skills"] == ["task-creation"]
     assert response.decision == "allow"
@@ -212,7 +217,7 @@ async def test_synthesized_event_skipped_when_skill_already_loaded(
 
     engine = RuleEngine(db)
     variables: dict[str, object] = {"loaded_skills": ["task-creation"]}
-    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    response = await engine.evaluate(hook_event, session_id=SESSION_ID, variables=variables)
 
     assert response.decision == "allow"
     assert variables["loaded_skills"] == ["task-creation"]
@@ -251,7 +256,7 @@ async def test_synthesized_event_not_skipped_when_skill_legacy_injected(
 
     engine = RuleEngine(db)
     variables: dict[str, object] = {"injected_skills": ["task-creation"]}
-    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    response = await engine.evaluate(hook_event, session_id=SESSION_ID, variables=variables)
 
     assert response.decision == "block"
     assert (
@@ -321,7 +326,7 @@ async def test_synthesized_event_for_unrelated_server_does_not_fire(
 
     engine = RuleEngine(db)
     variables: dict[str, object] = {}
-    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    response = await engine.evaluate(hook_event, session_id=SESSION_ID, variables=variables)
 
     assert response.decision == "allow"
     assert "loaded_skills" not in variables

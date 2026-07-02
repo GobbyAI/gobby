@@ -1,6 +1,7 @@
 """Audit logging regressions for step workflow enforcement."""
 
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +16,10 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
-SESSION_ID = "audit-session"
+# Session/project id columns are native uuid in PostgreSQL; synthetic ids
+# would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 @pytest.fixture
@@ -57,14 +61,14 @@ def _create_session(db: "HubDatabase") -> None:
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (SESSION_ID, "ext-1", "machine-1", "claude", "project-1"),
+        (SESSION_ID, "ext-1", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -109,7 +113,7 @@ def _setup_workflow(
     )
     instance_mgr.save_instance(
         WorkflowInstance(
-            id=f"inst-{SESSION_ID}-{definition.name}",
+            id=str(uuid.uuid4()),
             session_id=SESSION_ID,
             workflow_name=definition.name,
             enabled=True,

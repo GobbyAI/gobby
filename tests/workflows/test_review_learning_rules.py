@@ -15,6 +15,11 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# EXTERNAL_SESSION_ID would fail with `invalid input syntax for type uuid`.
+EXTERNAL_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
 
 def _sync_bundled(db: HubDatabase) -> None:
     sync_bundled_rules(db, get_bundled_rules_path())
@@ -23,11 +28,11 @@ def _sync_bundled(db: HubDatabase) -> None:
 def _event(data: dict[str, Any]) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="external-session",
+        session_id=EXTERNAL_SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data=data,
-        metadata={"_platform_session_id": "platform-session"},
+        metadata={"_platform_session_id": PLATFORM_SESSION_ID},
     )
 
 
@@ -83,7 +88,7 @@ class TestReviewLearningRule:
                     "canonical_code_navigation_broad": True,
                 }
             ),
-            session_id="external-session",
+            session_id=EXTERNAL_SESSION_ID,
             variables={},
         )
 
@@ -95,7 +100,7 @@ class TestReviewLearningRule:
         assert json.loads(calls[0]["args"]["file_paths_json"]) == [
             "crates/gcode/src/config/services.rs"
         ]
-        assert calls[0]["args"]["session_id"] == "platform-session"
+        assert calls[0]["args"]["session_id"] == PLATFORM_SESSION_ID
 
     @pytest.mark.asyncio
     async def test_mutation_injects_before_write(self, temp_db: HubDatabase) -> None:
@@ -116,7 +121,7 @@ class TestReviewLearningRule:
                     "canonical_repo_mutation": True,
                 }
             ),
-            session_id="external-session",
+            session_id=EXTERNAL_SESSION_ID,
             variables={},
         )
 
@@ -142,7 +147,7 @@ class TestReviewLearningRule:
                     "canonical_repo_mutation": True,
                 }
             ),
-            session_id="external-session",
+            session_id=EXTERNAL_SESSION_ID,
             variables={},
         )
 
@@ -167,8 +172,8 @@ class TestReviewLearningRule:
             }
         )
 
-        first = await engine.evaluate(event, session_id="external-session", variables={})
-        second = await engine.evaluate(event, session_id="external-session", variables={})
+        first = await engine.evaluate(event, session_id=EXTERNAL_SESSION_ID, variables={})
+        second = await engine.evaluate(event, session_id=EXTERNAL_SESSION_ID, variables={})
 
         assert first.context is not None
         assert second.context is None
@@ -196,7 +201,7 @@ class TestReviewLearningRule:
                     "canonical_narrow_source_context": True,
                 }
             ),
-            session_id="external-session",
+            session_id=EXTERNAL_SESSION_ID,
             variables={},
         )
 

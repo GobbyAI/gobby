@@ -54,6 +54,15 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 "error": "Clone tools require a git repository context",
             }
 
+        # clones.project_id is a NOT NULL uuid column; refuse before doing git work
+        # rather than failing the DB insert after the clone directory exists.
+        project_id = ctx.project_id
+        if not project_id:
+            return {
+                "success": False,
+                "error": "No project context available for clone creation",
+            }
+
         try:
             if use_local:
                 # Clone from local repo path - always full clone
@@ -101,7 +110,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
 
             # Store clone record
             clone = ctx.clone_storage.create(
-                project_id=ctx.project_id,
+                project_id=project_id,
                 branch_name=branch_name,
                 clone_path=clone_path,
                 base_branch=base_branch,

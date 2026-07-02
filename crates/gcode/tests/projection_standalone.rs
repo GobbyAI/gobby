@@ -8,7 +8,12 @@ use serde_json::{Value, json};
 use std::fs;
 use std::process::{Command, Output};
 
-const TEST_PROJECT_ID: &str = "projection-standalone-project";
+// Fixture ids are UUIDv5(CODE_INDEX_UUID_NAMESPACE, <legacy label>) because the
+// hub stores every code_* id column as native uuid.
+const TEST_PROJECT_ID: &str = "ed4b112e-ef27-5198-a8e8-bbcf9a21c367"; // projection-standalone-project
+const TEST_FILE_ID: &str = "594f29ce-5db4-533a-8f4d-0b4bb23b8452"; // projection-standalone-file
+const CALLER_ID: &str = "7dc88f58-8509-5bce-ace8-3f8fa094a85f"; // projection-standalone-caller
+const CALLEE_ID: &str = "5d199fbd-befb-5998-9b10-af5d05dcbad4"; // projection-standalone-callee
 const TEST_FILE: &str = "src/lib.rs";
 
 #[test]
@@ -47,7 +52,7 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
             json!({
                 "result": {
                     "points": [
-                        {"id": "projection-standalone-caller", "payload": {"project_id": TEST_PROJECT_ID, "file_path": TEST_FILE}},
+                        {"id": CALLER_ID, "payload": {"project_id": TEST_PROJECT_ID, "file_path": TEST_FILE}},
                         {"id": "stale-vector", "payload": {"project_id": TEST_PROJECT_ID, "file_path": "src/stale.rs"}}
                     ],
                     "next_page_offset": null
@@ -184,16 +189,24 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
         .expect("qdrant server");
     assert_eq!(embedding_requests.len(), 4);
     assert!(qdrant_requests.iter().any(|request| {
-        request.contains("PUT /collections/code_symbols_projection-standalone-project HTTP/1.1")
+        request.contains(&format!(
+            "PUT /collections/code_symbols_{TEST_PROJECT_ID} HTTP/1.1"
+        ))
     }));
     assert!(
-        qdrant_requests.iter().any(|request| request.contains(
-            "PUT /collections/code_symbols_projection-standalone-project/points HTTP/1.1"
-        ))
+        qdrant_requests
+            .iter()
+            .any(|request| request.contains(&format!(
+                "PUT /collections/code_symbols_{TEST_PROJECT_ID}/points HTTP/1.1"
+            )))
     );
-    assert!(qdrant_requests.iter().any(|request| request.contains(
-        "POST /collections/code_symbols_projection-standalone-project/points/scroll HTTP/1.1"
-    )));
+    assert!(
+        qdrant_requests
+            .iter()
+            .any(|request| request.contains(&format!(
+                "POST /collections/code_symbols_{TEST_PROJECT_ID}/points/scroll HTTP/1.1"
+            )))
+    );
     assert!(
         qdrant_requests
             .iter()
@@ -288,17 +301,17 @@ fn config_store_has_embedding_overrides(conn: &mut Client) -> bool {
 
 fn seed_project(conn: &mut Client) {
     cleanup_project(conn, TEST_PROJECT_ID).expect("cleanup projection rows");
-    conn.batch_execute(
+    conn.batch_execute(&format!(
         "INSERT INTO code_indexed_projects
             (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
          VALUES
-            ('projection-standalone-project', '/tmp/projection-standalone', 1, 2, NOW(), 0);
+            ('{TEST_PROJECT_ID}', '/tmp/projection-standalone', 1, 2, NOW(), 0);
 
          INSERT INTO code_indexed_files
             (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
              graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
          VALUES
-            ('projection-standalone-file', 'projection-standalone-project', 'src/lib.rs', 'rust',
+            ('{TEST_FILE_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'rust',
              'hash-1', 2, 54, false, false, NULL, NOW());
 
          INSERT INTO code_symbols
@@ -306,22 +319,22 @@ fn seed_project(conn: &mut Client) {
              line_start, line_end, signature, docstring, parent_symbol_id, content_hash,
              summary, created_at, updated_at)
          VALUES
-            ('projection-standalone-caller', 'projection-standalone-project', 'src/lib.rs', 'caller',
+            ('{CALLER_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'caller',
              'crate::caller', 'function', 'rust', 0, 28, 1, 1, 'pub fn caller()', NULL, NULL,
              'hash-1', NULL, NOW(), NOW()),
-            ('projection-standalone-callee', 'projection-standalone-project', 'src/lib.rs', 'callee',
+            ('{CALLEE_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'callee',
              'crate::callee', 'function', 'rust', 29, 47, 2, 2, 'pub fn callee()', NULL, NULL,
              'hash-1', NULL, NOW(), NOW());
 
          INSERT INTO code_imports (project_id, source_file, target_module)
-         VALUES ('projection-standalone-project', 'src/lib.rs', 'std');
+         VALUES ('{TEST_PROJECT_ID}', 'src/lib.rs', 'std');
 
          INSERT INTO code_calls
             (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
              callee_external_module, file_path, line)
          VALUES
-            ('projection-standalone-project', 'projection-standalone-caller', 'projection-standalone-callee',
-             'callee', 'symbol', '', 'src/lib.rs', 1);",
-    )
+            ('{TEST_PROJECT_ID}', '{CALLER_ID}', '{CALLEE_ID}',
+             'callee', 'symbol', '', 'src/lib.rs', 1);"
+    ))
     .expect("seed projection rows");
 }

@@ -327,6 +327,10 @@ class TestWebChatLifecycle:
         """
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
+        # session_variables.session_id targets the native-uuid sessions.id
+        # column, so the DB-backed session id must be a valid UUID string.
+        db_session_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+
         task_manager = LocalTaskManager(temp_db)
         closed_task = task_manager.create_task(
             project_id=sample_project["id"],
@@ -340,7 +344,7 @@ class TestWebChatLifecycle:
         )
 
         SessionVariableManager(temp_db).merge_variables(
-            "db-id",
+            db_session_id,
             {
                 "claimed_tasks": {
                     closed_task.id: f"#{closed_task.seq_num}",
@@ -351,7 +355,9 @@ class TestWebChatLifecycle:
         )
 
         host = _LifecycleHost()
-        host._chat_sessions["conv-1"] = _web_chat_session(project_id=sample_project["id"])
+        host._chat_sessions["conv-1"] = _web_chat_session(
+            db_session_id=db_session_id, project_id=sample_project["id"]
+        )
         rule_engine = RuleEngine(temp_db, task_manager=task_manager)
         host.workflow_handler = WorkflowHookHandler(
             rule_engine=rule_engine,

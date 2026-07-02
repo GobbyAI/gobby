@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use anyhow::Context as _;
 use postgres::Client;
 
 use crate::config::Context;
+use crate::db::id_param;
 use crate::graph::code_graph;
 use crate::index::{api, hasher};
 use crate::models::IndexedProject;
@@ -86,30 +88,31 @@ pub fn invalidate(
     project_id: &str,
     daemon_url: Option<&str>,
 ) -> anyhow::Result<()> {
+    let project_uuid = id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
-        &[&project_id],
+        &[&project_uuid],
     )?;
     tx.execute(
         "DELETE FROM code_imports WHERE project_id = $1",
-        &[&project_id],
+        &[&project_uuid],
     )?;
     tx.execute(
         "DELETE FROM code_content_chunks WHERE project_id = $1",
-        &[&project_id],
+        &[&project_uuid],
     )?;
     tx.execute(
         "DELETE FROM code_indexed_files WHERE project_id = $1",
-        &[&project_id],
+        &[&project_uuid],
     )?;
     tx.execute(
         "DELETE FROM code_symbols WHERE project_id = $1",
-        &[&project_id],
+        &[&project_uuid],
     )?;
     tx.execute(
         "DELETE FROM code_indexed_projects WHERE id = $1",
-        &[&project_id],
+        &[&project_uuid],
     )?;
     tx.commit()?;
     if let Some(url) = daemon_url {
@@ -184,13 +187,15 @@ pub(super) fn get_stale_files(
     conn: &mut Client,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
-) -> Result<HashSet<String>, postgres::Error> {
+) -> anyhow::Result<HashSet<String>> {
     let mut stale = HashSet::new();
     let mut indexed = HashMap::new();
+    let project_uuid = id_param(project_id)
+        .with_context(|| format!("stale detection requires a uuid project id, got {project_id}"))?;
     let rows = conn
         .query(
             "SELECT file_path, content_hash FROM code_indexed_files WHERE project_id = $1",
-            &[&project_id],
+            &[&project_uuid],
         )
         .map_err(|error| {
             log::error!(
@@ -263,12 +268,15 @@ pub(super) fn get_orphan_files(
     conn: &mut Client,
     project_id: &str,
     present_paths: &HashSet<String>,
-) -> Result<Vec<String>, postgres::Error> {
+) -> anyhow::Result<Vec<String>> {
     let mut orphans = Vec::new();
+    let project_uuid = id_param(project_id).with_context(|| {
+        format!("orphan detection requires a uuid project id, got {project_id}")
+    })?;
     let rows = conn
         .query(
             "SELECT file_path FROM code_indexed_files WHERE project_id = $1",
-            &[&project_id],
+            &[&project_uuid],
         )
         .map_err(|error| {
             log::error!(
@@ -297,6 +305,11 @@ fn count_rows(conn: &mut Client, table: &str, project_id: &str) -> usize {
     if !matches!(table, "code_indexed_files" | "code_symbols") {
         return 0;
     }
+    // A non-uuid project id cannot exist in the uuid column; report zero rows,
+    // matching this helper's existing swallow-to-zero error handling.
+    let Ok(project_id) = id_param(project_id) else {
+        return 0;
+    };
     let sql = format!("SELECT COUNT(*)::BIGINT AS count FROM {table} WHERE project_id = $1");
     conn.query_one(&sql, &[&project_id])
         .ok()

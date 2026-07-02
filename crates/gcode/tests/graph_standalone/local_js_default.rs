@@ -18,8 +18,11 @@ fn seed_leftover_local_import(conn: &mut Client, caller_id: &str) {
         "INSERT INTO code_calls
             (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
              callee_external_module, file_path, line)
-         VALUES ($1, $2, '', 'helper', 'local_import', 'src/utils.js', 'legacy.js', 99)",
-        &[&JS_DEFAULT_LOCAL_PROJECT_ID, &caller_id],
+         VALUES ($1, $2, NULL, 'helper', 'local_import', 'src/utils.js', 'legacy.js', 99)",
+        &[
+            &crate::common::uuid_param(JS_DEFAULT_LOCAL_PROJECT_ID),
+            &crate::common::uuid_param(caller_id),
+        ],
     )
     .expect("seed leftover local_import row");
 }

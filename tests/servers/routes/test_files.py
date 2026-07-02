@@ -10,6 +10,11 @@ from gobby.servers.routes.files import create_files_router
 
 pytestmark = pytest.mark.unit
 
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+GIT_PROJECT_ID = "22222222-2222-4222-8222-222222222222"
+GIT_DIFF_PROJECT_ID = "33333333-3333-4333-8333-333333333333"
+UNKNOWN_PROJECT_ID = "99999999-9999-4999-8999-999999999999"
+
 
 class TestFilesRoutes:
     @pytest.fixture
@@ -37,7 +42,7 @@ class TestFilesRoutes:
     @pytest.fixture
     def mock_project(self, project_dir: Path) -> MagicMock:
         project = MagicMock()
-        project.id = "test-project-id"
+        project.id = PROJECT_ID
         project.name = "test-project"
         project.repo_path = str(project_dir)
         return project
@@ -97,12 +102,12 @@ class TestFilesRoutes:
         assert len(data) == 2
         assert data[0]["name"] == "Personal"
         assert data[1]["name"] == "test-project"
-        assert data[1]["id"] == "test-project-id"
+        assert data[1]["id"] == PROJECT_ID
 
     # -- /tree --
 
     def test_tree_root(self, client: TestClient, project_dir: Path) -> None:
-        resp = client.get("/api/files/tree", params={"project_id": "test-project-id", "path": ""})
+        resp = client.get("/api/files/tree", params={"project_id": PROJECT_ID, "path": ""})
         assert resp.status_code == 200
         entries = resp.json()
         names = [e["name"] for e in entries]
@@ -118,9 +123,7 @@ class TestFilesRoutes:
             assert max(dir_indices) < min(file_indices)
 
     def test_tree_subdirectory(self, client: TestClient) -> None:
-        resp = client.get(
-            "/api/files/tree", params={"project_id": "test-project-id", "path": "src"}
-        )
+        resp = client.get("/api/files/tree", params={"project_id": PROJECT_ID, "path": "src"})
         assert resp.status_code == 200
         entries = resp.json()
         names = [e["name"] for e in entries]
@@ -128,20 +131,18 @@ class TestFilesRoutes:
         assert "utils.py" in names
 
     def test_tree_nonexistent_project(self, client: TestClient) -> None:
-        resp = client.get("/api/files/tree", params={"project_id": "nonexistent", "path": ""})
+        resp = client.get("/api/files/tree", params={"project_id": UNKNOWN_PROJECT_ID, "path": ""})
         assert resp.status_code == 404
 
     def test_tree_not_a_directory(self, client: TestClient) -> None:
-        resp = client.get(
-            "/api/files/tree", params={"project_id": "test-project-id", "path": "README.md"}
-        )
+        resp = client.get("/api/files/tree", params={"project_id": PROJECT_ID, "path": "README.md"})
         assert resp.status_code == 400
 
     # -- /read --
 
     def test_read_file(self, client: TestClient) -> None:
         resp = client.get(
-            "/api/files/read", params={"project_id": "test-project-id", "path": "src/main.py"}
+            "/api/files/read", params={"project_id": PROJECT_ID, "path": "src/main.py"}
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -153,7 +154,7 @@ class TestFilesRoutes:
 
     def test_read_json_file(self, client: TestClient) -> None:
         resp = client.get(
-            "/api/files/read", params={"project_id": "test-project-id", "path": "config.json"}
+            "/api/files/read", params={"project_id": PROJECT_ID, "path": "config.json"}
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -161,7 +162,7 @@ class TestFilesRoutes:
 
     def test_read_image_returns_metadata_only(self, client: TestClient) -> None:
         resp = client.get(
-            "/api/files/read", params={"project_id": "test-project-id", "path": "images/logo.png"}
+            "/api/files/read", params={"project_id": PROJECT_ID, "path": "images/logo.png"}
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -171,7 +172,7 @@ class TestFilesRoutes:
 
     def test_read_nonexistent_file(self, client: TestClient) -> None:
         resp = client.get(
-            "/api/files/read", params={"project_id": "test-project-id", "path": "nonexistent.txt"}
+            "/api/files/read", params={"project_id": PROJECT_ID, "path": "nonexistent.txt"}
         )
         assert resp.status_code == 404
 
@@ -181,7 +182,7 @@ class TestFilesRoutes:
         (project_dir / "large.txt").write_text(large_content)
         resp = client.get(
             "/api/files/read",
-            params={"project_id": "test-project-id", "path": "large.txt", "max_size": 100},
+            params={"project_id": PROJECT_ID, "path": "large.txt", "max_size": 100},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -192,14 +193,14 @@ class TestFilesRoutes:
 
     def test_serve_image(self, client: TestClient) -> None:
         resp = client.get(
-            "/api/files/image", params={"project_id": "test-project-id", "path": "images/logo.png"}
+            "/api/files/image", params={"project_id": PROJECT_ID, "path": "images/logo.png"}
         )
         assert resp.status_code == 200
         assert "image" in resp.headers["content-type"]
 
     def test_serve_non_image_rejected(self, client: TestClient) -> None:
         resp = client.get(
-            "/api/files/image", params={"project_id": "test-project-id", "path": "README.md"}
+            "/api/files/image", params={"project_id": PROJECT_ID, "path": "README.md"}
         )
         assert resp.status_code == 400
 
@@ -208,21 +209,21 @@ class TestFilesRoutes:
     def test_path_traversal_blocked(self, client: TestClient) -> None:
         resp = client.get(
             "/api/files/read",
-            params={"project_id": "test-project-id", "path": "../../etc/passwd"},
+            params={"project_id": PROJECT_ID, "path": "../../etc/passwd"},
         )
         assert resp.status_code == 403
 
     def test_path_traversal_in_tree(self, client: TestClient) -> None:
         resp = client.get(
             "/api/files/tree",
-            params={"project_id": "test-project-id", "path": "../"},
+            params={"project_id": PROJECT_ID, "path": "../"},
         )
         assert resp.status_code == 403
 
     def test_path_traversal_in_image(self, client: TestClient) -> None:
         resp = client.get(
             "/api/files/image",
-            params={"project_id": "test-project-id", "path": "../../etc/passwd"},
+            params={"project_id": PROJECT_ID, "path": "../../etc/passwd"},
         )
         assert resp.status_code == 403
 
@@ -232,7 +233,7 @@ class TestFilesRoutes:
         resp = client.post(
             "/api/files/write",
             json={
-                "project_id": "test-project-id",
+                "project_id": PROJECT_ID,
                 "path": "src/main.py",
                 "content": "print('updated')\n",
             },
@@ -246,7 +247,7 @@ class TestFilesRoutes:
     def test_write_new_file(self, client: TestClient, project_dir: Path) -> None:
         resp = client.post(
             "/api/files/write",
-            json={"project_id": "test-project-id", "path": "src/new_file.py", "content": "# new\n"},
+            json={"project_id": PROJECT_ID, "path": "src/new_file.py", "content": "# new\n"},
         )
         assert resp.status_code == 200
         assert (project_dir / "src" / "new_file.py").read_text() == "# new\n"
@@ -254,14 +255,14 @@ class TestFilesRoutes:
     def test_write_to_git_dir_blocked(self, client: TestClient) -> None:
         resp = client.post(
             "/api/files/write",
-            json={"project_id": "test-project-id", "path": ".git/config", "content": "hacked"},
+            json={"project_id": PROJECT_ID, "path": ".git/config", "content": "hacked"},
         )
         assert resp.status_code == 403
 
     def test_write_path_traversal_blocked(self, client: TestClient) -> None:
         resp = client.post(
             "/api/files/write",
-            json={"project_id": "test-project-id", "path": "../../etc/evil", "content": "bad"},
+            json={"project_id": PROJECT_ID, "path": "../../etc/evil", "content": "bad"},
         )
         assert resp.status_code == 403
 
@@ -269,7 +270,7 @@ class TestFilesRoutes:
         resp = client.post(
             "/api/files/write",
             json={
-                "project_id": "test-project-id",
+                "project_id": PROJECT_ID,
                 "path": "nonexistent/dir/file.txt",
                 "content": "x",
             },
@@ -309,7 +310,7 @@ class TestFilesRoutes:
         # Point mock to the git project
         mock_server.session_manager.db.fetchone.side_effect = (
             lambda q, p: {
-                "id": "git-proj",
+                "id": GIT_PROJECT_ID,
                 "name": "git-proj",
                 "repo_path": str(git_dir),
                 "github_url": None,
@@ -318,11 +319,11 @@ class TestFilesRoutes:
                 "created_at": "2024-01-01T00:00:00",
                 "updated_at": "2024-01-01T00:00:00",
             }
-            if p and p[0] == "git-proj"
+            if p and p[0] == GIT_PROJECT_ID
             else None
         )
 
-        resp = client.get("/api/files/git-status", params={"project_id": "git-proj"})
+        resp = client.get("/api/files/git-status", params={"project_id": GIT_PROJECT_ID})
         assert resp.status_code == 200
         data = resp.json()
         assert data["branch"] is not None
@@ -330,7 +331,7 @@ class TestFilesRoutes:
         assert "README.md" in data["files"]
 
     def test_git_status_nonexistent_project(self, client: TestClient) -> None:
-        resp = client.get("/api/files/git-status", params={"project_id": "nonexistent"})
+        resp = client.get("/api/files/git-status", params={"project_id": UNKNOWN_PROJECT_ID})
         assert resp.status_code == 404
 
     # -- /git-diff --
@@ -362,7 +363,7 @@ class TestFilesRoutes:
 
         mock_server.session_manager.db.fetchone.side_effect = (
             lambda q, p: {
-                "id": "git-diff-proj",
+                "id": GIT_DIFF_PROJECT_ID,
                 "name": "git-diff-proj",
                 "repo_path": str(git_dir),
                 "github_url": None,
@@ -371,13 +372,13 @@ class TestFilesRoutes:
                 "created_at": "2024-01-01T00:00:00",
                 "updated_at": "2024-01-01T00:00:00",
             }
-            if p and p[0] == "git-diff-proj"
+            if p and p[0] == GIT_DIFF_PROJECT_ID
             else None
         )
 
         resp = client.get(
             "/api/files/git-diff",
-            params={"project_id": "git-diff-proj", "path": "README.md"},
+            params={"project_id": GIT_DIFF_PROJECT_ID, "path": "README.md"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -387,7 +388,7 @@ class TestFilesRoutes:
     def test_git_diff_path_traversal(self, client: TestClient) -> None:
         resp = client.get(
             "/api/files/git-diff",
-            params={"project_id": "test-project-id", "path": "../../etc/passwd"},
+            params={"project_id": PROJECT_ID, "path": "../../etc/passwd"},
         )
         assert resp.status_code == 403
 

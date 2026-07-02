@@ -26,14 +26,27 @@ pytestmark = [pytest.mark.unit]
 
 
 class _RecordingBackend:
-    """Replays a fixed stream and records the prompt it was sent."""
+    """Replays a fixed stream and records the prompt it was sent.
+
+    The ACP session sends prompts as normalized content-block lists
+    (``normalize_prompt_blocks``); flatten text blocks so assertions can do
+    plain substring checks.
+    """
 
     def __init__(self, events: list[StreamEvent], prompts: list[str]) -> None:
         self._events = events
         self._prompts = prompts
 
-    async def send_message(self, session: Any, prompt: str) -> AsyncIterator[StreamEvent]:
-        self._prompts.append(prompt)
+    async def send_message(
+        self, session: Any, prompt: str | list[dict[str, Any]]
+    ) -> AsyncIterator[StreamEvent]:
+        if isinstance(prompt, str):
+            text = prompt
+        else:
+            text = "\n".join(
+                str(block.get("text", "")) for block in prompt if isinstance(block, dict)
+            )
+        self._prompts.append(text)
         for ev in self._events:
             yield ev
 

@@ -9,6 +9,10 @@ from gobby.memory.manager import MemoryManager
 
 pytestmark = pytest.mark.unit
 
+# Valid-format UUIDs: projects.id and memories.id are native uuid columns.
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+MISSING_MEMORY_ID = "99999999-9999-4999-8999-999999999999"
+
 
 @pytest.fixture
 def db(hub_db):
@@ -36,21 +40,21 @@ async def test_create_memory_exists(manager: MemoryManager) -> None:
 @pytest.mark.asyncio
 async def test_search_memories_exists(manager: MemoryManager) -> None:
     """search_memories() should exist and be callable."""
-    results = await manager.search_memories(query=None, project_id="proj-1", limit=5)
+    results = await manager.search_memories(query=None, project_id=PROJECT_ID, limit=5)
     assert isinstance(results, list)
 
 
 @pytest.mark.asyncio
 async def test_search_memories_as_context_exists(manager: MemoryManager) -> None:
     """search_memories_as_context() should exist and return a string."""
-    result = await manager.search_memories_as_context(project_id="proj-1")
+    result = await manager.search_memories_as_context(project_id=PROJECT_ID)
     assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
 async def test_delete_memory_exists(manager: MemoryManager) -> None:
     """delete_memory() should exist and return a bool."""
-    result = await manager.delete_memory("nonexistent-id")
+    result = await manager.delete_memory(MISSING_MEMORY_ID)
     assert result is False
 
 

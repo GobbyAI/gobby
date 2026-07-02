@@ -56,7 +56,7 @@ impl GcodeStandaloneSetup {
                 "code_indexed_projects table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_indexed_projects} (
-                        id TEXT PRIMARY KEY,
+                        id UUID PRIMARY KEY,
                         root_path TEXT NOT NULL,
                         total_files INTEGER NOT NULL DEFAULT 0,
                         total_symbols INTEGER NOT NULL DEFAULT 0,
@@ -71,8 +71,8 @@ impl GcodeStandaloneSetup {
                 "code_indexed_files table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_indexed_files} (
-                        id TEXT PRIMARY KEY,
-                        project_id TEXT NOT NULL,
+                        id UUID PRIMARY KEY,
+                        project_id UUID NOT NULL,
                         file_path TEXT NOT NULL,
                         language TEXT NOT NULL,
                         content_hash TEXT NOT NULL,
@@ -112,8 +112,8 @@ impl GcodeStandaloneSetup {
                 "code_symbols table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_symbols} (
-                        id TEXT PRIMARY KEY,
-                        project_id TEXT NOT NULL,
+                        id UUID PRIMARY KEY,
+                        project_id UUID NOT NULL,
                         file_path TEXT NOT NULL,
                         name TEXT NOT NULL,
                         qualified_name TEXT NOT NULL,
@@ -125,7 +125,7 @@ impl GcodeStandaloneSetup {
                         line_end INTEGER NOT NULL,
                         signature TEXT,
                         docstring TEXT,
-                        parent_symbol_id TEXT,
+                        parent_symbol_id UUID,
                         content_hash TEXT NOT NULL,
                         summary TEXT,
                         summary_attempted_at TIMESTAMPTZ,
@@ -171,8 +171,8 @@ impl GcodeStandaloneSetup {
                 "code_content_chunks table",
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_content_chunks} (
-                        id TEXT PRIMARY KEY,
-                        project_id TEXT NOT NULL,
+                        id UUID PRIMARY KEY,
+                        project_id UUID NOT NULL,
                         file_path TEXT NOT NULL,
                         chunk_index INTEGER NOT NULL,
                         line_start INTEGER NOT NULL,
@@ -203,7 +203,7 @@ impl GcodeStandaloneSetup {
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_imports} (
                         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        project_id TEXT NOT NULL,
+                        project_id UUID NOT NULL,
                         source_file TEXT NOT NULL,
                         target_module TEXT NOT NULL,
                         UNIQUE (project_id, source_file, target_module)
@@ -222,15 +222,16 @@ impl GcodeStandaloneSetup {
                 format!(
                     "CREATE TABLE IF NOT EXISTS {code_calls} (
                         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                        project_id TEXT NOT NULL,
-                        caller_symbol_id TEXT NOT NULL,
-                        callee_symbol_id TEXT NOT NULL DEFAULT '',
+                        project_id UUID NOT NULL,
+                        caller_symbol_id UUID,
+                        callee_symbol_id UUID,
                         callee_name TEXT NOT NULL,
                         callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
                         callee_external_module TEXT NOT NULL DEFAULT '',
                         file_path TEXT NOT NULL,
                         line INTEGER NOT NULL DEFAULT 0,
-                        UNIQUE (
+                        CONSTRAINT code_calls_unique_call_target
+                        UNIQUE NULLS NOT DISTINCT (
                             project_id, caller_symbol_id, callee_symbol_id, callee_name,
                             callee_target_kind, callee_external_module, file_path, line
                         )

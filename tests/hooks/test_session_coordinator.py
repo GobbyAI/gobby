@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import uuid
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch
@@ -31,6 +32,11 @@ from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
+# projects.id, sessions.id, and workflow instance ids are native uuid columns.
+PROJECT_ID = "eeeeeeee-0000-4000-8000-000000000001"
+PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
+CHILD_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000003"
+
 
 def _create_session_row(db: HubDatabase, session_id: str) -> None:
     db.execute(
@@ -39,14 +45,14 @@ def _create_session_row(db: HubDatabase, session_id: str) -> None:
         VALUES (%s, %s, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO NOTHING
         """,
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, f"ext-{session_id}", "machine-1", "claude", "project-1"),
+        (session_id, f"ext-{session_id}", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -73,7 +79,8 @@ def _install_step_workflow(db: HubDatabase, session_id: str, current_step: str) 
     )
     WorkflowInstanceManager(db).save_instance(
         WorkflowInstance(
-            id=f"inst-{session_id}",
+            # workflow_instances.id is a native uuid column.
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}")),
             session_id=session_id,
             workflow_name="merge-worker",
             current_step=current_step,
@@ -478,24 +485,24 @@ class TestAgentRunCompletion:
         """SESSION_END does not mark a live step workflow as successful."""
         from gobby.storage.agents import LocalAgentRunManager
 
-        _create_session_row(temp_db, "parent-session")
-        _create_session_row(temp_db, "child-session")
-        _install_step_workflow(temp_db, "child-session", "resolve_conflicts")
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        _install_step_workflow(temp_db, CHILD_SESSION_ID, "resolve_conflicts")
 
         run_manager = LocalAgentRunManager(temp_db)
         run = run_manager.create(
-            parent_session_id="parent-session",
+            parent_session_id=PARENT_SESSION_ID,
             provider="claude",
             prompt="resolve merge conflicts",
             workflow_name="merge-worker",
             agent_name="merge-worker",
-            child_session_id="child-session",
+            child_session_id=CHILD_SESSION_ID,
         )
         run_manager.start(run.id)
 
         coordinator = SessionCoordinator(agent_run_manager=run_manager)
         session = SimpleNamespace(
-            id="child-session",
+            id=CHILD_SESSION_ID,
             agent_run_id=run.id,
             summary_markdown="Blocked by step enforcement.",
             tool_call_count=7,
@@ -519,24 +526,24 @@ class TestAgentRunCompletion:
         """A leftover terminal-step workflow instance does not force failure."""
         from gobby.storage.agents import LocalAgentRunManager
 
-        _create_session_row(temp_db, "parent-session")
-        _create_session_row(temp_db, "child-session")
-        _install_step_workflow(temp_db, "child-session", "terminate")
+        _create_session_row(temp_db, PARENT_SESSION_ID)
+        _create_session_row(temp_db, CHILD_SESSION_ID)
+        _install_step_workflow(temp_db, CHILD_SESSION_ID, "terminate")
 
         run_manager = LocalAgentRunManager(temp_db)
         run = run_manager.create(
-            parent_session_id="parent-session",
+            parent_session_id=PARENT_SESSION_ID,
             provider="claude",
             prompt="resolve merge conflicts",
             workflow_name="merge-worker",
             agent_name="merge-worker",
-            child_session_id="child-session",
+            child_session_id=CHILD_SESSION_ID,
         )
         run_manager.start(run.id)
 
         coordinator = SessionCoordinator(agent_run_manager=run_manager)
         session = SimpleNamespace(
-            id="child-session",
+            id=CHILD_SESSION_ID,
             agent_run_id=run.id,
             summary_markdown="Done",
             tool_call_count=7,

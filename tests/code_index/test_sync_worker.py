@@ -22,8 +22,14 @@ from gobby.code_index.models import IndexedFile, IndexedProject
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass, sync_worker_loop
 from gobby.config.code_index import CodeIndexConfig
+from tests.code_index.conftest import PROJECT_ID
 
 pytestmark = pytest.mark.unit
+
+# Mock-only ids kept uuid-shaped to mirror the native uuid code_* columns.
+STALE_FILE_ID = "00000000-0000-4000-8000-00000000aaaa"
+CURRENT_FILE_ID = "00000000-0000-4000-8000-00000000bbbb"
+FILE_1_ID = "00000000-0000-4000-8000-00000000cccc"
 
 
 class RecordingRunDb:
@@ -109,8 +115,8 @@ class IndexedFileNotFoundGcodeGateway:
             shutil.rmtree(project_root)
         if self.remove_source:
             (project_root / file_path).unlink()
-        stderr = f"indexed file `{file_path}` was not found for project proj-1"
-        raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, "proj-1")
+        stderr = f"indexed file `{file_path}` was not found for project {PROJECT_ID}"
+        raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, PROJECT_ID)
 
     async def vector_sync_file(
         self,
@@ -124,8 +130,8 @@ class IndexedFileNotFoundGcodeGateway:
             shutil.rmtree(project_root)
         if self.remove_source:
             (project_root / file_path).unlink()
-        stderr = f"indexed file `{file_path}` was not found for project proj-1"
-        raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, "proj-1")
+        stderr = f"indexed file `{file_path}` was not found for project {PROJECT_ID}"
+        raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, PROJECT_ID)
 
 
 class CommandErrorGcodeGateway:
@@ -172,7 +178,7 @@ class ProjectNotFoundGcodeGateway:
 
 
 def _indexed_project(root: Path) -> IndexedProject:
-    return IndexedProject(id="proj-1", root_path=str(root), total_files=1, total_symbols=1)
+    return IndexedProject(id=PROJECT_ID, root_path=str(root), total_files=1, total_symbols=1)
 
 
 def _indexed_file(
@@ -183,8 +189,8 @@ def _indexed_file(
     language: str = "python",
 ) -> IndexedFile:
     return IndexedFile(
-        id=IndexedFile.make_id("proj-1", "src/app.py"),
-        project_id="proj-1",
+        id=IndexedFile.make_id(PROJECT_ID, "src/app.py"),
+        project_id=PROJECT_ID,
         file_path="src/app.py",
         language=language,
         content_hash="abc123",
@@ -239,7 +245,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "vector")
+    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "vector")
     storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     storage.mark_graph_synced.assert_not_called()
 
@@ -284,7 +290,7 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
 
 
 @pytest.mark.asyncio
@@ -302,7 +308,7 @@ async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
         storage=storage,
         gcode_gateway=gcode_gateway,
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         root=tmp_path,
         file=pending_file,
         run_db=RecordingRunDb(),
@@ -315,7 +321,7 @@ async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
 
 
 @pytest.mark.asyncio
@@ -338,7 +344,7 @@ async def test_sync_file_marks_non_graph_language_graph_synced_without_gcode(
         storage=storage,
         gcode_gateway=gcode_gateway,
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         root=tmp_path,
         file=pending_file,
         run_db=RecordingRunDb(),
@@ -351,7 +357,7 @@ async def test_sync_file_marks_non_graph_language_graph_synced_without_gcode(
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
 
 
 @pytest.mark.asyncio
@@ -412,7 +418,7 @@ async def test_sync_file_purges_when_gcode_project_missing_and_root_disappears(
         storage=storage,
         gcode_gateway=ProjectNotFoundGcodeGateway(remove_root=True),
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         root=root,
         file=pending_file,
         clear_graph=clear_graph,
@@ -421,8 +427,8 @@ async def test_sync_file_purges_when_gcode_project_missing_and_root_disappears(
 
     assert did_sync is False
     assert not root.exists()
-    storage.delete_project_index.assert_called_once_with("proj-1")
-    clear_graph.assert_awaited_once_with("proj-1")
+    storage.delete_project_index.assert_called_once_with(PROJECT_ID)
+    clear_graph.assert_awaited_once_with(PROJECT_ID)
 
 
 @pytest.mark.asyncio
@@ -441,13 +447,13 @@ async def test_sync_file_warns_without_traceback_when_gcode_project_missing_but_
             storage=storage,
             gcode_gateway=ProjectNotFoundGcodeGateway(),
             config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
 
     assert did_sync is False
-    assert "gcode project missing for proj-1" in caplog.text
+    assert f"gcode project missing for {PROJECT_ID}" in caplog.text
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
     storage.delete_project_index.assert_not_called()
 
@@ -464,7 +470,7 @@ async def test_sync_file_skips_when_source_missing_before_graph_sync(tmp_path: P
         storage=storage,
         gcode_gateway=gcode_gateway,
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         root=tmp_path,
         file=pending_file,
     )
@@ -491,14 +497,14 @@ async def test_sync_file_leaves_graph_unsynced_when_indexed_row_disappears(
             storage=storage,
             gcode_gateway=gcode_gateway,
             config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
 
     assert did_sync is False
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
-    assert "indexed file src/app.py disappeared from project proj-1" in caplog.text
+    assert f"indexed file src/app.py disappeared from project {PROJECT_ID}" in caplog.text
     assert not any(record.levelno >= logging.WARNING for record in caplog.records)
     storage.mark_graph_synced.assert_not_called()
 
@@ -518,7 +524,7 @@ async def test_sync_file_skips_when_source_disappears_during_graph_sync(
         storage=storage,
         gcode_gateway=gcode_gateway,
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         root=tmp_path,
         file=pending_file,
     )
@@ -544,7 +550,7 @@ async def test_sync_file_warns_and_retries_when_indexed_row_still_exists(
             storage=storage,
             gcode_gateway=IndexedFileNotFoundGcodeGateway(),
             config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
@@ -552,7 +558,7 @@ async def test_sync_file_warns_and_retries_when_indexed_row_still_exists(
     assert did_sync is False
     assert any(
         record.levelno == logging.WARNING
-        and "indexed file src/app.py missing in gcode project proj-1" in record.getMessage()
+        and f"indexed file src/app.py missing in gcode project {PROJECT_ID}" in record.getMessage()
         and record.exc_info is None
         for record in caplog.records
     )
@@ -575,7 +581,7 @@ async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> 
         storage=storage,
         gcode_gateway=gcode_gateway,
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         root=tmp_path,
         file=pending_file,
     )
@@ -585,7 +591,7 @@ async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> 
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
 
 
 @pytest.mark.asyncio
@@ -604,7 +610,7 @@ async def test_sync_file_logs_unclassified_gcode_failures_as_errors(
             storage=storage,
             gcode_gateway=CommandErrorGcodeGateway(),
             config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
@@ -635,7 +641,7 @@ async def test_sync_file_logs_real_graph_failures_as_errors(
             storage=storage,
             gcode_gateway=RecordingGcodeGateway(fail=True),
             config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
@@ -656,7 +662,7 @@ async def test_sync_file_warns_and_retries_when_graph_sync_times_out(
     tmp_path: Path,
 ) -> None:
     """Graph gcode timeouts stay pending without traceback logs."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=True, graph_synced=False)
@@ -704,7 +710,7 @@ async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
     tmp_path: Path,
 ) -> None:
     """Vector projection work is delegated to gcode and marks the row on success."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
@@ -740,7 +746,7 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     tmp_path: Path,
 ) -> None:
     """Vector gcode timeouts stay pending without traceback logs."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
@@ -799,14 +805,14 @@ async def test_sync_file_leaves_vectors_unsynced_when_indexed_row_disappears(
             storage=storage,
             gcode_gateway=gcode_gateway,
             config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
 
     assert did_sync is False
     assert gcode_gateway.vector_synced_files == [(tmp_path, pending_file.file_path)]
-    assert "indexed file src/app.py disappeared from project proj-1" in caplog.text
+    assert f"indexed file src/app.py disappeared from project {PROJECT_ID}" in caplog.text
     assert not any(record.levelno >= logging.WARNING for record in caplog.records)
     storage.mark_vectors_synced.assert_not_called()
     storage.clear_projection_cleanup_pending.assert_not_called()
@@ -829,7 +835,7 @@ async def test_sync_file_skips_when_source_disappears_during_vector_sync(
             storage=storage,
             gcode_gateway=gcode_gateway,
             config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
@@ -857,7 +863,7 @@ async def test_sync_file_warns_and_retries_when_vector_indexed_row_still_exists(
             storage=storage,
             gcode_gateway=IndexedFileNotFoundGcodeGateway(),
             config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
         )
@@ -865,7 +871,7 @@ async def test_sync_file_warns_and_retries_when_vector_indexed_row_still_exists(
     assert did_sync is False
     assert any(
         record.levelno == logging.WARNING
-        and "indexed file src/app.py missing in gcode project proj-1" in record.getMessage()
+        and f"indexed file src/app.py missing in gcode project {PROJECT_ID}" in record.getMessage()
         and "vector sync; leaving vectors_synced=false" in record.getMessage()
         and record.exc_info is None
         for record in caplog.records
@@ -882,7 +888,7 @@ async def test_sync_file_does_not_mark_vectors_synced_when_gcode_vector_sync_fai
     tmp_path: Path,
 ) -> None:
     """A failed gcode vector sync leaves the row pending for retry."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     _write_source(tmp_path)
     indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
@@ -914,7 +920,7 @@ async def test_sync_file_does_not_mark_vectors_synced_when_gcode_vector_sync_fai
 @pytest.mark.asyncio
 async def test_sync_pass_polls_projects_and_files_through_run_db(tmp_path: Path) -> None:
     """Project and pending-file polling uses the injected DB runner."""
-    project = IndexedProject(id="proj-1", root_path=str(tmp_path), total_files=0, total_symbols=0)
+    project = IndexedProject(id=PROJECT_ID, root_path=str(tmp_path), total_files=0, total_symbols=0)
     storage = MagicMock()
     storage.list_indexed_projects.return_value = [project]
     storage.get_pending_sync_files.return_value = []
@@ -940,7 +946,7 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     tmp_path: Path,
 ) -> None:
     """Vector marker writes use the injected DB runner."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     source_file = tmp_path / file_path
     source_file.parent.mkdir(parents=True, exist_ok=True)
@@ -991,14 +997,14 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
 @pytest.mark.asyncio
 async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path: Path) -> None:
     """A stale pending row should not overwrite current sync state or marker IDs."""
-    project_id = "proj-1"
+    project_id = PROJECT_ID
     file_path = "src/app.py"
     source_file = tmp_path / file_path
     source_file.parent.mkdir(parents=True, exist_ok=True)
     source_file.write_text("def greet(name: str) -> str:\n    return name\n")
 
     stale_file = IndexedFile(
-        id="stale-file-id",
+        id=STALE_FILE_ID,
         project_id=project_id,
         file_path=file_path,
         language="python",
@@ -1007,7 +1013,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
         graph_synced=False,
     )
     current_file = IndexedFile(
-        id="current-file-id",
+        id=CURRENT_FILE_ID,
         project_id=project_id,
         file_path=file_path,
         language="python",
@@ -1041,7 +1047,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_called_once_with(current_file.id)
     storage.mark_graph_synced.assert_called_once_with(current_file.id, current_file.content_hash)
-    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
 
@@ -1050,8 +1056,8 @@ async def test_sync_graph_delegates_to_gcode_without_python_relation_reads(tmp_p
     """Graph sync delegates to gcode instead of reading relation rows in Python."""
     gcode_gateway = RecordingGcodeGateway()
     file = IndexedFile(
-        id="file-1",
-        project_id="proj-1",
+        id=FILE_1_ID,
+        project_id=PROJECT_ID,
         file_path="a.py",
         language="python",
         content_hash="hash",

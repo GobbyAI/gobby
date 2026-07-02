@@ -47,7 +47,13 @@ impl Drop for ProjectCleanup {
     }
 }
 
-pub fn cleanup_project(conn: &mut Client, project_id: &str) -> Result<(), postgres::Error> {
+/// Parse a fixture id for binding against the hub's native-uuid columns.
+pub fn uuid_param(id: &str) -> uuid::Uuid {
+    uuid::Uuid::parse_str(id).expect("fixture id is a uuid")
+}
+
+pub fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
+    let project_id = uuid_param(project_id);
     let mut tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
@@ -73,5 +79,6 @@ pub fn cleanup_project(conn: &mut Client, project_id: &str) -> Result<(), postgr
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_id],
     )?;
-    tx.commit()
+    tx.commit()?;
+    Ok(())
 }

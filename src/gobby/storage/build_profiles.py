@@ -254,7 +254,7 @@ class BuildProfileManager:
               FROM build_profiles
              WHERE (source = 'installed' OR project_id IS NULL OR project_id = %s)
                {deleted_filter}
-             ORDER BY source, COALESCE(project_id, ''), name
+             ORDER BY source, COALESCE(project_id::text, ''), name
             """,  # nosec B608 # deleted_filter is controlled by a boolean.
             (project_id,),
         )

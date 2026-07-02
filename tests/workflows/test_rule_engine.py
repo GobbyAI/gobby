@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,12 @@ from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# "sess-1" would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+OTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+NONEXISTENT_SESSION_ID = "33333333-3333-4333-8333-333333333333"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -45,7 +52,7 @@ def _make_event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -106,7 +113,7 @@ async def _assert_evaluation(
     expected_decision: str,
     variables: dict[str, Any] | None = None,
     expected_reason_contains: str | None = None,
-    session_id: str = "sess-1",
+    session_id: str = SESSION_ID,
 ) -> Any:
     """Helper to evaluate an event and check the decision."""
 
@@ -298,7 +305,7 @@ class TestSetVariableEffect:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"custom_counter": 2}
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["custom_counter"] == 3
 
@@ -326,7 +333,7 @@ class TestSetVariableEffect:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"template_counter": 2}
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["template_counter"] == 3
 
@@ -452,7 +459,7 @@ class TestWhenConditions:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"stop_attempts": 5}
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["stop_attempts"] == 0
 
@@ -488,7 +495,7 @@ class TestPriorityOrdering:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         # Priority 10 runs first (x=2), then priority 20 (x=1)
         assert variables["x"] == 1
@@ -511,9 +518,7 @@ class TestSessionOverrides:
         )
 
         # Insert session override to disable the rule
-        import uuid
-
-        session_id = "override-session"
+        session_id = str(uuid.uuid4())
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (%s, %s, %s, %s)""",
@@ -538,18 +543,16 @@ class TestSessionOverrides:
             ),
         )
 
-        import uuid
-
         db.execute(
             """INSERT INTO rule_overrides (id, session_id, rule_name, enabled)
                VALUES (%s, %s, %s, %s)""",
-            (str(uuid.uuid4()), "session-a", "block-rule", False),
+            (str(uuid.uuid4()), SESSION_ID, "block-rule", False),
         )
 
         event = _make_event(HookEventType.BEFORE_TOOL)
 
-        # session-b should still be blocked
-        await _assert_evaluation(db, event, "block", session_id="session-b")
+        # A different session should still be blocked
+        await _assert_evaluation(db, event, "block", session_id=OTHER_SESSION_ID)
 
 
 class TestObserveEffect:
@@ -613,7 +616,7 @@ class TestObserveEffect:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert len(variables["_observations"]) == 2
         assert variables["_observations"][0]["category"] == "a"
@@ -637,7 +640,7 @@ class TestObserveEffect:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["_observations"][0]["category"] == "general"
 
@@ -665,7 +668,7 @@ class TestObserveEffect:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["_observations"][0]["message"] == "Used Edit"
 
@@ -876,7 +879,7 @@ class TestMcpCallToolUnwrapping:
                 },
             },
         )
-        response = await engine.evaluate(event_with, session_id="sess-1", variables={})
+        response = await engine.evaluate(event_with, session_id=SESSION_ID, variables={})
         assert response.decision == "allow"
 
         # Without commit_sha → should block
@@ -891,7 +894,7 @@ class TestMcpCallToolUnwrapping:
                 },
             },
         )
-        response = await engine.evaluate(event_without, session_id="sess-1", variables={})
+        response = await engine.evaluate(event_without, session_id=SESSION_ID, variables={})
         assert response.decision == "block"
         assert "commit_sha" in (response.reason or "")
 
@@ -943,7 +946,7 @@ class TestMultipleEffects:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert "Blocked with side-effect" in (response.reason or "")
@@ -971,7 +974,7 @@ class TestMultipleEffects:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.SESSION_START)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert variables.get("initialized") is True
@@ -1007,7 +1010,7 @@ class TestMultipleEffects:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"should_set": False}
         event = _make_event(HookEventType.SESSION_START)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("always_set") is True
         assert variables.get("conditionally_set") is None
@@ -1042,7 +1045,7 @@ class TestMultipleEffects:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"should_set": True}
         event = _make_event(HookEventType.SESSION_START)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("always_set") is True
         assert variables.get("conditionally_set") is True
@@ -1087,7 +1090,7 @@ class TestMultipleEffects:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.PRE_COMPACT)
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
         calls = response.metadata.get("mcp_calls", [])
@@ -1117,7 +1120,7 @@ class TestBeforeToolBlockTracking:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("_last_blocked_tool") == "Edit"
         assert variables.get("_last_blocked_rule_name") == "block-edit"
@@ -1144,7 +1147,7 @@ class TestBeforeToolBlockTracking:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.STOP)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("tool_block_pending") is None
 
@@ -1169,7 +1172,7 @@ class TestBeforeToolBlockTracking:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("_last_blocked_tool") == "Edit"
         assert variables.get("_last_blocked_rule_name") == "multi-with-block"
@@ -1193,7 +1196,7 @@ class TestBeforeToolBlockTracking:
             "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["tool_block_pending"] is False
         assert variables["_last_blocked_tool"] == ""
@@ -1210,7 +1213,7 @@ class TestBeforeToolBlockTracking:
         variables: dict[str, Any] = {"tool_block_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         event.metadata["is_failure"] = True
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["tool_block_pending"] is True
 
@@ -1236,7 +1239,7 @@ class TestConsecutiveToolBlocks:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"_last_blocked_tool": "Edit"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 1
 
@@ -1268,7 +1271,7 @@ class TestConsecutiveToolBlocks:
             "max_consecutive_blocked_tool_attempts": 5,
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -1293,7 +1296,7 @@ class TestConsecutiveToolBlocks:
             "max_consecutive_blocked_tool_attempts": 5,
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert response.reason is not None
@@ -1314,7 +1317,7 @@ class TestConsecutiveToolBlocks:
             "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 0
         assert variables["_last_blocked_tool"] == ""
@@ -1333,7 +1336,7 @@ class TestConsecutiveToolBlocks:
             "_last_blocked_reason": "Rule enforced by Gobby: [block-edit]\nNo editing",
         }
         event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 0
         assert variables["_last_blocked_tool"] == ""
@@ -1358,7 +1361,7 @@ class TestConsecutiveToolBlocks:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("consecutive_tool_blocks", 0) == 0
 
@@ -1375,7 +1378,7 @@ class TestConsecutiveToolBlocks:
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         event.metadata["is_failure"] = True
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 2
         assert variables["_last_blocked_tool"] == "Edit"
@@ -1392,7 +1395,7 @@ class TestNoRules:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL)
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
 
@@ -1427,7 +1430,7 @@ class TestOverrideCollectsMcpCalls:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"tool_block_pending": True}
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert "tool-failure-recovery" in (response.reason or "")
@@ -1465,7 +1468,7 @@ class TestOverrideCollectsMcpCalls:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"force_allow_stop": True}
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         calls = response.metadata.get("mcp_calls", [])
@@ -1492,7 +1495,7 @@ class TestOverrideCollectsMcpCalls:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"tool_block_pending": True}
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert variables.get("ran") is True  # rule loop still ran
@@ -1515,7 +1518,7 @@ class TestOverrideCollectsMcpCalls:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"force_allow_stop": True}
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
 
@@ -1550,7 +1553,7 @@ class TestMcpCallTemplateRendering:
         event = _make_event(HookEventType.SESSION_START)
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"_assigned_pipeline": "my-deploy-pipeline"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         mcp_calls = response.metadata.get("mcp_calls", [])
@@ -1585,7 +1588,7 @@ class TestMcpCallTemplateRendering:
 
         event = _make_event(HookEventType.SESSION_START)
         engine = RuleEngine(db)
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         mcp_calls = response.metadata.get("mcp_calls", [])
         assert len(mcp_calls) == 1
@@ -1612,7 +1615,7 @@ class TestToolBlockPendingScopeAware:
         }
         # A different tool (Read) succeeds — should still clear the pending flag
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["tool_block_pending"] is False
         assert variables["_last_blocked_tool"] == ""
@@ -1633,7 +1636,7 @@ class TestToolBlockPendingScopeAware:
             "_last_blocked_reason": "Rule enforced by Gobby: [block-write]\nNo writing",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Write"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["tool_block_pending"] is False
         assert variables["_last_blocked_tool"] == ""
@@ -1654,7 +1657,7 @@ class TestToolBlockPendingScopeAware:
             "_last_blocked_reason": "Rule enforced by Gobby: [legacy-block]\nLegacy block",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["tool_block_pending"] is False
         assert variables["_last_blocked_rule_name"] == ""
@@ -1671,20 +1674,20 @@ class TestToolBlockPendingScopeAware:
 
         # Edit pre-tool fires → sets edit_write_pending
         before_event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(before_event, session_id="sess-1", variables=variables)
+        await engine.evaluate(before_event, session_id=SESSION_ID, variables=variables)
         assert variables.get("edit_write_pending") is True
 
         # Edit fails → sets tool_block_pending
         fail_event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         fail_event.metadata["is_failure"] = True
-        await engine.evaluate(fail_event, session_id="sess-1", variables=variables)
+        await engine.evaluate(fail_event, session_id=SESSION_ID, variables=variables)
         assert variables["tool_block_pending"] is True
         # edit_write_pending should NOT be cleared by a failed edit
         assert variables.get("edit_write_pending") is True
 
         # Read succeeds (sibling cancelled call) — edit_write_pending still True
         success_event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(success_event, session_id="sess-1", variables=variables)
+        await engine.evaluate(success_event, session_id=SESSION_ID, variables=variables)
 
         # edit_write_pending is the safety net — Read doesn't clear it
         assert variables.get("edit_write_pending") is True
@@ -1702,7 +1705,7 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("edit_write_pending") is True
 
@@ -1715,7 +1718,7 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("edit_write_pending") is True
 
@@ -1736,7 +1739,7 @@ class TestEditWritePending:
                 ),
             },
         )
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("edit_write_pending") is True
 
@@ -1752,7 +1755,7 @@ class TestEditWritePending:
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Bash", "tool_input": {"command": "printf hi > src/main.py"}},
         )
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("edit_write_pending") is True
 
@@ -1765,7 +1768,7 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("edit_write_pending") is not True
 
@@ -1778,7 +1781,7 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"edit_write_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is False
 
@@ -1799,7 +1802,7 @@ class TestEditWritePending:
                 ),
             },
         )
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is False
 
@@ -1813,7 +1816,7 @@ class TestEditWritePending:
         variables: dict[str, Any] = {"edit_write_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         event.metadata["is_failure"] = True
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is True
 
@@ -1826,7 +1829,7 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"edit_write_pending": True}
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert response.reason is not None and "edit-write-recovery" in response.reason
@@ -1842,12 +1845,12 @@ class TestEditWritePending:
 
         # Successful Edit clears the flag
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert variables["edit_write_pending"] is False
 
         # Now stop should be allowed
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1862,14 +1865,14 @@ class TestEditWritePending:
         # Blocks 1, 2, 3
         for i in range(3):
             event = _make_event(HookEventType.STOP)
-            response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+            response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
             assert response.decision == "block", f"Block {i + 1} should block"
 
         assert variables["edit_write_stop_blocks"] == 3
 
         # 4th attempt — circuit breaker trips, allow stop
         event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
         assert variables["edit_write_pending"] is False
         assert variables["edit_write_stop_blocks"] == 0
@@ -1900,7 +1903,7 @@ class TestEditWritePending:
 
         # Fire before_tool for Edit — rule blocks it
         edit_event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(edit_event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(edit_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
         # edit_write_pending should be cleared since the edit was rule-blocked
@@ -1908,7 +1911,7 @@ class TestEditWritePending:
 
         # Stop should now be allowed — a gate-blocked edit is not a tool execution failure
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1927,13 +1930,13 @@ class TestEditWritePending:
 
         # Successful Read should clear the stale flag
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is False
 
         # Stop should be allowed
         stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(stop_event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1947,7 +1950,7 @@ class TestEditWritePending:
         # Failed Bash should NOT clear the flag
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Bash"})
         event.metadata["is_failure"] = True
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables["edit_write_pending"] is True
 
@@ -1992,7 +1995,7 @@ class TestInlineMcpCallDispatch:
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
         variables: dict[str, Any] = {}
         event = _make_event(data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.context == skill_fetch_directive("python")
         assert "# Python skill content" not in (response.context or "")
@@ -2034,7 +2037,7 @@ class TestInlineMcpCallDispatch:
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_fail)
         variables: dict[str, Any] = {}
         event = _make_event(data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         # Variable should NOT be set (dispatch failed, effects aborted)
         assert variables.get("injected") is None
@@ -2074,7 +2077,7 @@ class TestInlineMcpCallDispatch:
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_raise)
         variables: dict[str, Any] = {}
         event = _make_event(data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         # Variable should NOT be set
         assert variables.get("injected") is None
@@ -2109,7 +2112,7 @@ class TestInlineMcpCallDispatch:
 
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
         event = _make_event(data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         # Should be deferred, not dispatched inline
         assert call_count == 0
@@ -2139,7 +2142,7 @@ class TestInlineMcpCallDispatch:
 
         engine = RuleEngine(db, mcp_dispatcher=None)
         event = _make_event(data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         # Should fall back to deferred
         assert len(response.metadata.get("mcp_calls", [])) == 1
@@ -2177,7 +2180,7 @@ class TestInlineMcpCallDispatch:
 
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
         event = _make_event(data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         # Background should NOT dispatch inline
         assert call_count == 0
@@ -2311,13 +2314,13 @@ class TestRuleEngineHelpers:
     def test_has_pending_messages_no_messages(self, db: HubDatabase) -> None:
         """_has_pending_messages returns False when no messages exist."""
         engine = RuleEngine(db)
-        result = engine._has_pending_messages("sess-nonexistent")
+        result = engine._has_pending_messages(NONEXISTENT_SESSION_ID)
         assert result is False
 
     def test_pending_message_count_no_messages(self, db: HubDatabase) -> None:
         """_pending_message_count returns 0 when no messages exist."""
         engine = RuleEngine(db)
-        result = engine._pending_message_count("sess-nonexistent")
+        result = engine._pending_message_count(NONEXISTENT_SESSION_ID)
         assert result == 0
 
 
@@ -2334,7 +2337,7 @@ class TestCatastrophicFailure:
             data={"tool_name": "Bash", "tool_output": "Error: rate limit exceeded"},
         )
         event.metadata["is_failure"] = True
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("force_allow_stop") is True
 
@@ -2348,7 +2351,7 @@ class TestCatastrophicFailure:
             data={"tool_name": "Edit", "tool_output": "File not found"},
         )
         event.metadata["is_failure"] = True
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("force_allow_stop") is not True
 
@@ -2363,7 +2366,7 @@ class TestCatastrophicFailure:
                 data={"tool_name": "Bash", "tool_output": f"Error: {pattern}"},
             )
             event.metadata["is_failure"] = True
-            await engine.evaluate(event, session_id="sess-1", variables=variables)
+            await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
             assert variables.get("force_allow_stop") is True, f"Pattern '{pattern}' not detected"
 
 
@@ -2378,7 +2381,7 @@ class TestStopAttempts:
 
         for i in range(3):
             event = _make_event(HookEventType.STOP)
-            await engine.evaluate(event, session_id="sess-1", variables=variables)
+            await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
             assert variables["stop_attempts"] == i + 1
 
     @pytest.mark.asyncio
@@ -2388,7 +2391,7 @@ class TestStopAttempts:
         variables: dict[str, Any] = {"stop_attempts": 5}
 
         event = _make_event(HookEventType.BEFORE_AGENT)
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert variables["stop_attempts"] == 0
 
 
@@ -2416,7 +2419,7 @@ class TestEnforcementToggle:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
 
@@ -2435,7 +2438,7 @@ class TestUnmappedEventType:
         event = _make_event(HookEventType.BEFORE_TOOL)
         # Manually set to an unmapped type
         event.event_type = "custom_unmapped_type"  # type: ignore[assignment]
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
         assert response.decision == "allow"
 
 
@@ -2589,7 +2592,7 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("matched") is True
 
@@ -2625,7 +2628,7 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("worker_matched") is True
         assert variables.get("default_matched") is None
@@ -2662,7 +2665,7 @@ class TestLiveActiveRuleSelection:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
         event.project_id = project.id
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("project_matched") is True
         assert variables.get("global_matched") is None
@@ -2691,7 +2694,7 @@ class TestLiveActiveRuleSelection:
             data={"tool_name": "Read", "project_id": project.id},
         )
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("global_matched") is True
 
@@ -2723,7 +2726,7 @@ class TestLiveActiveRuleSelection:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
         first_variables: dict[str, Any] = {"_agent_type": "default"}
 
-        await engine.evaluate(event, session_id="sess-1", variables=first_variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=first_variables)
 
         assert first_variables.get("old_matched") is True
         assert first_variables.get("new_matched") is None
@@ -2738,7 +2741,7 @@ class TestLiveActiveRuleSelection:
         manager.update(agent_id, definition_json=updated_agent.model_dump_json())
         second_variables: dict[str, Any] = {"_agent_type": "default"}
 
-        await engine.evaluate(event, session_id="sess-1", variables=second_variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=second_variables)
 
         assert second_variables.get("new_matched") is True
         assert second_variables.get("old_matched") is None
@@ -2772,7 +2775,7 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("allowed") is True
         assert variables.get("blocked") is None
@@ -2812,7 +2815,7 @@ class TestLiveActiveRuleSelection:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert variables.get("allowed") is True
         assert variables.get("blocked") is None
@@ -2839,7 +2842,7 @@ class TestAgentScope:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"_agent_type": "researcher"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert variables.get("matched") is True
 
     @pytest.mark.asyncio
@@ -2860,7 +2863,7 @@ class TestAgentScope:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert variables.get("matched") is None
 
 
@@ -2890,7 +2893,7 @@ class TestObserveEffectExtended:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         obs = variables.get("_observations", [])
         assert len(obs) == 1
@@ -2926,7 +2929,7 @@ class TestConsecutiveBlockDifferentTool:
 
         # Try a different tool — counter should reset to 0
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         # Counter was reset because the tool changed
         assert variables["consecutive_tool_blocks"] == 0
@@ -2959,12 +2962,12 @@ class TestSessionOverridesExtended:
         # Add session override to disable this rule
         db.execute(
             "INSERT INTO rule_overrides (id, session_id, rule_name, enabled) VALUES (%s, %s, %s, %s)",
-            ("override-1", "sess-override", "block-everything", False),
+            ("override-1", SESSION_ID, "block-everything", False),
         )
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
-        response = await engine.evaluate(event, session_id="sess-override", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
         assert response.decision == "allow"
 
 
@@ -3007,7 +3010,7 @@ class TestLoadSkillEffect:
         engine = RuleEngine(db, skill_manager=skill_mgr)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "EnterPlanMode"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert response.context == skill_fetch_directive("plan")
@@ -3031,7 +3034,7 @@ class TestLoadSkillEffect:
         engine = RuleEngine(db, skill_manager=skill_mgr)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Bash"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert response.context == skill_fetch_directive("nonexistent")
@@ -3053,7 +3056,7 @@ class TestLoadSkillEffect:
         engine = RuleEngine(db)  # No skill_manager
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Bash"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert response.context == skill_fetch_directive("plan")
@@ -3082,7 +3085,7 @@ class TestLoadSkillEffect:
         engine = RuleEngine(db, skill_manager=skill_mgr)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Bash"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert not (response.context or "")
@@ -3109,7 +3112,7 @@ class TestLoadSkillEffect:
         engine = RuleEngine(db, skill_manager=skill_mgr)
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "EnterPlanMode"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert variables["plan_mode"] is True
@@ -3147,7 +3150,7 @@ class TestVerboseOnceBlockReason:
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert "gcode outline" in (response.reason or "")
@@ -3172,8 +3175,8 @@ class TestVerboseOnceBlockReason:
         variables: dict[str, Any] = {}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(event, session_id="sess-1", variables=variables)
-        second = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert second.decision == "block"
         assert second.reason == (
@@ -3208,10 +3211,10 @@ class TestVerboseOnceBlockReason:
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
 
-        first = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        first = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         variables["loaded_skills"] = ["rust"]
-        second = await engine.evaluate(event, session_id="sess-1", variables=variables)
-        third = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        second = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+        third = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert first.decision == "block"
         assert first.reason is not None
@@ -3258,12 +3261,12 @@ class TestVerboseOnceBlockReason:
 
         first = await engine.evaluate(
             _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"}),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=variables,
         )
         second = await engine.evaluate(
             _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Bash"}),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=variables,
         )
 
@@ -3292,8 +3295,8 @@ class TestVerboseOnceBlockReason:
         variables: dict[str, Any] = {}
         block_event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
 
-        await engine.evaluate(block_event, session_id="sess-1", variables=variables)
-        await engine.evaluate(block_event, session_id="sess-1", variables=variables)
+        await engine.evaluate(block_event, session_id=SESSION_ID, variables=variables)
+        await engine.evaluate(block_event, session_id=SESSION_ID, variables=variables)
         assert any(
             entry.startswith("require-code-index-skill:")
             for entry in variables["_block_reasons_shown"]
@@ -3302,13 +3305,13 @@ class TestVerboseOnceBlockReason:
         # New turn: BEFORE_AGENT is the TURN_START transport event.
         await engine.evaluate(
             _make_event(HookEventType.BEFORE_AGENT),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=variables,
         )
         assert variables["_block_reasons_shown"] == []
 
         # Next block in the new turn re-teaches with the full reason.
-        third = await engine.evaluate(block_event, session_id="sess-1", variables=variables)
+        third = await engine.evaluate(block_event, session_id=SESSION_ID, variables=variables)
         assert third.decision == "block"
         assert "gcode outline" in (third.reason or "")
         assert self._TERSE_HINT not in (third.reason or "")

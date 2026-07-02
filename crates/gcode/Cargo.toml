@@ -34,7 +34,7 @@ serde_yaml = { package = "yaml_serde", version = "0.10.4" }
 toml = "1"
 
 # Database
-postgres = "0.19"
+postgres = { version = "0.19", features = ["with-uuid-1"] }
 
 # Graph/vector backends
 urlencoding = "2"

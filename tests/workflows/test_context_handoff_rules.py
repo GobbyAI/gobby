@@ -468,7 +468,7 @@ class TestAutoCompactAfterTaskClose:
         }
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
-            session_id="session-1",
+            session_id="11111111-1111-4111-8111-111111111111",
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
@@ -483,7 +483,9 @@ class TestAutoCompactAfterTaskClose:
             metadata={"session_type": "terminal"},
         )
 
-        response = await engine.evaluate(event, session_id="session-1", variables=variables)
+        response = await engine.evaluate(
+            event, session_id="11111111-1111-4111-8111-111111111111", variables=variables
+        )
 
         compact_calls = [
             call
@@ -496,7 +498,9 @@ class TestAutoCompactAfterTaskClose:
         assert response.context is None
         assert variables["_auto_compact_after_task_close_queued_for"] == "#123"
 
-        second_response = await engine.evaluate(event, session_id="session-1", variables=variables)
+        second_response = await engine.evaluate(
+            event, session_id="11111111-1111-4111-8111-111111111111", variables=variables
+        )
 
         second_compact_calls = [
             call

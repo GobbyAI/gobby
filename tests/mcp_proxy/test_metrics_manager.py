@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+PROJECT_1 = "66666666-6666-4666-8666-666666666666"
+PROJECT_2 = "77777777-7777-4777-8777-777777777777"
+
 
 @pytest.fixture
 def mock_telemetry():
@@ -32,14 +35,14 @@ def metrics_manager(temp_db: "HubDatabase", mock_telemetry) -> ToolMetricsManage
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
         VALUES (%s, %s, %s, NOW(), NOW())
         """,
-        ("proj-1", "Test Project 1", "/tmp/test1"),
+        (PROJECT_1, "Test Project 1", "/tmp/test1"),
     )
     temp_db.execute(
         """
         INSERT INTO projects (id, name, repo_path, created_at, updated_at)
         VALUES (%s, %s, %s, NOW(), NOW())
         """,
-        ("proj-2", "Test Project 2", "/tmp/test2"),
+        (PROJECT_2, "Test Project 2", "/tmp/test2"),
     )
     return ToolMetricsManager(temp_db)
 
@@ -51,7 +54,7 @@ class TestToolMetrics:
         """Test creating ToolMetrics from database row."""
         row = {
             "id": "tm-123",
-            "project_id": "proj-1",
+            "project_id": PROJECT_1,
             "server_name": "test-server",
             "tool_name": "test_tool",
             "call_count": 10,
@@ -66,7 +69,7 @@ class TestToolMetrics:
         metrics = ToolMetrics.from_row(row)
 
         assert metrics.id == "tm-123"
-        assert metrics.project_id == "proj-1"
+        assert metrics.project_id == PROJECT_1
         assert metrics.server_name == "test-server"
         assert metrics.tool_name == "test_tool"
         assert metrics.call_count == 10
@@ -79,7 +82,7 @@ class TestToolMetrics:
         """Test converting ToolMetrics to dictionary."""
         metrics = ToolMetrics(
             id="tm-123",
-            project_id="proj-1",
+            project_id=PROJECT_1,
             server_name="test-server",
             tool_name="test_tool",
             call_count=10,
@@ -94,7 +97,7 @@ class TestToolMetrics:
         result = metrics.to_dict()
 
         assert result["id"] == "tm-123"
-        assert result["project_id"] == "proj-1"
+        assert result["project_id"] == PROJECT_1
         assert result["server_name"] == "test-server"
         assert result["tool_name"] == "test_tool"
         assert result["call_count"] == 10
@@ -106,7 +109,7 @@ class TestToolMetrics:
         """Test success_rate is None when call_count is 0."""
         metrics = ToolMetrics(
             id="tm-123",
-            project_id="proj-1",
+            project_id=PROJECT_1,
             server_name="test-server",
             tool_name="test_tool",
             call_count=0,
@@ -132,12 +135,12 @@ class TestRecordCall:
         metrics_manager.record_call(
             server_name="test-server",
             tool_name="test_tool",
-            project_id="proj-1",
+            project_id=PROJECT_1,
             latency_ms=100.0,
             success=True,
         )
 
-        result = metrics_manager.get_metrics(project_id="proj-1")
+        result = metrics_manager.get_metrics(project_id=PROJECT_1)
         assert result["summary"]["total_calls"] == 1
         assert result["summary"]["total_success"] == 1
         assert result["summary"]["total_failure"] == 0
@@ -149,7 +152,7 @@ class TestRecordCall:
                 "server_name": "test-server",
                 "tool_name": "test_tool",
                 "success": "true",
-                "project_id": "proj-1",
+                "project_id": PROJECT_1,
             },
         )
         mock_telemetry.inc_counter.assert_any_call(
@@ -158,7 +161,7 @@ class TestRecordCall:
                 "server_name": "test-server",
                 "tool_name": "test_tool",
                 "success": "true",
-                "project_id": "proj-1",
+                "project_id": PROJECT_1,
             },
         )
         mock_telemetry.observe_histogram.assert_called_once_with(
@@ -168,7 +171,7 @@ class TestRecordCall:
                 "server_name": "test-server",
                 "tool_name": "test_tool",
                 "success": "true",
-                "project_id": "proj-1",
+                "project_id": PROJECT_1,
             },
         )
 
@@ -179,12 +182,12 @@ class TestRecordCall:
         metrics_manager.record_call(
             server_name="test-server",
             tool_name="test_tool",
-            project_id="proj-1",
+            project_id=PROJECT_1,
             latency_ms=100.0,
             success=False,
         )
 
-        result = metrics_manager.get_metrics(project_id="proj-1")
+        result = metrics_manager.get_metrics(project_id=PROJECT_1)
         assert result["summary"]["total_calls"] == 1
         assert result["summary"]["total_success"] == 0
         assert result["summary"]["total_failure"] == 1
@@ -196,7 +199,7 @@ class TestRecordCall:
                 "server_name": "test-server",
                 "tool_name": "test_tool",
                 "success": "false",
-                "project_id": "proj-1",
+                "project_id": PROJECT_1,
             },
         )
         mock_telemetry.inc_counter.assert_any_call(
@@ -205,7 +208,7 @@ class TestRecordCall:
                 "server_name": "test-server",
                 "tool_name": "test_tool",
                 "success": "false",
-                "project_id": "proj-1",
+                "project_id": PROJECT_1,
             },
         )
 
@@ -216,7 +219,7 @@ class TestRecordCall:
             metrics_manager.record_call(
                 server_name="test-server",
                 tool_name="test_tool",
-                project_id="proj-1",
+                project_id=PROJECT_1,
                 latency_ms=100.0,
                 success=True,
             )
@@ -224,12 +227,12 @@ class TestRecordCall:
             metrics_manager.record_call(
                 server_name="test-server",
                 tool_name="test_tool",
-                project_id="proj-1",
+                project_id=PROJECT_1,
                 latency_ms=200.0,
                 success=False,
             )
 
-        result = metrics_manager.get_metrics(project_id="proj-1")
+        result = metrics_manager.get_metrics(project_id=PROJECT_1)
         assert result["summary"]["total_calls"] == 5
         assert result["summary"]["total_success"] == 3
         assert result["summary"]["total_failure"] == 2
@@ -246,18 +249,18 @@ class TestGetMetrics:
 
     def test_get_metrics_filter_by_project(self, metrics_manager: ToolMetricsManager) -> None:
         """Test filtering metrics by project_id."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool1", "proj-2", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_2, 100.0, True)
 
-        result = metrics_manager.get_metrics(project_id="proj-1")
+        result = metrics_manager.get_metrics(project_id=PROJECT_1)
         assert result["summary"]["total_calls"] == 1
         assert len(result["tools"]) == 1
-        assert result["tools"][0]["project_id"] == "proj-1"
+        assert result["tools"][0]["project_id"] == PROJECT_1
 
     def test_get_metrics_filter_by_server(self, metrics_manager: ToolMetricsManager) -> None:
         """Test filtering metrics by server_name."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server2", "tool2", "proj-1", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server2", "tool2", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_metrics(server_name="server1")
         assert result["summary"]["total_calls"] == 1
@@ -265,8 +268,8 @@ class TestGetMetrics:
 
     def test_get_metrics_filter_by_tool(self, metrics_manager: ToolMetricsManager) -> None:
         """Test filtering metrics by tool_name."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool2", "proj-1", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool2", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_metrics(tool_name="tool1")
         assert result["summary"]["total_calls"] == 1
@@ -275,11 +278,11 @@ class TestGetMetrics:
     def test_get_metrics_aggregates(self, metrics_manager: ToolMetricsManager) -> None:
         """Test aggregate calculations in get_metrics."""
         # Record calls with different latencies
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool1", "proj-1", 200.0, True)
-        metrics_manager.record_call("server1", "tool1", "proj-1", 300.0, False)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 200.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 300.0, False)
 
-        result = metrics_manager.get_metrics(project_id="proj-1")
+        result = metrics_manager.get_metrics(project_id=PROJECT_1)
         summary = result["summary"]
         assert summary["total_calls"] == 3
         assert summary["total_success"] == 2
@@ -300,9 +303,9 @@ class TestGetTopTools:
         """Test ordering tools by call_count."""
         # Record different numbers of calls for different tools
         for _ in range(5):
-            metrics_manager.record_call("server1", "popular_tool", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", "popular_tool", PROJECT_1, 100.0, True)
         for _ in range(2):
-            metrics_manager.record_call("server1", "less_popular", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", "less_popular", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_top_tools(order_by="call_count")
         assert len(result) == 2
@@ -312,7 +315,7 @@ class TestGetTopTools:
     def test_get_top_tools_with_limit(self, metrics_manager: ToolMetricsManager) -> None:
         """Test limit parameter works correctly."""
         for i in range(5):
-            metrics_manager.record_call("server1", f"tool{i}", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", f"tool{i}", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_top_tools(limit=3)
         assert len(result) == 3
@@ -321,7 +324,7 @@ class TestGetTopTools:
         self, metrics_manager: ToolMetricsManager
     ) -> None:
         """Test invalid order_by falls back to call_count."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
 
         # Should not raise, should fall back to call_count
         result = metrics_manager.get_top_tools(order_by="invalid_column")
@@ -329,12 +332,12 @@ class TestGetTopTools:
 
     def test_get_top_tools_filter_by_project(self, metrics_manager: ToolMetricsManager) -> None:
         """Test filtering by project_id."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool2", "proj-2", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool2", PROJECT_2, 100.0, True)
 
-        result = metrics_manager.get_top_tools(project_id="proj-1")
+        result = metrics_manager.get_top_tools(project_id=PROJECT_1)
         assert len(result) == 1
-        assert result[0]["project_id"] == "proj-1"
+        assert result[0]["project_id"] == PROJECT_1
 
 
 class TestGetToolSuccessRate:
@@ -345,7 +348,7 @@ class TestGetToolSuccessRate:
         result = metrics_manager.get_tool_success_rate(
             server_name="server1",
             tool_name="nonexistent",
-            project_id="proj-1",
+            project_id=PROJECT_1,
         )
         assert result is None
 
@@ -353,38 +356,38 @@ class TestGetToolSuccessRate:
         """Test success rate calculation."""
         # Record 8 successes and 2 failures
         for _ in range(8):
-            metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
         for _ in range(2):
-            metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, False)
+            metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, False)
 
         result = metrics_manager.get_tool_success_rate(
             server_name="server1",
             tool_name="tool1",
-            project_id="proj-1",
+            project_id=PROJECT_1,
         )
         assert result == pytest.approx(0.8, rel=0.01)
 
     def test_success_rate_all_success(self, metrics_manager: ToolMetricsManager) -> None:
         """Test success rate with all successes."""
         for _ in range(5):
-            metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_tool_success_rate(
             server_name="server1",
             tool_name="tool1",
-            project_id="proj-1",
+            project_id=PROJECT_1,
         )
         assert result == 1.0
 
     def test_success_rate_all_failures(self, metrics_manager: ToolMetricsManager) -> None:
         """Test success rate with all failures."""
         for _ in range(5):
-            metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, False)
+            metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, False)
 
         result = metrics_manager.get_tool_success_rate(
             server_name="server1",
             tool_name="tool1",
-            project_id="proj-1",
+            project_id=PROJECT_1,
         )
         assert result == 0.0
 
@@ -401,15 +404,15 @@ class TestGetFailingTools:
         """Test get_failing_tools filters by threshold."""
         # Tool with 60% failure rate (above default 50% threshold)
         for _ in range(4):
-            metrics_manager.record_call("server1", "failing_tool", "proj-1", 100.0, False)
+            metrics_manager.record_call("server1", "failing_tool", PROJECT_1, 100.0, False)
         for _ in range(6):
-            metrics_manager.record_call("server1", "failing_tool", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", "failing_tool", PROJECT_1, 100.0, True)
 
         # Tool with 20% failure rate (below threshold)
         for _ in range(2):
-            metrics_manager.record_call("server1", "good_tool", "proj-1", 100.0, False)
+            metrics_manager.record_call("server1", "good_tool", PROJECT_1, 100.0, False)
         for _ in range(8):
-            metrics_manager.record_call("server1", "good_tool", "proj-1", 100.0, True)
+            metrics_manager.record_call("server1", "good_tool", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_failing_tools(threshold=0.3)
         assert len(result) == 1
@@ -419,20 +422,20 @@ class TestGetFailingTools:
     def test_get_failing_tools_filter_by_project(self, metrics_manager: ToolMetricsManager) -> None:
         """Test filtering failing tools by project."""
         for _ in range(5):
-            metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, False)
+            metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, False)
         for _ in range(5):
-            metrics_manager.record_call("server1", "tool2", "proj-2", 100.0, False)
+            metrics_manager.record_call("server1", "tool2", PROJECT_2, 100.0, False)
 
-        result = metrics_manager.get_failing_tools(project_id="proj-1", threshold=0.5)
+        result = metrics_manager.get_failing_tools(project_id=PROJECT_1, threshold=0.5)
         assert len(result) == 1
-        assert result[0]["project_id"] == "proj-1"
+        assert result[0]["project_id"] == PROJECT_1
 
     @pytest.mark.integration
     def test_get_failing_tools_respects_limit(self, metrics_manager: ToolMetricsManager) -> None:
         """Test limit parameter works correctly."""
         for i in range(5):
             for _ in range(5):
-                metrics_manager.record_call("server1", f"failing_tool{i}", "proj-1", 100.0, False)
+                metrics_manager.record_call("server1", f"failing_tool{i}", PROJECT_1, 100.0, False)
 
         result = metrics_manager.get_failing_tools(threshold=0.5, limit=3)
         assert len(result) == 3
@@ -443,8 +446,8 @@ class TestResetMetrics:
 
     def test_reset_all_metrics(self, metrics_manager: ToolMetricsManager) -> None:
         """Test resetting all metrics."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server2", "tool2", "proj-2", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server2", "tool2", PROJECT_2, 100.0, True)
 
         deleted = metrics_manager.reset_metrics()
         assert deleted == 2
@@ -454,20 +457,20 @@ class TestResetMetrics:
 
     def test_reset_by_project(self, metrics_manager: ToolMetricsManager) -> None:
         """Test resetting metrics for specific project."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool2", "proj-2", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool2", PROJECT_2, 100.0, True)
 
-        deleted = metrics_manager.reset_metrics(project_id="proj-1")
+        deleted = metrics_manager.reset_metrics(project_id=PROJECT_1)
         assert deleted == 1
 
         result = metrics_manager.get_metrics()
         assert result["summary"]["total_calls"] == 1
-        assert result["tools"][0]["project_id"] == "proj-2"
+        assert result["tools"][0]["project_id"] == PROJECT_2
 
     def test_reset_by_server(self, metrics_manager: ToolMetricsManager) -> None:
         """Test resetting metrics for specific server."""
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server2", "tool2", "proj-1", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server2", "tool2", PROJECT_1, 100.0, True)
 
         deleted = metrics_manager.reset_metrics(server_name="server1")
         assert deleted == 1
@@ -496,7 +499,7 @@ class TestCleanupOldMetrics:
             """,
             (
                 "tm-old",
-                "proj-1",
+                PROJECT_1,
                 "server1",
                 "old_tool",
                 1,
@@ -511,7 +514,7 @@ class TestCleanupOldMetrics:
         )
 
         # Record a new metric
-        metrics_manager.record_call("server1", "new_tool", "proj-1", 100.0, True)
+        metrics_manager.record_call("server1", "new_tool", PROJECT_1, 100.0, True)
 
         # Cleanup with 7 day retention
         deleted = metrics_manager.cleanup_old_metrics(retention_days=7)
@@ -537,9 +540,9 @@ class TestGetRetentionStats:
     def test_retention_stats_with_data(self, metrics_manager: ToolMetricsManager) -> None:
         """Test retention stats with data."""
         # Record some calls
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool2", "proj-1", 100.0, True)
-        metrics_manager.record_call("server1", "tool1", "proj-1", 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool2", PROJECT_1, 100.0, True)
+        metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
 
         result = metrics_manager.get_retention_stats()
         assert result["total_metrics"] == 2  # 2 unique tool entries
@@ -570,7 +573,7 @@ class TestGetDailyMetrics:
                 total_latency_ms, avg_latency_ms, created_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
-            ("proj-1", "server1", "tool1", "2024-01-01", 10, 8, 2, 1000.0, 100.0),
+            (PROJECT_1, "server1", "tool1", "2024-01-01", 10, 8, 2, 1000.0, 100.0),
         )
         temp_db.execute(
             """
@@ -580,13 +583,13 @@ class TestGetDailyMetrics:
                 total_latency_ms, avg_latency_ms, created_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             """,
-            ("proj-2", "server2", "tool2", "2024-01-02", 5, 5, 0, 500.0, 100.0),
+            (PROJECT_2, "server2", "tool2", "2024-01-02", 5, 5, 0, 500.0, 100.0),
         )
 
         # Filter by project
-        result = metrics_manager.get_daily_metrics(project_id="proj-1")
+        result = metrics_manager.get_daily_metrics(project_id=PROJECT_1)
         assert len(result["daily"]) == 1
-        assert result["daily"][0]["project_id"] == "proj-1"
+        assert result["daily"][0]["project_id"] == PROJECT_1
 
         # Filter by date range
         result = metrics_manager.get_daily_metrics(start_date="2024-01-01", end_date="2024-01-01")

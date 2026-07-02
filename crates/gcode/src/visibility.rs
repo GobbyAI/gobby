@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use postgres::Client;
+use uuid::Uuid;
 
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
@@ -52,24 +53,41 @@ pub fn context_for_source_project(ctx: &Context, source_project_id: &str) -> Con
     scoped
 }
 
+/// Parse a project id for binding against a uuid column in a bool-returning
+/// visibility check. A non-uuid id cannot exist in the hub, so callers treat a
+/// parse failure exactly like a no-row query result.
+fn project_uuid_or_invisible(project_id: &str) -> Option<Uuid> {
+    db::id_param(project_id).ok()
+}
+
 pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
     match &ctx.index_scope {
-        ProjectIndexScope::Single => conn
-            .query_one(
+        ProjectIndexScope::Single => {
+            let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
+                return false;
+            };
+            conn.query_one(
                 "SELECT EXISTS(
                     SELECT 1 FROM code_indexed_files
                     WHERE project_id = $1 AND file_path = $2 AND language != $3
                 )",
-                &[&ctx.project_id, &file_path, &TOMBSTONE_LANGUAGE],
+                &[&project_id, &file_path, &TOMBSTONE_LANGUAGE],
             )
             .and_then(|row| row.try_get::<_, bool>(0))
-            .unwrap_or(false),
+            .unwrap_or(false)
+        }
         ProjectIndexScope::Overlay {
             overlay_project_id,
             parent_project_id,
             ..
-        } => conn
-            .query_one(
+        } => {
+            let (Some(overlay_project_id), Some(parent_project_id)) = (
+                project_uuid_or_invisible(overlay_project_id),
+                project_uuid_or_invisible(parent_project_id),
+            ) else {
+                return false;
+            };
+            conn.query_one(
                 "SELECT EXISTS(
                     SELECT 1 FROM code_indexed_files of
                     WHERE of.project_id = $1
@@ -87,35 +105,46 @@ pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) ->
                     LIMIT 1
                 )",
                 &[
-                    overlay_project_id,
-                    parent_project_id,
+                    &overlay_project_id,
+                    &parent_project_id,
                     &file_path,
                     &TOMBSTONE_LANGUAGE,
                 ],
             )
             .and_then(|row| row.try_get::<_, bool>(0))
-            .unwrap_or(false),
+            .unwrap_or(false)
+        }
     }
 }
 
 pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
     match &ctx.index_scope {
-        ProjectIndexScope::Single => conn
-            .query_one(
+        ProjectIndexScope::Single => {
+            let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
+                return false;
+            };
+            conn.query_one(
                 "SELECT EXISTS(
                     SELECT 1 FROM code_content_chunks
                     WHERE project_id = $1 AND file_path = $2
                 )",
-                &[&ctx.project_id, &file_path],
+                &[&project_id, &file_path],
             )
             .and_then(|row| row.try_get::<_, bool>(0))
-            .unwrap_or(false),
+            .unwrap_or(false)
+        }
         ProjectIndexScope::Overlay {
             overlay_project_id,
             parent_project_id,
             ..
-        } => conn
-            .query_one(
+        } => {
+            let (Some(overlay_project_id), Some(parent_project_id)) = (
+                project_uuid_or_invisible(overlay_project_id),
+                project_uuid_or_invisible(parent_project_id),
+            ) else {
+                return false;
+            };
+            conn.query_one(
                 "SELECT EXISTS(
                     SELECT 1 FROM code_content_chunks c
                     JOIN code_indexed_files f
@@ -137,14 +166,15 @@ pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -
                     LIMIT 1
                 )",
                 &[
-                    overlay_project_id,
-                    parent_project_id,
+                    &overlay_project_id,
+                    &parent_project_id,
                     &file_path,
                     &TOMBSTONE_LANGUAGE,
                 ],
             )
             .and_then(|row| row.try_get::<_, bool>(0))
-            .unwrap_or(false),
+            .unwrap_or(false)
+        }
     }
 }
 
@@ -181,6 +211,9 @@ pub fn project_path_is_visible(
 }
 
 pub fn project_file_is_visible(conn: &mut Client, project_id: &str, file_path: &str) -> bool {
+    let Some(project_id) = project_uuid_or_invisible(project_id) else {
+        return false;
+    };
     conn.query_one(
         "SELECT EXISTS(
             SELECT 1 FROM code_indexed_files
@@ -193,6 +226,9 @@ pub fn project_file_is_visible(conn: &mut Client, project_id: &str, file_path: &
 }
 
 pub fn overlay_has_row(conn: &mut Client, overlay_project_id: &str, file_path: &str) -> bool {
+    let Some(overlay_project_id) = project_uuid_or_invisible(overlay_project_id) else {
+        return false;
+    };
     conn.query_one(
         "SELECT EXISTS(
             SELECT 1 FROM code_indexed_files
@@ -209,6 +245,10 @@ pub fn visible_symbol_by_id(
     ctx: &Context,
     id: &str,
 ) -> anyhow::Result<Option<Symbol>> {
+    // A non-uuid id cannot exist in the uuid column: no such symbol.
+    let Ok(id) = db::id_param(id) else {
+        return Ok(None);
+    };
     let columns = db::symbol_select_columns("cs");
     let Some(row) = conn.query_opt(
         &format!("SELECT {columns} FROM code_symbols cs WHERE cs.id = $1"),
@@ -230,21 +270,21 @@ pub fn visible_symbols_by_ids(
         return Ok(Vec::new());
     }
 
-    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
+    // Non-uuid ids cannot exist in the uuid column; drop them the same way a
+    // non-matching id used to fall out of the IN list.
+    let ids: Vec<Uuid> = ids.iter().filter_map(|id| db::id_param(id).ok()).collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let columns = db::symbol_select_columns("");
     let sql = format!(
         "SELECT {columns} FROM code_symbols
-         WHERE id IN ({})
-         ORDER BY file_path, line_start",
-        placeholders.join(",")
+         WHERE id = ANY($1)
+         ORDER BY file_path, line_start"
     );
-    let params: Vec<&(dyn postgres::types::ToSql + Sync)> = ids
-        .iter()
-        .map(|s| s as &(dyn postgres::types::ToSql + Sync))
-        .collect();
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for row in conn.query(&sql, &params)? {
+    for row in conn.query(&sql, &[&ids])? {
         let symbol = Symbol::from_row(&row)?;
         if seen.insert(symbol.id.clone()) {
             out.push(symbol);
@@ -299,6 +339,16 @@ fn indexed_file_languages(
         return Ok(HashMap::new());
     }
 
+    // Non-uuid project ids (unit-test contexts) cannot exist in the hub; skip
+    // them instead of failing the whole visibility lookup.
+    let project_ids: Vec<Uuid> = project_ids
+        .iter()
+        .filter_map(|id| db::id_param(id).ok())
+        .collect();
+    if project_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
     let rows = conn.query(
         "SELECT project_id, file_path, language
          FROM code_indexed_files
@@ -309,7 +359,7 @@ fn indexed_file_languages(
         .map(|row| {
             Ok((
                 (
-                    row.try_get::<_, String>("project_id")?,
+                    db::id_string(&row, "project_id")?,
                     row.try_get::<_, String>("file_path")?,
                 ),
                 row.try_get::<_, String>("language")?,
@@ -387,6 +437,7 @@ fn query_symbols_for_files(
     project_id: &str,
     file_paths: &[String],
 ) -> anyhow::Result<Vec<Symbol>> {
+    let project_id = db::id_param(project_id)?;
     let rows = conn.query(
         &symbols_for_files_sql(),
         &[&project_id, &file_paths, &TOMBSTONE_LANGUAGE],
@@ -400,6 +451,8 @@ fn query_overlay_symbols_for_files(
     parent_project_id: &str,
     file_paths: &[String],
 ) -> anyhow::Result<Vec<Symbol>> {
+    let overlay_project_id = db::id_param(overlay_project_id)?;
+    let parent_project_id = db::id_param(parent_project_id)?;
     let rows = conn.query(
         &overlay_symbols_for_files_sql(),
         &[
@@ -459,7 +512,7 @@ pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Str
              WHERE cs.project_id = $1
                AND cf.language != $2
              ORDER BY cs.kind",
-            &[&ctx.project_id, &TOMBSTONE_LANGUAGE],
+            &[&db::id_param(&ctx.project_id)?, &TOMBSTONE_LANGUAGE],
         )?,
         ProjectIndexScope::Overlay {
             overlay_project_id,
@@ -487,7 +540,11 @@ pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Str
                    )
              ) visible
              ORDER BY kind",
-            &[overlay_project_id, parent_project_id, &TOMBSTONE_LANGUAGE],
+            &[
+                &db::id_param(overlay_project_id)?,
+                &db::id_param(parent_project_id)?,
+                &TOMBSTONE_LANGUAGE,
+            ],
         )?,
     };
 
@@ -503,7 +560,7 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
              FROM code_indexed_files
              WHERE project_id = $1 AND language != $2
              ORDER BY file_path",
-            &[&ctx.project_id, &TOMBSTONE_LANGUAGE],
+            &[&db::id_param(&ctx.project_id)?, &TOMBSTONE_LANGUAGE],
         )?,
         ProjectIndexScope::Overlay {
             overlay_project_id,
@@ -523,7 +580,11 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
                    WHERE of.project_id = $1 AND of.file_path = pf.file_path
                )
              ORDER BY file_path",
-            &[overlay_project_id, parent_project_id, &TOMBSTONE_LANGUAGE],
+            &[
+                &db::id_param(overlay_project_id)?,
+                &db::id_param(parent_project_id)?,
+                &TOMBSTONE_LANGUAGE,
+            ],
         )?,
     };
 
@@ -545,11 +606,14 @@ pub fn tombstone_count(conn: &mut Client, ctx: &Context) -> usize {
     else {
         return 0;
     };
+    let Some(overlay_project_id) = project_uuid_or_invisible(overlay_project_id) else {
+        return 0;
+    };
     conn.query_one(
         "SELECT COUNT(*)::BIGINT AS count
          FROM code_indexed_files
          WHERE project_id = $1 AND language = $2",
-        &[overlay_project_id, &TOMBSTONE_LANGUAGE],
+        &[&overlay_project_id, &TOMBSTONE_LANGUAGE],
     )
     .ok()
     .and_then(|row| row.try_get::<_, i64>("count").ok())

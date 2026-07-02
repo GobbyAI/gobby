@@ -1,5 +1,6 @@
 """Focused tests for session storage behavior."""
 
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,10 @@ from psycopg.errors import RaiseException
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+# sessions.id is a native uuid column; a valid-but-unknown UUID exercises the
+# "missing session" path without tripping the uuid cast.
+MISSING_SESSION_ID = str(uuid.uuid4())
 
 
 class TestSessionManagerMetadata:
@@ -143,7 +148,7 @@ class TestSessionManagerMetadata:
             lambda session_id, title: calls.append((session_id, title))
         )
 
-        updated = session_manager.update_title("missing-session", "Nope")
+        updated = session_manager.update_title(MISSING_SESSION_ID, "Nope")
 
         assert updated is None
         assert calls == []
@@ -158,7 +163,7 @@ class TestSessionManagerMetadata:
             lambda event, session_id: calls.append((event, session_id))
         )
 
-        updated = session_manager.update_digest_markdown("missing-session", "## Digest")
+        updated = session_manager.update_digest_markdown(MISSING_SESSION_ID, "## Digest")
 
         assert updated is None
         assert calls == []
@@ -217,7 +222,7 @@ class TestSessionManagerMetadata:
         )
 
         updated = session_manager.persist_digest_state(
-            "missing-session",
+            MISSING_SESSION_ID,
             last_turn_markdown="last turn",
             digest_markdown="digest",
             last_digest_input_hash="abc123",

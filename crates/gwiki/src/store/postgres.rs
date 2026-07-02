@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
+use uuid::Uuid;
 
 use super::helpers::{
     clip_link_field, display_path, document_kind_name, ingestion_status,
@@ -36,13 +37,13 @@ impl<'a> PostgresWikiStore<'a> {
         }
     }
 
-    fn scope_params(&self) -> (String, String, Option<String>, Option<String>) {
-        (
+    fn scope_params(&self) -> Result<(String, String, Option<Uuid>, Option<String>), StoreError> {
+        Ok((
             self.scope.scope_kind().to_string(),
             self.scope.scope_id().to_string(),
-            self.scope.project_id(),
+            project_uuid(self.scope.project_id())?,
             self.scope.topic_name(),
-        )
+        ))
     }
 
     fn document_meta(&mut self, path: &Path) -> Result<DocumentMeta, StoreError> {
@@ -75,6 +76,22 @@ impl<'a> PostgresWikiStore<'a> {
     }
 }
 
+/// Convert a scope project id into the native uuid bind expected by the
+/// PostgreSQL `project_id` columns (uuid, nullable). Absent or empty ids map
+/// to NULL; anything else must parse as a UUID or the write is rejected
+/// before reaching the server.
+fn project_uuid(project_id: Option<String>) -> Result<Option<Uuid>, StoreError> {
+    match project_id.as_deref() {
+        None | Some("") => Ok(None),
+        Some(value) => Uuid::parse_str(value)
+            .map(Some)
+            .map_err(|error| StoreError::InvalidData {
+                field: "project_id",
+                message: format!("{value} is not a valid UUID: {error}"),
+            }),
+    }
+}
+
 impl WikiIndexStore for PostgresWikiStore<'_> {
     fn indexed_hashes(&mut self) -> Result<BTreeMap<PathBuf, String>, StoreError> {
         let rows = self.conn.query(
@@ -102,7 +119,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         // ToSql type checks against jsonb columns (parameter serialization error).
         let provenance = json!({ "source_path": path });
         let frontmatter = json!({});
-        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
+        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params()?;
 
         self.conn.execute(
             "INSERT INTO gwiki_documents (
@@ -157,6 +174,12 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let document = self.document_meta(path)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
+        let (scope_kind, scope_id, project_id, topic_name) = (
+            scope.scope_kind().to_string(),
+            scope.scope_id().to_string(),
+            project_uuid(scope.project_id())?,
+            scope.topic_name(),
+        );
         let chunks = chunks
             .into_iter()
             .map(|chunk| {
@@ -205,12 +228,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 "heading": chunk.heading,
             });
             let frontmatter = json!({});
-            let (scope_kind, scope_id, project_id, topic_name) = (
-                scope.scope_kind().to_string(),
-                scope.scope_id().to_string(),
-                scope.project_id(),
-                scope.topic_name(),
-            );
 
             if let Err(error) = tx.execute(
                 "INSERT INTO gwiki_chunks (
@@ -254,6 +271,12 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         validate_link_paths(path, &links)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
+        let (scope_kind, scope_id, project_id, topic_name) = (
+            scope.scope_kind().to_string(),
+            scope.scope_id().to_string(),
+            project_uuid(scope.project_id())?,
+            scope.topic_name(),
+        );
         let mut tx = self.conn.transaction()?;
         if let Err(error) = tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
@@ -283,12 +306,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 "byte_end": link.byte_end,
                 "alias": link.alias,
             });
-            let (scope_kind, scope_id, project_id, topic_name) = (
-                scope.scope_kind().to_string(),
-                scope.scope_id().to_string(),
-                scope.project_id(),
-                scope.topic_name(),
-            );
 
             if let Err(error) = tx.execute(
                 "INSERT INTO gwiki_links (
@@ -334,7 +351,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             "document_path": &document_path,
         });
         let frontmatter = json!({});
-        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
+        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params()?;
 
         self.conn.execute(
             "INSERT INTO gwiki_sources (
@@ -382,7 +399,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             .unwrap_or("unknown");
         let provenance = json!({ "event": status });
         let frontmatter = json!({});
-        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params();
+        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params()?;
 
         self.conn.execute(
             "INSERT INTO gwiki_ingestions (

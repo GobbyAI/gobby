@@ -321,6 +321,10 @@ fn resolve_gwiki_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gwiki/src/commands/sources.rs",
             "commands::sources::execute_remove",
         ),
+        "benchmark" => (
+            "crates/gwiki/src/commands/benchmark.rs",
+            "commands::benchmark::execute",
+        ),
         _ => ("", ""),
     }
 }

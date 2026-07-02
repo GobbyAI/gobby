@@ -1205,7 +1205,9 @@ class TestExportImport:
         client: TestClient,
         temp_db: Any,
     ) -> None:
-        project_id = "proj-original"
+        # Prompt-override project ids target the native-uuid projects.id
+        # column, so the exported path segment must be a valid UUID string.
+        project_id = "11111111-1111-4111-8111-111111111111"
 
         response = client.post(
             "/api/config/import",

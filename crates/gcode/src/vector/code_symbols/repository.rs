@@ -1,4 +1,5 @@
 use postgres::{GenericClient, types::ToSql};
+use uuid::Uuid;
 
 use crate::db;
 use crate::models::Symbol;
@@ -42,14 +43,17 @@ impl SymbolPredicate<'_> {
         }
     }
 
-    fn params(&self) -> Vec<&(dyn ToSql + Sync)> {
+    fn project_id(&self) -> &str {
         match self {
-            Self::Project { project_id } => vec![project_id as &(dyn ToSql + Sync)],
-            Self::File {
-                project_id,
-                file_path,
-            } => vec![
-                project_id as &(dyn ToSql + Sync),
+            Self::Project { project_id } | Self::File { project_id, .. } => project_id,
+        }
+    }
+
+    fn params<'p>(&'p self, project_uuid: &'p Uuid) -> Vec<&'p (dyn ToSql + Sync)> {
+        match self {
+            Self::Project { .. } => vec![project_uuid as &(dyn ToSql + Sync)],
+            Self::File { file_path, .. } => vec![
+                project_uuid as &(dyn ToSql + Sync),
                 file_path as &(dyn ToSql + Sync),
             ],
         }
@@ -61,7 +65,8 @@ fn fetch_symbols_where(
     predicate: SymbolPredicate<'_>,
 ) -> anyhow::Result<Vec<Symbol>> {
     let columns = db::symbol_select_columns("");
-    let params = predicate.params();
+    let project_uuid = db::id_param(predicate.project_id())?;
+    let params = predicate.params(&project_uuid);
     conn.query(
         &format!(
             "SELECT {columns} FROM code_symbols

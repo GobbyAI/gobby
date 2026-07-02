@@ -1,15 +1,22 @@
+import uuid
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
+# projects.id is a native uuid column.
+PROJECT_ID = str(uuid.uuid4())
+
 
 @pytest.fixture
 def db(temp_db):
     database = temp_db
     with database.transaction() as conn:
-        conn.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("p1", "test_project"))
+        conn.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "test_project")
+        )
     return database
 
 
@@ -23,7 +30,7 @@ def manager(db):
 @pytest.mark.e2e
 def test_create_task_preserves_description_and_category(manager):
     task = manager.create_task(
-        project_id="p1",
+        project_id=PROJECT_ID,
         title="Test Expansion",
         description="Rich details here",
         category="planning",
@@ -41,7 +48,7 @@ def test_create_task_preserves_description_and_category(manager):
 @pytest.mark.integration
 @pytest.mark.e2e
 def test_update_task_description(manager):
-    task = manager.create_task(project_id="p1", title="Update Me")
+    task = manager.create_task(project_id=PROJECT_ID, title="Update Me")
     updated = manager.update_task(task.id, description="Updated details")
     assert updated.description == "Updated details"
 
@@ -53,7 +60,9 @@ def test_update_task_description(manager):
 @pytest.mark.integration
 @pytest.mark.e2e
 def test_to_dict_excludes_legacy_expansion_fields(manager):
-    task = manager.create_task(project_id="p1", title="Dict Test", description="Secret details")
+    task = manager.create_task(
+        project_id=PROJECT_ID, title="Dict Test", description="Secret details"
+    )
 
     data = task.to_dict()
     assert data["description"] == "Secret details"

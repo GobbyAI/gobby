@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
+from gobby.storage.session_resolution import is_session_uuid
 
 from .definitions import WorkflowInstance
 
@@ -34,6 +35,8 @@ class WorkflowInstanceManager:
 
     def get_instance(self, session_id: str, workflow_name: str) -> WorkflowInstance | None:
         """Get a specific workflow instance by session and workflow name."""
+        if not is_session_uuid(session_id):
+            return None
         row = self.db.fetchone(
             "SELECT * FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
             (session_id, workflow_name),
@@ -44,6 +47,8 @@ class WorkflowInstanceManager:
 
     def get_active_instances(self, session_id: str) -> list[WorkflowInstance]:
         """Get all enabled workflow instances for a session, sorted by priority."""
+        if not is_session_uuid(session_id):
+            return []
         rows = self.db.fetchall(
             "SELECT * FROM workflow_instances WHERE session_id = %s AND enabled = %s "
             "ORDER BY priority ASC",
@@ -53,6 +58,8 @@ class WorkflowInstanceManager:
 
     def save_instance(self, instance: WorkflowInstance) -> None:
         """Create or update a workflow instance (upsert on session_id + workflow_name)."""
+        if not is_session_uuid(instance.session_id):
+            return
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             """
@@ -91,6 +98,8 @@ class WorkflowInstanceManager:
 
     def delete_instance(self, session_id: str, workflow_name: str) -> None:
         """Delete a workflow instance."""
+        if not is_session_uuid(session_id):
+            return
         self.db.execute(
             "DELETE FROM workflow_instances WHERE session_id = %s AND workflow_name = %s",
             (session_id, workflow_name),
@@ -98,6 +107,8 @@ class WorkflowInstanceManager:
 
     def delete_instances_for_session(self, session_id: str) -> int:
         """Delete all workflow instances for a session and return deleted row count."""
+        if not is_session_uuid(session_id):
+            return 0
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "DELETE FROM workflow_instances WHERE session_id = %s",
@@ -107,6 +118,8 @@ class WorkflowInstanceManager:
 
     def set_enabled(self, session_id: str, workflow_name: str, enabled: bool) -> None:
         """Toggle the enabled state of a workflow instance."""
+        if not is_session_uuid(session_id):
+            return
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE workflow_instances SET enabled = %s, updated_at = %s "

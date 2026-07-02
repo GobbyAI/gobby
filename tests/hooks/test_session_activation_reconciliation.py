@@ -535,7 +535,8 @@ def test_existing_step_workflow_current_step_is_preserved(
     _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
     WorkflowInstanceManager(db).save_instance(
         WorkflowInstance(
-            id="instance-worker",
+            # workflow_instances.id is a native uuid column.
+            id="acacacac-0000-4000-8000-000000000001",
             session_id=child_id,
             workflow_name="worker-steps",
             enabled=True,

@@ -22,6 +22,11 @@ from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
 
+# Session/project id columns are native uuid in PostgreSQL; synthetic ids like
+# "sess-1" would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PLATFORM_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -37,7 +42,7 @@ def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 def _make_event(
     event_type: HookEventType = HookEventType.BEFORE_TOOL,
     data: dict[str, Any] | None = None,
-    platform_session_id: str | None = "plat-sess-1",
+    platform_session_id: str | None = PLATFORM_SESSION_ID,
 ) -> HookEvent:
     metadata = {}
     if platform_session_id is not None:
@@ -45,7 +50,7 @@ def _make_event(
 
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -137,7 +142,7 @@ class TestDeliverPendingMessages:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_AGENT)
         variables: dict[str, Any] = {"servers_listed": True}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         mcp_calls = response.metadata.get("mcp_calls", [])
@@ -152,12 +157,12 @@ class TestDeliverPendingMessages:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_AGENT)
         variables: dict[str, Any] = {"servers_listed": True}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         call = response.metadata["mcp_calls"][0]
         assert call["server"] == "gobby-agents"
         assert call["tool"] == "deliver_pending_messages"
-        assert call["arguments"] == {"target_session_id": "plat-sess-1"}
+        assert call["arguments"] == {"target_session_id": PLATFORM_SESSION_ID}
         assert call["inject_result"] is True
 
     @pytest.mark.asyncio
@@ -169,7 +174,7 @@ class TestDeliverPendingMessages:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_AGENT)
         response = await engine.evaluate(
-            event, session_id="sess-1", variables={"servers_listed": True}
+            event, session_id=SESSION_ID, variables={"servers_listed": True}
         )
 
         assert response.decision == "allow"
@@ -185,7 +190,7 @@ class TestDeliverPendingMessages:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_AGENT, platform_session_id=None)
         variables: dict[str, Any] = {"is_spawned_agent": True, "servers_listed": True}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         mcp_calls = response.metadata.get("mcp_calls", [])
@@ -215,8 +220,8 @@ class TestIsMessageDeliveryTool:
 # notify-unread-mail helpers
 # ═══════════════════════════════════════════════════════════════════════
 
-_SENDER_SESSION = "sender-session-aaa"
-_TEST_PROJECT_ID = "test-project-001"
+_SENDER_SESSION = "33333333-3333-4333-8333-333333333333"
+_TEST_PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
 
 def _ensure_project(db: HubDatabase) -> None:
@@ -273,7 +278,7 @@ def _make_event_with_metadata(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -326,7 +331,7 @@ class TestNotifyUnreadMail:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert "undelivered" in (response.context or "").lower()
@@ -347,7 +352,7 @@ class TestNotifyUnreadMail:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert not response.context  # no nudge when already reading mail
@@ -367,7 +372,7 @@ class TestNotifyUnreadMail:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert not response.context
@@ -387,7 +392,7 @@ class TestNotifyUnreadMail:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert not response.context
@@ -409,7 +414,7 @@ class TestNotifyUnreadMail:
         )
         # No _agent_type — this is a root session
         variables: dict[str, Any] = {}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert not response.context
@@ -430,7 +435,7 @@ class TestNotifyUnreadMail:
             metadata={},  # no _platform_session_id key
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert not response.context
@@ -452,7 +457,7 @@ class TestNotifyUnreadMail:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert "2 undelivered" in (response.context or "")
@@ -496,7 +501,7 @@ class TestJinja2HelperRendering:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert "Count: 3" in (response.reason or "")
@@ -529,7 +534,7 @@ class TestJinja2HelperRendering:
             metadata={"_platform_session_id": target_session},
         )
         variables: dict[str, Any] = {"_agent_type": "worker"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
         assert "Pending: 1" in (response.context or "")

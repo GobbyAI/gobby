@@ -394,7 +394,8 @@ class TestLoadPipeline:
                     definition_json, source, created_at, updated_at)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    "bad-json-id",
+                    # workflow_definitions.id is a native uuid column
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                     "invalid",
                     "pipeline",
                     True,

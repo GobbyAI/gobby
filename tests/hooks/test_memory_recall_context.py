@@ -20,7 +20,9 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.memories import Memory
 from gobby.workflows.state_manager import SessionVariableManager
 
-SESSION_ID = "hook-memory-recall-session"
+# sessions.id, session_variables.session_id, and projects.id are native uuid columns.
+SESSION_ID = "ffffffff-0000-4000-8000-000000000001"
+PROJECT_ID = "ffffffff-0000-4000-8000-000000000002"
 
 pytestmark = pytest.mark.unit
 
@@ -79,7 +81,7 @@ def _event() -> HookEvent:
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"prompt": "please use project memory to fix this regression today"},
-        project_id="project-1",
+        project_id=PROJECT_ID,
         metadata={"_platform_session_id": SESSION_ID},
     )
 
@@ -88,13 +90,13 @@ def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, "
         "updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "external-hook-session", "machine-1", "claude", "project-1"),
+        (session_id, "external-hook-session", "machine-1", "claude", PROJECT_ID),
     )
 
 

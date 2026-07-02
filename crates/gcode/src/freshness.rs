@@ -97,7 +97,7 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
 
     let last_indexed_at: Option<SystemTime> = match conn.query_opt(
         "SELECT last_indexed_at FROM code_indexed_projects WHERE id = $1",
-        &[&ctx.project_id],
+        &[&db::id_param(&ctx.project_id)?],
     )? {
         Some(row) => row.try_get::<_, Option<SystemTime>>(0)?,
         None => None,
@@ -227,6 +227,12 @@ mod tests {
         hasher::symbol_content_hash(source, start, end).expect("symbol hash")
     }
 
+    /// Stable uuid project id for a freshness-test label; the hub stores
+    /// project ids as native uuid, so labels cannot be bound directly.
+    fn test_project_id(label: &str) -> String {
+        uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, label.as_bytes()).to_string()
+    }
+
     fn postgres_test_context(project_id: &str) -> Context {
         let database_url = crate::test_env::postgres_test_database_url("freshness tests");
         db::connect_readwrite(&database_url).expect("connect freshness PostgreSQL test database");
@@ -327,7 +333,7 @@ mod tests {
         )]
         #[serial_test::serial(serial_db)]
         fn busy_project_lock_skips_freshness_refresh() {
-            let ctx = postgres_test_context("gcode-freshness-busy");
+            let ctx = postgres_test_context(&test_project_id("gcode-freshness-busy"));
             let _holder = hold_project_lock(&ctx);
 
             let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
@@ -355,7 +361,7 @@ mod tests {
             set_mtime(&lib, aged);
             set_mtime(&root.join("README.md"), aged);
 
-            let ctx = postgres_context_with_root("gcode-freshness-pregate", root);
+            let ctx = postgres_context_with_root(&test_project_id("gcode-freshness-pregate"), root);
 
             // Start clean, then index so code_indexed_projects.last_indexed_at = NOW().
             invalidate_test_project(&ctx);

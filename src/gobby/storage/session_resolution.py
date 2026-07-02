@@ -12,6 +12,17 @@ import uuid
 from gobby.storage.hub.protocol import HubDatabase
 
 
+def is_session_uuid(value: str | None) -> bool:
+    """Return whether a value can be safely used against session UUID columns."""
+    if not value:
+        return False
+    try:
+        uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None = None) -> str:
     """
     Resolve a session reference to a UUID.
@@ -59,7 +70,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         is_seq_num_lookup = seq_num_ref.isdigit()
         if is_seq_num_lookup and len(seq_num_ref) >= 8:
             prefix_rows = db.fetchall(
-                "SELECT id FROM sessions WHERE id LIKE %s LIMIT 2",
+                "SELECT id FROM sessions WHERE id::text LIKE %s LIMIT 2",
                 (f"{seq_num_ref}%",),
             )
             if len(prefix_rows) == 1:
@@ -123,7 +134,7 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         return str(ext_rows[0]["id"])
 
     # Prefix matching — id first, then external_id.
-    rows = db.fetchall("SELECT id FROM sessions WHERE id LIKE %s LIMIT 5", (f"{ref}%",))
+    rows = db.fetchall("SELECT id FROM sessions WHERE id::text LIKE %s LIMIT 5", (f"{ref}%",))
     if rows:
         if len(rows) > 1:
             matches = [str(r["id"]) for r in rows]

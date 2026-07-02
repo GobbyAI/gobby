@@ -222,15 +222,14 @@ pub(super) fn collect_orphan_project_ids(
         &[],
     )?;
 
-    rows.into_iter()
-        .map(|row| row.try_get(0).map_err(anyhow::Error::from))
-        .collect()
+    rows.into_iter().map(|row| db::id_string(&row, 0)).collect()
 }
 
 pub(super) fn delete_orphan_project_sql_rows(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<OrphanSqlDeletionCounts> {
+    let project_id = db::id_param(project_id)?;
     let calls_deleted = conn.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],
@@ -638,7 +637,18 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time after epoch")
             .as_nanos();
-        format!("{prefix}-{nanos}")
+        uuid::Uuid::new_v5(
+            &crate::models::CODE_INDEX_UUID_NAMESPACE,
+            format!("{prefix}-{nanos}").as_bytes(),
+        )
+        .to_string()
+    }
+
+    fn test_uuid(conn_id: &str, label: &str) -> uuid::Uuid {
+        uuid::Uuid::new_v5(
+            &crate::models::CODE_INDEX_UUID_NAMESPACE,
+            format!("{conn_id}:{label}").as_bytes(),
+        )
     }
 
     fn seed_project_with_child_rows(
@@ -647,14 +657,16 @@ mod tests {
         include_project_row: bool,
     ) {
         let file_path = "src/lib.rs";
-        let file_id = format!("{project_id}-file");
-        let symbol_id = format!("{project_id}-symbol");
+        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+        let file_id = test_uuid(project_id, "file");
+        let symbol_id = test_uuid(project_id, "symbol");
+        let chunk_id = test_uuid(project_id, "chunk");
         if include_project_row {
             conn.execute(
                 "INSERT INTO code_indexed_projects
                     (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
                  VALUES ($1, $2, 1, 1, NOW(), 0)",
-                &[&project_id, &format!("/tmp/{project_id}")],
+                &[&project_uuid, &format!("/tmp/{project_id}")],
             )
             .expect("insert indexed project");
         }
@@ -662,7 +674,7 @@ mod tests {
             "INSERT INTO code_indexed_files
                 (id, project_id, file_path, language, content_hash, symbol_count, byte_size)
              VALUES ($1, $2, $3, 'rust', 'hash-1', 1, 19)",
-            &[&file_id, &project_id, &file_path],
+            &[&file_id, &project_uuid, &file_path],
         )
         .expect("insert indexed file");
         conn.execute(
@@ -672,33 +684,34 @@ mod tests {
                  content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
                  1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', NULL, NOW(), NOW())",
-            &[&symbol_id, &project_id, &file_path],
+            &[&symbol_id, &project_uuid, &file_path],
         )
         .expect("insert symbol");
         conn.execute(
             "INSERT INTO code_content_chunks
                 (id, project_id, file_path, chunk_index, line_start, line_end, content, language)
              VALUES ($1, $2, $3, 0, 1, 1, 'pub fn indexed() {}', 'rust')",
-            &[&format!("{project_id}-chunk"), &project_id, &file_path],
+            &[&chunk_id, &project_uuid, &file_path],
         )
         .expect("insert content chunk");
         conn.execute(
             "INSERT INTO code_imports (project_id, source_file, target_module)
              VALUES ($1, $2, 'std::fmt')",
-            &[&project_id, &file_path],
+            &[&project_uuid, &file_path],
         )
         .expect("insert import");
         conn.execute(
             "INSERT INTO code_calls
                 (project_id, caller_symbol_id, callee_symbol_id, callee_name,
                  callee_target_kind, callee_external_module, file_path, line)
-             VALUES ($1, $2, '', 'missing', 'unresolved', '', $3, 1)",
-            &[&project_id, &symbol_id, &file_path],
+             VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 1)",
+            &[&project_uuid, &symbol_id, &file_path],
         )
         .expect("insert call");
     }
 
     fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
+        let project_id = db::id_param(project_id)?;
         conn.execute(
             "DELETE FROM code_calls WHERE project_id = $1",
             &[&project_id],
@@ -738,7 +751,7 @@ mod tests {
     fn count_rows(conn: &mut postgres::Client, table: &str, project_id: &str) -> i64 {
         conn.query_one(
             &format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE project_id = $1"),
-            &[&project_id],
+            &[&db::id_param(project_id).expect("test project id is a uuid")],
         )
         .expect("count rows")
         .get(0)

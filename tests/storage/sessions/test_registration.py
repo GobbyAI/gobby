@@ -2,6 +2,7 @@
 
 import inspect
 import logging
+import uuid
 from collections.abc import Sequence
 
 import pytest
@@ -751,7 +752,7 @@ class TestSessionManagerRegistration:
 
     def test_get_nonexistent(self, session_manager: SessionManager) -> None:
         """Test getting nonexistent session returns None."""
-        result = session_manager.get("nonexistent-id")
+        result = session_manager.get(str(uuid.uuid4()))
         assert result is None
 
     def test_find_by_external_id(
@@ -782,7 +783,7 @@ class TestSessionManagerRegistration:
         result = session_manager.find_by_external_id(
             external_id="nonexistent",
             machine_id="machine",
-            project_id="nonexistent-project",
+            project_id=str(uuid.uuid4()),
             source="claude",
         )
         assert result is None

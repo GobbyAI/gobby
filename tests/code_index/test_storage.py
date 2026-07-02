@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import pytest
@@ -16,8 +17,16 @@ from gobby.code_index.models import (
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
+from tests.code_index.conftest import MISSING_ID, PROJECT_ID, PROJECT_ID_2
 
 pytestmark = pytest.mark.unit
+
+CALLER_SYMBOL_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/caller-symbol"))
+
+
+def _ordered_uuid(n: int) -> str:
+    """Deterministic UUID whose sort order follows ``n`` (Postgres sorts uuids bytewise)."""
+    return str(uuid.UUID(int=n))
 
 
 # ── Symbols ─────────────────────────────────────────────────────────────
@@ -26,8 +35,8 @@ pytestmark = pytest.mark.unit
 def _make_search_symbol(symbol_id: str, name: str, byte_start: int) -> Symbol:
     return Symbol(
         id=symbol_id,
-        project_id="proj-1",
-        file_path=f"src/{symbol_id}.py",
+        project_id=PROJECT_ID,
+        file_path=f"src/{name}_{byte_start}.py",
         name=name,
         qualified_name=name,
         kind="function",
@@ -86,14 +95,14 @@ def test_upsert_symbols_update_on_conflict(
 
 def test_get_symbol_not_found(code_storage: CodeIndexStorage) -> None:
     """Non-existent symbol returns None."""
-    assert code_storage.get_symbol("nonexistent-id") is None
+    assert code_storage.get_symbol(MISSING_ID) is None
 
 
 def test_get_symbols_for_file(code_storage: CodeIndexStorage, sample_symbols: list[Symbol]) -> None:
     """Retrieve all symbols for a specific file."""
     code_storage.upsert_symbols(sample_symbols)
 
-    symbols = code_storage.get_symbols_for_file("proj-1", "src/app.py")
+    symbols = code_storage.get_symbols_for_file(PROJECT_ID, "src/app.py")
     assert len(symbols) == 3
     # Should be ordered by line_start
     assert symbols[0].line_start <= symbols[1].line_start
@@ -101,7 +110,7 @@ def test_get_symbols_for_file(code_storage: CodeIndexStorage, sample_symbols: li
 
 def test_get_symbols_for_file_empty(code_storage: CodeIndexStorage) -> None:
     """No symbols for a non-indexed file."""
-    symbols = code_storage.get_symbols_for_file("proj-1", "missing.py")
+    symbols = code_storage.get_symbols_for_file(PROJECT_ID, "missing.py")
     assert symbols == []
 
 
@@ -111,7 +120,7 @@ def test_search_symbols_by_name(
     """Search finds symbols by name substring."""
     code_storage.upsert_symbols(sample_symbols)
 
-    results = code_storage.search_symbols_by_name("greet", "proj-1")
+    results = code_storage.search_symbols_by_name("greet", PROJECT_ID)
     assert len(results) >= 1
     assert any(s.name == "greet" for s in results)
 
@@ -120,25 +129,36 @@ def test_search_symbols_by_name_ranks_exact_prefix_then_id(
     code_storage: CodeIndexStorage,
 ) -> None:
     """Exact names are not truncated by earlier substring matches."""
+    # Duplicate names ("runner") tiebreak on id, so the ids encode the
+    # expected order: runner-a (smaller uuid) sorts before runner-b even
+    # though runner-a is inserted last.
+    substring_a = _ordered_uuid(0x10)
+    substring_b = _ordered_uuid(0x11)
+    substring_c = _ordered_uuid(0x12)
+    substring_d = _ordered_uuid(0x13)
+    runner_a = _ordered_uuid(0x20)
+    runner_b = _ordered_uuid(0x21)
+    runway = _ordered_uuid(0x30)
+    exact = _ordered_uuid(0x40)
     symbols = [
-        _make_search_symbol("symbol-substring-a", "arun_00", 10),
-        _make_search_symbol("symbol-substring-b", "arun_01", 20),
-        _make_search_symbol("symbol-substring-c", "brun_00", 30),
-        _make_search_symbol("symbol-substring-d", "crun_00", 40),
-        _make_search_symbol("symbol-runner-b", "runner", 50),
-        _make_search_symbol("symbol-runway", "runway", 60),
-        _make_search_symbol("symbol-exact", "run", 70),
-        _make_search_symbol("symbol-runner-a", "runner", 80),
+        _make_search_symbol(substring_a, "arun_00", 10),
+        _make_search_symbol(substring_b, "arun_01", 20),
+        _make_search_symbol(substring_c, "brun_00", 30),
+        _make_search_symbol(substring_d, "crun_00", 40),
+        _make_search_symbol(runner_b, "runner", 50),
+        _make_search_symbol(runway, "runway", 60),
+        _make_search_symbol(exact, "run", 70),
+        _make_search_symbol(runner_a, "runner", 80),
     ]
     code_storage.upsert_symbols(symbols)
 
-    results = code_storage.search_symbols_by_name("run", "proj-1", limit=4)
+    results = code_storage.search_symbols_by_name("run", PROJECT_ID, limit=4)
 
     assert [symbol.id for symbol in results] == [
-        "symbol-exact",
-        "symbol-runner-a",
-        "symbol-runner-b",
-        "symbol-runway",
+        exact,
+        runner_a,
+        runner_b,
+        runway,
     ]
 
 
@@ -149,7 +169,7 @@ def test_search_symbols_by_name_with_kind_filter(
     code_storage.upsert_symbols(sample_symbols)
 
     # Search for all names, but only classes
-    results = code_storage.search_symbols_by_name("Calc", "proj-1", kind="class")
+    results = code_storage.search_symbols_by_name("Calc", PROJECT_ID, kind="class")
     assert len(results) == 1
     assert results[0].kind == "class"
 
@@ -160,7 +180,7 @@ def test_search_symbols_by_qualified_name(
     """Search matches qualified_name too (e.g., Calculator.add)."""
     code_storage.upsert_symbols(sample_symbols)
 
-    results = code_storage.search_symbols_by_name("Calculator.add", "proj-1")
+    results = code_storage.search_symbols_by_name("Calculator.add", PROJECT_ID)
     assert len(results) >= 1
     assert any(s.qualified_name == "Calculator.add" for s in results)
 
@@ -168,22 +188,25 @@ def test_search_symbols_by_qualified_name(
 def test_get_calls_for_file_round_trips_optional_fields_as_none(
     code_storage: CodeIndexStorage,
 ) -> None:
-    """Optional callee metadata should round-trip as None, not empty strings."""
-    calls = [
-        CallRelation(
-            caller_symbol_id="sym-1",
-            callee_name="missing_target",
-            file_path="src/app.py",
-            line=42,
-        )
-    ]
+    """Unresolved callees round-trip as NULL/None, and NULL-keyed rows still dedup.
 
-    code_storage.upsert_calls("proj-1", "src/app.py", calls)
+    The dedup constraint is UNIQUE NULLS NOT DISTINCT, so two identical rows
+    whose callee_symbol_id is NULL still conflict and collapse to one row.
+    """
+    unresolved_call = CallRelation(
+        caller_symbol_id=CALLER_SYMBOL_ID,
+        callee_name="missing_target",
+        file_path="src/app.py",
+        line=42,
+    )
+    calls = [unresolved_call, unresolved_call]
 
-    results = code_storage.get_calls_for_file("proj-1", "src/app.py")
+    code_storage.upsert_calls(PROJECT_ID, "src/app.py", calls)
+
+    results = code_storage.get_calls_for_file(PROJECT_ID, "src/app.py")
     assert results == [
         {
-            "caller_symbol_id": "sym-1",
+            "caller_symbol_id": CALLER_SYMBOL_ID,
             "callee_symbol_id": None,
             "callee_name": "missing_target",
             "callee_target_kind": "unresolved",
@@ -200,10 +223,10 @@ def test_delete_symbols_for_file(
     """Delete all symbols for a file."""
     code_storage.upsert_symbols(sample_symbols)
 
-    deleted = code_storage.delete_symbols_for_file("proj-1", "src/app.py")
+    deleted = code_storage.delete_symbols_for_file(PROJECT_ID, "src/app.py")
     assert deleted == 3
 
-    remaining = code_storage.get_symbols_for_file("proj-1", "src/app.py")
+    remaining = code_storage.get_symbols_for_file(PROJECT_ID, "src/app.py")
     assert remaining == []
 
 
@@ -211,7 +234,7 @@ def test_delete_symbols_for_file_returns_zero_for_missing(
     code_storage: CodeIndexStorage,
 ) -> None:
     """Deleting from a non-existent file returns 0."""
-    assert code_storage.delete_symbols_for_file("proj-1", "gone.py") == 0
+    assert code_storage.delete_symbols_for_file(PROJECT_ID, "gone.py") == 0
 
 
 # ── Files ───────────────────────────────────────────────────────────────
@@ -231,10 +254,10 @@ def test_get_pending_sync_files_uses_boolean_literals_for_postgres() -> None:
     db = _CaptureFetchallDb()
     storage = CodeIndexStorage(db)  # type: ignore[arg-type]
 
-    assert storage.get_pending_sync_files("proj-1") == []
+    assert storage.get_pending_sync_files(PROJECT_ID) == []
 
     sql, params = db.calls[0]
-    assert params[0] == "proj-1"
+    assert params[0] == PROJECT_ID
     assert params[-1] == 50
     assert len(params) == 4
     assert "vectors_synced IS FALSE" in sql
@@ -250,15 +273,15 @@ def test_get_pending_sync_files_deprioritizes_recent_failures(
 ) -> None:
     """Recently failed rows do not pin the pending batch head."""
     old_file = IndexedFile(
-        id=IndexedFile.make_id("proj-1", "src/old.py"),
-        project_id="proj-1",
+        id=IndexedFile.make_id(PROJECT_ID, "src/old.py"),
+        project_id=PROJECT_ID,
         file_path="src/old.py",
         language="python",
         content_hash="old",
     )
     new_file = IndexedFile(
-        id=IndexedFile.make_id("proj-1", "src/new.py"),
-        project_id="proj-1",
+        id=IndexedFile.make_id(PROJECT_ID, "src/new.py"),
+        project_id=PROJECT_ID,
         file_path="src/new.py",
         language="python",
         content_hash="new",
@@ -268,7 +291,7 @@ def test_get_pending_sync_files_deprioritizes_recent_failures(
     assert code_storage.mark_vector_sync_attempted(old_file.id) is True
     assert code_storage.mark_graph_sync_attempted(old_file.id) is True
 
-    pending = code_storage.get_pending_sync_files("proj-1", limit=1)
+    pending = code_storage.get_pending_sync_files(PROJECT_ID, limit=1)
 
     assert [file.file_path for file in pending] == ["src/new.py"]
 
@@ -278,8 +301,8 @@ def test_get_pending_sync_files_retries_after_failure_cooloff(
 ) -> None:
     """Failed rows become eligible again after the cooloff expires."""
     file = IndexedFile(
-        id=IndexedFile.make_id("proj-1", "src/retry.py"),
-        project_id="proj-1",
+        id=IndexedFile.make_id(PROJECT_ID, "src/retry.py"),
+        project_id=PROJECT_ID,
         file_path="src/retry.py",
         language="python",
         content_hash="retry",
@@ -288,7 +311,7 @@ def test_get_pending_sync_files_retries_after_failure_cooloff(
     assert code_storage.mark_vector_sync_attempted(file.id) is True
 
     pending = code_storage.get_pending_sync_files(
-        "proj-1",
+        PROJECT_ID,
         limit=1,
         graph=False,
         failure_cooloff_seconds=0,
@@ -300,8 +323,8 @@ def test_get_pending_sync_files_retries_after_failure_cooloff(
 def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
     """Round-trip: upsert then retrieve file record."""
     f = IndexedFile(
-        id=IndexedFile.make_id("proj-1", "src/lib.py"),
-        project_id="proj-1",
+        id=IndexedFile.make_id(PROJECT_ID, "src/lib.py"),
+        project_id=PROJECT_ID,
         file_path="src/lib.py",
         language="python",
         content_hash="hash123",
@@ -310,7 +333,7 @@ def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
     )
     code_storage.upsert_file(f)
 
-    retrieved = code_storage.get_file("proj-1", "src/lib.py")
+    retrieved = code_storage.get_file(PROJECT_ID, "src/lib.py")
     assert retrieved is not None
     assert retrieved.file_path == "src/lib.py"
     assert retrieved.content_hash == "hash123"
@@ -319,7 +342,7 @@ def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
 
 def test_get_file_not_found(code_storage: CodeIndexStorage) -> None:
     """Missing file returns None."""
-    assert code_storage.get_file("proj-1", "nope.py") is None
+    assert code_storage.get_file(PROJECT_ID, "nope.py") is None
 
 
 def test_list_files(code_storage: CodeIndexStorage) -> None:
@@ -327,15 +350,15 @@ def test_list_files(code_storage: CodeIndexStorage) -> None:
     for name in ("a.py", "b.py", "c.py"):
         code_storage.upsert_file(
             IndexedFile(
-                id=IndexedFile.make_id("proj-1", name),
-                project_id="proj-1",
+                id=IndexedFile.make_id(PROJECT_ID, name),
+                project_id=PROJECT_ID,
                 file_path=name,
                 language="python",
                 content_hash=f"hash-{name}",
             )
         )
 
-    files = code_storage.list_files("proj-1")
+    files = code_storage.list_files(PROJECT_ID)
     assert len(files) == 3
     # Ordered by file_path
     assert files[0].file_path == "a.py"
@@ -346,8 +369,8 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
     # Store a file with hash "old"
     code_storage.upsert_file(
         IndexedFile(
-            id=IndexedFile.make_id("proj-1", "changed.py"),
-            project_id="proj-1",
+            id=IndexedFile.make_id(PROJECT_ID, "changed.py"),
+            project_id=PROJECT_ID,
             file_path="changed.py",
             language="python",
             content_hash="old-hash",
@@ -355,8 +378,8 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
     )
     code_storage.upsert_file(
         IndexedFile(
-            id=IndexedFile.make_id("proj-1", "same.py"),
-            project_id="proj-1",
+            id=IndexedFile.make_id(PROJECT_ID, "same.py"),
+            project_id=PROJECT_ID,
             file_path="same.py",
             language="python",
             content_hash="current-hash",
@@ -368,7 +391,7 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
         "same.py": "current-hash",  # Unchanged
         "brand_new.py": "fresh-hash",  # New file
     }
-    stale = code_storage.get_stale_files("proj-1", current_hashes)
+    stale = code_storage.get_stale_files(PROJECT_ID, current_hashes)
     assert "changed.py" in stale
     assert "brand_new.py" in stale
     assert "same.py" not in stale
@@ -380,7 +403,7 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
 def test_upsert_and_get_project_stats(code_storage: CodeIndexStorage) -> None:
     """Round-trip project statistics."""
     project = IndexedProject(
-        id="proj-1",
+        id=PROJECT_ID,
         root_path="/home/user/project",
         total_files=20,
         total_symbols=150,
@@ -389,7 +412,7 @@ def test_upsert_and_get_project_stats(code_storage: CodeIndexStorage) -> None:
     )
     code_storage.upsert_project_stats(project)
 
-    retrieved = code_storage.get_project_stats("proj-1")
+    retrieved = code_storage.get_project_stats(PROJECT_ID)
     assert retrieved is not None
     assert retrieved.root_path == "/home/user/project"
     assert retrieved.total_files == 20
@@ -399,33 +422,33 @@ def test_upsert_and_get_project_stats(code_storage: CodeIndexStorage) -> None:
 
 def test_get_project_stats_not_found(code_storage: CodeIndexStorage) -> None:
     """Non-existent project returns None."""
-    assert code_storage.get_project_stats("missing") is None
+    assert code_storage.get_project_stats(MISSING_ID) is None
 
 
 def test_projection_cleanup_pending_round_trip(code_storage: CodeIndexStorage) -> None:
-    code_storage.record_projection_cleanup_failure("proj-1", "graph", "falkor down")
-    code_storage.record_projection_cleanup_failure("proj-1", "graph", "still down")
-    code_storage.record_projection_cleanup_failure("proj-1", "vector", "qdrant down")
+    code_storage.record_projection_cleanup_failure(PROJECT_ID, "graph", "falkor down")
+    code_storage.record_projection_cleanup_failure(PROJECT_ID, "graph", "still down")
+    code_storage.record_projection_cleanup_failure(PROJECT_ID, "vector", "qdrant down")
 
     pending = code_storage.list_projection_cleanup_pending()
 
     assert [(row.project_id, row.store, row.attempts, row.last_error) for row in pending] == [
-        ("proj-1", "graph", 2, "still down"),
-        ("proj-1", "vector", 1, "qdrant down"),
+        (PROJECT_ID, "graph", 2, "still down"),
+        (PROJECT_ID, "vector", 1, "qdrant down"),
     ]
 
-    assert code_storage.clear_projection_cleanup_pending("proj-1", "graph") is True
-    assert code_storage.clear_projection_cleanup_pending("proj-1", "graph") is False
+    assert code_storage.clear_projection_cleanup_pending(PROJECT_ID, "graph") is True
+    assert code_storage.clear_projection_cleanup_pending(PROJECT_ID, "graph") is False
     assert [
         (row.project_id, row.store) for row in code_storage.list_projection_cleanup_pending()
-    ] == [("proj-1", "vector")]
+    ] == [(PROJECT_ID, "vector")]
 
 
 def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None:
-    code_storage.mark_prune_dirty("proj-1", "/repo/one", "orphan_files")
-    code_storage.mark_prune_dirty("proj-2", "/repo/two", "invalidate")
-    code_storage.mark_prune_dirty("proj-1", "/repo/one-renamed", "invalidate")
-    code_storage.record_prune_failure("proj-1", "gcode prune failed")
+    code_storage.mark_prune_dirty(PROJECT_ID, "/repo/one", "orphan_files")
+    code_storage.mark_prune_dirty(PROJECT_ID_2, "/repo/two", "invalidate")
+    code_storage.mark_prune_dirty(PROJECT_ID, "/repo/one-renamed", "invalidate")
+    code_storage.record_prune_failure(PROJECT_ID, "gcode prune failed")
 
     dirty = code_storage.list_prune_dirty_projects()
 
@@ -434,10 +457,10 @@ def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None
         project_id: (row.root_path, row.reason, row.attempts)
         for project_id, row in dirty_by_project.items()
     } == {
-        "proj-1": ("/repo/one-renamed", "invalidate", 1),
-        "proj-2": ("/repo/two", "invalidate", 0),
+        PROJECT_ID: ("/repo/one-renamed", "invalidate", 1),
+        PROJECT_ID_2: ("/repo/two", "invalidate", 0),
     }
-    assert dirty_by_project["proj-1"].last_error == "gcode prune failed"
+    assert dirty_by_project[PROJECT_ID].last_error == "gcode prune failed"
     first_page = code_storage.list_prune_dirty_projects(limit=1)
     cursor = (
         first_page[-1].updated_at,
@@ -445,17 +468,17 @@ def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None
         first_page[-1].project_id,
     )
     next_page = code_storage.list_prune_dirty_projects(limit=10, after=cursor)
-    assert {row.project_id for row in first_page + next_page} == {"proj-1", "proj-2"}
+    assert {row.project_id for row in first_page + next_page} == {PROJECT_ID, PROJECT_ID_2}
     assert {row.project_id for row in first_page}.isdisjoint({row.project_id for row in next_page})
-    assert code_storage.clear_prune_dirty("proj-1") is True
-    assert code_storage.clear_prune_dirty("proj-1") is False
-    assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == ["proj-2"]
+    assert code_storage.clear_prune_dirty(PROJECT_ID) is True
+    assert code_storage.clear_prune_dirty(PROJECT_ID) is False
+    assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == [PROJECT_ID_2]
 
 
 def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
     """Second upsert updates existing project stats."""
     project = IndexedProject(
-        id="proj-1",
+        id=PROJECT_ID,
         root_path="/home/user/project",
         total_files=10,
         total_symbols=50,
@@ -466,7 +489,7 @@ def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
     project.total_symbols = 100
     code_storage.upsert_project_stats(project)
 
-    retrieved = code_storage.get_project_stats("proj-1")
+    retrieved = code_storage.get_project_stats(PROJECT_ID)
     assert retrieved is not None
     assert retrieved.total_files == 20
     assert retrieved.total_symbols == 100
@@ -479,7 +502,7 @@ def test_delete_project_index_removes_all_project_data(
     """Deleting a project index removes stats and all derived index records."""
     code_storage.upsert_project_stats(
         IndexedProject(
-            id="proj-1",
+            id=PROJECT_ID,
             root_path="/home/user/project",
             total_files=1,
             total_symbols=len(sample_symbols),
@@ -487,8 +510,8 @@ def test_delete_project_index_removes_all_project_data(
     )
     code_storage.upsert_file(
         IndexedFile(
-            id=IndexedFile.make_id("proj-1", "src/app.py"),
-            project_id="proj-1",
+            id=IndexedFile.make_id(PROJECT_ID, "src/app.py"),
+            project_id=PROJECT_ID,
             file_path="src/app.py",
             language="python",
             content_hash="abc123",
@@ -497,12 +520,12 @@ def test_delete_project_index_removes_all_project_data(
     )
     code_storage.upsert_symbols(sample_symbols)
     code_storage.upsert_imports(
-        "proj-1",
+        PROJECT_ID,
         "src/app.py",
         [ImportRelation(source_file="src/app.py", target_module="pathlib")],
     )
     code_storage.upsert_calls(
-        "proj-1",
+        PROJECT_ID,
         "src/app.py",
         [
             CallRelation(
@@ -515,7 +538,7 @@ def test_delete_project_index_removes_all_project_data(
     )
     code_storage.upsert_content_chunks(_make_chunks())
 
-    counts = code_storage.delete_project_index("proj-1")
+    counts = code_storage.delete_project_index(PROJECT_ID)
 
     assert counts == {
         "symbols": len(sample_symbols),
@@ -525,12 +548,12 @@ def test_delete_project_index_removes_all_project_data(
         "content_chunks": 2,
         "projects": 1,
     }
-    assert code_storage.get_project_stats("proj-1") is None
-    assert code_storage.list_files("proj-1") == []
-    assert code_storage.count_symbols("proj-1") == 0
-    assert code_storage.get_imports_for_file("proj-1", "src/app.py") == []
-    assert code_storage.get_calls_for_file("proj-1", "src/app.py") == []
-    assert code_storage.search_content_fts("def", "proj-1") == []
+    assert code_storage.get_project_stats(PROJECT_ID) is None
+    assert code_storage.list_files(PROJECT_ID) == []
+    assert code_storage.count_symbols(PROJECT_ID) == 0
+    assert code_storage.get_imports_for_file(PROJECT_ID, "src/app.py") == []
+    assert code_storage.get_calls_for_file(PROJECT_ID, "src/app.py") == []
+    assert code_storage.search_content_fts("def", PROJECT_ID) == []
 
 
 # ── Summaries ───────────────────────────────────────────────────────────
@@ -542,7 +565,7 @@ def test_delete_project_index_removes_all_project_data(
 def test_count_symbols(code_storage: CodeIndexStorage, sample_symbols: list[Symbol]) -> None:
     """Count symbols for a project."""
     code_storage.upsert_symbols(sample_symbols)
-    assert code_storage.count_symbols("proj-1") == 3
+    assert code_storage.count_symbols(PROJECT_ID) == 3
 
 
 def test_count_files(code_storage: CodeIndexStorage) -> None:
@@ -550,20 +573,20 @@ def test_count_files(code_storage: CodeIndexStorage) -> None:
     for name in ("a.py", "b.py"):
         code_storage.upsert_file(
             IndexedFile(
-                id=IndexedFile.make_id("proj-1", name),
-                project_id="proj-1",
+                id=IndexedFile.make_id(PROJECT_ID, name),
+                project_id=PROJECT_ID,
                 file_path=name,
                 language="python",
                 content_hash=f"h-{name}",
             )
         )
-    assert code_storage.count_files("proj-1") == 2
+    assert code_storage.count_files(PROJECT_ID) == 2
 
 
 # ── Content Chunks ─────────────────────────────────────────────────────
 
 
-def _make_chunks(project_id: str = "proj-1", file_path: str = "src/app.py") -> list[ContentChunk]:
+def _make_chunks(project_id: str = PROJECT_ID, file_path: str = "src/app.py") -> list[ContentChunk]:
     """Helper to create sample content chunks."""
     return [
         ContentChunk(
@@ -608,10 +631,10 @@ def test_delete_content_chunks_for_file(code_storage: CodeIndexStorage) -> None:
     code_storage.upsert_content_chunks(chunks1)
     code_storage.upsert_content_chunks(chunks2)
 
-    code_storage.delete_content_chunks_for_file("proj-1", "a.py")
+    code_storage.delete_content_chunks_for_file(PROJECT_ID, "a.py")
 
     # b.py chunks should still exist
-    results = code_storage.search_content_fts("Calculator", "proj-1")
+    results = code_storage.search_content_fts("Calculator", PROJECT_ID)
     file_paths = {r["file_path"] for r in results}
     assert "a.py" not in file_paths
     assert "b.py" in file_paths
@@ -620,9 +643,9 @@ def test_delete_content_chunks_for_file(code_storage: CodeIndexStorage) -> None:
 def test_delete_content_chunks_for_project(code_storage: CodeIndexStorage) -> None:
     """Deleting chunks for a project removes all chunks."""
     code_storage.upsert_content_chunks(_make_chunks())
-    code_storage.delete_content_chunks_for_project("proj-1")
+    code_storage.delete_content_chunks_for_project(PROJECT_ID)
 
-    results = code_storage.search_content_fts("greet", "proj-1")
+    results = code_storage.search_content_fts("greet", PROJECT_ID)
     assert results == []
 
 
@@ -630,7 +653,7 @@ def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
     """Keyword search finds text in content chunks."""
     code_storage.upsert_content_chunks(_make_chunks())
 
-    results = code_storage.search_content_fts("greeting", "proj-1")
+    results = code_storage.search_content_fts("greeting", PROJECT_ID)
     assert len(results) >= 1
     assert results[0]["file_path"] == "src/app.py"
     assert results[0]["language"] == "python"
@@ -644,21 +667,21 @@ def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> No
     code_storage.upsert_content_chunks(chunks1)
     code_storage.upsert_content_chunks(chunks2)
 
-    results = code_storage.search_content_fts("Calculator", "proj-1", file_path="a.py")
+    results = code_storage.search_content_fts("Calculator", PROJECT_ID, file_path="a.py")
     assert all(r["file_path"] == "a.py" for r in results)
 
 
 def test_search_content_fts_empty_query(code_storage: CodeIndexStorage) -> None:
     """Empty query returns no results."""
     code_storage.upsert_content_chunks(_make_chunks())
-    assert code_storage.search_content_fts("", "proj-1") == []
-    assert code_storage.search_content_fts("   ", "proj-1") == []
+    assert code_storage.search_content_fts("", PROJECT_ID) == []
+    assert code_storage.search_content_fts("   ", PROJECT_ID) == []
 
 
 def test_search_content_fts_no_match(code_storage: CodeIndexStorage) -> None:
     """Query with no matching content returns empty list."""
     code_storage.upsert_content_chunks(_make_chunks())
-    results = code_storage.search_content_fts("zzz_nonexistent_zzz", "proj-1")
+    results = code_storage.search_content_fts("zzz_nonexistent_zzz", PROJECT_ID)
     assert results == []
 
 
@@ -673,7 +696,7 @@ def test_search_content_fts_surfaces_backend_failure(
 
     monkeypatch.setattr("gobby.search.keyword.fetch_all", fail_fetch_all)
 
-    assert code_storage.search_content_fts("greeting", "proj-1") == []
+    assert code_storage.search_content_fts("greeting", PROJECT_ID) == []
 
 
 # ── Summary freshness ──────────────────────────────────────────────────
@@ -724,7 +747,7 @@ def test_get_unsummarized_symbols(
     code_storage.upsert_symbols(sample_symbols)
 
     # All three should be unsummarized
-    unsummarized = code_storage.get_unsummarized_symbols("proj-1")
+    unsummarized = code_storage.get_unsummarized_symbols(PROJECT_ID)
     assert len(unsummarized) == 3
 
     # Summarize one
@@ -734,7 +757,7 @@ def test_get_unsummarized_symbols(
         "A greeting function.",
     )
 
-    unsummarized = code_storage.get_unsummarized_symbols("proj-1")
+    unsummarized = code_storage.get_unsummarized_symbols(PROJECT_ID)
     assert len(unsummarized) == 2
     assert all(s.id != sample_symbols[0].id for s in unsummarized)
 
@@ -752,11 +775,11 @@ def test_get_unsummarized_symbols_deprioritizes_recent_failures(
         == 1
     )
 
-    unsummarized = code_storage.get_unsummarized_symbols("proj-1")
+    unsummarized = code_storage.get_unsummarized_symbols(PROJECT_ID)
 
     assert {symbol.id for symbol in unsummarized} == {symbol.id for symbol in sample_symbols[1:]}
     retried = code_storage.get_unsummarized_symbols(
-        "proj-1",
+        PROJECT_ID,
         failure_cooloff_seconds=0,
     )
     assert {symbol.id for symbol in retried} == {symbol.id for symbol in sample_symbols}
@@ -786,7 +809,7 @@ def test_get_unsummarized_symbols_filters_by_kind(
     code_storage.upsert_symbols(sample_symbols)
 
     # Only functions
-    unsummarized = code_storage.get_unsummarized_symbols("proj-1", kinds=["function"])
+    unsummarized = code_storage.get_unsummarized_symbols(PROJECT_ID, kinds=["function"])
     assert len(unsummarized) == 1
     assert unsummarized[0].kind == "function"
 
@@ -797,7 +820,7 @@ def test_get_unsummarized_symbols_respects_limit(
     """get_unsummarized_symbols respects the limit parameter."""
     code_storage.upsert_symbols(sample_symbols)
 
-    unsummarized = code_storage.get_unsummarized_symbols("proj-1", limit=1)
+    unsummarized = code_storage.get_unsummarized_symbols(PROJECT_ID, limit=1)
     assert len(unsummarized) == 1
 
 
@@ -854,7 +877,7 @@ def test_update_symbol_summary_sanitizes_before_persistence(
 
 def test_update_symbol_summary_nonexistent(code_storage: CodeIndexStorage) -> None:
     """update_symbol_summary returns False for nonexistent symbol."""
-    result = code_storage.update_symbol_summary("nonexistent-id", "missing", "Some summary.")
+    result = code_storage.update_symbol_summary(MISSING_ID, "missing", "Some summary.")
     assert result is False
 
 
@@ -864,8 +887,8 @@ def test_stale_content_hash_rejects_sync_marks_and_summary(
 ) -> None:
     """Stale snapshot writes should leave reindexed rows pending."""
     indexed_file = IndexedFile(
-        id=IndexedFile.make_id("proj-1", "src/app.py"),
-        project_id="proj-1",
+        id=IndexedFile.make_id(PROJECT_ID, "src/app.py"),
+        project_id=PROJECT_ID,
         file_path="src/app.py",
         language="python",
         content_hash="old-hash",
@@ -880,7 +903,7 @@ def test_stale_content_hash_rejects_sync_marks_and_summary(
     assert code_storage.mark_vectors_synced(indexed_file.id, stale_file_hash) is False
     assert code_storage.mark_graph_synced(indexed_file.id, stale_file_hash) is False
 
-    pending = code_storage.get_pending_sync_files("proj-1")
+    pending = code_storage.get_pending_sync_files(PROJECT_ID)
     assert len(pending) == 1
     assert pending[0].content_hash == "new-hash"
     assert pending[0].vectors_synced is False

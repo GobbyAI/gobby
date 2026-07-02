@@ -29,6 +29,15 @@ from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
 
+# sessions.id / session_variables.session_id are native uuid columns, so
+# pre-created session ids must be valid-format UUIDs.
+COMPACT_SESSION_ID = "cccccccc-0000-4000-8000-000000000001"
+CLI_SESSION_IDS = {
+    "codex": "cccccccc-0000-4000-8000-000000000002",
+    "qwen": "cccccccc-0000-4000-8000-000000000003",
+    "droid": "cccccccc-0000-4000-8000-000000000004",
+}
+
 
 class TestSessionStartHandoff:
     """Test session handoff context injection on /clear and /compact."""
@@ -36,7 +45,7 @@ class TestSessionStartHandoff:
     def _make_db(self, hub_db: HubDatabase) -> HubDatabase:
         return hub_db
 
-    def _make_precreated_session(self, session_id: str = "sess-compact") -> MagicMock:
+    def _make_precreated_session(self, session_id: str = COMPACT_SESSION_ID) -> MagicMock:
         session = MagicMock()
         session.id = session_id
         session.seq_num = 45
@@ -925,7 +934,7 @@ class TestSessionStartHandoff:
     ) -> None:
         """Providers that omit source='compact' still resume after compact_self."""
         db = self._make_db(hub_db)
-        session = self._make_precreated_session(session_id=f"{cli_source}-sess")
+        session = self._make_precreated_session(session_id=CLI_SESSION_IDS[cli_source])
         mark_compact_self_continuation_pending(db, session.id)
         mock_dependencies["session_storage"].db = db
         mock_dependencies["session_storage"].get.return_value = session

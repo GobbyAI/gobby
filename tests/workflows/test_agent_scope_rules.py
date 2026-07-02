@@ -22,6 +22,10 @@ from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -40,7 +44,7 @@ def _make_event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -88,7 +92,7 @@ class TestAgentScopeFiltering:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "block"
 
@@ -110,7 +114,7 @@ class TestAgentScopeFiltering:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
 
@@ -133,7 +137,7 @@ class TestAgentScopeFiltering:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert "Dev block" in (response.reason or "")
@@ -157,7 +161,7 @@ class TestAgentScopeFiltering:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
         variables: dict[str, Any] = {"_agent_type": "qa"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
 
@@ -179,7 +183,7 @@ class TestAgentScopeFiltering:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
-        response = await engine.evaluate(event, session_id="sess-1", variables={})
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
 
@@ -204,17 +208,17 @@ class TestAgentScopeFiltering:
 
         # Should match for developer
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
         # Should match for qa
         variables = {"_agent_type": "qa"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "block"
 
         # Should NOT match for coordinator
         variables = {"_agent_type": "coordinator"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
         assert response.decision == "allow"
 
 
@@ -258,7 +262,7 @@ class TestDeveloperAgentRules:
             },
         )
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
         assert "review" in (response.reason or "").lower()
@@ -295,7 +299,7 @@ class TestDeveloperAgentRules:
             },
         )
         variables: dict[str, Any] = {"_agent_type": "qa"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
 
@@ -328,7 +332,7 @@ class TestDeveloperAgentRules:
             data={"tool_name": "Bash", "command": "git commit -m 'fix'"},
         )
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
 
@@ -366,7 +370,7 @@ class TestQAAgentRules:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         variables: dict[str, Any] = {"_agent_type": "qa"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
 
@@ -395,7 +399,7 @@ class TestQAAgentRules:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"
 
@@ -433,7 +437,7 @@ class TestCoordinatorAgentRules:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
         variables: dict[str, Any] = {"_agent_type": "coordinator"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "block"
 
@@ -462,6 +466,6 @@ class TestCoordinatorAgentRules:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
         variables: dict[str, Any] = {"_agent_type": "developer"}
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
         assert response.decision == "allow"

@@ -1,5 +1,7 @@
 """Tests for skill storage."""
 
+import uuid
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -11,6 +13,11 @@ from gobby.storage.skills import (
 )
 
 pytestmark = pytest.mark.unit
+
+# projects.id (and skills.project_id) are native uuid columns.
+PROJ_1_ID = str(uuid.uuid4())
+PROJ_2_ID = str(uuid.uuid4())
+PROJ_TEST_ID = str(uuid.uuid4())
 
 
 class TestSkillSourceType:
@@ -515,11 +522,11 @@ class TestSkillProjectScope:
         with db.transaction() as conn:
             conn.execute(
                 "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                ("proj-1", "project-1"),
+                (PROJ_1_ID, "project-1"),
             )
             conn.execute(
                 "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                ("proj-2", "project-2"),
+                (PROJ_2_ID, "project-2"),
             )
 
         manager = LocalSkillManager(db)
@@ -529,25 +536,25 @@ class TestSkillProjectScope:
             name="shared-name",
             description="Project 1 version",
             content="Content 1",
-            project_id="proj-1",
+            project_id=PROJ_1_ID,
         )
         skill2 = manager.create_skill(
             name="shared-name",
             description="Project 2 version",
             content="Content 2",
-            project_id="proj-2",
+            project_id=PROJ_2_ID,
         )
 
         assert skill1.id != skill2.id
-        assert skill1.project_id == "proj-1"
-        assert skill2.project_id == "proj-2"
+        assert skill1.project_id == PROJ_1_ID
+        assert skill2.project_id == PROJ_2_ID
 
     def test_global_vs_project_skills(self, db) -> None:
         """Test global skills vs project-scoped skills."""
         with db.transaction() as conn:
             conn.execute(
                 "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                ("proj-test", "test-project"),
+                (PROJ_TEST_ID, "test-project"),
             )
 
         manager = LocalSkillManager(db)
@@ -565,7 +572,7 @@ class TestSkillProjectScope:
             name="project-skill",
             description="Project",
             content="Content",
-            project_id="proj-test",
+            project_id=PROJ_TEST_ID,
         )
 
         # List global only
@@ -574,11 +581,11 @@ class TestSkillProjectScope:
         assert global_skills[0].name == "global-skill"
 
         # List project with global included
-        project_skills = manager.list_skills(project_id="proj-test", include_global=True)
+        project_skills = manager.list_skills(project_id=PROJ_TEST_ID, include_global=True)
         assert len(project_skills) == 2
 
         # List project without global
-        project_only = manager.list_skills(project_id="proj-test", include_global=False)
+        project_only = manager.list_skills(project_id=PROJ_TEST_ID, include_global=False)
         assert len(project_only) == 1
         assert project_only[0].name == "project-skill"
 

@@ -5,6 +5,27 @@ from typing import Any
 
 import pytest
 
+# Valid-format project UUID for scope resolution (projects.id is a native uuid
+# column now, and ReviewLearningService requires a project context or a
+# resolvable session_id).
+PROJECT_SCOPE_ID = "1f7a9c2e-4b3d-4e6f-8a90-5c1d2e3f4a5b"
+
+
+@pytest.fixture(autouse=True)
+def _review_learning_project_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin a project context so ReviewLearningService._resolve_scope succeeds.
+
+    Tests here run outside a real Gobby project context; without this the
+    service raises "Review-learning requires a project context or resolvable
+    session_id" before exercising the behavior under test. Tests that pass an
+    explicit session_id still win: the session row's project_id takes
+    precedence over this fallback.
+    """
+    monkeypatch.setattr(
+        "gobby.review_learning.service.get_project_context",
+        lambda: {"id": PROJECT_SCOPE_ID},
+    )
+
 
 @dataclass
 class FakeMemory:

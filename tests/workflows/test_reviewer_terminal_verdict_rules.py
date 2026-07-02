@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,10 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
+
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
 
 RULE_NAMES = {
@@ -49,7 +54,7 @@ def _event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=source,
         timestamp=datetime.now(UTC),
         data=data,
@@ -180,7 +185,7 @@ async def test_qa_reviewer_successful_validation_sets_pending_and_injects_remind
         "GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_qa_reviewer_definition.py -q"
     )
 
-    response = await engine.evaluate(event, "sess-qa", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is True
@@ -200,7 +205,7 @@ async def test_codex_cmd_alias_validation_sets_pending(db: HubDatabase) -> None:
         "GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_qa_reviewer_definition.py -q"
     )
 
-    response = await engine.evaluate(event, "sess-codex", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is True
@@ -218,7 +223,7 @@ async def test_python_module_ruff_format_check_is_validation_command(
     variables = _review_vars("qa-reviewer")
     event = _cmd_validation_event("uv run python -m ruff format --check src/gobby")
 
-    response = await engine.evaluate(event, "sess-codex", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is True
@@ -233,7 +238,7 @@ async def test_doc_reviewer_successful_validation_uses_review_verdict_contract(
     variables = _review_vars("doc-reviewer")
     event = _validation_event("uv run ruff check src/gobby/install/shared/workflows/agents")
 
-    response = await engine.evaluate(event, "sess-doc", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is True
@@ -250,7 +255,7 @@ async def test_holistic_reviewer_successful_validation_requires_stage_verdict(
     variables = _review_vars("holistic-reviewer")
     event = _validation_event("uv run mypy src/gobby/workflows")
 
-    response = await engine.evaluate(event, "sess-holistic", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is True
@@ -268,7 +273,7 @@ async def test_failed_validation_does_not_set_pending(db: HubDatabase) -> None:
         success=False,
     )
 
-    response = await engine.evaluate(event, "sess-failed", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables.get("reviewer_terminal_verdict_pending") is None
@@ -285,7 +290,7 @@ async def test_terminal_verdict_success_clears_pending(db: HubDatabase) -> None:
     }
     event = _verdict_event("gobby-tasks-ops", "approve_review")
 
-    response = await engine.evaluate(event, "sess-clear", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is False
@@ -303,7 +308,7 @@ async def test_holistic_terminal_verdict_success_clears_pending(db: HubDatabase)
     }
     event = _verdict_event("gobby-tasks-ops", "complete_stage")
 
-    response = await engine.evaluate(event, "sess-holistic-clear", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is False
@@ -321,7 +326,7 @@ async def test_turn_end_blocks_while_terminal_verdict_pending(db: HubDatabase) -
     }
     event = _event(HookEventType.AFTER_AGENT, {})
 
-    response = await engine.evaluate(event, "sess-block", variables)
+    response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "block"
     assert "reviewer-terminal-verdict-block-turn-end" in (response.reason or "")

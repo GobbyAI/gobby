@@ -6,8 +6,23 @@ mod serial_db {
 
     use gobby_code::test_env;
 
-    const PROJECT_ID: &str = "gcode-projection-stale-missing-file";
+    // UUIDv5(CODE_INDEX_UUID_NAMESPACE, "gcode-projection-stale-missing-file"):
+    // the hub stores project ids as native uuid.
+    const PROJECT_ID: &str = "4424ae52-9ce0-52ae-af19-8c3a093c351f";
     const FILE_PATH: &str = "src/lib.rs";
+
+    /// Parse a fixture id for binding against native-uuid hub columns.
+    fn uuid_param(id: &str) -> uuid::Uuid {
+        uuid::Uuid::parse_str(id).expect("fixture id is a uuid")
+    }
+
+    /// Deterministic uuid for a seeded child row of `project_id`.
+    fn row_uuid(project_id: &str, label: &str) -> uuid::Uuid {
+        uuid::Uuid::new_v5(
+            &gobby_code::models::CODE_INDEX_UUID_NAMESPACE,
+            format!("{project_id}:{label}").as_bytes(),
+        )
+    }
 
     #[test]
     #[cfg_attr(
@@ -43,7 +58,7 @@ mod serial_db {
         seed_indexed_file(&mut conn, PROJECT_ID, FILE_PATH);
         conn.execute(
             "DELETE FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
-            &[&PROJECT_ID, &FILE_PATH],
+            &[&uuid_param(PROJECT_ID), &FILE_PATH],
         )
         .expect("delete indexed file row");
 
@@ -182,18 +197,19 @@ mod serial_db {
             "INSERT INTO code_indexed_projects
                 (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
              VALUES ($1, $2, 1, 1, NOW(), 0)",
-            &[&project_id, &root_path.as_ref()],
+            &[&uuid_param(project_id), &root_path.as_ref()],
         )
         .expect("insert indexed project");
     }
 
     fn seed_indexed_file_without_project(conn: &mut Client, project_id: &str, file_path: &str) {
+        let project_uuid = uuid_param(project_id);
         conn.execute(
             "INSERT INTO code_indexed_files
                 (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
                  graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
              VALUES ($1, $2, $3, 'rust', 'hash-1', 1, 19, false, true, NULL, NOW())",
-            &[&format!("{project_id}-file"), &project_id, &file_path],
+            &[&row_uuid(project_id, "file"), &project_uuid, &file_path],
         )
         .expect("insert indexed file");
         conn.execute(
@@ -203,32 +219,33 @@ mod serial_db {
                  content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
                  1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', NULL, NOW(), NOW())",
-            &[&format!("{project_id}-symbol"), &project_id, &file_path],
+            &[&row_uuid(project_id, "symbol"), &project_uuid, &file_path],
         )
         .expect("insert symbol");
     }
 
     fn seed_orphan_project_rows(conn: &mut Client, project_id: &str) {
         seed_indexed_file_without_project(conn, project_id, FILE_PATH);
+        let project_uuid = uuid_param(project_id);
         conn.execute(
             "INSERT INTO code_content_chunks
                 (id, project_id, file_path, chunk_index, line_start, line_end, content, language)
              VALUES ($1, $2, $3, 0, 1, 1, 'pub fn indexed() {}', 'rust')",
-            &[&format!("{project_id}-chunk"), &project_id, &FILE_PATH],
+            &[&row_uuid(project_id, "chunk"), &project_uuid, &FILE_PATH],
         )
         .expect("insert content chunk");
         conn.execute(
             "INSERT INTO code_imports (project_id, source_file, target_module)
              VALUES ($1, $2, 'std::fmt')",
-            &[&project_id, &FILE_PATH],
+            &[&project_uuid, &FILE_PATH],
         )
         .expect("insert import");
         conn.execute(
             "INSERT INTO code_calls
                 (project_id, caller_symbol_id, callee_symbol_id, callee_name,
                  callee_target_kind, callee_external_module, file_path, line)
-             VALUES ($1, $2, '', 'missing', 'unresolved', '', $3, 1)",
-            &[&project_id, &format!("{project_id}-symbol"), &FILE_PATH],
+             VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 1)",
+            &[&project_uuid, &row_uuid(project_id, "symbol"), &FILE_PATH],
         )
         .expect("insert call");
     }
@@ -244,7 +261,7 @@ mod serial_db {
     fn indexed_project_count(conn: &mut Client, project_id: &str) -> i64 {
         conn.query_one(
             "SELECT COUNT(*)::BIGINT FROM code_indexed_projects WHERE id = $1",
-            &[&project_id],
+            &[&uuid_param(project_id)],
         )
         .expect("count indexed project rows")
         .get(0)
@@ -253,13 +270,14 @@ mod serial_db {
     fn count_rows(conn: &mut Client, table: &str, project_id: &str) -> i64 {
         conn.query_one(
             &format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE project_id = $1"),
-            &[&project_id],
+            &[&uuid_param(project_id)],
         )
         .expect("count child rows")
         .get(0)
     }
 
     fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
+        let project_id = uuid_param(project_id);
         conn.execute(
             "DELETE FROM code_calls
              WHERE project_id = $1

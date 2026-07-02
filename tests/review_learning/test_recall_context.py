@@ -193,7 +193,19 @@ async def test_recall_fails_open_on_memory_search_errors(
 
 
 @pytest.mark.asyncio
-async def test_recall_requires_project_scope(fake_task_manager: FakeTaskManager) -> None:
+async def test_recall_requires_project_scope(
+    fake_task_manager: FakeTaskManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Opt out of the package-level autouse project-context pin: this test
+    # asserts the no-scope failure mode.
+    monkeypatch.setattr(
+        "gobby.review_learning.service.get_project_context",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "gobby.review_learning.service.get_current_session_id",
+        lambda: None,
+    )
     service = ReviewLearningService(FakeMemoryManager(db=FakeDB()), fake_task_manager)
 
     with pytest.raises(RuntimeError, match="requires a project context"):

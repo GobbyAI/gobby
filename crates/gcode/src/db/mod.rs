@@ -2,9 +2,11 @@ use postgres::Client;
 
 use crate::schema;
 
+mod ids;
 mod queries;
 mod resolution;
 
+pub use ids::*;
 pub use queries::*;
 pub use resolution::*;
 

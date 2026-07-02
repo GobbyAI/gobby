@@ -52,6 +52,10 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+# sessions.id is a native uuid column; web-chat session ids in the
+# X-Gobby-Session-Id header must be valid UUID strings.
+WEB_SESSION_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1"
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -3039,7 +3043,7 @@ class TestHooksEndpoints:
 
             response = client.post(
                 "/api/hooks/execute",
-                headers={"X-Gobby-Session-Id": "sess-web-1"},
+                headers={"X-Gobby-Session-Id": WEB_SESSION_ID},
                 json=_hook_envelope(
                     hook_type=hook_type,
                     source=source,
@@ -3051,7 +3055,7 @@ class TestHooksEndpoints:
         assert response.json() == {"decision": "approve"}
         mock_hold_open.assert_awaited_once()
         args = mock_hold_open.await_args.args
-        assert args[1] == "sess-web-1"
+        assert args[1] == WEB_SESSION_ID
         assert args[2] == "PreToolUse"
         assert args[4] == source
         assert mock_hold_open.await_args.kwargs["server"] is server
@@ -3082,7 +3086,7 @@ class TestHooksEndpoints:
             try:
                 response = client.post(
                     "/api/hooks/execute",
-                    headers={"X-Gobby-Session-Id": "sess-web-1"},
+                    headers={"X-Gobby-Session-Id": WEB_SESSION_ID},
                     json=_hook_envelope(
                         hook_type="pre-tool-use",
                         source="claude",

@@ -1102,9 +1102,10 @@ class TestMemoryNodeProjectIdScoping:
         cypher = mem_queries[0].args[0]
         params = mem_queries[0].args[1]
         assert "m.project_id = $project_id" in cypher
-        assert "OR m.project_id IS NULL" in cypher
-        assert "OR e.project_id IS NULL" in cypher
+        assert "OR ($include_global AND m.project_id IS NULL)" in cypher
+        assert "OR ($include_global AND e.project_id IS NULL)" in cypher
         assert params["project_id"] == "proj-A"
+        assert params["include_global"] is True
 
     @pytest.mark.asyncio
     async def test_find_related_memory_ids_filters_by_project_id(
@@ -1131,17 +1132,19 @@ class TestMemoryNodeProjectIdScoping:
         neighbor_params = neighbor_call.args[1]
         assert "start.project_id = $project_id" in neighbor_cypher
         assert "neighbor.project_id = $project_id" in neighbor_cypher
-        assert "OR start.project_id IS NULL" in neighbor_cypher
-        assert "OR neighbor.project_id IS NULL" in neighbor_cypher
+        assert "OR ($include_global AND start.project_id IS NULL)" in neighbor_cypher
+        assert "OR ($include_global AND neighbor.project_id IS NULL)" in neighbor_cypher
         assert neighbor_params["project_id"] == "proj-A"
+        assert neighbor_params["include_global"] is True
 
         memory_call = mock_falkor.query.call_args_list[1]
         memory_cypher = memory_call.args[0]
         memory_params = memory_call.args[1]
         assert "m.project_id = $project_id" in memory_cypher
-        assert "OR m.project_id IS NULL" in memory_cypher
-        assert "OR e.project_id IS NULL" in memory_cypher
+        assert "OR ($include_global AND m.project_id IS NULL)" in memory_cypher
+        assert "OR ($include_global AND e.project_id IS NULL)" in memory_cypher
         assert memory_params["project_id"] == "proj-A"
+        assert memory_params["include_global"] is True
 
 
 class TestRemoveMemoryFromGraph:

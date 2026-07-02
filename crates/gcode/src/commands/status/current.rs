@@ -13,9 +13,11 @@ use super::shared::{format_coverage, format_timestamp, indexed_project_from_row}
 pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
 
-    let stats: Option<IndexedProject> = conn
-        .query_opt(
-            "SELECT id,
+    let stats: Option<IndexedProject> = db::id_param(&ctx.project_id)
+        .ok()
+        .and_then(|project_id| {
+            conn.query_opt(
+                "SELECT id,
                     root_path,
                     total_files::BIGINT AS total_files,
                     total_symbols::BIGINT AS total_symbols,
@@ -23,10 +25,11 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
                     NULL::BIGINT AS total_eligible_files
              FROM code_indexed_projects WHERE id = $1",
-            &[&ctx.project_id],
-        )
-        .ok()
-        .flatten()
+                &[&project_id],
+            )
+            .ok()
+            .flatten()
+        })
         .and_then(|row| indexed_project_from_row(&row).ok());
 
     match stats {

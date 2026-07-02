@@ -151,7 +151,8 @@ class TestSessionStartContextClaim:
 
     def test_duplicate_session_start_claims_full_context_once(self, temp_db: Any) -> None:
         handler = _session_variable_handler(temp_db)
-        session_id = "sess-duplicate-start"
+        # session_variables.session_id is a native uuid column.
+        session_id = "dddddddd-0000-4000-8000-000000000001"
 
         first = classify_session_start_context(
             handler,
@@ -177,7 +178,7 @@ class TestSessionStartContextClaim:
         self, temp_db: Any
     ) -> None:
         handler = _session_variable_handler(temp_db)
-        session_id = "sess-concurrent-start"
+        session_id = "dddddddd-0000-4000-8000-000000000002"
         barrier = Barrier(8)
 
         def classify_once(_: int) -> str:
@@ -200,7 +201,7 @@ class TestSessionStartContextClaim:
 
     def test_explicit_context_loss_bypasses_existing_startup_claim(self, temp_db: Any) -> None:
         handler = _session_variable_handler(temp_db)
-        session_id = "sess-clear-start"
+        session_id = "dddddddd-0000-4000-8000-000000000003"
         SessionVariableManager(temp_db).merge_variables(
             session_id,
             {"_startup_context_injected": True},

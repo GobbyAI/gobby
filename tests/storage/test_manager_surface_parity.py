@@ -190,6 +190,10 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
             yield txn
 
     db.transaction_immediate = recording_transaction  # type: ignore[method-assign]
+    # projects.id and tasks.id/project_id/parent_task_id are native uuid columns.
+    project_id = "adadadad-0000-4000-8000-000000000001"
+    root_task_id = "adadadad-0000-4000-8000-000000000002"
+    child_task_id = "adadadad-0000-4000-8000-000000000003"
     try:
         db.execute(
             """
@@ -197,7 +201,7 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (id) DO NOTHING
             """,
-            ("project-1", "Project 1", "/tmp/project-1"),
+            (project_id, "Project 1", "/tmp/project-1"),
         )
         db.executemany(
             """
@@ -208,14 +212,14 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
             VALUES (%s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             [
-                ("root", "project-1", None, "Root", "epic"),
-                ("child", "project-1", "root", "Child", "task"),
+                (root_task_id, project_id, None, "Root", "epic"),
+                (child_task_id, project_id, root_task_id, "Child", "task"),
             ],
         )
 
         updated = cascade_build_state_to_subtree(
             db,
-            "root",
+            root_task_id,
             "worktree",
             unattended=False,
             allow_automation=True,
@@ -224,7 +228,7 @@ def test_subtree_cascade_serializes_overlapping_subtrees(
 
         assert updated == 2
         assert isinstance(seen_locks[0], TaskSubtreeCascade)
-        assert seen_locks[0].project_id == "project-1"
+        assert seen_locks[0].project_id == project_id
     finally:
         db.close()
 

@@ -16,6 +16,10 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
@@ -47,7 +51,7 @@ def _lifecycle_event(server: str = "gobby-tasks", tool: str = "close_task") -> H
         arguments["stage_name"] = "development"
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -66,7 +70,7 @@ def _lifecycle_event(server: str = "gobby-tasks", tool: str = "close_task") -> H
 def _set_variable_event(name: str) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -130,7 +134,7 @@ async def test_completion_readiness_blocks_without_evidence(
 
     response = await RuleEngine(db).evaluate(
         _lifecycle_event(server, tool),
-        session_id="sid",
+        session_id=SESSION_ID,
         variables=_ready_variables(verification_evidence=[], verification_evidence_recorded=False),
     )
 
@@ -147,7 +151,7 @@ async def test_completion_readiness_allows_successful_validation_evidence(
 
     response = await RuleEngine(db).evaluate(
         _lifecycle_event(),
-        session_id="sid",
+        session_id=SESSION_ID,
         variables=_ready_variables(),
     )
 
@@ -163,7 +167,7 @@ async def test_completion_readiness_blocks_failed_validation_evidence(
 
     response = await RuleEngine(db).evaluate(
         _lifecycle_event(),
-        session_id="sid",
+        session_id=SESSION_ID,
         variables=_ready_variables(
             verification_evidence=[
                 {
@@ -189,7 +193,7 @@ async def test_later_successful_validation_clears_failed_validation_block(
 
     response = await RuleEngine(db).evaluate(
         _lifecycle_event(),
-        session_id="sid",
+        session_id=SESSION_ID,
         variables=_ready_variables(
             verification_evidence=[
                 {
@@ -218,7 +222,7 @@ async def test_manual_evidence_satisfies_readiness_without_failed_validation(
 
     response = await RuleEngine(db).evaluate(
         _lifecycle_event(),
-        session_id="sid",
+        session_id=SESSION_ID,
         variables=_ready_variables(
             verification_evidence=[
                 {
@@ -242,7 +246,7 @@ async def test_manual_evidence_cannot_clear_failed_validation(
 
     response = await RuleEngine(db).evaluate(
         _lifecycle_event(),
-        session_id="sid",
+        session_id=SESSION_ID,
         variables=_ready_variables(
             verification_evidence=[
                 {
@@ -273,7 +277,7 @@ async def test_protected_evidence_variables_cannot_be_set_directly(
     for name in ("verification_evidence_recorded", "verification_evidence"):
         response = await RuleEngine(db).evaluate(
             _set_variable_event(name),
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={},
         )
 

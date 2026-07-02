@@ -239,7 +239,7 @@ def _is_pristine_ready_stage(row: Any) -> bool:
 def _is_auto_started_without_agent(row: Any) -> bool:
     return (
         row.state == "in_progress"
-        and row.entered_by_session_id == "dispatcher"
+        and row.entered_by_actor == "dispatcher"
         and row.completed_at is None
         and row.completed_by_session_id is None
         and row.completed_commit_sha is None

@@ -25,6 +25,12 @@ from tests.storage.tasks._stage_test_helpers import initialize_manifest, spec, s
 
 pytestmark = pytest.mark.unit
 
+# Session/instance id columns are native uuid in PostgreSQL; synthetic ids
+# like "child-session" would fail with `invalid input syntax for type uuid`.
+CHILD_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+WF_INSTANCE_ID = "22222222-2222-4222-8222-222222222222"
+WF_SUBMIT_INSTANCE_ID = "33333333-3333-4333-8333-333333333333"
+
 
 @pytest.mark.asyncio
 async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
@@ -38,7 +44,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         ) VALUES (%s, %s, %s, %s, %s, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         (
-            "child-session",
+            CHILD_SESSION_ID,
             "ext-child-session",
             "machine-1",
             "codex",
@@ -60,8 +66,8 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
     instance_manager = WorkflowInstanceManager(temp_db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id="wf-456",
-            session_id="child-session",
+            id=WF_INSTANCE_ID,
+            session_id=CHILD_SESSION_ID,
             workflow_name="tech-writer-steps",
             current_step="terminate",
             step_entered_at=datetime.now(UTC),
@@ -77,11 +83,11 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         new_callable=AsyncMock,
         return_value=True,
     ) as complete:
-        await engine._complete_agent_workflow_run("child-session", "tech-writer-steps")
+        await engine._complete_agent_workflow_run(CHILD_SESSION_ID, "tech-writer-steps")
 
     complete.assert_awaited_once()
     assert mutex.get_mutex(task.id) is None
-    assert instance_manager.get_active_instances("child-session") == []
+    assert instance_manager.get_active_instances(CHILD_SESSION_ID) == []
 
 
 @pytest.mark.asyncio
@@ -177,7 +183,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     instance_manager = WorkflowInstanceManager(temp_db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id="wf-submit",
+            id=WF_SUBMIT_INSTANCE_ID,
             session_id=child.id,
             workflow_name=workflow_name,
             current_step="implement",

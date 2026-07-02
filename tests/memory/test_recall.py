@@ -19,7 +19,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
-SESSION_ID = "session-memory-recall"
+SESSION_ID = "55555555-5555-4555-8555-555555555555"
 
 
 class FakeMemoryManager:

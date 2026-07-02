@@ -336,7 +336,7 @@ def setup_internal_registries(
         clones_registry = create_clones_registry(
             clone_storage=clone_storage,
             git_manager=clone_git_manager,  # may be None; tools guard at call time
-            project_id=project_id or "",
+            project_id=project_id,
             task_manager=task_manager,
         )
         manager.add_registry(clones_registry)

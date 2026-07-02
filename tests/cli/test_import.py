@@ -8,6 +8,13 @@ from gobby.sync.tasks import TaskSyncManager
 
 pytestmark = pytest.mark.unit
 
+# projects.id is a native uuid column.
+PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000001"
+RESOLUTION_PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000002"
+
+# import_from_github_issues derives deterministic uuid5 task ids from the
+# issue URL (tasks.id is a native uuid column); re-imports upsert in place.
+
 
 @pytest.fixture
 def sync_manager(hub_db):
@@ -21,7 +28,7 @@ async def test_import_from_github_issues(sync_manager, hub_db):
     # Setup project with matching URL
     hub_db.execute(
         "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
-        ("proj-123", "/tmp/test", "Test Project", "https://github.com/owner/repo"),
+        (PROJECT_ID, "/tmp/test", "Test Project", "https://github.com/owner/repo"),
     )
 
     with patch("subprocess.run") as mock_run:
@@ -48,7 +55,6 @@ async def test_import_from_github_issues(sync_manager, hub_db):
 
         assert result["success"] is True
         assert len(result["imported"]) == 1
-        assert "gh-1" in result["imported"]
 
 
 @pytest.mark.integration
@@ -60,7 +66,7 @@ async def test_import_project_id_resolution(sync_manager, hub_db):
     """
     # Setup: Insert a project with a known GitHub URL
     repo_url = "https://github.com/test/resolution"
-    expected_project_id = "proj-resolution-test"
+    expected_project_id = RESOLUTION_PROJECT_ID
     hub_db.execute(
         "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
         (expected_project_id, "/tmp/resolution", "Resolution Project", repo_url),
@@ -93,5 +99,6 @@ async def test_import_project_id_resolution(sync_manager, hub_db):
     assert result["count"] == 1
 
     # Verify the task was created with the correct project_id
-    row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = %s", ("gh-101",))
+    imported_id = result["imported"][0]
+    row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (imported_id,))
     assert row["project_id"] == expected_project_id

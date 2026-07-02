@@ -1,5 +1,6 @@
 """Tests for local worktree storage manager."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
@@ -834,7 +835,7 @@ class TestLocalWorktreeManagerStatusTransitions:
         blocked = manager.claim_if_available(
             worktree.id,
             resumed_owner.id,
-            allowed_existing_session_ids={None, "previous-owner"},
+            allowed_existing_session_ids={None, str(uuid.uuid4())},
         )
 
         assert blocked is None

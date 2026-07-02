@@ -22,6 +22,12 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
+# chat_attachments.id is a native uuid column; stored attachment ids must be
+# valid UUID strings. Client-side ids (conversation_id, message_id, draft_id)
+# remain plain text.
+ATT_ID_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+ATT_ID_2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"
+
 
 @pytest.mark.parametrize(
     "kwargs",
@@ -46,7 +52,7 @@ def _attachment(
     temp_db: HubDatabase,
     tmp_path: Path,
     *,
-    attachment_id: str = "att-1",
+    attachment_id: str = ATT_ID_1,
     size_bytes: int = 5,
 ) -> str:
     """Create a stored attachment row backed by a temporary local file."""
@@ -81,7 +87,7 @@ async def test_prepare_message_attachments_binds_ids_and_formats_safe_context(
 
     assert prepared.records[0].id == attachment_id
     assert prepared.content_blocks[0]["attachment"]["id"] == attachment_id
-    assert "att-1.txt" in (prepared.prompt_context or "")
+    assert f"{attachment_id}.txt" in (prepared.prompt_context or "")
     assert f"id={attachment_id}" in (prepared.prompt_context or "")
     assert str(tmp_path) not in (prepared.prompt_context or "")
     assert "base64" not in (prepared.prompt_context or "").lower()
@@ -98,8 +104,8 @@ async def test_prepare_message_attachments_honors_config_store_file_count(
     tmp_path: Path,
 ) -> None:
     ConfigStore(temp_db).set("chat.attachment_max_files_per_message", 1)
-    first = _attachment(temp_db, tmp_path, attachment_id="att-1")
-    second = _attachment(temp_db, tmp_path, attachment_id="att-2")
+    first = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_1)
+    second = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_2)
 
     with pytest.raises(ValueError, match="Too many attachments"):
         await prepare_message_attachments(_owner(temp_db), [{"id": first}, {"id": second}])
@@ -133,8 +139,8 @@ async def test_prepare_message_attachments_checks_current_total_size_limit_befor
     tmp_path: Path,
 ) -> None:
     ConfigStore(temp_db).set("chat.attachment_max_total_bytes_per_message", 8)
-    first = _attachment(temp_db, tmp_path, attachment_id="att-1", size_bytes=5)
-    second = _attachment(temp_db, tmp_path, attachment_id="att-2", size_bytes=5)
+    first = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_1, size_bytes=5)
+    second = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_2, size_bytes=5)
 
     with pytest.raises(ValueError, match="exceed configured 8 byte total limit"):
         await prepare_message_attachments(

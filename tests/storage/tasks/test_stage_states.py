@@ -769,15 +769,15 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
         """
         UPDATE task_stage_states
            SET entered_at = '2026-05-01T00:00:00+00:00',
-               entered_by_session_id = 'stale-session',
+               entered_by_session_id = %s,
                completed_at = '2026-05-02T00:00:00+00:00',
-               completed_by_session_id = 'stale-session',
+               completed_by_session_id = %s,
                completed_commit_sha = 'abc123',
                artifact_refs = '{"result":"stale"}',
                notes = 'stale note'
          WHERE task_id = %s AND stage_name IN ('pr', 'merge')
         """,
-        (task.id,),
+        (stale_owner.id, stale_owner.id, task.id),
     )
     temp_db.execute(
         """

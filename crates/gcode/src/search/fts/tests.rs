@@ -15,14 +15,24 @@ const OVERLAY_VISIBILITY_CHILD_TABLES: &[&str] = &[
 const OVERLAY_VISIBILITY_PROJECT_TABLE: &str = "code_indexed_projects";
 
 fn unique_test_id(prefix: &str) -> String {
-    format!(
+    fixture_uuid(&format!(
         "{prefix}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time after epoch")
             .as_nanos()
-    )
+    ))
+    .to_string()
+}
+
+/// Deterministic uuid for fixture ids derived from human-readable keys.
+fn fixture_uuid(key: &str) -> uuid::Uuid {
+    uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, key.as_bytes())
+}
+
+fn fixture_uuid_param(id: &str) -> uuid::Uuid {
+    crate::db::id_param(id).expect("fixture id is a uuid")
 }
 
 #[test]
@@ -235,7 +245,8 @@ mod serial_db {
             "target_symbol",
             "function",
         );
-        let symbol_id = format!("{project_id}:src/target.rs:target_symbol");
+        let symbol_id =
+            fixture_uuid(&format!("{project_id}:src/target.rs:target_symbol")).to_string();
 
         let resolved = resolve_graph_symbol_by_id(&mut conn, &symbol_id, &project_id)
             .expect("resolve symbol by id")
@@ -317,8 +328,8 @@ impl OverlayFixtureIds {
         let suffix = unique_test_id("gcode-overlay-test");
         Self {
             database_url,
-            parent_project_id: format!("{suffix}-parent"),
-            overlay_project_id: format!("{suffix}-overlay"),
+            parent_project_id: fixture_uuid(&format!("{suffix}-parent")).to_string(),
+            overlay_project_id: fixture_uuid(&format!("{suffix}-overlay")).to_string(),
         }
     }
 }
@@ -373,6 +384,8 @@ fn cleanup_overlay_visibility_projects(
     parent_project_id: &str,
     overlay_project_id: &str,
 ) -> anyhow::Result<()> {
+    let parent_project_id = crate::db::id_param(parent_project_id)?;
+    let overlay_project_id = crate::db::id_param(overlay_project_id)?;
     let mut tx = conn.transaction()?;
     for table in OVERLAY_VISIBILITY_CHILD_TABLES {
         let sql = format!("DELETE FROM {table} WHERE project_id = $1 OR project_id = $2");
@@ -479,7 +492,7 @@ fn insert_project(conn: &mut Client, project_id: &str, root_path: &str) {
         "INSERT INTO code_indexed_projects
                 (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
              VALUES ($1, $2, 0, 0, NOW(), 0)",
-        &[&project_id, &root_path],
+        &[&fixture_uuid_param(project_id), &root_path],
     )
     .expect("insert project");
 }
@@ -491,7 +504,8 @@ fn insert_file(
     language: &str,
     symbol_count: i32,
 ) {
-    let id = format!("{project_id}:{file_path}");
+    let id = fixture_uuid(&format!("{project_id}:{file_path}"));
+    let project_id = fixture_uuid_param(project_id);
     let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &language, &symbol_count];
     conn.execute(
         "INSERT INTO code_indexed_files
@@ -504,7 +518,8 @@ fn insert_file(
 }
 
 fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &str, kind: &str) {
-    let id = format!("{project_id}:{file_path}:{name}");
+    let id = fixture_uuid(&format!("{project_id}:{file_path}:{name}"));
+    let project_id = fixture_uuid_param(project_id);
     let summary = name.replace('_', " ").replace('+', " plus ");
     let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &name, &kind, &summary];
     conn.execute(
@@ -526,7 +541,8 @@ fn insert_chunk(
     chunk_index: i32,
     content: &str,
 ) {
-    let id = format!("{project_id}:{file_path}:{chunk_index}");
+    let id = fixture_uuid(&format!("{project_id}:{file_path}:{chunk_index}"));
+    let project_id = fixture_uuid_param(project_id);
     let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &chunk_index, &content];
     conn.execute(
         "INSERT INTO code_content_chunks

@@ -153,7 +153,7 @@ fn index_resolves_cross_file_rust_tuple_struct_construction() {
              FROM code_symbols
              WHERE project_id = $1 AND file_path = 'src/model.rs'
                AND name = 'UserId' AND kind IN ('class', 'type')",
-            &[&RUST_TUPLE_LOCAL_PROJECT_ID],
+            &[&crate::common::uuid_param(RUST_TUPLE_LOCAL_PROJECT_ID)],
         )
         .expect("count UserId symbols")
         .get(0);

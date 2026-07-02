@@ -18,6 +18,15 @@ from gobby.workflows.pipeline_state import (
 
 pytestmark = pytest.mark.unit
 
+# Fixed UUID literals so ids can be compared across assertions.
+PROJECT_ID = "11111111-1111-1111-1111-111111111111"
+OTHER_PROJECT_ID = "22222222-2222-2222-2222-222222222222"
+SESSION_123 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaa123"
+SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+SESSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+SESSION_X = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+SESSION_Q = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -26,7 +35,7 @@ def db(temp_db: HubDatabase) -> HubDatabase:
     # Create a test project
     database.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("test-project", "Test Project"),
+        (PROJECT_ID, "Test Project"),
     )
     return database
 
@@ -34,7 +43,7 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def manager(db: HubDatabase) -> LocalPipelineExecutionManager:
     """Create a LocalPipelineExecutionManager instance."""
-    return LocalPipelineExecutionManager(db, project_id="test-project")
+    return LocalPipelineExecutionManager(db, project_id=PROJECT_ID)
 
 
 @pytest.mark.parametrize("project_id", [None, ""])
@@ -57,7 +66,7 @@ class TestCreateExecution:
 
         assert execution.id.startswith("pe-")
         assert execution.pipeline_name == "test-pipeline"
-        assert execution.project_id == "test-project"
+        assert execution.project_id == PROJECT_ID
         assert execution.status == ExecutionStatus.PENDING
         assert execution.inputs_json is None
         assert execution.outputs_json is None
@@ -78,15 +87,15 @@ class TestCreateExecution:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("sess-123", "ext-1", "machine-1", "claude_code", "test-project", "active"),
+            (SESSION_123, "ext-1", "machine-1", "claude_code", PROJECT_ID, "active"),
         )
 
         execution = manager.create_execution(
             pipeline_name="test-pipeline",
-            session_id="sess-123",
+            session_id=SESSION_123,
         )
 
-        assert execution.session_id == "sess-123"
+        assert execution.session_id == SESSION_123
 
     def test_create_execution_with_parent(self, manager) -> None:
         """Test creating nested execution with parent."""
@@ -120,9 +129,9 @@ class TestGetExecution:
         """Executions from another project are hidden from exact lookups."""
         db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            ("other-project", "Other Project"),
+            (OTHER_PROJECT_ID, "Other Project"),
         )
-        other_manager = LocalPipelineExecutionManager(db, project_id="other-project")
+        other_manager = LocalPipelineExecutionManager(db, project_id=OTHER_PROJECT_ID)
         other_execution = other_manager.create_execution(pipeline_name="other-pipeline")
 
         assert manager.get_execution(other_execution.id) is None
@@ -142,9 +151,9 @@ class TestUpdateExecutionStatus:
     def test_update_status_is_project_scoped(self, db, manager) -> None:
         db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            ("other-project", "Other Project"),
+            (OTHER_PROJECT_ID, "Other Project"),
         )
-        other_manager = LocalPipelineExecutionManager(db, project_id="other-project")
+        other_manager = LocalPipelineExecutionManager(db, project_id=OTHER_PROJECT_ID)
         other_execution = other_manager.create_execution(pipeline_name="other-pipeline")
 
         assert manager.update_execution_status(other_execution.id, ExecutionStatus.RUNNING) is None
@@ -236,20 +245,20 @@ class TestListExecutionsExtended:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("sess-aaa", "ext-a", "machine-1", "claude_code", "test-project", "active"),
+            (SESSION_A, "ext-a", "machine-1", "claude_code", PROJECT_ID, "active"),
         )
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("sess-bbb", "ext-b", "machine-1", "claude_code", "test-project", "active"),
+            (SESSION_B, "ext-b", "machine-1", "claude_code", PROJECT_ID, "active"),
         )
-        manager.create_execution(pipeline_name="deploy", session_id="sess-aaa")
-        manager.create_execution(pipeline_name="test", session_id="sess-aaa")
-        manager.create_execution(pipeline_name="deploy", session_id="sess-bbb")
+        manager.create_execution(pipeline_name="deploy", session_id=SESSION_A)
+        manager.create_execution(pipeline_name="test", session_id=SESSION_A)
+        manager.create_execution(pipeline_name="deploy", session_id=SESSION_B)
 
-        results = manager.list_executions(session_id="sess-aaa")
+        results = manager.list_executions(session_id=SESSION_A)
         assert len(results) == 2
-        assert all(ex.session_id == "sess-aaa" for ex in results)
+        assert all(ex.session_id == SESSION_A for ex in results)
 
     def test_list_executions_by_parent_execution_id(self, manager) -> None:
         """Test filtering executions by parent_execution_id."""
@@ -510,16 +519,14 @@ class TestResolveExecutionReference:
                 return [{"id": "pe-global-execution"}]
 
         fake_db = FakeDB()
-        manager = LocalPipelineExecutionManager(
-            cast(HubDatabase, fake_db), project_id="test-project"
-        )
+        manager = LocalPipelineExecutionManager(cast(HubDatabase, fake_db), project_id=PROJECT_ID)
 
         resolved = manager.resolve_execution_reference("pe-global")
 
         assert resolved == "pe-global-execution"
         prefix_sql, prefix_params = fake_db.queries[-1]
         assert "project_id = %s" in prefix_sql
-        assert prefix_params == ("pe-global%", "test-project")
+        assert prefix_params == ("pe-global%", PROJECT_ID)
 
     def test_resolve_uuid_prefix_rejects_ambiguous_matches(self, manager) -> None:
         manager.create_execution(pipeline_name="first-pipeline")
@@ -824,13 +831,13 @@ class TestPagination:
             {"status": "pending", "cnt": 1},
             {"status": "running", "cnt": 1},
         ]
-        manager = LocalPipelineExecutionManager(cast(HubDatabase, db), project_id="test-project")
+        manager = LocalPipelineExecutionManager(cast(HubDatabase, db), project_id=PROJECT_ID)
 
         result = manager.count_by_status()
 
         sql, params = db.fetchall.call_args.args
         assert "project_id = %s" in sql
-        assert params == ("test-project",)
+        assert params == (PROJECT_ID,)
         assert result == {"pending": 1, "running": 1}
 
     def test_count_executions_respects_pipeline_name_filter(self, manager) -> None:
@@ -857,12 +864,12 @@ class TestPagination:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("sess-x", "ext-x", "machine-1", "claude_code", "test-project", "active"),
+            (SESSION_X, "ext-x", "machine-1", "claude_code", PROJECT_ID, "active"),
         )
-        manager.create_execution(pipeline_name="p1", session_id="sess-x")
-        manager.create_execution(pipeline_name="p2", session_id="sess-x")
+        manager.create_execution(pipeline_name="p1", session_id=SESSION_X)
+        manager.create_execution(pipeline_name="p2", session_id=SESSION_X)
         manager.create_execution(pipeline_name="p3")
-        assert manager.count_executions(session_id="sess-x") == 2
+        assert manager.count_executions(session_id=SESSION_X) == 2
 
     def test_status_summary_is_filter_scoped_dropping_status_predicate(self, manager) -> None:
         """status_summary_for_executions drops status filter but applies others."""
@@ -886,15 +893,15 @@ class TestPagination:
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("sess-q", "ext-q", "machine-1", "claude_code", "test-project", "active"),
+            (SESSION_Q, "ext-q", "machine-1", "claude_code", PROJECT_ID, "active"),
         )
-        e1 = manager.create_execution(pipeline_name="p1", session_id="sess-q")
-        e2 = manager.create_execution(pipeline_name="p2", session_id="sess-q")
+        e1 = manager.create_execution(pipeline_name="p1", session_id=SESSION_Q)
+        e2 = manager.create_execution(pipeline_name="p2", session_id=SESSION_Q)
         manager.create_execution(pipeline_name="p3")
         manager.update_execution_status(e1.id, ExecutionStatus.RUNNING)
         manager.update_execution_status(e2.id, ExecutionStatus.RUNNING)
 
-        scoped = manager.status_summary_for_executions(session_id="sess-q")
+        scoped = manager.status_summary_for_executions(session_id=SESSION_Q)
         assert scoped == {"running": 2}
 
     def test_execution_metrics_combines_filtered_total_and_status_summary(self, manager) -> None:

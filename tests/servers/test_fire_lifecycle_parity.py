@@ -64,7 +64,12 @@ def rules_db(hub_db: HubDatabase) -> HubDatabase:
     return hub_db
 
 
-def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMock:
+# session_variables.session_id targets the native-uuid sessions.id column, so
+# session ids that reach the real DB must be valid UUID strings.
+SESSION_ID = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
+
+
+def _make_session(db_session_id: str = SESSION_ID, seq_num: int = 42) -> MagicMock:
     session = MagicMock()
     session.db_session_id = db_session_id
     session.seq_num = seq_num
@@ -572,7 +577,7 @@ class TestFireLifecycleRequireUvRule:
     ) -> None:
         """Web chat normalizes exec_command to Bash and returns a plain block."""
         sync_bundled_rules(rules_db, get_bundled_rules_path())
-        SessionVariableManager(rules_db).merge_variables("sess-123", {"require_uv": True})
+        SessionVariableManager(rules_db).merge_variables(SESSION_ID, {"require_uv": True})
 
         host._chat_sessions["conv-1"] = _make_session()
         host.workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(rules_db))

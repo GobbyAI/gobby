@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
+from gobby.storage.session_resolution import is_session_uuid
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
@@ -365,6 +366,8 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
 
     def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
         """Get session by ID."""
+        if not is_session_uuid(session_id):
+            return None
         row = self.db.fetchone("SELECT * FROM sessions WHERE id = %s", (session_id,))
         return Session.from_row(row) if row else None
 

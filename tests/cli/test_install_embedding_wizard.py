@@ -104,6 +104,7 @@ class TestRunEmbeddingInstallNoInteractive:
             model_override=None,
             api_base_override=None,
             dim_override=None,
+            catalog_key=None,
         )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=True)
@@ -196,6 +197,7 @@ class TestRunEmbeddingInstallNoInteractive:
             model_override="text-embedding-qwen3-embedding-4b",
             api_base_override="http://lan:1234/v1",
             dim_override=2560,
+            catalog_key=None,
         )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
@@ -231,6 +233,7 @@ class TestRunEmbeddingInstallNoInteractive:
             model_override=None,
             api_base_override="http://custom-host:11434/v1",
             dim_override=768,
+            catalog_key=None,
         )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
@@ -267,6 +270,7 @@ class TestRunEmbeddingInstallNoInteractive:
             model_override="vendor-embed",
             api_base_override="https://embeddings.example.test/v1",
             dim_override=1024,
+            catalog_key=None,
         )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
@@ -497,6 +501,7 @@ class TestRunEmbeddingInstallOverrides:
             model_override="text-embedding-qwen3-embedding-4b",
             api_base_override="http://lan:1234/v1",
             dim_override=2560,
+            catalog_key=None,
         )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)
@@ -536,6 +541,7 @@ class TestRunEmbeddingInstallOverrides:
             model_override=None,
             api_base_override=None,
             dim_override=None,
+            catalog_key=None,
         )
 
     @patch("gobby.cli._detectors._is_ollama_available", return_value=False)

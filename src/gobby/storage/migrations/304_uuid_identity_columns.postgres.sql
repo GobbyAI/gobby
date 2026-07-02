@@ -69,6 +69,9 @@ ALTER TABLE metrics_events_archive
     ALTER COLUMN project_id DROP DEFAULT,
     ALTER COLUMN project_id DROP NOT NULL;
 
+DELETE FROM code_calls
+ WHERE NULLIF(caller_symbol_id::TEXT, '') IS NULL;
+
 ALTER TABLE agent_runs
     ALTER COLUMN child_session_id TYPE UUID USING NULLIF(child_session_id::TEXT, '')::UUID,
     ALTER COLUMN claimed_session_id TYPE UUID USING NULLIF(claimed_session_id::TEXT, '')::UUID,
@@ -185,6 +188,26 @@ ALTER TABLE projects
     ALTER COLUMN id TYPE UUID USING id::UUID;
 ALTER TABLE prompts
     ALTER COLUMN project_id TYPE UUID USING NULLIF(project_id::TEXT, '')::UUID;
+-- Re-id legacy non-UUID secret rows (composite "uuid:name" ids). The text
+-- assignment is guarded so it is never parsed on a fresh baseline where
+-- secrets.id is already uuid (PL/pgSQL type-checks only statements it reaches).
+DO $$
+BEGIN
+    IF (SELECT data_type FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'secrets' AND column_name = 'id') = 'text' THEN
+        UPDATE secrets
+           SET id = (
+               substr(md5('secret:' || id::TEXT || ':' || name), 1, 8) || '-' ||
+               substr(md5('secret:' || id::TEXT || ':' || name), 9, 4) || '-' ||
+               substr(md5('secret:' || id::TEXT || ':' || name), 13, 4) || '-' ||
+               substr(md5('secret:' || id::TEXT || ':' || name), 17, 4) || '-' ||
+               substr(md5('secret:' || id::TEXT || ':' || name), 21, 12)
+           )
+         WHERE id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+    END IF;
+END;
+$$;
 ALTER TABLE secrets
     ALTER COLUMN id TYPE UUID USING id::UUID;
 ALTER TABLE session_memories
@@ -208,6 +231,14 @@ ALTER TABLE sessions
     ALTER COLUMN summary_revision_id TYPE UUID USING NULLIF(summary_revision_id::TEXT, '')::UUID;
 ALTER TABLE skills
     ALTER COLUMN project_id TYPE UUID USING NULLIF(project_id::TEXT, '')::UUID;
+UPDATE task_stage_states
+   SET completed_by_session_id = NULL
+ WHERE completed_by_session_id IS NOT NULL
+   AND completed_by_session_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+UPDATE task_stage_states
+   SET entered_by_session_id = NULL
+ WHERE entered_by_session_id IS NOT NULL
+   AND entered_by_session_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 ALTER TABLE task_affected_files
     ALTER COLUMN task_id TYPE UUID USING task_id::UUID;
 ALTER TABLE task_artifacts
@@ -263,6 +294,34 @@ ALTER TABLE tools
     ALTER COLUMN mcp_server_id TYPE UUID USING mcp_server_id::UUID;
 ALTER TABLE workflow_audit_log
     ALTER COLUMN session_id TYPE UUID USING session_id::UUID;
+-- Normalize dash-less hex ids and re-id any other non-UUID workflow_definitions
+-- rows. Guarded for the same fresh-baseline reason as the secrets re-id above.
+DO $$
+BEGIN
+    IF (SELECT data_type FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'workflow_definitions' AND column_name = 'id') = 'text' THEN
+        UPDATE workflow_definitions
+           SET id = (
+               substr(id::TEXT, 1, 8) || '-' ||
+               substr(id::TEXT, 9, 4) || '-' ||
+               substr(id::TEXT, 13, 4) || '-' ||
+               substr(id::TEXT, 17, 4) || '-' ||
+               substr(id::TEXT, 21, 12)
+           )
+         WHERE id::TEXT ~* '^[0-9a-f]{32}$';
+        UPDATE workflow_definitions
+           SET id = (
+               substr(md5('workflow_definition:' || id::TEXT || ':' || name), 1, 8) || '-' ||
+               substr(md5('workflow_definition:' || id::TEXT || ':' || name), 9, 4) || '-' ||
+               substr(md5('workflow_definition:' || id::TEXT || ':' || name), 13, 4) || '-' ||
+               substr(md5('workflow_definition:' || id::TEXT || ':' || name), 17, 4) || '-' ||
+               substr(md5('workflow_definition:' || id::TEXT || ':' || name), 21, 12)
+           )
+         WHERE id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+    END IF;
+END;
+$$;
 ALTER TABLE workflow_definitions
     ALTER COLUMN id TYPE UUID USING id::UUID,
     ALTER COLUMN project_id TYPE UUID USING NULLIF(project_id::TEXT, '')::UUID;

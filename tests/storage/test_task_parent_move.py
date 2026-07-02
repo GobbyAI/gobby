@@ -1,5 +1,7 @@
 """Tests for parent task move behavior."""
 
+import uuid
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -7,12 +9,17 @@ from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
+# projects.id is a native uuid column.
+PROJECT_ID = str(uuid.uuid4())
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase):
     database = temp_db
     with database.transaction() as conn:
-        conn.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("p1", "test_project"))
+        conn.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "test_project")
+        )
     return database
 
 
@@ -27,16 +34,16 @@ class TestParentTaskMove:
     def test_move_parent_children_follow(self, manager) -> None:
         """When parent B is moved from A to D, children of B should still be B's children."""
         # Create hierarchy: A -> B -> C
-        a = manager.create_task(project_id="p1", title="Epic A", task_type="epic")
+        a = manager.create_task(project_id=PROJECT_ID, title="Epic A", task_type="epic")
         b = manager.create_task(
-            project_id="p1", title="Feature B", task_type="feature", parent_task_id=a.id
+            project_id=PROJECT_ID, title="Feature B", task_type="feature", parent_task_id=a.id
         )
         c = manager.create_task(
-            project_id="p1", title="Task C", task_type="task", parent_task_id=b.id
+            project_id=PROJECT_ID, title="Task C", task_type="task", parent_task_id=b.id
         )
 
         # Create new parent D
-        d = manager.create_task(project_id="p1", title="Epic D", task_type="epic")
+        d = manager.create_task(project_id=PROJECT_ID, title="Epic D", task_type="epic")
 
         # Move B from A to D
         manager.update_task(b.id, parent_task_id=d.id)
@@ -66,12 +73,12 @@ class TestParentTaskMove:
     def test_move_to_root_children_follow(self, manager) -> None:
         """When parent B is moved to root (cleared parent), children should follow."""
         # Create hierarchy: A -> B -> C
-        a = manager.create_task(project_id="p1", title="Epic A", task_type="epic")
+        a = manager.create_task(project_id=PROJECT_ID, title="Epic A", task_type="epic")
         b = manager.create_task(
-            project_id="p1", title="Feature B", task_type="feature", parent_task_id=a.id
+            project_id=PROJECT_ID, title="Feature B", task_type="feature", parent_task_id=a.id
         )
         c = manager.create_task(
-            project_id="p1", title="Task C", task_type="task", parent_task_id=b.id
+            project_id=PROJECT_ID, title="Task C", task_type="task", parent_task_id=b.id
         )
 
         # Move B to root (clear parent)
@@ -93,14 +100,14 @@ class TestParentTaskMove:
     def test_deep_hierarchy_move(self, manager) -> None:
         """Moving a task with deep hierarchy should preserve entire subtree."""
         # Create hierarchy: A -> B -> C -> D -> E
-        a = manager.create_task(project_id="p1", title="Epic A", task_type="epic")
-        b = manager.create_task(project_id="p1", title="B", parent_task_id=a.id)
-        c = manager.create_task(project_id="p1", title="C", parent_task_id=b.id)
-        d = manager.create_task(project_id="p1", title="D", parent_task_id=c.id)
-        e = manager.create_task(project_id="p1", title="E", parent_task_id=d.id)
+        a = manager.create_task(project_id=PROJECT_ID, title="Epic A", task_type="epic")
+        b = manager.create_task(project_id=PROJECT_ID, title="B", parent_task_id=a.id)
+        c = manager.create_task(project_id=PROJECT_ID, title="C", parent_task_id=b.id)
+        d = manager.create_task(project_id=PROJECT_ID, title="D", parent_task_id=c.id)
+        e = manager.create_task(project_id=PROJECT_ID, title="E", parent_task_id=d.id)
 
         # Create new root
-        x = manager.create_task(project_id="p1", title="Epic X", task_type="epic")
+        x = manager.create_task(project_id=PROJECT_ID, title="Epic X", task_type="epic")
 
         # Move B (with C, D, E underneath) to X
         manager.update_task(b.id, parent_task_id=x.id)

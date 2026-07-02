@@ -6,8 +6,8 @@ struct Workflow {
 
 const WORKFLOWS: [Workflow; 5] = [
     Workflow {
-        name: "ci.yml",
-        content: include_str!("../../../.github/workflows/ci.yml"),
+        name: "rust-ci.yml",
+        content: include_str!("../../../.github/workflows/rust-ci.yml"),
     },
     Workflow {
         name: "release-gcode.yml",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,11 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
+# Session/project/instance id columns are native uuid in PostgreSQL; synthetic
+# ids like SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -25,21 +31,21 @@ def db(temp_db: HubDatabase) -> HubDatabase:
     return database
 
 
-def _create_session(db: HubDatabase, session_id: str = "test-session") -> None:
+def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, created_at)
         VALUES (%s, %s, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO NOTHING
         """,
-        ("project-1", "test-project"),
+        (PROJECT_ID, "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", "project-1"),
+        (session_id, "ext-1", "machine-1", "claude", PROJECT_ID),
     )
 
 
@@ -133,8 +139,8 @@ def _setup_workflow(
     instance_manager = WorkflowInstanceManager(db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id="inst-test-session-developer",
-            session_id="test-session",
+            id=str(uuid.uuid4()),
+            session_id=SESSION_ID,
             workflow_name=str(workflow["name"]),
             enabled=True,
             priority=100,
@@ -157,7 +163,7 @@ def _after_mcp_tool(
         tool_input["arguments"] = arguments
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -172,7 +178,7 @@ def _after_mcp_tool(
 def _before_set_variable(name: str, value: object) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -194,7 +200,7 @@ def _after_set_variable(
         tool_output["value"] = output_value
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -209,7 +215,7 @@ def _after_set_variable(
 def _before_mcp_set_variable(name: str, value: object) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -232,11 +238,11 @@ async def test_successful_claim_advances_through_empty_skill_gate(db: HubDatabas
 
     response = await engine.evaluate(
         _after_mcp_tool("gobby-tasks", "claim_task"),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("test-session", "developer-steps")
+    instance = instance_manager.get_instance(SESSION_ID, "developer-steps")
     assert instance is not None
     assert instance.current_step == "implement"
     assert response.context is not None
@@ -263,10 +269,10 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
 
     await engine.evaluate(
         _after_mcp_tool("gobby-skills", "get_skill", arguments={"name": "python"}),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
-    instance = instance_manager.get_instance("test-session", "developer-steps")
+    instance = instance_manager.get_instance(SESSION_ID, "developer-steps")
     assert instance is not None
     assert instance.current_step == "load_additional_skills"
     assert instance.variables["additional_skills_loaded"] is False
@@ -274,10 +280,10 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
     variables["loaded_skills"] = ["python", "code-index"]
     await engine.evaluate(
         _after_mcp_tool("gobby-skills", "get_skill", arguments={"name": "code-index"}),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
-    instance = instance_manager.get_instance("test-session", "developer-steps")
+    instance = instance_manager.get_instance(SESSION_ID, "developer-steps")
     assert instance is not None
     assert instance.current_step == "implement"
     assert instance.variables["additional_skills_loaded"] is True
@@ -291,7 +297,7 @@ async def test_step_workflow_complete_user_write_is_blocked(db: HubDatabase) -> 
 
     response = await engine.evaluate(
         _before_set_variable("step_workflow_complete", True),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
@@ -308,7 +314,7 @@ async def test_step_workflow_complete_call_tool_write_is_blocked(db: HubDatabase
 
     response = await engine.evaluate(
         _before_mcp_set_variable("step_workflow_complete", True),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
@@ -325,7 +331,7 @@ async def test_non_reserved_set_variable_remains_allowed(db: HubDatabase) -> Non
 
     response = await engine.evaluate(
         _before_set_variable("lint_passed", True),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
@@ -345,11 +351,11 @@ async def test_missing_session_scoped_transition_variable_waits_without_error(
 
     response = await engine.evaluate(
         _before_set_variable("lint_passed", True),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("test-session", "set-variable-steps")
+    instance = instance_manager.get_instance(SESSION_ID, "set-variable-steps")
     assert instance is not None
     assert instance.current_step == "plan"
     assert response.decision == "allow"
@@ -367,11 +373,11 @@ async def test_native_set_variable_advances_session_scoped_transition(
 
     response = await engine.evaluate(
         _after_set_variable("merge_plan", {"steps": ["leaf"]}),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("test-session", "set-variable-steps")
+    instance = instance_manager.get_instance(SESSION_ID, "set-variable-steps")
     assert instance is not None
     assert instance.current_step == "execute"
     assert variables["merge_plan"] == {"steps": ["leaf"]}
@@ -396,11 +402,11 @@ async def test_native_set_variable_does_not_shadow_workflow_local_variable(
 
     await engine.evaluate(
         _after_set_variable("merge_plan", {"steps": ["leaf"]}),
-        session_id="test-session",
+        session_id=SESSION_ID,
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("test-session", "set-variable-steps")
+    instance = instance_manager.get_instance(SESSION_ID, "set-variable-steps")
     assert instance is not None
     assert instance.current_step == "plan"
     assert instance.variables["merge_plan"] is False

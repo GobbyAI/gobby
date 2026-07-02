@@ -817,16 +817,20 @@ async def test_get_session_commits_uses_session_project_repo_path(mock_session_m
     from datetime import datetime
     from unittest.mock import patch
 
+    # projects.id is a native uuid column; LocalProjectManager.get() returns
+    # None for non-uuid ids, which would silently fall back to the transcript
+    # directory instead of the project repo.
+    project_id = "7f3e2a10-9b8c-4d5e-a6f7-0123456789ab"
     mock_session = _make_mock_session("sess-abc")
     mock_session.created_at = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
     mock_session.updated_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
-    mock_session.project_id = "project-123"
+    mock_session.project_id = project_id
     mock_session.transcript_path = "/tmp/nonrepo/transcript.jsonl"
     mock_session_manager.get.return_value = mock_session
 
     mock_db = MagicMock()
     mock_db.fetchone.return_value = {
-        "id": "project-123",
+        "id": project_id,
         "name": "gobby",
         "repo_path": "/repo/gobby",
         "github_url": None,

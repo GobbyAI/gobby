@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 def _make_event(data: dict[str, Any] | None = None) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id="11111111-1111-4111-8111-111111111111",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data or {},
@@ -72,10 +72,14 @@ async def test_autonomous_audience_rules_skip_interactive_sessions(
     engine = RuleEngine(temp_db)
     event = _make_event({"tool_name": "Bash"})
 
-    interactive = await engine.evaluate(event, session_id="sess-1", variables={})
+    interactive = await engine.evaluate(
+        event,
+        session_id="11111111-1111-4111-8111-111111111111",
+        variables={},
+    )
     autonomous = await engine.evaluate(
         event,
-        session_id="sess-2",
+        session_id="22222222-2222-4222-8222-222222222222",
         variables={"is_spawned_agent": True},
     )
 

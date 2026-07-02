@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
@@ -18,6 +19,24 @@ from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
 from gobby.utils.sql import sql_placeholders
 
 logger = logging.getLogger(__name__)
+
+
+def _session_uuid_or_none(session_id: str | None) -> str | None:
+    if not is_session_uuid(session_id):
+        return None
+    return session_id
+
+
+def _actor_label(by_session_id: str | None, session_uuid: str | None) -> str:
+    """Actor identity for stage-state rows.
+
+    Callers pass either a real session UUID or an actor label ('dispatcher',
+    'system') through by_session_id; the uuid goes to *_by_session_id and the
+    label to *_by_actor ('session' when a real session acted).
+    """
+    if session_uuid is not None:
+        return "session"
+    return by_session_id or "system"
 
 
 class StageStateTransitions:
@@ -49,6 +68,8 @@ class StageStateTransitions:
         cited_subtasks: Sequence[str] | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
+        session_uuid = _session_uuid_or_none(by_session_id)
+        actor = _actor_label(by_session_id, session_uuid)
         snapshot = self.rows.current_stage(task_id)
         with self.mutexes.mutex(
             task_id,
@@ -90,9 +111,15 @@ class StageStateTransitions:
                            entered_by_session_id = CASE
                                WHEN %s = 'in_progress' THEN %s ELSE entered_by_session_id
                            END,
+                           entered_by_actor = CASE
+                               WHEN %s = 'in_progress' THEN %s ELSE entered_by_actor
+                           END,
                            completed_at = CASE WHEN %s = 'done' THEN %s ELSE completed_at END,
                            completed_by_session_id = CASE
                                WHEN %s = 'done' THEN %s ELSE completed_by_session_id
+                           END,
+                           completed_by_actor = CASE
+                               WHEN %s = 'done' THEN %s ELSE completed_by_actor
                            END,
                            completed_commit_sha = CASE
                                WHEN %s = 'done' THEN %s ELSE completed_commit_sha
@@ -109,11 +136,15 @@ class StageStateTransitions:
                         to_state,
                         now,
                         to_state,
-                        holder,
+                        session_uuid,
+                        to_state,
+                        actor,
                         to_state,
                         now,
                         to_state,
-                        holder,
+                        session_uuid,
+                        to_state,
+                        actor,
                         to_state,
                         commit_sha,
                         1 if verb == "start_stage" else 0,
@@ -152,7 +183,7 @@ class StageStateTransitions:
                         reason="manifest_exhausted",
                         commit_sha=commit_sha,
                         closed_at=now,
-                        closed_in_session_id=by_session_id,
+                        closed_in_session_id=session_uuid,
                         cascade_descendants=stage_name == "merge",
                         validation_override_reason=validation_override_reason,
                     )
@@ -208,6 +239,7 @@ class StageStateTransitions:
                        SET state = 'ready',
                            entered_at = NULL,
                            entered_by_session_id = NULL,
+                           entered_by_actor = NULL,
                            artifact_refs = NULL,
                            notes = NULL,
                            work_attempt_count = CASE
@@ -486,8 +518,10 @@ class StageStateTransitions:
                SET state = 'ready',
                    entered_at = NULL,
                    entered_by_session_id = NULL,
+                   entered_by_actor = NULL,
                    completed_at = NULL,
                    completed_by_session_id = NULL,
+                   completed_by_actor = NULL,
                    completed_commit_sha = NULL,
                    artifact_refs = NULL,
                    notes = NULL,
@@ -518,6 +552,8 @@ class StageStateTransitions:
         force: bool = False,
     ) -> StageState:
         holder = by_session_id or "system"
+        session_uuid = _session_uuid_or_none(by_session_id)
+        actor = _actor_label(by_session_id, session_uuid)
         snapshot = self.rows.current_stage(task_id)
         with self.mutexes.mutex(
             task_id,
@@ -539,14 +575,17 @@ class StageStateTransitions:
                     "SELECT claimed_by_session_id FROM tasks WHERE id = %s",
                     (task_id,),
                 ).fetchone()
-                claimed_by_session_id = task_row["claimed_by_session_id"] if task_row else None
-                if claimed_by_session_id and claimed_by_session_id != by_session_id and not force:
+                raw_claimed_by_session_id = task_row["claimed_by_session_id"] if task_row else None
+                claimed_by_session_id = (
+                    str(raw_claimed_by_session_id) if raw_claimed_by_session_id else None
+                )
+                if claimed_by_session_id and claimed_by_session_id != session_uuid and not force:
                     raise ValueError(
                         "Task is claimed by another session; pass force=True to move stages"
                     )
                 preserved_claim = (
                     claimed_by_session_id
-                    if claimed_by_session_id and claimed_by_session_id == by_session_id
+                    if claimed_by_session_id and claimed_by_session_id == session_uuid
                     else None
                 )
                 conn.execute(
@@ -581,6 +620,9 @@ class StageStateTransitions:
                                    completed_by_session_id = CASE
                                        WHEN state != %s THEN %s ELSE completed_by_session_id
                                    END,
+                                   completed_by_actor = CASE
+                                       WHEN state != %s THEN %s ELSE completed_by_actor
+                                   END,
                                    completed_commit_sha = CASE
                                        WHEN state != %s THEN NULL ELSE completed_commit_sha
                                    END,
@@ -592,7 +634,9 @@ class StageStateTransitions:
                                 to_state,
                                 now,
                                 to_state,
-                                holder,
+                                session_uuid,
+                                to_state,
+                                actor,
                                 to_state,
                                 now,
                                 task_id,
@@ -606,8 +650,10 @@ class StageStateTransitions:
                                SET state = %s,
                                    entered_at = NULL,
                                    entered_by_session_id = NULL,
+                                   entered_by_actor = NULL,
                                    completed_at = NULL,
                                    completed_by_session_id = NULL,
+                                   completed_by_actor = NULL,
                                    completed_commit_sha = NULL,
                                    artifact_refs = NULL,
                                    notes = CASE

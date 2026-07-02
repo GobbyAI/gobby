@@ -27,6 +27,11 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+# Session id columns are native uuid in PostgreSQL; synthetic ids like
+# SESSION_ID would fail with `invalid input syntax for type uuid`.
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
@@ -55,7 +60,7 @@ def _close_task_event(task_id: str = "#1", *, commit_sha: str | None = "abc123")
         arguments["commit_sha"] = commit_sha
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session",
+        session_id=SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         cwd="/tmp",
@@ -67,7 +72,7 @@ def _close_task_event(task_id: str = "#1", *, commit_sha: str | None = "abc123")
                 "arguments": arguments,
             },
         },
-        metadata={"_platform_session_id": "test-session", "project_path": "/tmp"},
+        metadata={"_platform_session_id": SESSION_ID, "project_path": "/tmp"},
     )
 
 
@@ -100,7 +105,7 @@ def _status_gate_variables(
 
 async def _evaluate_close_event(db: HubDatabase, variables: dict[str, object]) -> object:
     _sync_bundled(db)
-    SessionVariableManager(db).merge_variables("test-session", variables)
+    SessionVariableManager(db).merge_variables(SESSION_ID, variables)
     handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
     return await handler._evaluate_rules(_close_task_event("#1"))
 
@@ -524,7 +529,7 @@ class TestRequireClaimedTaskRequiredSkills:
         engine = RuleEngine(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={
@@ -538,7 +543,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         response = await engine.evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={
                 "task_claimed": True,
                 "claimed_task_required_skills": ["python", "development-discipline"],
@@ -556,7 +561,7 @@ class TestRequireClaimedTaskRequiredSkills:
         engine = RuleEngine(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={
@@ -570,7 +575,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         response = await engine.evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={
                 "task_claimed": True,
                 "enforce_tdd": False,
@@ -589,7 +594,7 @@ class TestRequireClaimedTaskRequiredSkills:
         engine = RuleEngine(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={
@@ -603,7 +608,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         response = await engine.evaluate(
             event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={"claimed_task_required_skills": [], "loaded_skills": []},
         )
 
@@ -846,7 +851,7 @@ class TestRequireCleanTreeBeforeStatus:
         """Should not run the clean-tree gate when the target task cannot resolve."""
         _sync_bundled(db)
         SessionVariableManager(db).merge_variables(
-            "test-session",
+            SESSION_ID,
             _status_gate_variables(
                 active_task_id="task-1",
                 task_edited_files={"task-1": ["src/owned.py"]},
@@ -971,7 +976,7 @@ class TestBlockNeedsReviewInteractive:
         arguments = {"task_id": task_id, "stage_name": stage_name}
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
@@ -998,7 +1003,7 @@ class TestBlockNeedsReviewInteractive:
 
         response = await engine.evaluate(
             self._review_event("submit_for_review", task_id="other-task"),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables=variables,
         )
 
@@ -1017,7 +1022,7 @@ class TestBlockNeedsReviewInteractive:
 
         response = await engine.evaluate(
             self._review_event("submit_for_review"),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables=variables,
         )
 
@@ -1035,7 +1040,7 @@ class TestBlockNeedsReviewInteractive:
 
         response = await engine.evaluate(
             self._review_event("submit_for_review"),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables=variables,
         )
 
@@ -1054,7 +1059,7 @@ class TestBlockNeedsReviewInteractive:
 
         response = await engine.evaluate(
             self._review_event("approve_review"),
-            session_id="test-session",
+            session_id=SESSION_ID,
             variables=variables,
         )
 
@@ -1165,7 +1170,7 @@ class TestBlockReopenTask:
         }
         claimed_response = await engine.evaluate(
             claimed_event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=claimed_variables,
         )
 
@@ -1175,7 +1180,7 @@ class TestBlockReopenTask:
         unclaimed_event = _make_reopen_event("#2")
         unclaimed_response = await engine.evaluate(
             unclaimed_event,
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables=claimed_variables,
         )
 
@@ -1189,7 +1194,7 @@ class TestBlockReopenTask:
 
         response = await engine.evaluate(
             _make_reopen_event("#77"),
-            session_id="sess-1",
+            session_id=SESSION_ID,
             variables={
                 "task_claimed": True,
                 "claimed_tasks": {"uuid-1": "#1"},
@@ -1283,7 +1288,7 @@ class TestTaskLifecycleSkillGates:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
@@ -1293,10 +1298,10 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
         allowed = await RuleEngine(db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"loaded_skills": ["task-creation"]},
         )
 
@@ -1309,7 +1314,7 @@ class TestTaskLifecycleSkillGates:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
@@ -1319,10 +1324,10 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
         allowed = await RuleEngine(db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"loaded_skills": ["task-transitions"]},
         )
 
@@ -1335,7 +1340,7 @@ class TestTaskLifecycleSkillGates:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
@@ -1346,10 +1351,10 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
         allowed = await RuleEngine(db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"loaded_skills": ["task-creation"]},
         )
 
@@ -1362,7 +1367,7 @@ class TestTaskLifecycleSkillGates:
         _sync_bundled(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-session",
+            session_id=SESSION_ID,
             source=SessionSource.CODEX,
             timestamp=datetime.now(UTC),
             data={
@@ -1375,10 +1380,10 @@ class TestTaskLifecycleSkillGates:
             },
         )
 
-        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        blocked = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
         allowed = await RuleEngine(db).evaluate(
             event,
-            session_id="sid",
+            session_id=SESSION_ID,
             variables={"loaded_skills": ["task-transitions"]},
         )
 
@@ -1391,7 +1396,7 @@ def _make_reopen_event(task_id: str) -> HookEvent:
     """Create a direct MCP reopen_task before_tool event."""
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="test-session-ext",
+        session_id=EXTERNAL_SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={
@@ -1402,5 +1407,5 @@ def _make_reopen_event(task_id: str) -> HookEvent:
                 "arguments": {"task_id": task_id},
             },
         },
-        metadata={"_platform_session_id": "test-session"},
+        metadata={"_platform_session_id": SESSION_ID},
     )

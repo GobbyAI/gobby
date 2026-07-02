@@ -220,7 +220,8 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
     db: HubDatabase,
     tmp_path,
 ) -> None:
-    platform_session_id = "platform-skill-session"
+    # session_variables.session_id is a native uuid column
+    platform_session_id = "11111111-1111-4111-8111-111111111111"
     SessionVariableManager(db).merge_variables(
         platform_session_id,
         {"baseline_dirty_files": [], "session_edited_files": []},

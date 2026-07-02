@@ -8,7 +8,6 @@ from typing import Any
 
 from gobby.mcp_proxy.bundled import (
     BUNDLED_EXTERNAL_MCP_SERVER_NAMES,
-    LEGACY_GLOBAL_PROJECT_IDS,
     canonical_project_id_for_server,
     is_bundled_external_mcp_server,
     normalize_bundled_managed_args,
@@ -126,7 +125,7 @@ class MCPServerStorageMixin:
         if not is_bundled_external_mcp_server(name):
             return [project_id]
 
-        lookup_ids = [GLOBAL_PROJECT_ID, *LEGACY_GLOBAL_PROJECT_IDS]
+        lookup_ids = [GLOBAL_PROJECT_ID]
         if project_id not in lookup_ids:
             lookup_ids.append(project_id)
         return lookup_ids
@@ -199,10 +198,9 @@ class MCPServerStorageMixin:
     @staticmethod
     def _choose_canonical_server(servers: list[MCPServer]) -> MCPServer:
         """Choose the canonical row to preserve when bundled rows are normalized."""
-        for project_id in (GLOBAL_PROJECT_ID, *LEGACY_GLOBAL_PROJECT_IDS):
-            for server in servers:
-                if server.project_id == project_id:
-                    return server
+        for server in servers:
+            if server.project_id == GLOBAL_PROJECT_ID:
+                return server
         return max(servers, key=lambda server: (server.updated_at, server.created_at, server.id))
 
     def upsert(
@@ -365,22 +363,21 @@ class MCPServerStorageMixin:
             else:
                 runtime_servers.append(server)
 
-        for project_scope in (GLOBAL_PROJECT_ID, *LEGACY_GLOBAL_PROJECT_IDS):
-            global_conditions = ["project_id = %s"]
-            params: list[Any] = [project_scope]
-            if enabled_only:
-                global_conditions.append("enabled IS TRUE")
-            global_conditions.append(
-                "name IN ({})".format(",".join("%s" for _ in BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
-            )
-            params.extend(sorted(BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
-            rows = self.db.fetchall(
-                f"SELECT * FROM mcp_servers WHERE {' AND '.join(global_conditions)} ORDER BY name",  # nosec B608
-                tuple(params),
-            )
-            for row in rows:
-                server = MCPServer.from_row(row)
-                bundled_groups.setdefault(server.name, []).append(server)
+        global_conditions = ["project_id = %s"]
+        params: list[Any] = [GLOBAL_PROJECT_ID]
+        if enabled_only:
+            global_conditions.append("enabled IS TRUE")
+        global_conditions.append(
+            "name IN ({})".format(",".join("%s" for _ in BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
+        )
+        params.extend(sorted(BUNDLED_EXTERNAL_MCP_SERVER_NAMES))
+        rows = self.db.fetchall(
+            f"SELECT * FROM mcp_servers WHERE {' AND '.join(global_conditions)} ORDER BY name",  # nosec B608
+            tuple(params),
+        )
+        for row in rows:
+            server = MCPServer.from_row(row)
+            bundled_groups.setdefault(server.name, []).append(server)
 
         for _name, servers in sorted(bundled_groups.items()):
             runtime_servers.append(self._choose_canonical_server(servers))

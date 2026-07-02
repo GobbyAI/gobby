@@ -18,6 +18,10 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+# Valid-format UUIDs that don't exist in the database.
+UNKNOWN_ID = "99999999-9999-4999-8999-999999999999"
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -117,7 +121,7 @@ class TestGetWorkflow:
         assert resp.json()["definition"]["name"] == "test-workflow"
 
     def test_get_not_found(self, client: TestClient) -> None:
-        resp = client.get("/api/workflows/nonexistent-id")
+        resp = client.get(f"/api/workflows/{UNKNOWN_ID}")
         assert resp.status_code == 404
 
 
@@ -166,7 +170,7 @@ class TestUpdateWorkflow:
         assert "No fields" in resp.json()["detail"]
 
     def test_update_not_found(self, client: TestClient) -> None:
-        resp = client.put("/api/workflows/nonexistent", json={"name": "x"})
+        resp = client.put(f"/api/workflows/{UNKNOWN_ID}", json={"name": "x"})
         assert resp.status_code == 404
 
 
@@ -183,7 +187,7 @@ class TestToggleWorkflow:
         assert resp.json()["definition"]["enabled"] is False
 
     def test_toggle_not_found(self, client: TestClient) -> None:
-        resp = client.put("/api/workflows/nonexistent/toggle")
+        resp = client.put(f"/api/workflows/{UNKNOWN_ID}/toggle")
         assert resp.status_code == 404
 
 
@@ -202,7 +206,7 @@ class TestDeleteWorkflow:
         assert resp.json()["deleted"] is True
 
     def test_delete_not_found(self, client: TestClient) -> None:
-        resp = client.delete("/api/workflows/nonexistent")
+        resp = client.delete(f"/api/workflows/{UNKNOWN_ID}")
         assert resp.status_code == 404
 
 
@@ -225,7 +229,7 @@ class TestDuplicateWorkflow:
 
     def test_duplicate_not_found(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/workflows/nonexistent/duplicate",
+            f"/api/workflows/{UNKNOWN_ID}/duplicate",
             json={"new_name": "copy"},
         )
         assert resp.status_code == 404
@@ -246,7 +250,7 @@ class TestExportWorkflow:
         assert resp.headers["content-type"].startswith("application/x-yaml")
 
     def test_export_not_found(self, client: TestClient) -> None:
-        resp = client.get("/api/workflows/nonexistent/export")
+        resp = client.get(f"/api/workflows/{UNKNOWN_ID}/export")
         assert resp.status_code == 404
 
 
@@ -271,7 +275,7 @@ class TestImportWorkflow:
 
 class TestRestoreWorkflow:
     def test_restore_not_found(self, client: TestClient) -> None:
-        resp = client.post("/api/workflows/nonexistent/restore")
+        resp = client.post(f"/api/workflows/{UNKNOWN_ID}/restore")
         assert resp.status_code == 404
 
 
@@ -449,11 +453,11 @@ class TestTemplates:
 class TestMoveWorkflow:
     def test_move_to_project_not_found(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/workflows/nonexistent/move-to-project",
-            json={"project_id": "proj-1"},
+            f"/api/workflows/{UNKNOWN_ID}/move-to-project",
+            json={"project_id": PROJECT_ID},
         )
         assert resp.status_code == 404
 
     def test_move_to_global_not_found(self, client: TestClient) -> None:
-        resp = client.post("/api/workflows/nonexistent/move-to-global")
+        resp = client.post(f"/api/workflows/{UNKNOWN_ID}/move-to-global")
         assert resp.status_code == 404

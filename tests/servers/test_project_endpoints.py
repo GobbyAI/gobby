@@ -164,14 +164,14 @@ class TestProjectResolutionEndpoints:
         )
         session_storage.update_status(session.id, "handoff_ready")
 
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="cwd-machine"):
-            response = client.post(
-                "/api/sessions/find_parent",
-                json={
-                    "source": "claude",
-                    "cwd": str(temp_dir),  # Use cwd instead of project_id
-                },
-            )
+        response = client.post(
+            "/api/sessions/find_parent",
+            json={
+                "source": "claude",
+                "machine_id": "cwd-machine",
+                "cwd": str(temp_dir),  # Use cwd instead of project_id
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()

@@ -354,6 +354,44 @@ impl Drop for ActiveIndexProgress<'_> {
     }
 }
 
+fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {
+    walker::DiscoveryOptions {
+        respect_gitignore: ctx.indexing.respect_gitignore,
+    }
+}
+
+pub(super) fn explicit_route_with_discovery_options(
+    root_path: &Path,
+    abs: &Path,
+    excludes: &[&str],
+    options: walker::DiscoveryOptions,
+) -> ExplicitFileRoute {
+    if !options.respect_gitignore {
+        return explicit_file_route(root_path, abs, excludes);
+    }
+    match walker::classify_explicit_file_with_options(root_path, abs, excludes, options) {
+        Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
+        Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
+        None => ExplicitFileRoute::Skip,
+    }
+}
+
+pub(super) fn cleanup_skipped_file_if_indexed(
+    ctx: &Context,
+    rel: &str,
+    outcome: &mut IndexOutcome,
+    file_facts_exist: bool,
+    file_vectors_synced: Option<bool>,
+    delete_file_facts: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    outcome.skipped_files += 1;
+    if file_facts_exist {
+        cleanup_deleted_file_projections(ctx, rel, outcome, file_vectors_synced);
+        delete_file_facts()?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod progress_tests {
     use super::*;
@@ -396,42 +434,4 @@ mod progress_tests {
             ]
         );
     }
-}
-
-fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {
-    walker::DiscoveryOptions {
-        respect_gitignore: ctx.indexing.respect_gitignore,
-    }
-}
-
-pub(super) fn explicit_route_with_discovery_options(
-    root_path: &Path,
-    abs: &Path,
-    excludes: &[&str],
-    options: walker::DiscoveryOptions,
-) -> ExplicitFileRoute {
-    if !options.respect_gitignore {
-        return explicit_file_route(root_path, abs, excludes);
-    }
-    match walker::classify_explicit_file_with_options(root_path, abs, excludes, options) {
-        Some(walker::FileClassification::Ast) => ExplicitFileRoute::Ast,
-        Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
-        None => ExplicitFileRoute::Skip,
-    }
-}
-
-pub(super) fn cleanup_skipped_file_if_indexed(
-    ctx: &Context,
-    rel: &str,
-    outcome: &mut IndexOutcome,
-    file_facts_exist: bool,
-    file_vectors_synced: Option<bool>,
-    delete_file_facts: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    outcome.skipped_files += 1;
-    if file_facts_exist {
-        cleanup_deleted_file_projections(ctx, rel, outcome, file_vectors_synced);
-        delete_file_facts()?;
-    }
-    Ok(())
 }

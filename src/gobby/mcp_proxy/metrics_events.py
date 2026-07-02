@@ -94,8 +94,8 @@ class MetricsEventStore:
             """,
             (
                 event_type,
-                project_id,
-                session_id,
+                project_id or None,
+                session_id or None,
                 server_name,
                 name,
                 bool(success),
@@ -387,8 +387,9 @@ class MetricsEventStore:
         """
         cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
 
-        # UPSERT aggregated counts into archive.
-        # Use COALESCE to keep nullable dimensions deterministic in conflict targets.
+        # UPSERT aggregated counts into archive. project_id is a nullable uuid;
+        # the rollup constraint is UNIQUE NULLS NOT DISTINCT, so NULL is a
+        # deterministic conflict target and must not be coalesced to ''.
         self.db.execute(
             """
             INSERT INTO metrics_events_archive (
@@ -398,7 +399,7 @@ class MetricsEventStore:
             )
             SELECT
                 event_type,
-                COALESCE(project_id, ''),
+                project_id,
                 COALESCE(server_name, ''),
                 name,
                 COUNT(*),
@@ -409,7 +410,7 @@ class MetricsEventStore:
                 SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END)
             FROM metrics_events
             WHERE created_at < %s
-            GROUP BY event_type, COALESCE(project_id, ''), COALESCE(server_name, ''), name
+            GROUP BY event_type, project_id, COALESCE(server_name, ''), name
             ON CONFLICT(event_type, project_id, server_name, name) DO UPDATE SET
                 call_count = metrics_events_archive.call_count + excluded.call_count,
                 success_count = metrics_events_archive.success_count + excluded.success_count,

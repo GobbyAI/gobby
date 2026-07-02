@@ -8,7 +8,8 @@ use crate::visibility;
 
 use super::common::{
     FILTERED_FETCH_CAP, PgParam, SymbolFilters, SymbolOrder, append_unique_symbols, escape_like,
-    push_param, query_symbols_by_conditions, sanitize_pg_search_query,
+    push_id_list_param, push_id_param, push_param, query_symbols_by_conditions,
+    sanitize_pg_search_query,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +50,7 @@ pub fn search_symbols_fts(
 
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
-    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let project_placeholder = push_id_param(&mut params, project_id);
     let conditions = vec![
         format!(
             "(cs.name @@@ {q} OR cs.qualified_name @@@ {q} OR cs.signature @@@ {q} OR cs.docstring @@@ {q} OR cs.summary @@@ {q})",
@@ -88,7 +89,7 @@ pub fn search_symbols_by_name(
     let escaped_query = escape_like(query);
     let pattern = format!("%{escaped_query}%");
     let mut params = Vec::new();
-    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let project_placeholder = push_id_param(&mut params, project_id);
     let name_placeholder = push_param(&mut params, pattern.clone());
     let qualified_placeholder = push_param(&mut params, pattern);
     let conditions = vec![
@@ -133,7 +134,7 @@ pub fn search_symbols_exact_first(
     };
 
     let mut params = Vec::new();
-    let project = push_param(&mut params, project_id.to_string());
+    let project = push_id_param(&mut params, project_id);
     let query_param = push_param(&mut params, query.to_string());
     let order = SymbolOrder::ExactCaseFirst(query_param.clone());
     let exact = query_symbols_by_conditions(
@@ -157,7 +158,7 @@ pub fn search_symbols_exact_first(
 
     let prefix_pattern = format!("{}%", escape_like(query));
     let mut params = Vec::new();
-    let project = push_param(&mut params, project_id.to_string());
+    let project = push_id_param(&mut params, project_id);
     let prefix = push_param(&mut params, prefix_pattern);
     let prefix_matches = query_symbols_by_conditions(
         conn,
@@ -349,7 +350,7 @@ fn query_visible_symbols_by_conditions(
     if project_ids.is_empty() || limit == 0 {
         return VisibleSearchOutcome::ok(Vec::new());
     }
-    let project_placeholder = push_param(&mut params, project_ids);
+    let project_placeholder = push_id_list_param(&mut params, &project_ids);
     conditions.push(format!("cs.project_id = ANY({project_placeholder})"));
     let symbols = query_symbols_by_conditions(
         conn,

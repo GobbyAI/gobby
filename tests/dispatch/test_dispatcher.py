@@ -31,6 +31,11 @@ from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_sta
 
 pytestmark = pytest.mark.unit
 
+SESSION_1 = "11111111-1111-4111-8111-111111111111"
+OWNER_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+HOLISTIC_COMMENT_ID = "33333333-3333-4333-8333-333333333333"
+UNKNOWN_TASK_ID = "44444444-4444-4444-8444-444444444444"
+
 
 _LEGACY_STAGE_MAP = {
     "expanding": "expansion",
@@ -115,7 +120,7 @@ def _mutex_storage(temp_db: HubDatabase) -> TaskDispatchMutexManager:
 def _session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
-    session_id: str = "session-1",
+    session_id: str = SESSION_1,
 ) -> str:
     temp_db.execute(
         """
@@ -248,8 +253,11 @@ async def test_append_audit_marker_returns_false_on_db_failure(
     broken_db.fetchone.side_effect = psycopg.OperationalError("database unavailable")
     caplog.set_level(logging.WARNING, logger="gobby.dispatch.audit")
 
-    assert await dispatcher.append_audit_marker(broken_db, "task-1", "Dispatch", "marker") is False
-    assert "Failed to append dispatch audit marker for task task-1" in caplog.text
+    assert (
+        await dispatcher.append_audit_marker(broken_db, UNKNOWN_TASK_ID, "Dispatch", "marker")
+        is False
+    )
+    assert f"Failed to append dispatch audit marker for task {UNKNOWN_TASK_ID}" in caplog.text
 
 
 def test_development_prompt_includes_persisted_holistic_failure_context(
@@ -275,12 +283,12 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
             id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
         )
         VALUES (
-            'comment-holistic-followup', %s, NULL, 'holistic-reviewer', 'system',
+            %s, %s, NULL, 'holistic-reviewer', 'system',
             '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
         """,
-        (task.id,),
+        (HOLISTIC_COMMENT_ID, task.id),
     )
 
     action = rules.development_rule(task, build_context(temp_db, task))
@@ -887,7 +895,7 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
     """Run heartbeat blocks ready task behind active overlapping write set."""
     from gobby.dispatch import dispatcher
 
-    owner_session_id = _session(temp_db, sample_project, "owner-session")
+    owner_session_id = _session(temp_db, sample_project, OWNER_SESSION_ID)
     active = _task(
         temp_db,
         sample_project,
@@ -3062,11 +3070,11 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, lifecycle="expanding")
-    _session(temp_db, sample_project, "session-1")
+    _session(temp_db, sample_project, SESSION_1)
     executor = _FakePipelineExecutor()
     services = SimpleNamespace(
         pipeline_executor=executor,
-        triggering_session_id="session-1",
+        triggering_session_id=SESSION_1,
     )
     monkeypatch.setattr(
         dispatcher.dispatch_rules,
@@ -3089,7 +3097,7 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     calls = await _wait_for_executor_calls(executor)
 
     assert calls[0]["inputs"] == {"task_id": task.id}
-    assert calls[0]["session_id"] == "session-1"
+    assert calls[0]["session_id"] == SESSION_1
 
 
 @pytest.mark.asyncio

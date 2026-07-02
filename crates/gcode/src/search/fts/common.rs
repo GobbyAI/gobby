@@ -68,6 +68,38 @@ where
     format!("${}", params.len())
 }
 
+/// Push a project/symbol id for a native-uuid column bind.
+///
+/// The FTS layer swallows query failures into empty results, so a non-uuid id
+/// (which cannot exist in the hub) binds SQL `NULL` — `col = NULL` matches no
+/// rows, preserving the pre-uuid "unknown id finds nothing" behavior while
+/// keeping placeholder numbering intact.
+pub(super) fn push_id_param(params: &mut Vec<PgParam>, id: &str) -> String {
+    match uuid::Uuid::parse_str(id) {
+        Ok(id) => push_param(params, id),
+        Err(error) => {
+            log::warn!("non-uuid id `{id}` in FTS query matches no rows: {error}");
+            push_param(params, Option::<uuid::Uuid>::None)
+        }
+    }
+}
+
+/// Push a list of project ids for a `= ANY(...)` uuid-array bind, dropping
+/// non-uuid entries (they cannot match any hub row).
+pub(super) fn push_id_list_param(params: &mut Vec<PgParam>, ids: &[String]) -> String {
+    let ids: Vec<uuid::Uuid> = ids
+        .iter()
+        .filter_map(|id| match uuid::Uuid::parse_str(id) {
+            Ok(id) => Some(id),
+            Err(error) => {
+                log::warn!("dropping non-uuid id `{id}` from FTS id list: {error}");
+                None
+            }
+        })
+        .collect();
+    push_param(params, ids)
+}
+
 pub(super) fn param_refs(params: &[PgParam]) -> Vec<&(dyn ToSql + Sync)> {
     params
         .iter()
@@ -97,7 +129,7 @@ pub(super) fn push_visible_project_file_filter(
 
     match &ctx.index_scope {
         ProjectIndexScope::Single => {
-            let project = push_param(params, ctx.project_id.clone());
+            let project = push_id_param(params, &ctx.project_id);
             conditions.push(format!("{row_alias}.project_id = {project}"));
         }
         ProjectIndexScope::Overlay {
@@ -105,8 +137,8 @@ pub(super) fn push_visible_project_file_filter(
             parent_project_id,
             ..
         } => {
-            let overlay = push_param(params, overlay_project_id.clone());
-            let parent = push_param(params, parent_project_id.clone());
+            let overlay = push_id_param(params, overlay_project_id);
+            let parent = push_id_param(params, parent_project_id);
             conditions.push(format!(
                 "({row_alias}.project_id = {overlay}
                   OR (

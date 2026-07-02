@@ -265,8 +265,11 @@ class TestCronRun:
     """Tests for 'gobby cron run'."""
 
     def test_run_triggers_execution(self, runner, mock_storage) -> None:
-        with patch("gobby.cli.cron.DaemonClient") as client_cls:
-            client = client_cls.return_value
+        # `cron run` obtains its client via gobby.cli.cron.get_daemon_client,
+        # so patch that seam (patching DaemonClient would leak real HTTP calls
+        # to any locally running daemon).
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            client = get_client.return_value
             client.call_http_api.return_value = _make_daemon_response()
 
             result = runner.invoke(cli, ["cron", "run", "cj-abc123"])
@@ -285,8 +288,8 @@ class TestCronRun:
             status_code=404,
             payload={"detail": "Cron job not found: cj-nonexistent"},
         )
-        with patch("gobby.cli.cron.DaemonClient") as client_cls:
-            client_cls.return_value.call_http_api.return_value = response
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            get_client.return_value.call_http_api.return_value = response
             result = runner.invoke(cli, ["cron", "run", "cj-nonexistent"])
 
         assert result.exit_code != 0
@@ -294,8 +297,8 @@ class TestCronRun:
         mock_storage.create_run.assert_not_called()
 
     def test_run_json_output(self, runner, mock_storage) -> None:
-        with patch("gobby.cli.cron.DaemonClient") as client_cls:
-            client_cls.return_value.call_http_api.return_value = _make_daemon_response()
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            get_client.return_value.call_http_api.return_value = _make_daemon_response()
             result = runner.invoke(cli, ["cron", "run", "cj-abc123", "--json"])
 
         assert result.exit_code == 0
@@ -340,8 +343,8 @@ class TestCronRun:
         detail: dict[str, str],
         expected: str,
     ) -> None:
-        with patch("gobby.cli.cron.DaemonClient") as client_cls:
-            client_cls.return_value.call_http_api.return_value = _make_daemon_response(
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            get_client.return_value.call_http_api.return_value = _make_daemon_response(
                 status_code=status_code,
                 payload={"detail": detail},
             )
@@ -352,8 +355,8 @@ class TestCronRun:
         mock_storage.create_run.assert_not_called()
 
     def test_run_daemon_unavailable(self, runner, mock_storage) -> None:
-        with patch("gobby.cli.cron.DaemonClient") as client_cls:
-            client_cls.return_value.call_http_api.side_effect = httpx.ConnectError(
+        with patch("gobby.cli.cron.get_daemon_client") as get_client:
+            get_client.return_value.call_http_api.side_effect = httpx.ConnectError(
                 "connection refused"
             )
             result = runner.invoke(cli, ["cron", "run", "cj-abc123"])

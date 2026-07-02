@@ -1,5 +1,7 @@
 """Focused tests for session storage behavior."""
 
+import uuid
+
 import pytest
 
 from gobby.storage.projects import LocalProjectManager
@@ -117,7 +119,7 @@ class TestSessionManagerLifecycle:
 
     def test_delete_nonexistent(self, session_manager: SessionManager) -> None:
         """Test deleting nonexistent session returns False."""
-        result = session_manager.delete("nonexistent-id")
+        result = session_manager.delete(str(uuid.uuid4()))
         assert result is False
 
     def test_transcript_processing_lifecycle(
@@ -459,7 +461,7 @@ class TestSessionManagerLifecycle:
 
     def test_count_no_results(self, session_manager: SessionManager) -> None:
         """Test count returns 0 when no sessions match."""
-        count = session_manager.count(project_id="nonexistent-project")
+        count = session_manager.count(project_id=str(uuid.uuid4()))
         assert count == 0
 
     def test_count_by_status(

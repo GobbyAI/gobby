@@ -378,7 +378,9 @@ async def test_restore_memory_unhides_dream_flagged_row(manager: MemoryManager) 
 async def test_restore_memory_missing_raises(manager: MemoryManager) -> None:
     """Restoring an unknown memory id raises ValueError from storage."""
     with pytest.raises(ValueError, match="not found"):
-        manager.restore_memory("does-not-exist")
+        # memories.id is a native uuid column, so the unknown probe must be
+        # a valid-format UUID.
+        manager.restore_memory("99999999-9999-4999-8999-999999999999")
 
 
 @pytest.mark.asyncio

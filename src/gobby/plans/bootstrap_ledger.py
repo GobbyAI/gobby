@@ -336,7 +336,7 @@ def _task_title(db: HubDatabase, *, project_id: str, task_ref: str) -> str | Non
     row = db.fetchone(
         """
         SELECT title FROM tasks
-        WHERE project_id = %s AND (id = %s OR id LIKE %s ESCAPE '!')
+        WHERE project_id = %s AND (id::text = %s OR id::text LIKE %s ESCAPE '!')
         ORDER BY id
         LIMIT 1
         """,

@@ -3,8 +3,8 @@ use postgres::Client;
 use crate::config::Context;
 
 use super::common::{
-    PgParam, SymbolFilters, param_refs, push_param, push_path_filter, push_symbol_filters,
-    push_visible_project_file_filter, query_count, sanitize_pg_search_query,
+    PgParam, SymbolFilters, param_refs, push_id_param, push_param, push_path_filter,
+    push_symbol_filters, push_visible_project_file_filter, query_count, sanitize_pg_search_query,
 };
 
 pub fn count_text(
@@ -26,7 +26,7 @@ pub fn count_text(
 
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
-    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let project_placeholder = push_id_param(&mut params, project_id);
     let mut conditions = vec![
         format!(
             "(cs.name @@@ {q} OR cs.qualified_name @@@ {q} OR cs.signature @@@ {q} OR cs.docstring @@@ {q} OR cs.summary @@@ {q})",
@@ -84,7 +84,7 @@ pub fn count_content(
     }
     let mut params = Vec::new();
     let query_placeholder = push_param(&mut params, bm25_query);
-    let project_placeholder = push_param(&mut params, project_id.to_string());
+    let project_placeholder = push_id_param(&mut params, project_id);
     let mut conditions = vec![
         format!("c.content @@@ {query_placeholder}"),
         format!("c.project_id = {project_placeholder}"),
