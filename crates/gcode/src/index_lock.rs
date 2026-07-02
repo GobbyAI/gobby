@@ -319,5 +319,50 @@ mod tests {
 
             assert_eq!(result, IndexLockResult::Acquired(7));
         }
+
+        /// Regression guard for #17482: `commands::index::run` runs the
+        /// graph/vector projection sync INSIDE the `with_project_lock` closure,
+        /// so the per-project advisory lock is held for the entire index+sync run.
+        /// This proves that once execution is inside the locked closure — past the
+        /// index phase, in the projection-sync phase — a competing acquirer of the
+        /// same `project_lock_key` on another connection is still refused (Busy).
+        /// If the sync were moved back outside the lock, the projection phase would
+        /// no longer be covered; this test pins the lock over the full closure body.
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn projection_sync_phase_is_covered_by_the_project_lock() {
+            let database_url = connect_postgres_test_db();
+            let project_id = "gcode-lock-projection-phase";
+            let ctx = context_for(database_url.clone(), project_id);
+            let key = project_lock_key(project_id);
+
+            // Model run()'s locked body: the index phase has completed and the
+            // projection-sync phase is now running — still inside the closure.
+            // From there, a second acquirer must observe the lock as held.
+            let observed = with_project_lock(&ctx, IndexLockPolicy::Wait, || {
+                let mut competitor =
+                    db::connect_readwrite(&database_url).expect("connect competing acquirer");
+                let acquired = try_advisory_lock(&mut competitor, key)
+                    .expect("probe project lock during projection-sync phase");
+                if acquired {
+                    // Never expected; release so a violated guarantee doesn't leak.
+                    competitor
+                        .execute("SELECT pg_advisory_unlock($1)", &[&key])
+                        .expect("release probe lock");
+                }
+                Ok::<_, anyhow::Error>(!acquired)
+            })
+            .expect("acquire project lock");
+
+            assert_eq!(
+                observed,
+                IndexLockResult::Acquired(true),
+                "project lock must remain held during the projection-sync phase"
+            );
+        }
     }
 }

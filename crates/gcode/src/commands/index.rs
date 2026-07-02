@@ -40,37 +40,56 @@ pub fn run(
         sync_projections,
     };
 
+    // Both the PostgreSQL index phase and the graph/vector projection sync must
+    // run under the same per-project lock. Releasing the lock before the sync
+    // (the previous behavior) let a second `--full --sync-projections` run — CLI
+    // or daemon-triggered — project concurrently, contending on FalkorDB, Qdrant,
+    // and the embedding endpoint.
+    enum RunOutput {
+        IndexOnly(IndexOutcome),
+        Projections(IndexSyncProjectionsOutput),
+    }
+
     let mut index_progress = StderrIndexProgress::new(target_ctx.quiet);
-    let outcome = match index_lock::with_project_lock(&target_ctx, IndexLockPolicy::Wait, || {
-        api::index_files(
+    let run_output = index_lock::with_project_lock(&target_ctx, IndexLockPolicy::Wait, || {
+        let outcome = api::index_files(
             request,
             &target_ctx,
             api::IndexOptions::with_progress(&mut index_progress),
-        )
-    })? {
-        IndexLockResult::Acquired(outcome) => outcome,
+        )?;
+        if sync_projections {
+            let mut projection_progress = StderrProjectionProgress::new(target_ctx.quiet);
+            let projections = sync::sync_after_index(
+                &target_ctx,
+                &outcome.indexed_file_paths,
+                &mut projection_progress,
+            )?;
+            Ok(RunOutput::Projections(sync_projections_payload(
+                &outcome,
+                projections,
+            )))
+        } else {
+            Ok(RunOutput::IndexOnly(outcome))
+        }
+    })?;
+
+    let run_output = match run_output {
+        IndexLockResult::Acquired(run_output) => run_output,
         IndexLockResult::Busy => anyhow::bail!(
             "index lock is busy for project {}; wait policy did not acquire it",
             target_ctx.project_id
         ),
     };
-    if sync_projections {
-        let mut projection_progress = StderrProjectionProgress::new(target_ctx.quiet);
-        let projections = sync::sync_after_index(
-            &target_ctx,
-            &outcome.indexed_file_paths,
-            &mut projection_progress,
-        )?;
-        let payload = sync_projections_payload(&outcome, projections);
-        return match format {
+
+    match run_output {
+        RunOutput::Projections(payload) => match format {
             Format::Json => output::print_json(&payload),
             Format::Text => output::print_text(&sync_projections_text(&payload)?),
-        };
-    }
-
-    match format {
-        Format::Json => output::print_json(&outcome),
-        Format::Text => output::print_text(&index_text(&outcome)),
+        },
+        RunOutput::IndexOnly(outcome) => match format {
+            Format::Json => output::print_json(&outcome),
+            Format::Text => output::print_text(&index_text(&outcome)),
+        },
     }
 }
 
