@@ -122,7 +122,7 @@ def test_postgres_baseline_declares_foreign_keys_deferrable() -> None:
 
     _assert_matches(
         sql,
-        r"parent_session_id\s+UUID\s+REFERENCES\s+sessions\s*\(\s*id\s*\)"
+        r"parent_session_id\s+TEXT\s+REFERENCES\s+sessions\s*\(\s*id\s*\)"
         r"[^,\n]*DEFERRABLE\s+INITIALLY\s+IMMEDIATE",
         "self-referential sessions.parent_session_id must be deferrable",
     )
@@ -134,7 +134,7 @@ def test_postgres_baseline_declares_foreign_keys_deferrable() -> None:
     )
     _assert_matches(
         sql,
-        r"parent_session_id\s+UUID\s+NOT\s+NULL\s+REFERENCES\s+sessions\s*\(\s*id\s*\)"
+        r"parent_session_id\s+TEXT\s+NOT\s+NULL\s+REFERENCES\s+sessions\s*\(\s*id\s*\)"
         r"[^,\n]*DEFERRABLE\s+INITIALLY\s+IMMEDIATE",
         "agent_runs.parent_session_id -> sessions.id must be deferrable",
     )
