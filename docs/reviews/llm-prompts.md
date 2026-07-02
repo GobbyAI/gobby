@@ -175,8 +175,9 @@
 - **Minimal fix:** Guard `if not isinstance(data, dict): continue`, wrap `_classify_event` in `try/except Exception` that logs and yields a base `StreamEvent(raw=data)`, and use `decode(errors="replace")`.
 - **Confidence:** high.
 
-### [IMPORTANT] `config ai.generation.profile_defaults` is ignored for profile-only requests
+### [RESOLVED] `config ai.generation.profile_defaults` is ignored for profile-only requests
 
+- **Resolution (#17527):** Profile overrides are now honored — `TextGenerationService._candidate_requests` consults `self._profile_defaults` before the hardcoded defaults (`src/gobby/ai/_text_generation_service.py:545`).
 - **Where:** `src/gobby/ai/text_generation.py:286-294` (uses hardcoded `default_candidates_for_profile`); `src/gobby/config/feature_base.py:31-47` (the hardcoded table); `src/gobby/config/app.py:539-551` (`profile_defaults` applied only to feature configs); `src/gobby/servers/routes/llm.py:57-62`
 - **Failure mode:** `TextGenerationService._candidate_requests` resolves a profile-only request via the hardcoded `DEFAULT_PROFILE_CANDIDATES`; the user's `ai.generation.profile_defaults` overrides (documented at `docs/guides/llm-features.md:29-36`) are threaded only into `FeatureDefaultConfig.candidates`. So `POST /api/llm/generate` with only a prompt (or an explicit `profile`) routes to cloud CLI candidates even when the operator pinned `feature_low` to local-only — silently defeating privacy/cost intent.
 - **Minimal fix:** Pass `config.ai.generation.profile_defaults` into `TextGenerationService` and consult it before `default_candidates_for_profile`.

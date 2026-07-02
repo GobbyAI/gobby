@@ -174,13 +174,13 @@ fn aggregate_docs_use_heavier_prompt_tier_than_symbol_docs() {
             .map(|(_, tier)| *tier)
             .collect::<Vec<_>>()
     };
-    // Top-level repo-wide synthesis routes to the opus-first aggregate tier (#904).
+    // Top-level repo-wide synthesis routes to the feature_high aggregate tier (#904).
     for aggregate in [prompts::REPO_SYSTEM, prompts::ARCHITECTURE_SYSTEM] {
         let seen = tier_for(aggregate);
         assert!(!seen.is_empty(), "{aggregate} generates");
         assert!(
             seen.iter().all(|tier| *tier == PromptTier::Aggregate),
-            "{aggregate} routes to the opus-first aggregate tier"
+            "{aggregate} routes to the feature_high aggregate tier"
         );
     }
     // Module docs and file-body narratives are mid-level per-unit synthesis, so

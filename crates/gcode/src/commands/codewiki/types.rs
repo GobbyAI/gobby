@@ -724,7 +724,7 @@ pub type TextVerifier<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
 
 /// Weight tier of one codewiki generation call (#904). `Aggregate` is the
 /// top-level repo-wide synthesis — repo overview, architecture, and the curated
-/// narrative/concept layer — and is written opus-first. `Module` is mid-level
+/// narrative/concept layer — on the heavy feature_high profile. `Module` is mid-level
 /// per-unit synthesis (module docs and file-body narratives) and routes to
 /// sonnet. `Standard` is high-volume per-symbol prose on the default low tier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

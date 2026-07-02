@@ -158,8 +158,9 @@ structural fallbacks:
 On the daemon route, aggregate docs (architecture, module, repo, curated
 concept, and narrative prose) request a heavier daemon profile because they
 synthesize many child summaries into one long grounded answer; file and symbol
-docs stay on the daemon default profile. The aggregate writer chain defaults to
-an opus-first profile; override it with `--ai-aggregate-profile <PROFILE>`.
+docs stay on the daemon default profile. The aggregate writer defaults to the
+`feature_high` profile (daemon chain: codex/gpt-5.5@xhigh, then
+claude/opus@high); override it with `--ai-aggregate-profile <PROFILE>`.
 
 ### Prose Depth and Audience Register
 
