@@ -7,6 +7,7 @@ Clones are full repository copies while worktrees share a single .git directory.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,7 +15,6 @@ from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ class LocalCloneManager:
         Returns:
             Created Clone instance
         """
-        clone_id = generate_prefixed_id("clone", length=6)
+        clone_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
 
         self.db.execute(

@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.skills._models import SkillFile
-from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+# Deterministic id namespace: same (skill_id, path) -> same id, backing the
+# UNIQUE(skill_id, path) constraint with id-level stability.
+_NS_SKILL_FILES = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:skill_files")
 
 
 class SkillFilesMixin:
@@ -98,7 +102,7 @@ class SkillFilesMixin:
                     # else: hash matches, skip
                 else:
                     # New file — insert
-                    file_id = generate_prefixed_id("skf", f"{skill_id}:{f.path}")
+                    file_id = str(uuid.uuid5(_NS_SKILL_FILES, f"{skill_id}:{f.path}"))
                     conn.execute(
                         """INSERT INTO skill_files
                            (id, skill_id, path, file_type, content, content_hash,

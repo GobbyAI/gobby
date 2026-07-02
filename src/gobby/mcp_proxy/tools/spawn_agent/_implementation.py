@@ -502,7 +502,7 @@ async def spawn_agent_impl(
 
     # 9. Generate session and run IDs
     session_id = str(uuid.uuid4())
-    run_id = f"run-{uuid.uuid4().hex[:12]}"
+    run_id = str(uuid.uuid4())
 
     # 10. Build initial_variables (merge factory's with impl's own)
     effective_initial_variables: dict[str, Any] = {}

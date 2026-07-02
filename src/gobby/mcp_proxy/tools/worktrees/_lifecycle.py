@@ -125,7 +125,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Do NOT manually run `git worktree remove` - use this tool instead.
 
         Args:
-            worktree_id: The worktree ID to delete (e.g., "wt-abc123").
+            worktree_id: The worktree ID (uuid) to delete.
             force: Force deletion even if there are uncommitted changes.
             project_path: Optional path to project root to resolve git context.
 

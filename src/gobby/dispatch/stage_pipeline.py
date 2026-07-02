@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -15,7 +16,6 @@ from gobby.dispatch.actions import StartPipelineAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex, RuntimeDispatchMutexError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
-from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
@@ -248,7 +248,7 @@ def create_stage_pipeline_execution(
     db: HubDatabase,
     services: object | None,
 ) -> str:
-    execution_id = generate_prefixed_id("pe")
+    execution_id = str(uuid.uuid4())
     session_id = getattr(services, "triggering_session_id", None)
     try:
         definition_json = cast(Any, pipeline).model_dump_json()

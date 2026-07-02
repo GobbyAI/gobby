@@ -129,12 +129,12 @@ Emit the plan as a structured list into a session variable
 
 ```yaml
 - step_no: 1
-  worktree_id: wt-abc
+  worktree_id: 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c
   action: merge
   expected_conflicts: []
   verify_command: "uv run pytest tests/storage/"
 - step_no: 2
-  worktree_id: wt-def
+  worktree_id: 0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d
   action: cherry-pick
   commits: ["a1b2c3d"]
   verify_command: "uv run pytest tests/clones/"
@@ -261,7 +261,7 @@ Write a campaign report and pass its reference to
   "executed_steps": [
     {
       "step_no": 1,
-      "worktree_id": "wt-abc",
+      "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
       "action": "merge",
       "outcome": "merged",
       "verify_exit_code": 0,

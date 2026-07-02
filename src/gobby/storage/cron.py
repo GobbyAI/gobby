@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -18,7 +19,6 @@ from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronJob
 from gobby.storage.cron_runs import CronRunStorageMixin
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ class CronJobStorage(CronRunStorageMixin):
         is_system: bool = False,
     ) -> CronJob:
         """Create a new cron job."""
-        job_id = generate_prefixed_id("cj", length=12)
+        job_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
 
         interval_seconds = _normalize_interval_seconds(schedule_type, interval_seconds)

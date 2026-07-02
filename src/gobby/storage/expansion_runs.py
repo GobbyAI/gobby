@@ -150,7 +150,7 @@ class LocalExpansionRunManager:
     ) -> ExpansionRun:
         """Create a new expansion run."""
         if run_id is None:
-            run_id = f"expand-{uuid.uuid4().hex[:12]}"
+            run_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             """

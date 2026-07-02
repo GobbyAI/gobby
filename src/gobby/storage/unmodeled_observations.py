@@ -118,7 +118,7 @@ class UnmodeledObservationStore:
                 RETURNING id
                 """,
                 (
-                    f"uoe-{uuid4().hex}",
+                    str(uuid4()),
                     observation.session_id,
                     observation.source,
                     observation.kind,

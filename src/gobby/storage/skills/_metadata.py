@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.storage.sql_dialect import json_text_expr
-from gobby.utils.id import generate_prefixed_id
+
+# Deterministic id namespace: same (name, project, source) -> same id. Skill id
+# stability matters because skill_files ids are seeded with the skill id.
+_NS_SKILLS = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:skills")
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -124,7 +128,7 @@ class SkillMetadataMixin:
             source = "project"
 
         now = datetime.now(UTC).isoformat()
-        skill_id = generate_prefixed_id("skl", f"{name}:{project_id or 'global'}:{source}")
+        skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
 
         # Check if skill already exists in this project scope with same source
         existing = self.get_by_name(

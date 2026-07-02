@@ -15,6 +15,7 @@ Commands for managing git worktrees:
 """
 
 import json
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from json import JSONDecodeError
@@ -377,10 +378,20 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
 # ... stale/cleanup/stats commands ...
 
 
+def _is_full_uuid(value: str) -> bool:
+    """Return whether a value is a canonical uuid string, safe against uuid columns."""
+    if len(value) != 36:
+        return False
+    try:
+        uuid.UUID(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def resolve_worktree_id(manager: LocalWorktreeManager, worktree_ref: str) -> str:
     """Resolve worktree reference (UUID or prefix) to full ID."""
-    # Optimization: check 36 chars?
-    if len(worktree_ref) == 36 and manager.get(worktree_ref):
+    if _is_full_uuid(worktree_ref) and manager.get(worktree_ref):
         return worktree_ref
 
     # Use list listing since local manager doesn't expose prefix search easily

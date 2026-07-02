@@ -103,7 +103,7 @@ class ToolMetricsStore:
             success: Whether the call succeeded
         """
         now = datetime.now(UTC).isoformat()
-        metrics_id = f"tm-{uuid.uuid4().hex[:6]}"
+        metrics_id = str(uuid.uuid4())
         success_inc = 1 if success else 0
         failure_inc = 0 if success else 1
 

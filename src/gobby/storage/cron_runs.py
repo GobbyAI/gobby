@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,7 +19,6 @@ from gobby.storage.cron_children import (
 from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronRun
 from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
-from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
 CRON_RUN_ERROR_MAX_CHARS = 5000
@@ -44,7 +44,7 @@ class CronRunStorageMixin:
 
     def create_run(self, cron_job_id: str) -> CronRun | None:
         """Create a cron run unless this job already has pending/running work."""
-        run_id = generate_prefixed_id("cr", length=12)
+        run_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
 
         candidate = CronRun(
@@ -94,7 +94,7 @@ class CronRunStorageMixin:
         if max_concurrent_jobs < 1:
             raise ValueError("max_concurrent_jobs must be positive")
 
-        run_id = generate_prefixed_id("cr", length=12)
+        run_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
 
         candidate = CronRun(

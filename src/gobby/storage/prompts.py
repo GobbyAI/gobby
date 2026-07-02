@@ -8,6 +8,7 @@ prompts.
 
 import json
 import logging
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -15,7 +16,10 @@ from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.id import generate_prefixed_id
+
+# Deterministic id namespace: same (name, scope, project) -> same id, backing
+# the UNIQUE(name, scope, project_id) constraint with id-level stability.
+_NS_PROMPTS = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:prompts")
 
 __all__ = [
     "LocalPromptManager",
@@ -283,7 +287,7 @@ class LocalPromptManager:
             ValueError: If prompt already exists in that scope
         """
         now = datetime.now(UTC).isoformat()
-        prompt_id = generate_prefixed_id("pmt", f"{name}:{scope}:{project_id or 'none'}")
+        prompt_id = str(uuid.uuid5(_NS_PROMPTS, f"{name}:{scope}:{project_id or 'none'}"))
 
         variables_json = json.dumps(variables) if variables else None
 

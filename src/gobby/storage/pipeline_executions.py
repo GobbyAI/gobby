@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.id import generate_prefixed_id
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 logger = logging.getLogger("gobby.storage.pipelines")
+
+
+def _is_full_uuid(value: str) -> bool:
+    """Return whether a value is a canonical uuid string, safe against uuid columns."""
+    if len(value) != 36:
+        return False
+    try:
+        uuid.UUID(value)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 class PipelineExecutionStorageMixin:
@@ -54,7 +65,7 @@ class PipelineExecutionStorageMixin:
             Created PipelineExecution instance
         """
         project_id = self._require_project_id()
-        execution_id = generate_prefixed_id("pe")
+        execution_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
 
         with self.db.transaction():
@@ -518,8 +529,8 @@ class PipelineExecutionStorageMixin:
         """Resolve an execution reference to a UUID.
 
         Supports:
-        - Full UUID: pe-abc123... or UUID format
-        - UUID prefix: pe-abc1 (matches by prefix)
+        - Full UUID
+        - UUID prefix (matches by prefix)
 
         Args:
             ref: Execution reference
@@ -530,10 +541,12 @@ class PipelineExecutionStorageMixin:
         Raises:
             ValueError: If reference cannot be resolved
         """
-        # Try exact match first
-        execution = self.get_execution(ref)
-        if execution:
-            return execution.id
+        # Try exact match first; short prefixes are not valid uuid literals and
+        # would error against the uuid PK column.
+        if _is_full_uuid(ref):
+            execution = self.get_execution(ref)
+            if execution:
+                return execution.id
 
         # Try prefix match.
         escaped_ref = ref.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -541,7 +554,7 @@ class PipelineExecutionStorageMixin:
         rows = self.db.fetchall(
             f"""
             SELECT id FROM pipeline_executions
-            WHERE id LIKE %s ESCAPE '\\' AND {project_clause}
+            WHERE id::text LIKE %s ESCAPE '\\' AND {project_clause}
             ORDER BY id ASC
             LIMIT 2
             """,  # nosec B608

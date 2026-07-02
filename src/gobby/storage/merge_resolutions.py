@@ -5,6 +5,7 @@ Stores merge resolutions and conflicts for worktree merge operations.
 """
 
 import logging
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,9 +15,13 @@ from typing import Any
 import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
+
+# Deterministic id namespaces: same seed -> same id, which IS the merge_start
+# idempotency guarantee (duplicate seed hits the PK conflict on plain INSERT).
+_NS_MERGE_RESOLUTIONS = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:merge_resolutions")
+_NS_MERGE_CONFLICTS = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:merge_conflicts")
 
 
 class ConflictStatus(Enum):
@@ -174,7 +179,7 @@ class MergeResolutionManager:
             The created MergeResolution
         """
         now = datetime.now(UTC).isoformat()
-        resolution_id = generate_prefixed_id("mr", worktree_id + source_branch)
+        resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, worktree_id + source_branch))
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -431,7 +436,7 @@ class MergeResolutionManager:
             The created MergeConflict
         """
         now = datetime.now(UTC).isoformat()
-        conflict_id = generate_prefixed_id("mc", resolution_id + file_path)
+        conflict_id = str(uuid.uuid5(_NS_MERGE_CONFLICTS, resolution_id + file_path))
 
         with self.db.transaction() as conn:
             conn.execute(

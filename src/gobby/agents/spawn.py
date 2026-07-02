@@ -173,7 +173,7 @@ def prepare_terminal_spawn(
 
     # Use provided agent_run_id or generate one (backward compat)
     if agent_run_id is None:
-        agent_run_id = f"run-{uuid.uuid4().hex[:12]}"
+        agent_run_id = str(uuid.uuid4())
 
     # Create agent_runs record so the FK constraint on sessions.agent_run_id is satisfied.
     import logging as _logging

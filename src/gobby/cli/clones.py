@@ -11,6 +11,7 @@ Commands for managing git clones:
 """
 
 import json
+import uuid
 
 import click
 import httpx
@@ -426,10 +427,21 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
         raise SystemExit(1)
 
 
+def _is_full_uuid(value: str) -> bool:
+    """Return whether a value is a canonical uuid string, safe against uuid columns."""
+    if len(value) != 36:
+        return False
+    try:
+        uuid.UUID(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def resolve_clone_id(manager: LocalCloneManager, clone_ref: str) -> str | None:
     """Resolve clone reference (UUID or prefix) to full ID."""
     # Check for exact match first
-    if manager.get(clone_ref):
+    if _is_full_uuid(clone_ref) and manager.get(clone_ref):
         return clone_ref
 
     # Try prefix match

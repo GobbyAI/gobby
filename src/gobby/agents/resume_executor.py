@@ -126,7 +126,7 @@ async def resume_agent_run(
     if not prompt:
         prompt = DAEMON_STOP_CONTINUATION_PROMPT
 
-    run_id = f"run-{uuid.uuid4().hex[:12]}"
+    run_id = str(uuid.uuid4())
     metadata = dict(resume_metadata)
     metadata["resumed_from_run_id"] = original_run.id
     metadata["provider_native_session_id"] = native_session_id

@@ -63,7 +63,7 @@ class _AgentRunLifecycleMixin:
             Created AgentRun.
         """
         if run_id is None:
-            run_id = f"run-{uuid.uuid4().hex[:12]}"
+            run_id = str(uuid.uuid4())
         now = utc_now_iso()
 
         self.db.execute(

@@ -248,18 +248,46 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
 
     for table_name, columns in {
         "projects": ("id",),
-        "sessions": ("id", "project_id", "parent_session_id", "summary_revision_id"),
+        "sessions": (
+            "id",
+            "project_id",
+            "parent_session_id",
+            "summary_revision_id",
+            "agent_run_id",
+        ),
         "tasks": ("id", "project_id", "parent_task_id", "created_in_session_id"),
         "memories": ("id", "project_id", "source_session_id"),
         "memory_crossrefs": ("source_id", "target_id"),
         "code_symbols": ("id", "project_id", "parent_symbol_id"),
         "workflow_instances": ("id", "session_id"),
-        "comms_identities": ("session_id", "project_id"),
-        "comms_messages": ("session_id",),
-        "comms_routing_rules": ("project_id", "session_id"),
+        "agent_runs": ("id",),
+        "tool_metrics": ("id",),
+        "build_runs": ("id",),
+        "build_history_events": ("run_id",),
+        "expansion_runs": ("id",),
+        "worktrees": ("id",),
+        "clones": ("id",),
+        "merge_resolutions": ("id", "worktree_id"),
+        "merge_conflicts": ("id", "resolution_id"),
+        "skills": ("id",),
+        "skill_files": ("id", "skill_id"),
+        "cron_jobs": ("id",),
+        "cron_runs": ("id", "cron_job_id", "agent_run_id", "pipeline_execution_id"),
+        "pipeline_executions": ("id", "parent_execution_id"),
+        "step_executions": ("execution_id",),
+        "prompts": ("id",),
+        "checkpoints": ("run_id",),
+        "completion_subscribers": ("completion_id",),
+        "task_dispatch_mutex": ("run_id",),
+        "task_delivery_units": ("worktree_id",),
+        "comms_channels": ("id",),
+        "comms_identities": ("id", "channel_id", "session_id", "project_id"),
+        "comms_messages": ("id", "channel_id", "identity_id", "session_id"),
+        "comms_routing_rules": ("id", "channel_id", "project_id", "session_id"),
+        "comms_attachments": ("id", "message_id"),
         "session_variables": ("session_id",),
         "rule_overrides": ("session_id",),
-        "unmodeled_observation_events": ("session_id",),
+        "unmodeled_observation_events": ("id", "session_id"),
         "unmodeled_observations": ("example_session_id",),
     }.items():
         table_sql = _table_definition(baseline, table_name)
@@ -274,6 +302,22 @@ def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
             "ADD COLUMN child_session_id UUID REFERENCES sessions(id)",
             "ADD COLUMN claimed_session_id UUID REFERENCES sessions(id)",
             "ADD COLUMN task_id UUID REFERENCES tasks(id)",
+            "ADD COLUMN worktree_id UUID",
+            "ADD COLUMN clone_id UUID",
+        ),
+    )
+
+    # task_artifacts is declared with indentation the _table_definition helper
+    # cannot terminate; assert its converted id columns by containment.
+    _assert_contains_all(
+        "task_artifacts isolation/expansion id columns",
+        baseline,
+        (
+            "worktree_id UUID",
+            "clone_id UUID",
+            "integration_workspace_id UUID",
+            "integration_clone_id UUID",
+            "expansion_run_id UUID",
         ),
     )
 
@@ -282,11 +326,10 @@ def test_postgres_baseline_keeps_allowlisted_textual_ids() -> None:
     baseline = _baseline_text()
 
     for table_name, columns in {
-        "agent_runs": ("id",),
-        "cron_runs": ("id", "agent_run_id"),
-        "comms_channels": ("id",),
-        "comms_identities": ("id", "channel_id"),
-        "comms_messages": ("id", "channel_id", "identity_id", "platform_message_id"),
+        "comms_messages": ("platform_message_id", "platform_thread_id"),
+        "comms_identities": ("external_user_id",),
+        "sessions": ("external_id", "spawned_by_agent_id"),
+        "rule_overrides": ("id",),
         "secret_key_material": ("id",),
         "spans": ("trace_id", "span_id", "parent_span_id"),
     }.items():

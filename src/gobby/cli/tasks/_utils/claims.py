@@ -62,7 +62,7 @@ def get_claimed_task_owners() -> dict[str, str]:
 
                 # Partial UUID prefix - find matching task
                 row = db.fetchone(
-                    "SELECT id FROM tasks WHERE id LIKE %s AND project_id = %s",
+                    "SELECT id FROM tasks WHERE id::text LIKE %s AND project_id = %s",
                     (f"{ref}%", project_id),
                 )
                 return row["id"] if row else None

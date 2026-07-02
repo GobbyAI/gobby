@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -11,7 +12,6 @@ from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr
-from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class BuildHistoryStorage:
         actor: str = "build",
         summary: Mapping[str, Any] | None = None,
     ) -> BuildRun:
-        run_id = generate_prefixed_id("br", length=12)
+        run_id = str(uuid.uuid4())
         now = _now()
         with self.db.transaction() as conn:
             conn.execute(
@@ -185,7 +185,7 @@ class BuildHistoryStorage:
         summary: Mapping[str, Any] | None = None,
         error: str | None = None,
     ) -> BuildRun:
-        run_id = generate_prefixed_id("br", length=12)
+        run_id = str(uuid.uuid4())
         now = _now()
         completed_at = now if status != "started" else None
         with self.db.transaction() as conn:

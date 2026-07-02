@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +16,6 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.id import generate_prefixed_id
 
 if TYPE_CHECKING:
     pass
@@ -36,7 +36,7 @@ class LocalCommunicationsStore:
     def create_channel(self, channel: ChannelConfig) -> ChannelConfig:
         """Save a new channel to the database."""
         if not channel.id:
-            channel.id = generate_prefixed_id("cc")
+            channel.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -130,7 +130,7 @@ class LocalCommunicationsStore:
     def create_identity(self, identity: CommsIdentity) -> CommsIdentity:
         """Save a new identity to the database."""
         if not identity.id:
-            identity.id = generate_prefixed_id("ci")
+            identity.id = str(uuid.uuid4())
 
         now = datetime.now(UTC).isoformat()
         if not identity.created_at:
@@ -241,7 +241,7 @@ class LocalCommunicationsStore:
     def create_message(self, message: CommsMessage) -> CommsMessage:
         """Save a new message to the database."""
         if not message.id:
-            message.id = generate_prefixed_id("cm")
+            message.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -350,7 +350,7 @@ class LocalCommunicationsStore:
     def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:
         """Save a new routing rule to the database."""
         if not rule.id:
-            rule.id = generate_prefixed_id("cr")
+            rule.id = str(uuid.uuid4())
 
         if rule.project_id is None and self.project_id:
             rule.project_id = self.project_id
@@ -444,7 +444,7 @@ class LocalCommunicationsStore:
     def create_attachment(self, attachment: CommsAttachment) -> CommsAttachment:
         """Save a new attachment to the database."""
         if not attachment.id:
-            attachment.id = generate_prefixed_id("ca")
+            attachment.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
             conn.execute(
