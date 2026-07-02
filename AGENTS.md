@@ -3,7 +3,7 @@
 These are enforced by hooks, rules and workflows.
 
 1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
-2. **NEVER create or leave monoliths.** Keep non-test Python, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Leave these tasks for another agent to pick up. Markdown files, including `docs/guides/*.md` and repo-root instruction files, are documentation artifacts and are not subject to this 1,000-line source-file rule; do not create refactor tasks or block docs work based only on Markdown line count.
+2. **NEVER create or leave monoliths.** Keep non-test Python, Rust, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.rs`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Leave these tasks for another agent to pick up. Markdown files, including `docs/guides/*.md`, `gobby-wiki/*.md`, and repo-root instruction files, are documentation artifacts and are not subject to this 1,000-line source-file rule; **DO NOT** create refactor tasks or block docs work based only on Markdown line count.
 3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
 4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
@@ -41,10 +41,6 @@ Daemon logs are in `~/.gobby/logs/`.
 
 Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning includes organizing work, not just designing it.
 
-## Design Context
-
-All design / UI / color / typography work — across every Gobby surface (product UI in `./web/`, the gobby.ai marketing site, Gobby Pro, installer, CLI/TUI) — must read `.impeccable.md` at the project root before producing output. It defines the design system, deutan-safe color constraints, WCAG 2.2 AA target, aesthetic references, and per-surface variation rules. Update via the `impeccable` skill's `teach` mode rather than freehand edits.
-
 ## Project Overview
 
 A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Gemini, and QwenCode. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
@@ -58,25 +54,14 @@ A local-first daemon to unify your AI coding tools. Session tracking and handoff
 - **Agent spawning** with P2P messaging, command coordination, and worktree isolation
 - **Memory system** for persistent facts across sessions
 
-## Rust Workspace
-
-The former `~/Projects/gobby-cli` Rust workspace now lives in this repo under `crates/`, with the root Cargo workspace in `Cargo.toml`.
-
-- `crates/gcode` provides the `gcode` binary and `gobby-code` package.
-- `crates/gcore` provides the shared `gobby-core` library.
-- `crates/ghook` provides the `ghook` binary and `gobby-hooks` package.
-- `crates/gwiki` provides the `gwiki` binary and `gobby-wiki` package.
-
-Treat `~/Projects/gobby-cli`, `deps/gobby-cli`, and `GobbyAI/gobby-cli` as historical references only. New Rust helper work, schema mirrors, code-index/wiki changes, and release freshness checks belong in `~/Projects/gobby` and should prefer `GobbyAI/gobby` releases. Use the old repository only as a temporary fallback for pre-migration release assets until the retirement checklist is complete.
-
-Python remains the authoritative daemon implementation until a boundary explicitly passes Rust migration parity, observability, and rollback gates. Rust changes in `crates/` must preserve existing `gcode`, `ghook`, and `gwiki` behavior while shared foundations move into `gobby-core`.
-
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Core Python code lives in `src/gobby/`. Key areas include `cli/` for Click commands, `servers/` for HTTP/WebSocket endpoints, `mcp_proxy/` and `tools/` for tool execution, `sessions/`, `tasks/`, `workflows/`, `agents/`, `worktrees/`, `memory/`, and `storage/`. Rust helper crates live in `crates/` and are part of the root Cargo workspace. Tests live under `tests/`, usually grouped by module (`tests/tasks/`, `tests/workflows/`, `tests/memory/`). Project metadata and synced task state live in `.gobby/`.
+
+Core code lives in `src/gobby/`. Key areas include `cli/` for Click commands, `servers/` for HTTP/WebSocket endpoints, `mcp_proxy/` and `tools/` for tool execution, `sessions/`, `tasks/`, `workflows/`, `agents/`, `worktrees/`, `memory/`, and `storage/`. Tests live under `tests/`, usually grouped by module (`tests/tasks/`, `tests/workflows/`, `tests/memory/`). Project metadata and synced task state live in `.gobby/`.
 
 ## Build, Test, and Development Commands
+
 Use `uv` for local development.
 
 - `uv sync`: install runtime and dev dependencies for Python 3.13+.
@@ -87,22 +72,25 @@ Use `uv` for local development.
 - `uv run mypy src/`: run strict type checking.
 - `uv run pytest tests/tasks/test_validation.py -v`: run a focused test file.
 - `uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing`: run a module with coverage.
-- `cargo test --workspace`: run Rust workspace tests from the repo root.
-- `cargo clippy --workspace --all-targets`: lint Rust workspace crates.
 
 ## Coding Style & Naming Conventions
+
 Follow Python 3.13 conventions with full type hints and `async`/`await` for I/O-heavy paths. Use 4-space indentation and keep lines within Ruff’s 100-character limit. Modules and functions use `snake_case`; classes use `PascalCase`; test files follow `test_*.py`. Prefer small, focused modules in existing package boundaries rather than new top-level directories.
 
 ## Testing Guidelines
+
 Pytest is the test runner, with markers including `unit`, `slow`, `integration`, `e2e`, and `cli`. Coverage below 80% fails CI, so add or update tests with code changes. Keep tests near the affected domain and use descriptive names such as `test_task_id_generation.py` or `test_worktree_merge_integration.py`. Avoid running the full suite unless necessary; target the relevant file or package first.
 
 ## Commit & Pull Request Guidelines
+
 Recent history uses task-linked commits like `[gobby-#11184] fix: stop retrying transcript processing when JSONL file is missing`. Keep that pattern: `[gobby-#NNNNN] <type>: <summary>`. Typical types include `fix`, `feat`, `refactor`, and `chore`. PRs should explain the behavioral change, reference the task or issue, list validation performed, and include screenshots only for UI changes.
 
 ## Agent-Specific Workflow
+
 Before editing files, create or claim a Gobby task and work under that task. For AI agents, use the `gobby-tasks` MCP server for task lifecycle operations, not the `gobby tasks` CLI and not direct storage/SQL/REST mutations. The MCP path updates workflow/session state such as claims, session links, and `task_claimed`; bypassing it can leave the repo in an inconsistent state.
 
 When working task state as an agent:
+
 - Prefer lifecycle MCP tools such as `create_task` with `claim=true`, `claim_task`, `close_task`, `reopen_task`, and `escalate_task`; use `gobby-tasks-ops` review tools such as `submit_for_review(stage_name="...")` when handing a stage to review.
 - When code changes are complete and the task is ready to finish, prefer `close_task(task_id, commit_sha="...")` so the commit is linked and the task is closed in one step.
 - Use `link_commit` only when you intentionally need to attach a commit while keeping the task open, such as handing work off for review or continuing follow-up changes later.
