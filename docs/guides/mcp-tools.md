@@ -851,7 +851,7 @@ verification.
 ```python
 # Start a merge
 call_tool("gobby-merge", "merge_start", {
-    "worktree_id": "wt-abc123",
+    "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
     "source_branch": "feature/login",
 })
 

@@ -14,14 +14,14 @@ gobby worktrees create feature/auth --task #123 --json
 
 # Inspect and filter worktrees
 gobby worktrees list --status active
-gobby worktrees show wt-abc123 --json
+gobby worktrees show 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c --json
 
 # Attach or clear session ownership
-gobby worktrees claim wt-abc123 #4817
-gobby worktrees release wt-abc123
+gobby worktrees claim 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c #4817
+gobby worktrees release 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c
 
 # Sync, detect stale worktrees, and clean them up
-gobby worktrees sync wt-abc123 --json
+gobby worktrees sync 6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c --json
 gobby worktrees stale --days 7
 gobby worktrees cleanup --days 7 --dry-run
 ```
@@ -44,7 +44,7 @@ call_tool(
     server_name="gobby-worktrees",
     tool_name="claim_worktree",
     arguments={
-        "worktree_id": "wt-abc123",
+        "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
         "session_id": "#4817",
     },
 )
@@ -192,7 +192,7 @@ call_tool(
     server_name="gobby-worktrees",
     tool_name="sync_worktree",
     arguments={
-        "worktree_id": "wt-abc123",
+        "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
         "strategy": "merge",
         "project_path": "/path/to/repo",
     },
@@ -214,7 +214,7 @@ call_tool(
     server_name="gobby-worktrees",
     tool_name="merge_worktree",
     arguments={
-        "worktree_id": "wt-abc123",
+        "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
         "target_branch": "main",
         "project_path": "/path/to/repo",
     },
@@ -229,7 +229,7 @@ call_tool(
     server_name="gobby-worktrees",
     tool_name="push_branch",
     arguments={
-        "worktree_id": "wt-abc123",
+        "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
         "remote": "origin",
         "target_branch": "main",
         "force_with_lease": False,
@@ -345,7 +345,7 @@ call_tool(
     server_name="gobby-merge",
     tool_name="merge_start",
     arguments={
-        "worktree_id": "wt-abc123",
+        "worktree_id": "6f1d2b3a-9c4e-4f5a-8b6c-7d8e9f0a1b2c",
         "source_branch": "feature/auth",
         "target_branch": "main",
         "strategy": "auto",
