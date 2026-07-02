@@ -133,6 +133,7 @@ class HookManagerFactory:
         database: HubDatabase | None = None,
         session_manager: SessionManager | None = None,
         code_index_trigger: Any | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> HookManagerComponents:
         """Create all HookManager subsystems.
 
@@ -154,6 +155,9 @@ class HookManagerFactory:
             resolve_project_id: Callable resolving project ID from (project_id, cwd)
             database: Optional database instance to share with daemon services
             session_manager: Optional SessionManager instance to share with daemon services
+            memory_manager: Optional fully-wired MemoryManager (llm_service, vector
+                store, embeddings, graph) shared from the daemon. When omitted, a
+                keyword-only fallback manager is built from the database and config.
 
         Returns:
             HookManagerComponents with all wired subsystem instances
@@ -196,8 +200,9 @@ class HookManagerFactory:
         # Initialize autonomous components
         autonomous = cls._create_autonomous(resolved_database)
 
-        # Initialize memory system
-        mem_manager = cls._create_memory(resolved_database, config)
+        # Initialize memory system — prefer the daemon's fully-wired manager so
+        # hook-path recall uses the same semantic+graph search as the MCP path.
+        mem_manager = memory_manager or cls._create_memory(resolved_database, config, llm_service)
 
         # Initialize workflow engine
         workflow_components = cls._create_workflow_engine(
@@ -437,13 +442,17 @@ class HookManagerFactory:
         )
 
     @staticmethod
-    def _create_memory(database: HubDatabase, config: Any | None) -> MemoryManager:
+    def _create_memory(
+        database: HubDatabase,
+        config: Any | None,
+        llm_service: LLMService | None = None,
+    ) -> MemoryManager:
         memory_config = config.memory if config and hasattr(config, "memory") else None
         if not memory_config:
             from gobby.config.persistence import MemoryConfig
 
             memory_config = MemoryConfig()
-        return MemoryManager(database, memory_config)
+        return MemoryManager(database, memory_config, llm_service=llm_service)
 
     @staticmethod
     def _create_webhooks(config: Any | None) -> WebhookDispatcher:

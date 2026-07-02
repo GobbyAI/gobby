@@ -519,3 +519,100 @@ async def test_search_no_backfill_when_first_page_fills() -> None:
 
     assert [memory.id for memory in results] == ["a1", "a2"]
     assert vector_store.calls == [4]
+
+
+def _fallback_service(
+    memory_ids: list[str],
+    *,
+    keyword_results: list[tuple[str, float]],
+    search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
+) -> SearchService:
+    """SearchService with no vector store/embed_fn, so search() takes _keyword_fallback."""
+    return SearchService(
+        storage=_Storage(memory_ids),  # type: ignore[arg-type]
+        vector_store=None,
+        embed_fn=None,
+        kg_service=None,
+        keyword_search=lambda query, limit, project_id: keyword_results,
+        config=MemoryConfig(),
+        falkordb_graph_search=False,
+        falkordb_graph_min_score=0.0,
+        rrf_k=60,
+        falkordb_rrf_k=60,
+        vector_store_failure_logger=lambda message, error: None,
+        run_db=None,
+        search_debug_sink=search_debug_sink,
+    )
+
+
+@pytest.mark.asyncio
+async def test_keyword_fallback_emits_debug_snapshot_with_join_keys() -> None:
+    """Fallback searches are never silent: one event per completed search (#17491)."""
+    snapshots: list[SearchDebugSnapshot] = []
+    service = _fallback_service(
+        ["kw"],
+        keyword_results=[("kw", 0.7)],
+        search_debug_sink=snapshots.append,
+    )
+
+    results = await service.search(
+        "query",
+        limit=1,
+        session_id="session-1",
+        recall_request_id="request-1",
+        caller="memory.recall",
+    )
+
+    assert [mem.id for mem in results] == ["kw"]
+    assert results[0].search_via == "keyword"
+    assert snapshots == [
+        SearchDebugSnapshot(
+            merged_ids=["kw"],
+            returned_ids=["kw"],
+            ranking_score_map={"kw": 0.7},
+            rrf_applied=False,
+            query="query",
+            session_id="session-1",
+            recall_request_id="request-1",
+            caller="memory.recall",
+            returned_hits=[
+                SearchDebugHit(
+                    memory_id="kw",
+                    rank=0,
+                    search_via="keyword",
+                    similarity=0.7,
+                    raw_semantic_score=None,
+                    temporal_decay_factor=None,
+                    ranking_score=None,
+                    ranking_mode=None,
+                    graph_score=None,
+                )
+            ],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_keyword_fallback_emits_debug_snapshot_when_empty() -> None:
+    """A fallback search with zero hits still emits its event."""
+    snapshots: list[SearchDebugSnapshot] = []
+    service = _fallback_service(
+        [],
+        keyword_results=[],
+        search_debug_sink=snapshots.append,
+    )
+
+    results = await service.search(
+        "query",
+        limit=1,
+        session_id="session-1",
+        recall_request_id="request-1",
+        caller="memory.recall",
+    )
+
+    assert results == []
+    assert len(snapshots) == 1
+    assert snapshots[0].caller == "memory.recall"
+    assert snapshots[0].session_id == "session-1"
+    assert snapshots[0].recall_request_id == "request-1"
+    assert snapshots[0].returned_ids == []

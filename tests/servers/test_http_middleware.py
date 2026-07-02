@@ -43,11 +43,13 @@ class TestLifespan:
         mock_config.workflow.timeout = 30
         mock_config.workflow.enabled = True
 
+        memory_manager = MagicMock()
         services = ServiceContainer(
             config=mock_config,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
+            memory_manager=memory_manager,
         )
 
         server = HTTPServer(
@@ -63,6 +65,7 @@ class TestLifespan:
                 hook_manager_kwargs = MockHM.call_args.kwargs
                 assert hook_manager_kwargs["database"] is session_storage.db
                 assert hook_manager_kwargs["session_manager"] is session_storage
+                assert hook_manager_kwargs["memory_manager"] is memory_manager
 
     def test_lifespan_rejects_non_awaitable_hook_manager_shutdown(
         self,

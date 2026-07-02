@@ -358,6 +358,26 @@ class TestSearchMemories:
         assert updated.access_count == original_count + 1
         assert updated.last_accessed_at is not None
 
+    @pytest.mark.asyncio
+    async def test_recall_search_on_degraded_manager_emits_caller_event(self, memory_manager):
+        """Regression #17491: a manager without vector wiring routes queries through
+        the keyword fallback, which must still emit one recall-signal event per
+        search carrying the caller and join keys — fallback is never silent."""
+        snapshots = []
+        memory_manager._search_service._search_debug_sink = snapshots.append
+
+        await memory_manager.search_memories(
+            query="anything at all",
+            session_id="session-1",
+            recall_request_id="request-1",
+            caller="memory.recall",
+        )
+
+        assert len(snapshots) == 1
+        assert snapshots[0].caller == "memory.recall"
+        assert snapshots[0].session_id == "session-1"
+        assert snapshots[0].recall_request_id == "request-1"
+
 
 # =============================================================================
 # Test: Access Statistics

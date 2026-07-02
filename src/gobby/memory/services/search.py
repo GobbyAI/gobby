@@ -162,7 +162,16 @@ class SearchService:
                 )
         elif query:
             memories = await self._keyword_fallback(
-                query, limit, project_id, memory_type, tags_all, tags_any, tags_none
+                query,
+                limit,
+                project_id,
+                memory_type,
+                tags_all,
+                tags_any,
+                tags_none,
+                session_id=session_id,
+                recall_request_id=recall_request_id,
+                caller=caller,
             )
         else:
             memories = await self._run_storage(
@@ -390,8 +399,12 @@ class SearchService:
         tags_all: list[str] | None,
         tags_any: list[str] | None,
         tags_none: list[str] | None,
+        *,
+        session_id: str | None = None,
+        recall_request_id: str | None = None,
+        caller: str = "memory.search",
     ) -> list[Memory]:
-        return await keyword_fallback(
+        memories = await keyword_fallback(
             run_storage=self._run_storage,
             storage=self._storage,
             keyword_search=self._keyword_search,
@@ -403,6 +416,21 @@ class SearchService:
             tags_any=tags_any,
             tags_none=tags_none,
         )
+        # One event per completed search — fallback searches must not be silent.
+        self._emit_search_debug(
+            query=query,
+            project_id=project_id,
+            session_id=session_id,
+            recall_request_id=recall_request_id,
+            caller=caller,
+            merged_ids=[mem.id for mem in memories],
+            returned=memories,
+            ranking_score_map={
+                mem.id: mem.similarity for mem in memories if mem.similarity is not None
+            },
+            rrf_applied=False,
+        )
+        return memories
 
     def update_access_stats(self, memories: list[Memory]) -> None:
         """Update access count and time for memories (debounced)."""

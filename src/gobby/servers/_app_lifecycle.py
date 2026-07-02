@@ -51,6 +51,7 @@ def create_lifespan(
             "completion_registry": server.services.completion_registry,
             "database": server.services.database,
             "session_manager": server.services.session_manager,
+            "memory_manager": server.services.memory_manager,
         }
         if (
             server.services.agent_runner is not None

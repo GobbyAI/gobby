@@ -163,3 +163,125 @@ def test_factory_create_reuses_injected_session_manager(
     assert components.event_handlers._session_manager is session_manager
     assert components.session_task_manager.db is temp_db
     assert components.task_manager.db is temp_db
+
+
+def _patched_subsystems() -> tuple[SimpleNamespace, SimpleNamespace]:
+    workflow_components = SimpleNamespace(
+        loader=MagicMock(),
+        template_engine=MagicMock(),
+        skill_manager=MagicMock(),
+        pipeline_executor=None,
+        handler=MagicMock(),
+    )
+    autonomous_components = SimpleNamespace(
+        stop_registry=MagicMock(),
+        progress_tracker=MagicMock(),
+        stuck_detector=MagicMock(),
+    )
+    return workflow_components, autonomous_components
+
+
+def _create_kwargs(
+    session_manager: SessionManager, default_config: DaemonConfig
+) -> dict[str, object]:
+    return {
+        "daemon_host": "localhost",
+        "daemon_port": 60887,
+        "llm_service": None,
+        "config": default_config,
+        "hook_logger": logging.getLogger("test"),
+        "loop": None,
+        "broadcaster": None,
+        "tool_proxy_getter": None,
+        "message_processor": None,
+        "memory_sync_manager": None,
+        "task_sync_manager": None,
+        "agent_runner": None,
+        "completion_registry": None,
+        "get_machine_id": lambda: "machine-1",
+        "resolve_project_id": lambda _project_id, _cwd: "project-1",
+        "session_manager": session_manager,
+    }
+
+
+def test_factory_create_uses_injected_memory_manager(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    default_config: DaemonConfig,
+) -> None:
+    """The daemon's fully-wired MemoryManager must be shared, not rebuilt (#17491)."""
+    workflow_components, autonomous_components = _patched_subsystems()
+    shared_memory_manager = MagicMock()
+
+    with (
+        patch.object(HookManagerFactory, "_create_autonomous", return_value=autonomous_components),
+        patch.object(HookManagerFactory, "_create_memory") as create_memory,
+        patch.object(
+            HookManagerFactory, "_create_workflow_engine", return_value=workflow_components
+        ),
+        patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
+    ):
+        components = HookManagerFactory.create(
+            memory_manager=shared_memory_manager,
+            **_create_kwargs(session_manager, default_config),  # type: ignore[arg-type]
+        )
+
+    create_memory.assert_not_called()
+    assert components.memory_manager is shared_memory_manager
+
+
+def test_factory_create_memory_fallback_threads_llm_service(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    default_config: DaemonConfig,
+) -> None:
+    """Without an injected manager, the fallback receives the factory's llm_service."""
+    workflow_components, autonomous_components = _patched_subsystems()
+    fallback_manager = MagicMock()
+    llm_service = MagicMock()
+
+    with (
+        patch.object(HookManagerFactory, "_create_autonomous", return_value=autonomous_components),
+        patch.object(
+            HookManagerFactory, "_create_memory", return_value=fallback_manager
+        ) as create_memory,
+        patch.object(
+            HookManagerFactory, "_create_workflow_engine", return_value=workflow_components
+        ),
+        patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
+    ):
+        kwargs = _create_kwargs(session_manager, default_config)
+        kwargs["llm_service"] = llm_service
+        components = HookManagerFactory.create(**kwargs)  # type: ignore[arg-type]
+
+    create_memory.assert_called_once_with(temp_db, default_config, llm_service)
+    assert components.memory_manager is fallback_manager
+
+
+def test_hook_manager_forwards_injected_memory_manager() -> None:
+    """HookManager should pass the daemon's MemoryManager into the factory."""
+    database = MagicMock()
+    session_manager = MagicMock()
+    memory_manager = MagicMock()
+    components = _mock_components(database, session_manager)
+    components.memory_manager = memory_manager
+
+    with (
+        patch("gobby.hooks.hook_manager.HookManagerFactory.create") as create,
+        patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
+        patch("gobby.hooks.event_enrichment.EventEnricher"),
+        patch("gobby.hooks.session_lookup.SessionLookupService"),
+        patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
+    ):
+        create.return_value = components
+        manager = HookManager(
+            daemon_host="localhost",
+            daemon_port=60887,
+            database=database,
+            session_manager=session_manager,
+            memory_manager=memory_manager,
+            log_file="/tmp/test-hook-manager.log",
+        )
+
+    assert create.call_args.kwargs["memory_manager"] is memory_manager
+    assert manager._memory_manager is memory_manager
