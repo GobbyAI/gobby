@@ -9,6 +9,7 @@ links to the guide that owns that topic.
 |-------|-------------|
 | [system-requirements.md](system-requirements.md) | Supported operating systems, runtime prerequisites, and backing services |
 | [configuration.md](configuration.md) | Daemon, project, and environment configuration reference |
+| [ai-configuration.md](ai-configuration.md) | AI capability routing, mixed backends, `--no-ai`, and local model budget |
 | [shared-stack.md](shared-stack.md) | Tailscale shared daemon/PostgreSQL setup, trust boundary, and current remote limitations |
 
 ## Core Workflows
@@ -46,6 +47,10 @@ links to the guide that owns that topic.
 |-------|-------------|
 | [search.md](search.md) | Unified search with text, vector, and hybrid modes |
 | [code-index.md](code-index.md) | `gcode` indexing, symbol search, and graph navigation |
+| [gcode-user-guide.md](gcode-user-guide.md) | `gcode` search, symbols, dependency graphs, and project management |
+| [codewiki.md](codewiki.md) | Generated codebase docs, degraded graph output, and `gwiki` ingest |
+| [gwiki-user-guide.md](gwiki-user-guide.md) | `gwiki` vault setup, multimodal ingest, hybrid search, research, and maintenance |
+| [ghook-user-guide.md](ghook-user-guide.md) | `ghook` hook dispatch, inbox replay, diagnostics, and troubleshooting |
 
 ## Interfaces & Reference
 
@@ -89,6 +94,19 @@ links to the guide that owns that topic.
 | [frontend-style-guide.md](frontend-style-guide.md) | Design tokens, component patterns, and web UI styling rules |
 | [voice.md](voice.md) | Local speech-to-text and text-to-speech for web chat voice conversations |
 
+## Maintainer Guides
+
+| Guide | Description |
+|-------|-------------|
+| [release-guide.md](release-guide.md) | Rust helper release versions, tag order, and local binary installation |
+| [gcode-development-guide.md](gcode-development-guide.md) | `gcode` code-index internals |
+| [gcode-graph-core.md](gcode-graph-core.md) | `gcode` graph-core daemon transition contract |
+| [ai-daemon-contract.md](ai-daemon-contract.md) | CLI-consumed daemon AI routes, probes, routing, and embedding namespace migration |
+| [hub-install-contract.md](hub-install-contract.md) | Standalone hub adoption and additive upgrade requirements |
+| [gcore-development-guide.md](gcore-development-guide.md) | `gobby-core` shared foundation crate internals |
+| [ghook-development-guide.md](ghook-development-guide.md) | `ghook` hook-dispatch implementation details |
+| [gwiki-development-guide.md](gwiki-development-guide.md) | `gwiki` research and knowledge-vault CLI internals |
+
 ## Writing Specifications
 
 | Guide | Description |
@@ -103,10 +121,11 @@ links to the guide that owns that topic.
 
 1. Read [system-requirements.md](system-requirements.md) to check prerequisites.
 2. Read [configuration.md](configuration.md) to understand daemon and project settings.
-3. Read [shared-stack.md](shared-stack.md) before pointing other machines at a shared daemon.
-4. Read [web-ui.md](web-ui.md) for the browser surfaces and route/API flow.
-5. Read [tasks.md](tasks.md) to learn task lifecycle basics.
-6. Read [cli-commands.md](cli-commands.md) for day-to-day commands.
+3. Read [ai-configuration.md](ai-configuration.md) before choosing AI backends.
+4. Read [shared-stack.md](shared-stack.md) before pointing other machines at a shared daemon.
+5. Read [web-ui.md](web-ui.md) for the browser surfaces and route/API flow.
+6. Read [tasks.md](tasks.md) to learn task lifecycle basics.
+7. Read [cli-commands.md](cli-commands.md) for day-to-day commands.
 
 ### Automated Development
 
@@ -138,4 +157,4 @@ links to the guide that owns that topic.
 - **Check daemon health**: `gobby status` or `/api/admin/status`
 - **Audit test quality**: `gobby test-quality audit tests/path`
 
-_Last verified: 2026-05-08_
+_Last verified: 2026-07-02_
