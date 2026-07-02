@@ -11,7 +11,9 @@ pytestmark = pytest.mark.unit
 
 def _task(stage_name: str = "ideation"):
     stage = SimpleNamespace(name=stage_name, state="ready", position=0)
-    return SimpleNamespace(id="task-1", ref="#1", task_type="task", stages=[stage])
+    return SimpleNamespace(
+        id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83", ref="#1", task_type="task", stages=[stage]
+    )
 
 
 def _context(stage_name: str, *, enabled: bool | None):
@@ -67,5 +69,5 @@ def test_disabled_default_agent_routes_to_stage_generic_escalation_rule(
     )
 
     assert isinstance(action, EscalateAction)
-    assert action.task_id == "task-1"
+    assert action.task_id == "7d34e462-6ba3-5a6c-b1c6-1584b855cb83"
     assert action.reason == reason

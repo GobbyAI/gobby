@@ -137,7 +137,7 @@ class TestLocalWorktreeManagerCreate:
         assert worktree.task_id is None
         assert worktree.agent_session_id is None
         assert worktree.status == "active"
-        assert worktree.id.startswith("wt-")
+        assert str(uuid.UUID(worktree.id)) == worktree.id
         mock_db.execute.assert_called_once()
 
     def test_create_with_all_fields(
@@ -177,8 +177,8 @@ class TestLocalWorktreeManagerCreate:
         )
 
         assert worktree1.id != worktree2.id
-        assert worktree1.id.startswith("wt-")
-        assert worktree2.id.startswith("wt-")
+        assert str(uuid.UUID(worktree1.id)) == worktree1.id
+        assert str(uuid.UUID(worktree2.id)) == worktree2.id
 
     def test_create_sets_timestamps(
         self,

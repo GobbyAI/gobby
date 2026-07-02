@@ -183,8 +183,8 @@ class TestMergeStartTool:
         )
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -197,7 +197,7 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
@@ -224,8 +224,8 @@ class TestMergeStartTool:
         )
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -238,7 +238,7 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
@@ -256,8 +256,8 @@ class TestMergeStartTool:
         from gobby.storage.merge_resolutions import MergeResolution
 
         existing = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="resolved",
@@ -270,14 +270,14 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
         )
 
         assert result["success"] is True
-        assert result["resolution_id"] == "mr-test123"
+        assert result["resolution_id"] == "15174726-47f5-57c4-999e-18bf66046857"
         assert result["reused_resolution"] is True
         mock_storage.get_or_create_resolution.assert_not_called()
         mock_resolver.resolve.assert_not_called()
@@ -290,8 +290,8 @@ class TestMergeStartTool:
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         existing = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -300,8 +300,8 @@ class TestMergeStartTool:
             updated_at="2025-01-01T00:00:00+00:00",
         )
         conflict = MergeConflict(
-            id="mc-test123",
-            resolution_id="mr-test123",
+            id="30dcb6c0-d1bd-53cc-af75-86dc1ef4619d",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="pending",
             ours_content="ours",
@@ -316,14 +316,14 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
         )
 
         assert result["success"] is False
-        assert result["resolution_id"] == "mr-test123"
+        assert result["resolution_id"] == "15174726-47f5-57c4-999e-18bf66046857"
         assert result["conflicts"] == [{"file": "src/test.py"}]
         assert result["reused_resolution"] is True
         mock_storage.get_or_create_resolution.assert_not_called()
@@ -339,8 +339,8 @@ class TestMergeStartTool:
         from gobby.worktrees.merge import MergeResult, ResolutionTier
 
         existing = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -361,14 +361,14 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
         )
 
         assert result["success"] is True
-        assert result["resolution_id"] == "mr-test123"
+        assert result["resolution_id"] == "15174726-47f5-57c4-999e-18bf66046857"
         mock_storage.get_or_create_resolution.assert_not_called()
         mock_resolver.resolve.assert_called_once()
 
@@ -380,8 +380,8 @@ class TestMergeStartTool:
         from gobby.storage.merge_resolutions import MergeResolution
 
         active = MergeResolution(
-            id="mr-active",
-            worktree_id="wt-abc",
+            id="daec6bc7-c9d5-5f26-9848-88bed1c4f56d",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/other",
             target_branch="develop",
             status="pending",
@@ -394,14 +394,14 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
         )
 
         assert result["success"] is False
-        assert result["resolution_id"] == "mr-active"
+        assert result["resolution_id"] == "daec6bc7-c9d5-5f26-9848-88bed1c4f56d"
         assert "active merge resolution" in result["error"].lower()
         mock_storage.get_or_create_resolution.assert_not_called()
         mock_resolver.resolve.assert_not_called()
@@ -427,7 +427,7 @@ class TestMergeStartTool:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "",
                 "target_branch": "main",
             },
@@ -480,8 +480,8 @@ class TestMergeStatusTool:
         from gobby.storage.merge_resolutions import MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -492,10 +492,12 @@ class TestMergeStatusTool:
         mock_storage.get_resolution.return_value = mock_resolution
         mock_storage.list_conflicts.return_value = []
 
-        result = await merge_registry.call("merge_status", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_status", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is True
-        assert result["resolution"]["id"] == "mr-test123"
+        assert result["resolution"]["id"] == "15174726-47f5-57c4-999e-18bf66046857"
         assert result["resolution"]["status"] == "pending"
 
     @pytest.mark.asyncio
@@ -504,8 +506,8 @@ class TestMergeStatusTool:
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -515,8 +517,8 @@ class TestMergeStatusTool:
         )
         mock_conflicts = [
             MergeConflict(
-                id="mc-conflict1",
-                resolution_id="mr-test123",
+                id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+                resolution_id="15174726-47f5-57c4-999e-18bf66046857",
                 file_path="src/test.py",
                 status="pending",
                 ours_content="our version",
@@ -529,7 +531,9 @@ class TestMergeStatusTool:
         mock_storage.get_resolution.return_value = mock_resolution
         mock_storage.list_conflicts.return_value = mock_conflicts
 
-        result = await merge_registry.call("merge_status", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_status", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is True
         assert len(result["conflicts"]) == 1
@@ -547,8 +551,8 @@ class TestMergeStatusTool:
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -559,8 +563,8 @@ class TestMergeStatusTool:
         mock_storage.get_resolution.return_value = mock_resolution
         mock_storage.list_conflicts.return_value = [
             MergeConflict(
-                id="mc-conflict1",
-                resolution_id="mr-test123",
+                id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+                resolution_id="15174726-47f5-57c4-999e-18bf66046857",
                 file_path="src/test.py",
                 status="resolved",
                 ours_content="our version",
@@ -573,7 +577,7 @@ class TestMergeStatusTool:
 
         result = await merge_registry.call(
             "merge_status",
-            {"resolution_id": "mr-test123", "include_content": True},
+            {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857", "include_content": True},
         )
 
         assert result["success"] is True
@@ -586,7 +590,9 @@ class TestMergeStatusTool:
         """merge_status returns error for unknown resolution."""
         mock_storage.get_resolution.return_value = None
 
-        result = await merge_registry.call("merge_status", {"resolution_id": "mr-unknown"})
+        result = await merge_registry.call(
+            "merge_status", {"resolution_id": "8df1d286-9d4f-51ac-a45c-f7ce99101e7e"}
+        )
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
@@ -641,8 +647,8 @@ class TestMergeResolveTool:
         from gobby.worktrees.merge import ResolutionResult, ResolutionTier
 
         mock_conflict = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="pending",
             ours_content="our version",
@@ -665,8 +671,8 @@ class TestMergeResolveTool:
         )
 
         resolved_conflict = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="resolved",
             ours_content="our version",
@@ -677,7 +683,9 @@ class TestMergeResolveTool:
         )
         mock_storage.update_conflict.return_value = resolved_conflict
 
-        result = await merge_registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+        result = await merge_registry.call(
+            "merge_resolve", {"conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08"}
+        )
 
         assert result["success"] is True
         assert result["conflict"]["status"] == "resolved"
@@ -693,8 +701,8 @@ class TestMergeResolveTool:
         from gobby.worktrees.merge import ResolutionResult, ResolutionTier
 
         mock_storage.get_conflict.return_value = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="pending",
             ours_content="our version",
@@ -719,7 +727,9 @@ class TestMergeResolveTool:
             git_manager=mock_git_manager,
         )
 
-        result = await registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+        result = await registry.call(
+            "merge_resolve", {"conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08"}
+        )
 
         assert result["success"] is False
         assert result["error"] == "AI resolution failed"
@@ -740,9 +750,9 @@ class TestMergeResolveTool:
         release_first = asyncio.Event()
 
         conflicts = {
-            "mc-conflict1": MergeConflict(
-                id="mc-conflict1",
-                resolution_id="mr-test123",
+            "45d99b5a-8044-5c05-b151-bb595a05ff08": MergeConflict(
+                id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+                resolution_id="15174726-47f5-57c4-999e-18bf66046857",
                 file_path="src/one.py",
                 status="pending",
                 ours_content="our version",
@@ -751,9 +761,9 @@ class TestMergeResolveTool:
                 created_at="2025-01-01T00:00:00+00:00",
                 updated_at="2025-01-01T00:00:00+00:00",
             ),
-            "mc-conflict2": MergeConflict(
-                id="mc-conflict2",
-                resolution_id="mr-test123",
+            "ddeb6614-5d79-59bd-a496-248b23e14170": MergeConflict(
+                id="ddeb6614-5d79-59bd-a496-248b23e14170",
+                resolution_id="15174726-47f5-57c4-999e-18bf66046857",
                 file_path="src/two.py",
                 status="pending",
                 ours_content="our version",
@@ -783,7 +793,7 @@ class TestMergeResolveTool:
         mock_resolver.resolve_file.side_effect = resolve_file
         mock_storage.update_conflict.side_effect = lambda conflict_id, **kwargs: MergeConflict(
             id=conflict_id,
-            resolution_id="mr-test123",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path=conflicts[conflict_id].file_path,
             status=kwargs["status"],
             ours_content="our version",
@@ -798,17 +808,21 @@ class TestMergeResolveTool:
             git_manager=mock_git_manager,
         )
 
-        first = asyncio.create_task(registry.call("merge_resolve", {"conflict_id": "mc-conflict1"}))
+        first = asyncio.create_task(
+            registry.call("merge_resolve", {"conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08"})
+        )
         await first_started.wait()
 
-        second = await registry.call("merge_resolve", {"conflict_id": "mc-conflict2"})
+        second = await registry.call(
+            "merge_resolve", {"conflict_id": "ddeb6614-5d79-59bd-a496-248b23e14170"}
+        )
         release_first.set()
         first_result = await first
 
         assert first_result["success"] is True
         assert second["success"] is False
         assert second["retry_later"] is True
-        assert second["resolution_id"] == "mr-test123"
+        assert second["resolution_id"] == "15174726-47f5-57c4-999e-18bf66046857"
         assert "do not parallelize" in second["error"]
         mock_resolver.resolve_file.assert_awaited_once()
 
@@ -834,8 +848,8 @@ class TestMergeResolveTool:
         worktree_manager = MagicMock()
         worktree_manager.get.return_value = worktree
         mock_storage.get_resolution.return_value = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -844,8 +858,8 @@ class TestMergeResolveTool:
             updated_at="2025-01-01T00:00:00+00:00",
         )
         mock_storage.get_conflict.return_value = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="pending",
             ours_content="stale ours",
@@ -874,7 +888,9 @@ class TestMergeResolveTool:
             worktree_manager=worktree_manager,
         )
 
-        result = await registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+        result = await registry.call(
+            "merge_resolve", {"conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08"}
+        )
 
         assert result["success"] is True
         hunks = mock_resolver.resolve_file.call_args.kwargs["conflict_hunks"]
@@ -888,8 +904,8 @@ class TestMergeResolveTool:
         from gobby.storage.merge_resolutions import MergeConflict
 
         mock_conflict = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="pending",
             ours_content="our version",
@@ -901,8 +917,8 @@ class TestMergeResolveTool:
         mock_storage.get_conflict.return_value = mock_conflict
 
         resolved_conflict = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="resolved",
             ours_content="our version",
@@ -916,7 +932,7 @@ class TestMergeResolveTool:
         result = await merge_registry.call(
             "merge_resolve",
             {
-                "conflict_id": "mc-conflict1",
+                "conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08",
                 "resolved_content": "manual merge",
             },
         )
@@ -929,7 +945,9 @@ class TestMergeResolveTool:
         """merge_resolve returns error for unknown conflict."""
         mock_storage.get_conflict.return_value = None
 
-        result = await merge_registry.call("merge_resolve", {"conflict_id": "mc-unknown"})
+        result = await merge_registry.call(
+            "merge_resolve", {"conflict_id": "8b939ffe-e337-5f7d-8681-cae70c1445ff"}
+        )
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
@@ -995,8 +1013,8 @@ class TestMergeApplyTool:
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -1008,8 +1026,8 @@ class TestMergeApplyTool:
 
         resolved_conflicts = [
             MergeConflict(
-                id="mc-conflict1",
-                resolution_id="mr-test123",
+                id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+                resolution_id="15174726-47f5-57c4-999e-18bf66046857",
                 file_path="src/test.py",
                 status="resolved",
                 ours_content="our version",
@@ -1039,8 +1057,8 @@ class TestMergeApplyTool:
         mock_git_manager.run_git_command.side_effect = fake_run_git
 
         updated_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="resolved",
@@ -1050,7 +1068,9 @@ class TestMergeApplyTool:
         )
         mock_storage.update_resolution.return_value = updated_resolution
 
-        result = await merge_registry.call("merge_apply", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_apply", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is True
         assert result["resolution"]["status"] == "resolved"
@@ -1076,8 +1096,8 @@ class TestMergeApplyTool:
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -1090,8 +1110,8 @@ class TestMergeApplyTool:
         # One conflict still pending
         conflicts = [
             MergeConflict(
-                id="mc-conflict1",
-                resolution_id="mr-test123",
+                id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+                resolution_id="15174726-47f5-57c4-999e-18bf66046857",
                 file_path="src/test.py",
                 status="pending",
                 ours_content="our version",
@@ -1103,7 +1123,9 @@ class TestMergeApplyTool:
         ]
         mock_storage.list_conflicts.return_value = conflicts
 
-        result = await merge_registry.call("merge_apply", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_apply", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is False
         assert "unresolved" in result["error"].lower()
@@ -1113,7 +1135,9 @@ class TestMergeApplyTool:
         """merge_apply returns error for unknown resolution."""
         mock_storage.get_resolution.return_value = None
 
-        result = await merge_registry.call("merge_apply", {"resolution_id": "mr-unknown"})
+        result = await merge_registry.call(
+            "merge_apply", {"resolution_id": "8df1d286-9d4f-51ac-a45c-f7ce99101e7e"}
+        )
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
@@ -1175,8 +1199,8 @@ class TestMergeAbortTool:
         from gobby.storage.merge_resolutions import MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -1198,12 +1222,16 @@ class TestMergeAbortTool:
 
         mock_git_manager.run_git_command.side_effect = fake_run_git
 
-        result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_abort", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is True
         assert "aborted" in result["message"].lower()
         mock_git_manager.run_git_command.assert_any_call(["merge", "--abort"], cwd=ANY, timeout=30)
-        mock_storage.delete_resolution.assert_called_once_with("mr-test123")
+        mock_storage.delete_resolution.assert_called_once_with(
+            "15174726-47f5-57c4-999e-18bf66046857"
+        )
 
     @pytest.mark.asyncio
     async def test_merge_abort_failure_preserves_resolution(
@@ -1213,8 +1241,8 @@ class TestMergeAbortTool:
         from gobby.storage.merge_resolutions import MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -1238,7 +1266,9 @@ class TestMergeAbortTool:
 
         mock_git_manager.run_git_command.side_effect = fake_run_git
 
-        result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_abort", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is False
         assert "git merge --abort failed" in result["error"]
@@ -1249,7 +1279,9 @@ class TestMergeAbortTool:
         """merge_abort returns error for unknown resolution."""
         mock_storage.get_resolution.return_value = None
 
-        result = await merge_registry.call("merge_abort", {"resolution_id": "mr-unknown"})
+        result = await merge_registry.call(
+            "merge_abort", {"resolution_id": "8df1d286-9d4f-51ac-a45c-f7ce99101e7e"}
+        )
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
@@ -1260,8 +1292,8 @@ class TestMergeAbortTool:
         from gobby.storage.merge_resolutions import MergeResolution
 
         mock_resolution = MergeResolution(
-            id="mr-test123",
-            worktree_id="wt-abc",
+            id="15174726-47f5-57c4-999e-18bf66046857",
+            worktree_id="42771f92-3d33-57b0-8bef-452d7139ad78",
             source_branch="feature/test",
             target_branch="main",
             status="resolved",
@@ -1271,7 +1303,9 @@ class TestMergeAbortTool:
         )
         mock_storage.get_resolution.return_value = mock_resolution
 
-        result = await merge_registry.call("merge_abort", {"resolution_id": "mr-test123"})
+        result = await merge_registry.call(
+            "merge_abort", {"resolution_id": "15174726-47f5-57c4-999e-18bf66046857"}
+        )
 
         assert result["success"] is False
         assert "already" in result["error"].lower() or "resolved" in result["error"].lower()
@@ -1320,7 +1354,7 @@ class TestMergeToolValidation:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "",
                 "target_branch": "main",
             },
@@ -1396,7 +1430,7 @@ class TestMergeToolErrors:
         result = await merge_registry.call(
             "merge_start",
             {
-                "worktree_id": "wt-abc",
+                "worktree_id": "42771f92-3d33-57b0-8bef-452d7139ad78",
                 "source_branch": "feature/test",
                 "target_branch": "main",
             },
@@ -1413,8 +1447,8 @@ class TestMergeToolErrors:
         from gobby.storage.merge_resolutions import MergeConflict
 
         mock_conflict = MergeConflict(
-            id="mc-conflict1",
-            resolution_id="mr-test123",
+            id="45d99b5a-8044-5c05-b151-bb595a05ff08",
+            resolution_id="15174726-47f5-57c4-999e-18bf66046857",
             file_path="src/test.py",
             status="pending",
             ours_content="our version",
@@ -1426,7 +1460,9 @@ class TestMergeToolErrors:
         mock_storage.get_conflict.return_value = mock_conflict
         mock_resolver.resolve_file = AsyncMock(side_effect=Exception("AI error"))
 
-        result = await merge_registry.call("merge_resolve", {"conflict_id": "mc-conflict1"})
+        result = await merge_registry.call(
+            "merge_resolve", {"conflict_id": "45d99b5a-8044-5c05-b151-bb595a05ff08"}
+        )
 
         assert result["success"] is False
         assert "error" in result

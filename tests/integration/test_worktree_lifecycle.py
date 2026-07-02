@@ -4,6 +4,7 @@ These tests verify the full worktree lifecycle with real database operations,
 including creation, status transitions, and cleanup.
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
@@ -101,7 +102,7 @@ class TestWorktreeCreation:
             worktree_path="/tmp/worktrees/test",
         )
 
-        assert worktree.id.startswith("wt-")
+        assert str(uuid.UUID(worktree.id)) == worktree.id
         assert worktree.project_id == project.id
         assert worktree.branch_name == "feature/test"
         assert worktree.worktree_path == "/tmp/worktrees/test"
@@ -173,7 +174,7 @@ class TestWorktreeRetrieval:
 
     def test_get_nonexistent(self, worktree_manager: LocalWorktreeManager) -> None:
         """Get returns None for nonexistent worktree."""
-        result = worktree_manager.get("wt-nonexistent")
+        result = worktree_manager.get("00000000-0000-0000-0000-0000000000ff")
         assert result is None
 
     def test_get_by_path(self, worktree_manager: LocalWorktreeManager, project: Project) -> None:
@@ -528,7 +529,7 @@ class TestWorktreeUpdate:
 
     def test_update_nonexistent(self, worktree_manager: LocalWorktreeManager) -> None:
         """Update returns None for nonexistent worktree."""
-        result = worktree_manager.update("wt-nonexistent", status="stale")
+        result = worktree_manager.update("00000000-0000-0000-0000-0000000000ff", status="stale")
         assert result is None
 
     def test_update_updates_timestamp(
@@ -568,7 +569,7 @@ class TestWorktreeDeletion:
 
     def test_delete_nonexistent(self, worktree_manager: LocalWorktreeManager) -> None:
         """Delete returns False for nonexistent worktree."""
-        result = worktree_manager.delete("wt-nonexistent")
+        result = worktree_manager.delete("00000000-0000-0000-0000-0000000000ff")
         assert result is False
 
 

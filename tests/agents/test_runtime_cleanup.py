@@ -25,7 +25,7 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
         ) VALUES (%s, %s, %s, %s, %s, 'active', NOW(), NOW())
         """,
         (
-            "child-session",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
             "ext-child-session",
             "machine-1",
             "codex",
@@ -41,14 +41,14 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
         task.id,
         holder="dispatcher",
         kind="spawn_agent",
-        run_id="run-123",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2004",
         ttl_seconds=300,
     )
     instance_manager = WorkflowInstanceManager(temp_db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id="wf-123",
-            session_id="child-session",
+            id="ffffffff-ffff-4fff-8fff-ffffffff2001",
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
             workflow_name="tech-writer-steps",
             current_step="implement",
             step_entered_at=datetime.now(UTC),
@@ -57,12 +57,12 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
 
     result = cleanup_agent_runtime_state(
         temp_db,
-        run_id="run-123",
-        child_session_id="child-session",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2004",
+        child_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001",
     )
 
     assert result.dispatch_mutex_rows == 1
     assert result.workflow_instance_rows == 1
     assert result.errors == ()
     assert mutex.get_mutex(task.id) is None
-    assert instance_manager.get_active_instances("child-session") == []
+    assert instance_manager.get_active_instances("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa2001") == []

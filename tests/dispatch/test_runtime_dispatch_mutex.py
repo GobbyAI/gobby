@@ -21,7 +21,7 @@ def _stage(stage_name: str, state: str, updated_at: str) -> SimpleNamespace:
 def _candidate(stage_state: str = "in_progress") -> SimpleNamespace:
     stage = _stage("development", stage_state, "2026-05-02T00:00:00+00:00")
     return SimpleNamespace(
-        id="task-1",
+        id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         parent_task_id=None,
         lifecycle="in_development",
         status="open",
@@ -127,13 +127,15 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(dispatcher, "DispatchWriteSetGuard", SpyWriteSetGuard)
     monkeypatch.setattr(dispatcher, "LocalAgentRunManager", FakeAgentRunManager)
 
-    result = await dispatcher.run_heartbeat(db=heartbeat_db, project_id="project-1")
+    result = await dispatcher.run_heartbeat(
+        db=heartbeat_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"
+    )
 
     assert result.skipped == 1
     assert captured["expected_stage_name"] == "development"
     assert captured["expected_stage_state"] == "needs_review"
     assert captured["expected_stage_updated_at"] == "2026-05-02T00:00:00+00:00"
     assert captured["write_set_db"] is heartbeat_db
-    assert captured["write_set_project_id"] == "project-1"
+    assert captured["write_set_project_id"] == "0e27d5b7-167e-5a64-8bd9-6b980bd88f06"
     assert "expected_lifecycle" not in captured
     assert "expected_status" not in captured

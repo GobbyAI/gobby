@@ -35,7 +35,7 @@ def test_delivery_state_records_campaign_and_units(
     )
     manager.record_unit(
         task.id,
-        worktree_id="wt-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         repo="owner/repo",
         source_branch="task-branch",
         target_branch="main",
@@ -62,8 +62,8 @@ def test_delivery_state_records_campaign_and_units(
         {
             "id": state["units"][0]["id"],
             "task_id": task.id,
-            "unit_key": "worktree:wt-1",
-            "worktree_id": "wt-1",
+            "unit_key": "worktree:eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "repo": "owner/repo",
             "source_branch": "task-branch",
             "target_branch": "main",

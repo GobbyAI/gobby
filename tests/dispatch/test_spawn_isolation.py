@@ -19,7 +19,7 @@ def test_task_bound_planning_agents_inherit_task_isolation(
     task_isolation: str,
 ) -> None:
     action = SpawnAgentAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         agent_slug=agent_slug,
         prompt="go",
@@ -37,7 +37,7 @@ def test_task_bound_planning_agents_inherit_task_isolation(
 @pytest.mark.parametrize("stage_name", ["planning", "expansion"])
 def test_pre_development_stages_default_to_none_without_task_isolation(stage_name: str) -> None:
     action = SpawnAgentAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         agent_slug="planner",
         prompt="go",
@@ -51,7 +51,7 @@ def test_pre_development_stages_default_to_none_without_task_isolation(stage_nam
 
 def test_taskless_plan_adversary_forces_none_isolation() -> None:
     action = SpawnAgentAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         agent_slug="plan-adversary-taskless",
         prompt="go",
@@ -65,7 +65,7 @@ def test_taskless_plan_adversary_forces_none_isolation() -> None:
 
 def test_taskless_plan_enhancer_forces_none_isolation() -> None:
     action = SpawnAgentAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         agent_slug="plan-enhancer-taskless",
         prompt="go",
@@ -84,7 +84,7 @@ class RaisingInitialVariables(dict[str, object]):
 
 def test_main_context_isolation_bypasses_stage_lookup() -> None:
     action = SpawnAgentAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         agent_slug="plan-adversary-taskless",
         prompt="go",

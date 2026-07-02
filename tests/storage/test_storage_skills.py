@@ -237,7 +237,7 @@ class TestLocalSkillManager:
             metadata={"skillport": {"category": "git", "tags": ["git", "commits"]}},
         )
 
-        assert skill.id.startswith("skl-")
+        assert str(uuid.UUID(skill.id)) == skill.id
         assert skill.name == "commit-message"
         assert skill.description == "Generate conventional commit messages"
         assert skill.content.startswith("# Commit Message Generator")
@@ -314,7 +314,7 @@ class TestLocalSkillManager:
     def test_get_skill_not_found(self, skill_manager) -> None:
         """Test getting a non-existent skill raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
-            skill_manager.get_skill("nonexistent-id")
+            skill_manager.get_skill("00000000-0000-0000-0000-0000000000ff")
 
     def test_get_by_name(self, skill_manager) -> None:
         """Test getting a skill by name."""
@@ -374,7 +374,7 @@ class TestLocalSkillManager:
     def test_update_skill_not_found(self, skill_manager) -> None:
         """Test updating a non-existent skill raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
-            skill_manager.update_skill("nonexistent", description="New")
+            skill_manager.update_skill("00000000-0000-0000-0000-0000000000ff", description="New")
 
     def test_delete_skill(self, skill_manager) -> None:
         """Test deleting a skill."""
@@ -389,7 +389,7 @@ class TestLocalSkillManager:
 
     def test_delete_skill_not_found(self, skill_manager) -> None:
         """Test deleting a non-existent skill returns False."""
-        assert skill_manager.delete_skill("nonexistent") is False
+        assert skill_manager.delete_skill("00000000-0000-0000-0000-0000000000ff") is False
 
     def test_list_skills(self, skill_manager) -> None:
         """Test listing skills."""
@@ -501,7 +501,7 @@ class TestLocalSkillManager:
         )
 
         assert skill_manager.skill_exists(skill.id) is True
-        assert skill_manager.skill_exists("nonexistent") is False
+        assert skill_manager.skill_exists("00000000-0000-0000-0000-0000000000ff") is False
 
     def test_count_skills(self, skill_manager) -> None:
         """Test counting skills."""

@@ -39,7 +39,7 @@ def _stage_state(state: str = "needs_review") -> StageState:
 def _task(*, state: str = "needs_review", claimed_by_session_id: str | None = None) -> Task:
     return Task(
         id=_TASK_ID,
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         title="Planning Task",
         priority=2,
         task_type="task",

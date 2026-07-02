@@ -72,7 +72,7 @@ def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> N
         task_id=task.id,
         fields={
             "worktree_path": "/tmp/gobby-wt",
-            "worktree_id": "worktree-row-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03",
             "base_commit_sha": "abc123",
             "target_branch": "release/0.4",
         },
@@ -81,7 +81,7 @@ def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> N
     artifacts = get_artifacts(task_id=task.id)
     assert set_result["ok"] is True
     assert artifacts["worktree_path"] == "/tmp/gobby-wt"
-    assert artifacts["worktree_id"] == "worktree-row-1"
+    assert artifacts["worktree_id"] == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03"
     assert artifacts["target_branch"] == "release/0.4"
 
     clear_result = clear_isolation_pair(task_id=task.id, family="worktree")

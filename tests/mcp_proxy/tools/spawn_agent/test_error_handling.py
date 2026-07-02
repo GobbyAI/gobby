@@ -127,7 +127,7 @@ class TestSpawnAgentImplErrorBranches:
 
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "proj-1", "project_path": "/path"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
                 prompt="test",
@@ -145,7 +145,7 @@ class TestSpawnAgentImplErrorBranches:
 
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "proj-1", "project_path": "/path"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
                 prompt="test",
@@ -168,7 +168,7 @@ class TestSpawnAgentImplErrorBranches:
 
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "proj-1", "project_path": "/path"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
                 prompt="test",
@@ -189,7 +189,7 @@ class TestSpawnAgentImplErrorBranches:
         runner._child_session_manager = MagicMock()
 
         mock_wt = MagicMock()
-        mock_wt.id = "wt-1"
+        mock_wt.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
         mock_wt.worktree_path = str(tmp_path / "nonexistent_dir")
         mock_wt.branch_name = "test-branch"
 
@@ -198,18 +198,18 @@ class TestSpawnAgentImplErrorBranches:
 
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "proj-1", "project_path": "/path"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                worktree_id="wt-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
             )
             assert result["success"] is False
             assert "missing" in result["error"].lower()
-            worktree_storage.delete.assert_called_once_with("wt-1")
+            worktree_storage.delete.assert_called_once_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
 
     @pytest.mark.asyncio
     async def test_clone_id_not_found_returns_error(self) -> None:
@@ -224,7 +224,7 @@ class TestSpawnAgentImplErrorBranches:
 
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "proj-1", "project_path": "/path"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
                 prompt="test",
@@ -254,7 +254,7 @@ class TestSpawnAgentImplErrorBranches:
 
         with patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "proj-1", "project_path": "/path"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001", "project_path": "/path"},
         ):
             result = await spawn_agent_impl(
                 prompt="test",
@@ -282,7 +282,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": "/path"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": "/path",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler",
@@ -311,7 +314,11 @@ class TestSpawnAgentImplErrorBranches:
         )
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
-        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree = MagicMock(
+            id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            worktree_path=str(worktree_path),
+            branch_name="branch",
+        )
         worktree_storage = MagicMock(db=temp_db)
         git_manager = MagicMock()
         spawn_config = SpawnConfig(
@@ -357,7 +364,7 @@ class TestSpawnAgentImplErrorBranches:
         artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
         assert ctx.extra["base_commit_sha"] == "base-sha"
         assert artifacts.worktree_path == str(worktree_path)
-        assert artifacts.worktree_id == "wt-1"
+        assert artifacts.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
         assert artifacts.base_commit_sha == "base-sha"
         sync.assert_awaited_once_with(
             git_manager=git_manager,
@@ -382,7 +389,11 @@ class TestSpawnAgentImplErrorBranches:
         runner.run_storage.has_active_run_for_task.return_value = False
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
-        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree = MagicMock(
+            id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            worktree_path=str(worktree_path),
+            branch_name="branch",
+        )
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
@@ -391,7 +402,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
@@ -435,7 +449,7 @@ class TestSpawnAgentImplErrorBranches:
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
-                worktree_id="wt-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
@@ -455,7 +469,7 @@ class TestSpawnAgentImplErrorBranches:
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
         assert spawn_request.cwd == str(worktree_path)
-        assert spawn_request.worktree_id == "wt-1"
+        assert spawn_request.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
 
     @pytest.mark.asyncio
     async def test_reused_worktree_rebase_conflict_uses_fresh_retry_worktree(
@@ -500,7 +514,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
@@ -569,7 +586,11 @@ class TestSpawnAgentImplErrorBranches:
         runner.run_storage.has_active_run_for_task.return_value = False
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
-        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree = MagicMock(
+            id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            worktree_path=str(worktree_path),
+            branch_name="branch",
+        )
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
@@ -594,7 +615,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
@@ -635,7 +659,7 @@ class TestSpawnAgentImplErrorBranches:
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
-                worktree_id="wt-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
@@ -654,7 +678,11 @@ class TestSpawnAgentImplErrorBranches:
         runner.run_storage.has_active_run_for_task.return_value = False
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
-        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree = MagicMock(
+            id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            worktree_path=str(worktree_path),
+            branch_name="branch",
+        )
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
@@ -676,7 +704,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
@@ -726,7 +757,7 @@ class TestSpawnAgentImplErrorBranches:
                 provider="codex",
                 task_id="#123",
                 task_manager=task_manager,
-                worktree_id="wt-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
@@ -779,7 +810,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(repo_path)},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(repo_path),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
@@ -834,7 +868,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(repo_path)},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(repo_path),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._code_index.ensure_isolation_code_index",
@@ -874,7 +911,11 @@ class TestSpawnAgentImplErrorBranches:
         runner.run_storage.has_active_run_for_task.return_value = False
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
-        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree = MagicMock(
+            id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            worktree_path=str(worktree_path),
+            branch_name="branch",
+        )
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
@@ -894,7 +935,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
@@ -922,7 +966,7 @@ class TestSpawnAgentImplErrorBranches:
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
-                worktree_id="wt-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
@@ -952,7 +996,11 @@ class TestSpawnAgentImplErrorBranches:
         runner._child_session_manager = MagicMock()
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
-        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree = MagicMock(
+            id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            worktree_path=str(worktree_path),
+            branch_name="branch",
+        )
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
@@ -961,7 +1009,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path / "repo")},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path / "repo"),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
@@ -981,7 +1032,7 @@ class TestSpawnAgentImplErrorBranches:
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
-                worktree_id="wt-1",
+                worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
             )
@@ -1004,7 +1055,10 @@ class TestSpawnAgentImplErrorBranches:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-1", "project_path": "/path"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": "/path",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"

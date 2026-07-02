@@ -138,7 +138,7 @@ async def test_execute_agent_spawn_with_mock_runner(
     )
     run = cron_storage.create_run(job.id)
 
-    mock_result = {"success": True, "run_id": "run-abc123"}
+    mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"}
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         new_callable=AsyncMock,
@@ -147,8 +147,8 @@ async def test_execute_agent_spawn_with_mock_runner(
         result = await executor.execute(job, run)
 
     assert result.status == "dispatched"
-    assert result.agent_run_id == "run-abc123"
-    assert "run_id=run-abc123" in (result.output or "")
+    assert result.agent_run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"
+    assert "run_id=dddddddd-dddd-4ddd-8ddd-dddddddd0abc" in (result.output or "")
     mock_spawn.assert_called_once()
 
 
@@ -248,7 +248,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
     pipeline_executor.session_manager = SessionManager(temp_db)
 
     execution = MagicMock()
-    execution.id = "pe-cron-123"
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0201"
     pipeline_executor.execution_manager = MagicMock()
     pipeline_executor.execution_manager.create_execution.return_value = execution
     pipeline_executor.execute = AsyncMock(return_value=None)
@@ -270,7 +270,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
         await asyncio.gather(*list(executor._background_tasks), return_exceptions=True)
 
     assert result.status == "dispatched"
-    assert result.pipeline_execution_id == "pe-cron-123"
+    assert result.pipeline_execution_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeee0201"
     repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
     assert repaired is not None
 
@@ -297,12 +297,12 @@ async def test_execute_pipeline_default_overlap_skips_active_child(
         INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
         VALUES (%s, %s, %s, %s)
         """,
-        ("pe-active-overlap", "approval", PROJECT_ID, "waiting_approval"),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0202", "approval", PROJECT_ID, "waiting_approval"),
     )
     cron_storage.update_run(
         previous.id,
         status="dispatched",
-        pipeline_execution_id="pe-active-overlap",
+        pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0202",
         completed_at="2026-02-10T00:00:00+00:00",
     )
     run = cron_storage.create_run(job.id)
@@ -312,7 +312,9 @@ async def test_execute_pipeline_default_overlap_skips_active_child(
     result = await executor.execute(job, run)
 
     assert result.status == "skipped"
-    assert "active child pipeline_execution pe-active-overlap" in (result.output or "")
+    assert "active child pipeline_execution eeeeeeee-eeee-4eee-8eee-eeeeeeee0202" in (
+        result.output or ""
+    )
 
 
 @pytest.mark.asyncio
@@ -328,7 +330,7 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
     pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
     pipeline_executor.session_manager = None
     execution = MagicMock()
-    execution.id = "pe-new-overlap"
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0203"
     pipeline_executor.execution_manager = MagicMock()
     pipeline_executor.execution_manager.create_execution.return_value = execution
     pipeline_executor.execute = AsyncMock(return_value=None)
@@ -345,12 +347,12 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
         INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
         VALUES (%s, %s, %s, %s)
         """,
-        ("pe-existing-overlap", "approval", PROJECT_ID, "running"),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0204", "approval", PROJECT_ID, "running"),
     )
     cron_storage.update_run(
         previous.id,
         status="dispatched",
-        pipeline_execution_id="pe-existing-overlap",
+        pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0204",
         completed_at="2026-02-10T00:00:00+00:00",
     )
     run = cron_storage.create_run(job.id)
@@ -361,7 +363,7 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
         await asyncio.gather(*list(executor._background_tasks), return_exceptions=True)
 
     assert result.status == "dispatched"
-    assert result.pipeline_execution_id == "pe-new-overlap"
+    assert result.pipeline_execution_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeee0203"
 
 
 @pytest.mark.asyncio
@@ -561,7 +563,7 @@ async def test_execute_agent_spawn_with_agent_definition(
     mock_body.build_prompt_preamble.return_value = "## Role\nYou are a developer"
     mock_body.provider = "gemini"
 
-    mock_result = {"success": True, "run_id": "run-def456"}
+    mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0def"}
     with (
         patch("gobby.workflows.agent_resolver.resolve_agent", return_value=mock_body),
         patch(
@@ -600,7 +602,7 @@ async def test_execute_agent_spawn_agent_definition_not_found(
     )
     run = cron_storage.create_run(job.id)
 
-    mock_result = {"success": True, "run_id": "run-ghi789"}
+    mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0987"}
     with (
         patch("gobby.workflows.agent_resolver.resolve_agent", return_value=None),
         patch(

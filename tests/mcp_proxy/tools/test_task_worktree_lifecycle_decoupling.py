@@ -45,7 +45,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task.requires_user_review = False
         mock_task_manager.get_task.return_value = mock_task

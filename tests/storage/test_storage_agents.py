@@ -203,7 +203,7 @@ class TestLocalAgentRunManager:
         )
 
         assert agent_run.id is not None
-        assert agent_run.id.startswith("run-")
+        assert str(uuid.UUID(agent_run.id)) == agent_run.id
         assert agent_run.parent_session_id == sample_session["id"]
         assert agent_run.provider == "claude"
         assert agent_run.prompt == "Implement a feature"
@@ -322,7 +322,7 @@ class TestLocalAgentRunManager:
 
     def test_get_nonexistent(self, agent_manager: LocalAgentRunManager) -> None:
         """Test getting nonexistent agent run returns None."""
-        result = agent_manager.get("nonexistent-id")
+        result = agent_manager.get("00000000-0000-0000-0000-0000000000ff")
         assert result is None
 
     def test_start_agent_run(
@@ -346,7 +346,7 @@ class TestLocalAgentRunManager:
 
     def test_start_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test starting nonexistent run returns None."""
-        result = agent_manager.start("nonexistent-id")
+        result = agent_manager.start("00000000-0000-0000-0000-0000000000ff")
         assert result is None
 
     def test_complete_agent_run(
@@ -423,7 +423,7 @@ class TestLocalAgentRunManager:
 
     def test_complete_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test completing nonexistent run returns None."""
-        result = agent_manager.complete("nonexistent-id", result="test")
+        result = agent_manager.complete("00000000-0000-0000-0000-0000000000ff", result="test")
         assert result is None
 
     def test_fail_agent_run(
@@ -473,7 +473,7 @@ class TestLocalAgentRunManager:
 
     def test_fail_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test failing nonexistent run returns None."""
-        result = agent_manager.fail("nonexistent-id", error="test")
+        result = agent_manager.fail("00000000-0000-0000-0000-0000000000ff", error="test")
         assert result is None
 
     def test_timeout_agent_run(
@@ -593,7 +593,7 @@ class TestLocalAgentRunManager:
 
     def test_timeout_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test timing out nonexistent run returns None."""
-        result = agent_manager.timeout("nonexistent-id")
+        result = agent_manager.timeout("00000000-0000-0000-0000-0000000000ff")
         assert result is None
 
     def test_cancel_agent_run(
@@ -653,7 +653,7 @@ class TestLocalAgentRunManager:
 
     def test_cancel_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test cancelling nonexistent run returns None."""
-        result = agent_manager.cancel("nonexistent-id")
+        result = agent_manager.cancel("00000000-0000-0000-0000-0000000000ff")
         assert result is None
 
     def test_get_cancelled_session_ids_honors_recency_window(
@@ -906,7 +906,9 @@ class TestLocalAgentRunManager:
         self, agent_manager: LocalAgentRunManager
     ) -> None:
         """Test updating child session on nonexistent run returns None."""
-        result = agent_manager.update_child_session("nonexistent-id", str(uuid.uuid4()))
+        result = agent_manager.update_child_session(
+            "00000000-0000-0000-0000-0000000000ff", str(uuid.uuid4())
+        )
         assert result is None
 
     def test_update_sdk_session_id(
@@ -930,7 +932,9 @@ class TestLocalAgentRunManager:
         self, agent_manager: LocalAgentRunManager
     ) -> None:
         """Test updating SDK session ID on nonexistent run returns None."""
-        result = agent_manager.update_sdk_session_id("nonexistent-id", "sdk-123")
+        result = agent_manager.update_sdk_session_id(
+            "00000000-0000-0000-0000-0000000000ff", "sdk-123"
+        )
         assert result is None
 
     def test_list_by_session(
@@ -1226,7 +1230,7 @@ class TestLocalAgentRunManager:
 
     def test_delete_nonexistent(self, agent_manager: LocalAgentRunManager) -> None:
         """Test deleting nonexistent run returns False."""
-        result = agent_manager.delete("nonexistent-id")
+        result = agent_manager.delete("00000000-0000-0000-0000-0000000000ff")
         assert result is False
 
     def test_cleanup_stale_runs(
@@ -1815,7 +1819,7 @@ class TestAgentRunEdgeCases:
         mock_cursor.rowcount = None
 
         with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            result = agent_manager.delete("some-id")
+            result = agent_manager.delete("00000000-0000-0000-0000-0000000000ff")
             assert result is False
 
     def test_cleanup_stale_runs_cursor_rowcount_none(

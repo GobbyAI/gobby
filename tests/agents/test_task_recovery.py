@@ -62,10 +62,10 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
         holder="dispatcher",
         kind="spawn",
         ttl_seconds=30,
-        run_id="run-terminal",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd2001",
     )
     run = _Run(
-        id="run-terminal",
+        id="dddddddd-dddd-4ddd-8ddd-dddddddd2001",
         status="failed",
         task_id=task.id,
         child_session_id=session.id,
@@ -86,7 +86,7 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
 
 
 @pytest.mark.asyncio
-async def test_resolve_claimed_task_uses_claimed_session_fallback(
+async def test_resolve_claimed_task_requires_child_session_ownership(
     temp_db,
     sample_project,
 ) -> None:
@@ -99,13 +99,6 @@ async def test_resolve_claimed_task_uses_claimed_session_fallback(
     )
     task = task_manager.create_task(sample_project["id"], "Recover claimed task")
     task_manager.claim_task(task.id, session.id)
-    run = _Run(
-        id="run-claimed-only",
-        status="failed",
-        task_id=task.id,
-        child_session_id=None,
-        claimed_session_id=session.id,
-    )
     handler = TaskRecoveryHandler(
         task_manager,
         _RunManager(),
@@ -113,19 +106,27 @@ async def test_resolve_claimed_task_uses_claimed_session_fallback(
         run_db=_run_db,
     )
 
-    resolved = await handler.resolve_claimed_task_for_run(run)
-
-    assert resolved is not None
-    assert resolved[0] == task.id
-
-    mismatched_run = _Run(
-        id="run-wrong-owner",
+    # Ownership is narrowed to child_session_id (#17367): a run without a child
+    # session never resolves, even when claimed_session_id matches the owner.
+    childless_run = _Run(
+        id="dddddddd-dddd-4ddd-8ddd-dddddddd2002",
         status="failed",
         task_id=task.id,
         child_session_id=None,
-        claimed_session_id="different-session",
+        claimed_session_id=session.id,
     )
-    assert await handler.resolve_claimed_task_for_run(mismatched_run) is None
+    assert await handler.resolve_claimed_task_for_run(childless_run) is None
+
+    owning_run = _Run(
+        id="dddddddd-dddd-4ddd-8ddd-dddddddd2003",
+        status="failed",
+        task_id=task.id,
+        child_session_id=session.id,
+        claimed_session_id=None,
+    )
+    resolved = await handler.resolve_claimed_task_for_run(owning_run)
+    assert resolved is not None
+    assert resolved[0] == task.id
 
 
 def test_release_task_claim_mutex_construction_type_error_falls_back() -> None:

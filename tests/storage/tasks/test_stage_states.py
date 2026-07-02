@@ -557,7 +557,7 @@ def test_holistic_failure_reactivates_merged_cited_child_worktree(
             agent_session_id, status, created_at, updated_at, merged_at, cleanup_after
         )
         VALUES (
-            'wt-reopened', %s, %s, 'task-reopened', '/tmp/gobby-reopened', 'main',
+            'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04', %s, %s, 'task-reopened', '/tmp/gobby-reopened', 'main',
             NULL, 'merged', '2026-05-07T00:00:00+00:00',
             '2026-05-07T00:00:00+00:00', '2026-05-07T00:00:00+00:00',
             '2026-05-14T00:00:00+00:00'
@@ -574,7 +574,9 @@ def test_holistic_failure_reactivates_merged_cited_child_worktree(
         cited_subtasks=[leaf.id],
     )
 
-    worktree = temp_db.fetchone("SELECT * FROM worktrees WHERE id = 'wt-reopened'")
+    worktree = temp_db.fetchone(
+        "SELECT * FROM worktrees WHERE id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04'"
+    )
     assert worktree is not None
     assert worktree["status"] == "active"
     assert worktree["merged_at"] is None

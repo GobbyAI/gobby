@@ -23,7 +23,7 @@ def db(hub_db: HubDatabase) -> HubDatabase:
     database.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("test-project", "Test Project"),
+        ("11111111-1111-4111-8111-111111110001", "Test Project"),
     )
     return database
 
@@ -90,7 +90,9 @@ class TestWakeDispatcherSdkResume:
             agent_run_manager=agent_run_mgr,
         )
 
-        await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
+        await dispatcher.wake(
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Pipeline done", {"status": "completed"}
+        )
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
         assert "Task completed" not in sdk_resumer.await_args.args[1]
@@ -119,7 +121,9 @@ class TestWakeDispatcherSdkResume:
             agent_run_manager=MagicMock(),
         )
 
-        await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
+        await dispatcher.wake(
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Pipeline done", {"status": "completed"}
+        )
 
         sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
         assert sdk_resumer.await_count == 1
@@ -148,7 +152,9 @@ class TestWakeDispatcherSdkResume:
             agent_run_manager=MagicMock(),
         )
 
-        await dispatcher.wake("sess-1", "Done", {"status": "completed"})
+        await dispatcher.wake(
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
+        )
 
         tmux_sender.assert_awaited_once_with(
             "agent-1",
@@ -184,7 +190,9 @@ class TestWakeDispatcherSdkResume:
             agent_run_manager=MagicMock(),
         )
 
-        await dispatcher.wake("sess-1", "Done", {"status": "completed"})
+        await dispatcher.wake(
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
+        )
 
         tmux_sender.assert_awaited_once_with(
             "agent-1",
@@ -211,12 +219,24 @@ class TestRegistryWakeCallback:
         wake_mock = AsyncMock()
         registry = CompletionEventRegistry(wake_callback=wake_mock)
 
-        registry.register("pe-1", subscribers=["sess-a", "sess-b"])
-        await registry.notify("pe-1", {"status": "completed"}, message="Pipeline done")
+        registry.register(
+            "796ce97e-38ee-508a-bdc0-f3ce2dded342",
+            subscribers=[
+                "12313230-63a9-5fd2-bdbb-f793325d2c16",
+                "e3c98b06-11a5-5e52-9b82-b47a220be090",
+            ],
+        )
+        await registry.notify(
+            "796ce97e-38ee-508a-bdc0-f3ce2dded342", {"status": "completed"}, message="Pipeline done"
+        )
 
         assert wake_mock.await_count == 2
-        wake_mock.assert_any_await("sess-a", "Pipeline done", {"status": "completed"})
-        wake_mock.assert_any_await("sess-b", "Pipeline done", {"status": "completed"})
+        wake_mock.assert_any_await(
+            "12313230-63a9-5fd2-bdbb-f793325d2c16", "Pipeline done", {"status": "completed"}
+        )
+        wake_mock.assert_any_await(
+            "e3c98b06-11a5-5e52-9b82-b47a220be090", "Pipeline done", {"status": "completed"}
+        )
 
 
 class TestContinuationPromptStorage:
@@ -226,7 +246,7 @@ class TestContinuationPromptStorage:
         """continuation_prompt column stored and retrieved."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
-        em = LocalPipelineExecutionManager(db=db, project_id="test-project")
+        em = LocalPipelineExecutionManager(db=db, project_id="11111111-1111-4111-8111-111111110001")
         exe = em.create_execution(
             pipeline_name="test",
             continuation_prompt="Review the results and create subtasks",
@@ -240,7 +260,7 @@ class TestContinuationPromptStorage:
         """continuation_prompt defaults to None."""
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
-        em = LocalPipelineExecutionManager(db=db, project_id="test-project")
+        em = LocalPipelineExecutionManager(db=db, project_id="11111111-1111-4111-8111-111111110001")
         exe = em.create_execution(pipeline_name="test")
 
         fetched = em.get_execution(exe.id)
@@ -252,8 +272,8 @@ class TestContinuationPromptStorage:
         from gobby.storage.agents import AgentRun
 
         run = AgentRun(
-            id="run-1",
-            parent_session_id="sess-1",
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            parent_session_id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
             provider="claude",
             prompt="Do thing",
             status="pending",
@@ -278,22 +298,27 @@ class TestAutoSubscribeLineage:
         # Mock session_manager that returns no lineage (simple case)
         _auto_subscribe_lineage(
             completion_registry=registry,
-            completion_id="pe-test-1",
-            session_id="sess-1",
+            completion_id="ee5aebce-1221-5451-99ec-8ecfd40241a3",
+            session_id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
             session_manager=None,
             continuation_prompt="Check results",
             db=db,
         )
 
         # Verify in-memory registration
-        assert registry.is_registered("pe-test-1")
-        assert registry.get_subscribers("pe-test-1") == ["sess-1"]
-        assert registry.get_continuation_prompt("pe-test-1") == "Check results"
+        assert registry.is_registered("ee5aebce-1221-5451-99ec-8ecfd40241a3")
+        assert registry.get_subscribers("ee5aebce-1221-5451-99ec-8ecfd40241a3") == [
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+        ]
+        assert (
+            registry.get_continuation_prompt("ee5aebce-1221-5451-99ec-8ecfd40241a3")
+            == "Check results"
+        )
 
         # Verify DB persistence
         em = CompletionSubscriberManager(db=db)
-        db_subs = em.get_completion_subscribers("pe-test-1")
-        assert "sess-1" in db_subs
+        db_subs = em.get_completion_subscribers("ee5aebce-1221-5451-99ec-8ecfd40241a3")
+        assert "9264a39c-68db-5eed-917c-6f7babb8e6b1" in db_subs
 
     def test_auto_subscribe_with_lineage(self) -> None:
         """Lineage traversal subscribes all ancestors."""
@@ -303,29 +328,39 @@ class TestAutoSubscribeLineage:
 
         # Mock session_manager with lineage
         session_mgr = MagicMock()
-        root_session = MagicMock(id="sess-root", parent_session_id=None)
-        mid_session = MagicMock(id="sess-mid", parent_session_id="sess-root")
-        child_session = MagicMock(id="sess-child", parent_session_id="sess-mid")
+        root_session = MagicMock(id="09f40f97-f292-584d-8062-93c53a015f01", parent_session_id=None)
+        mid_session = MagicMock(
+            id="e81205c4-e7a0-524d-b5e7-8bb20c928f39",
+            parent_session_id="09f40f97-f292-584d-8062-93c53a015f01",
+        )
+        child_session = MagicMock(
+            id="1b5b5082-3a7e-5c26-89ba-f21130d51dc7",
+            parent_session_id="e81205c4-e7a0-524d-b5e7-8bb20c928f39",
+        )
 
         # ChildSessionManager.get_session_lineage walks parent chain
         session_mgr.get.side_effect = lambda sid: {
-            "sess-child": child_session,
-            "sess-mid": mid_session,
-            "sess-root": root_session,
+            "1b5b5082-3a7e-5c26-89ba-f21130d51dc7": child_session,
+            "e81205c4-e7a0-524d-b5e7-8bb20c928f39": mid_session,
+            "09f40f97-f292-584d-8062-93c53a015f01": root_session,
         }.get(sid)
 
         _auto_subscribe_lineage(
             completion_registry=registry,
-            completion_id="pe-lin-1",
-            session_id="sess-child",
+            completion_id="29d58570-f82c-5b63-bf92-d8b94730df1f",
+            session_id="1b5b5082-3a7e-5c26-89ba-f21130d51dc7",
             session_manager=session_mgr,
             continuation_prompt=None,
             db=None,
         )
 
-        subs = registry.get_subscribers("pe-lin-1")
-        assert "sess-child" in subs
-        assert set(subs) == {"sess-child", "sess-mid", "sess-root"}
+        subs = registry.get_subscribers("29d58570-f82c-5b63-bf92-d8b94730df1f")
+        assert "1b5b5082-3a7e-5c26-89ba-f21130d51dc7" in subs
+        assert set(subs) == {
+            "1b5b5082-3a7e-5c26-89ba-f21130d51dc7",
+            "e81205c4-e7a0-524d-b5e7-8bb20c928f39",
+            "09f40f97-f292-584d-8062-93c53a015f01",
+        }
 
 
 class TestStartupRecovery:
@@ -337,14 +372,16 @@ class TestStartupRecovery:
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
 
-        em = LocalPipelineExecutionManager(db=db, project_id="test-project")
+        em = LocalPipelineExecutionManager(db=db, project_id="11111111-1111-4111-8111-111111110001")
 
         # Create execution that was running when daemon stopped
         exe = em.create_execution(pipeline_name="long-running")
         em.update_execution_status(exe.id, ExecutionStatus.RUNNING)
 
         # Add subscribers
-        em.add_completion_subscribers(exe.id, ["sess-1", "sess-2"])
+        em.add_completion_subscribers(
+            exe.id, ["9264a39c-68db-5eed-917c-6f7babb8e6b1", "7a378a57-18dd-56d9-be74-0fcb8a19376d"]
+        )
 
         # Simulate daemon restart: interrupt stale executions
         em.interrupt_stale_running_executions()

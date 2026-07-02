@@ -30,7 +30,7 @@ def registry(
     return create_worktrees_registry(
         worktree_storage=mock_worktree_storage,
         git_manager=mock_git_manager,
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
     )
 
 
@@ -41,7 +41,7 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-123",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/test",
         worktree_path="/tmp/wt/feature-test",
@@ -74,7 +74,7 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
     emit_event.assert_called_once_with(
         "worktree_created",
         worktree_id="wt-123",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         branch_name="feature/test",
         worktree_path="/tmp/wt/feature-test",
         base_branch="main",
@@ -91,7 +91,7 @@ async def test_create_worktree_installs_droid_hooks(
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-droid",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/droid",
         worktree_path="/tmp/wt/feature-droid",
@@ -133,7 +133,7 @@ async def test_create_worktree_installs_codex_hooks(
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-codex",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/codex",
         worktree_path="/tmp/wt/feature-codex",
@@ -187,7 +187,7 @@ async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git
 async def test_create_worktree_existing(registry, mock_worktree_storage) -> None:
     existing = Worktree(
         id="wt-123",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         branch_name="feature/exists",
         worktree_path="/tmp/exists",
         base_branch="main",
@@ -216,7 +216,7 @@ async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktr
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-auto",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/auto",
         worktree_path="/tmp/gobby-worktrees/feature-auto",
@@ -251,7 +251,7 @@ async def test_create_worktree_use_local_explicit(
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-local",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/local",
         worktree_path="/tmp/wt/feature-local",
@@ -292,7 +292,7 @@ async def test_create_worktree_auto_detects_unpushed(
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-auto-local",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/auto-local",
         worktree_path="/tmp/wt/feature-auto-local",
@@ -331,7 +331,7 @@ async def test_create_worktree_no_unpushed_uses_remote(
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
         id="wt-remote",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         task_id=None,
         branch_name="feature/remote",
         worktree_path="/tmp/wt/feature-remote",

@@ -769,7 +769,9 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     repo.mkdir()
     _init_repo(repo)
     (repo / ".gobby").mkdir()
-    project_json = '{\n  "id": "proj-1",\n  "name": "merge-project"\n}\n'
+    project_json = (
+        '{\n  "id": "aa81136a-134a-5bf3-bcd4-adac1fe28e9b",\n  "name": "merge-project"\n}\n'
+    )
     (repo / ".gobby" / "project.json").write_text(project_json)
     _git(repo, "add", ".gobby/project.json")
     _git(repo, "commit", "-m", "add project metadata")
@@ -780,16 +782,12 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
     _git(task_path, "config", "user.email", "test@example.com")
     _git(task_path, "config", "user.name", "Test User")
 
-    integration_project_json = (
-        '{\n  "id": "proj-1",\n  "name": "merge-project",\n  "parent_project_path": "/repo"\n}\n'
-    )
+    integration_project_json = '{\n  "id": "aa81136a-134a-5bf3-bcd4-adac1fe28e9b",\n  "name": "merge-project",\n  "parent_project_path": "/repo"\n}\n'
     (integration_path / ".gobby" / "project.json").write_text(integration_project_json)
     _git(integration_path, "add", ".gobby/project.json")
     _git(integration_path, "commit", "-m", "record integration project path")
 
-    task_project_json = (
-        '{\n  "id": "proj-1",\n  "name": "merge-project",\n  "parent_project_id": "proj-1"\n}\n'
-    )
+    task_project_json = '{\n  "id": "aa81136a-134a-5bf3-bcd4-adac1fe28e9b",\n  "name": "merge-project",\n  "parent_project_id": "aa81136a-134a-5bf3-bcd4-adac1fe28e9b"\n}\n'
     (task_path / ".gobby" / "project.json").write_text(task_project_json)
     (task_path / "feature.txt").write_text("feature\n")
     _git(task_path, "add", ".gobby/project.json", "feature.txt")

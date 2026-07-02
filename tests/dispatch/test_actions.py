@@ -13,7 +13,7 @@ def test_advance_action_carries_status_fields() -> None:
     from gobby.dispatch.actions import AdvanceLifecycleAction
 
     action = AdvanceLifecycleAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         from_lifecycle="in_development",
         from_status="needs_review",
         to_lifecycle="holistic_review",
@@ -31,7 +31,7 @@ def test_action_round_trip() -> None:
     from gobby.dispatch.actions import Action, SpawnAgentAction
 
     action: Action = SpawnAgentAction(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         agent_slug="backend-developer",
         prompt="Implement the task",

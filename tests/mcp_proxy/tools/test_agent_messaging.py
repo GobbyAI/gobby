@@ -145,8 +145,8 @@ class TestSendMessage:
     ) -> None:
         """P2P message between sessions in the same project."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-to": MockSession(id="s-to", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
 
         result = await messaging_registry.call(
@@ -168,8 +168,8 @@ class TestSendMessage:
     ) -> None:
         """Public send_message accepts session target_id and forwards metadata."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-to": MockSession(id="s-to", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
 
         result = await messaging_registry.call(
@@ -200,8 +200,8 @@ class TestSendMessage:
         from gobby.utils.session_context import session_context_for_test
 
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-to": MockSession(id="s-to", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
         mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
             id="msg-context",
@@ -250,8 +250,8 @@ class TestSendMessage:
     ) -> None:
         """Direct send_message function accepts optional fields only by keyword."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-to": MockSession(id="s-to", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
         send_message = messaging_registry.get_tool("send_message")
         assert send_message is not None
@@ -383,7 +383,7 @@ class TestSendMessage:
     ) -> None:
         """Reject unknown target identifiers."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
 
         result = await messaging_registry.call(
@@ -442,11 +442,11 @@ class TestSendMessage:
             wake_dispatcher=wake_dispatcher,
         )
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-child": MockSession(id="s-child", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-child": MockSession(id="s-child", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
         mock_db.fetchone.side_effect = lambda sql, params=(): (
-            {"id": "proj-1"} if "FROM projects" in sql else None
+            {"id": "11111111-1111-4111-8111-111111110001"} if "FROM projects" in sql else None
         )
         mock_db.fetchall.return_value = [
             {
@@ -471,7 +471,7 @@ class TestSendMessage:
             {
                 "from_session": "s-from",
                 "target": "project",
-                "target_id": "proj-1",
+                "target_id": "11111111-1111-4111-8111-111111110001",
                 "include_wakeup": True,
                 "content": "hello agents",
             },
@@ -687,10 +687,10 @@ class TestSendMessage:
         created = MockMessage(id="msg-direct", delivered_at=None)
         mock_message_manager.create_message.return_value = created
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
             "s-to": MockSession(
                 id="s-to",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 terminal_context={"parent_pid": 12345},
             ),
         }.get(sid)
@@ -728,8 +728,8 @@ class TestSendMessage:
     ) -> None:
         """Reject messages between sessions in different projects."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-to": MockSession(id="s-to", project_id="proj-2"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110002"),
         }.get(sid)
 
         result = await messaging_registry.call(
@@ -751,8 +751,14 @@ class TestSendMessage:
     ) -> None:
         """When child sends to parent, auto-write to agent_runs.result."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-child": MockSession(id="s-child", parent_session_id="s-parent", project_id="proj-1"),
-            "s-parent": MockSession(id="s-parent", project_id="proj-1"),
+            "s-child": MockSession(
+                id="s-child",
+                parent_session_id="s-parent",
+                project_id="11111111-1111-4111-8111-111111110001",
+            ),
+            "s-parent": MockSession(
+                id="s-parent", project_id="11111111-1111-4111-8111-111111110001"
+            ),
         }.get(sid)
         # Simulate finding an agent_run row
         mock_db.fetchone.return_value = {"id": "run-1"}

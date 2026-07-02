@@ -130,7 +130,8 @@ class TestCreateMemory:
         ]
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "create_memory",
@@ -152,7 +153,8 @@ class TestCreateMemory:
         mock_memory_manager.search_memories.return_value = []
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "create_memory", {"content": "Test", "tags": ["tag1", "tag2"]}
@@ -204,7 +206,8 @@ class TestCreateMemory:
         )
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await registry.call("create_memory", {"content": proposal})
 
@@ -235,7 +238,8 @@ class TestCreateMemory:
         )
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await registry.call(
                 "create_memory",
@@ -261,7 +265,7 @@ class TestCreateMemory:
         with (
             patch(
                 "gobby.utils.project_context.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.storage.session_resolution.resolve_session_reference",
@@ -273,7 +277,9 @@ class TestCreateMemory:
             )
 
         assert result["success"] is True
-        mock_resolve.assert_called_once_with(mock_memory_manager.db, "#42", "proj-1")
+        mock_resolve.assert_called_once_with(
+            mock_memory_manager.db, "#42", "11111111-1111-4111-8111-111111110001"
+        )
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
         assert call_kwargs["source_session_id"] == resolved_uuid
 
@@ -287,7 +293,7 @@ class TestCreateMemory:
         with (
             patch(
                 "gobby.utils.project_context.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.storage.session_resolution.resolve_session_reference",
@@ -314,7 +320,8 @@ class TestCreateMemory:
         ]
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call("create_memory", {"content": "Test content"})
 
@@ -330,7 +337,8 @@ class TestCreateMemory:
         mock_memory_manager.search_memories.side_effect = Exception("Search unavailable")
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call("create_memory", {"content": "Test"})
 
@@ -370,7 +378,8 @@ class TestSearchMemories:
         ]
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "search_memories", {"query": "test query", "limit": 5}
@@ -390,7 +399,8 @@ class TestSearchMemories:
     async def test_search_memories_with_filters(self, memory_registry, mock_memory_manager):
         """Test search with tag filters."""
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "search_memories",
@@ -419,7 +429,8 @@ class TestSearchMemories:
         ]
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "search_memories", {"query": "test query", "limit": 5}
@@ -458,7 +469,8 @@ class TestSearchMemories:
         ]
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "search_memories", {"query": "test query", "limit": 2, "min_score": 0.6}
@@ -585,7 +597,7 @@ class TestPromoteMemoryToGlobal:
     ) -> None:
         result = await memory_registry.call(
             "promote_memory_to_global",
-            {"memory_id": "mem-123", "target_project_id": "proj-2"},
+            {"memory_id": "mem-123", "target_project_id": "11111111-1111-4111-8111-111111110002"},
         )
 
         assert result["success"] is False
@@ -606,7 +618,8 @@ class TestListMemories:
         ]
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call("list_memories", {})
 
@@ -618,7 +631,8 @@ class TestListMemories:
     async def test_list_memories_with_filters(self, memory_registry, mock_memory_manager):
         """Test listing with filters."""
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call(
                 "list_memories",
@@ -657,7 +671,7 @@ class TestGetMemory:
             id="mem-123",
             content="Test content",
             memory_type="fact",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             access_count=5,
             tags=["tag1"],
         )
@@ -829,13 +843,16 @@ class TestMemoryStats:
         }
 
         with patch(
-            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = await memory_registry.call("memory_stats", {})
 
         assert "stats" in result
         assert result["stats"]["total"] == 100
-        mock_memory_manager.get_stats.assert_called_once_with(project_id="proj-1")
+        mock_memory_manager.get_stats.assert_called_once_with(
+            project_id="11111111-1111-4111-8111-111111110001"
+        )
 
     @pytest.mark.asyncio
     async def test_memory_stats_error(self, memory_registry, mock_memory_manager):

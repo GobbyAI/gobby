@@ -111,7 +111,7 @@ def test_reopen_blocks_active_agent_run(temp_db, sample_project) -> None:
         provider="codex",
         prompt="work",
         task_id=task.id,
-        run_id="run-reopen-active",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd20",
     )
 
     with pytest.raises(ValueError, match="controlled by active build automation"):

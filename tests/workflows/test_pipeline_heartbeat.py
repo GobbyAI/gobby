@@ -103,7 +103,7 @@ def _create_stalled_execution(
 def _add_alive_agent(
     agent_run_manager: LocalAgentRunManager,
     parent_session_id: str = SESSION_ID,
-    run_id: str = "run-alive-001",
+    run_id: str = "1fbb3f18-f217-5d39-a355-5774741d6228",
 ) -> None:
     """Create an active agent run in the DB for a parent session."""
     agent_run_manager.create(

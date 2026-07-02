@@ -693,7 +693,7 @@ async def test_run_now_executes_in_empty_session_context(
 @pytest.mark.asyncio
 async def test_run_now_nonexistent_job(scheduler: CronScheduler) -> None:
     """run_now returns None for non-existent job."""
-    result = await scheduler.run_now("cj-nonexistent")
+    result = await scheduler.run_now("00000000-0000-0000-0000-0000000000ff")
     assert result is None
 
 

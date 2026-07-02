@@ -27,7 +27,7 @@ def _stage(stage_name: str, state: str, position: int = 0) -> SimpleNamespace:
 
 def _task(*stages: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(
-        id="task-pr",
+        id="c465ddfe-ebc1-5611-af14-493e6e202c38",
         ref="#99",
         task_type="task",
         stages=list(stages),
@@ -60,7 +60,7 @@ def test_pr_work_escalates_when_no_agent() -> None:
     action = rules.pr_work_rule(_task(_stage("pr", "in_progress")), _context())
 
     assert isinstance(action, EscalateAction)
-    assert action.task_id == "task-pr"
+    assert action.task_id == "c465ddfe-ebc1-5611-af14-493e6e202c38"
     assert action.reason == "pr_no_agent"
 
 
@@ -79,7 +79,7 @@ def test_pr_work_spawns_when_merge_orchestrator_registered(
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.task_id == "task-pr"
+    assert action.task_id == "c465ddfe-ebc1-5611-af14-493e6e202c38"
     assert action.task_ref == "#99"
     assert action.agent_slug == "merge-orchestrator"
     assert action.initial_variables == {"stage_name": "pr", "stage_state": "in_progress"}
@@ -103,7 +103,7 @@ def test_pr_advance_rule_completes_pr_stage() -> None:
     action = rules.pr_advance_rule(_task(_stage("pr", "review_approved")), _context())
 
     assert isinstance(action, AdvanceStageAction)
-    assert action.task_id == "task-pr"
+    assert action.task_id == "c465ddfe-ebc1-5611-af14-493e6e202c38"
     assert action.stage_name == "pr"
     assert action.method == "complete_stage"
     assert action.by_session_id == "dispatcher"

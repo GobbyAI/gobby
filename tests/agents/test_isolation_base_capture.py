@@ -41,7 +41,7 @@ async def test_worktree_handler_captures_merge_base(
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.worktree_path == worktree_path
-    assert artifacts.worktree_id == "wt-123"
+    assert artifacts.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeee1123"
     assert artifacts.base_commit_sha == "base123"
     assert ctx.extra["base_commit_sha"] == "base123"
 
@@ -62,7 +62,7 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.clone_path == clone_path
-    assert artifacts.clone_id == "clone-123"
+    assert artifacts.clone_id == "cccccccc-cccc-4ccc-8ccc-cccccccc1123"
     assert artifacts.base_commit_sha == "abc123"
     assert ctx.extra["base_commit_sha"] == "abc123"
 
@@ -94,7 +94,7 @@ async def test_base_captured_before_first_agent_run(
         await handler.prepare_environment(_config(task.id, sample_project["id"], tmp_path))
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
-    assert artifacts.worktree_id == "wt-123"
+    assert artifacts.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeee1123"
 
 
 @pytest.mark.asyncio
@@ -178,7 +178,7 @@ def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler
     storage.db = temp_db
     storage.get_by_branch.return_value = None
     storage.create.return_value = MagicMock(
-        id="wt-123",
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeee1123",
         worktree_path=worktree_path,
         branch_name="branch",
     )
@@ -195,7 +195,7 @@ def _clone_handler(temp_db, tmp_path: Path) -> tuple[CloneIsolationHandler, str]
     storage.db = temp_db
     storage.get_by_branch.return_value = None
     storage.create.return_value = MagicMock(
-        id="clone-123",
+        id="cccccccc-cccc-4ccc-8ccc-cccccccc1123",
         clone_path=clone_path,
         branch_name="branch",
     )

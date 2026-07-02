@@ -1,5 +1,7 @@
 """Tests for local communications store."""
 
+import uuid
+
 import pytest
 
 from gobby.communications.identities import IdentityManager
@@ -35,7 +37,7 @@ def test_channel_crud(comms_store: LocalCommunicationsStore) -> None:
         updated_at="2024-01-01T00:00:00Z",
     )
     saved = comms_store.create_channel(channel)
-    assert saved.id.startswith("cc-")
+    assert str(uuid.UUID(saved.id)) == saved.id
     assert saved.name == "Test Channel"
 
     # Read
@@ -77,7 +79,7 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
     """Test full CRUD lifecycle for identities."""
     # Need a channel first because of FK
     channel = ChannelConfig(
-        id="cc-test",
+        id="cccccccc-1111-4ccc-8ccc-cccccccc0001",
         channel_type="test",
         name="Test",
         enabled=True,
@@ -90,7 +92,7 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
     # Create
     identity = CommsIdentity(
         id="",
-        channel_id="cc-test",
+        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001",
         external_user_id="user_123",
         external_username="testuser",
         session_id=None,
@@ -100,7 +102,7 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
         updated_at="2024-01-01T00:00:00Z",
     )
     saved = comms_store.create_identity(identity)
-    assert saved.id.startswith("ci-")
+    assert str(uuid.UUID(saved.id)) == saved.id
     assert saved.project_id == "00000000-0000-0000-0000-000000000000"
 
     # Read
@@ -109,15 +111,17 @@ def test_identity_crud(comms_store: LocalCommunicationsStore) -> None:
     assert fetched.external_username == "testuser"
     assert fetched.metadata_json == {"role": "admin"}
 
-    fetched_ext = comms_store.get_identity_by_external("cc-test", "user_123")
+    fetched_ext = comms_store.get_identity_by_external(
+        "cccccccc-1111-4ccc-8ccc-cccccccc0001", "user_123"
+    )
     assert fetched_ext is not None
     assert fetched_ext.id == saved.id
 
     # List
-    identities = comms_store.list_identities(channel_id="cc-test")
+    identities = comms_store.list_identities(channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0001")
     assert len(identities) == 1
 
-    identities_none = comms_store.list_identities(channel_id="other")
+    identities_none = comms_store.list_identities(channel_id="00000000-0000-0000-0000-0000000000ff")
     assert len(identities_none) == 0
 
     # Update
@@ -141,7 +145,7 @@ def test_resolve_identity_creates_real_store_identity_with_timestamps(
         temp_db, project_id="00000000-0000-0000-0000-000000000000"
     )
     channel = ChannelConfig(
-        id="cc-resolve",
+        id="cccccccc-1111-4ccc-8ccc-cccccccc0002",
         channel_type="test",
         name="Resolve Test",
         enabled=True,
@@ -157,20 +161,22 @@ def test_resolve_identity_creates_real_store_identity_with_timestamps(
         CommunicationsConfig(auto_create_sessions=True),
     )
     identity = identities.resolve_identity(
-        channel_id="cc-resolve",
+        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0002",
         external_user_id="new-user",
         external_username="newuser",
         metadata={"source": "telegram"},
         project_id="00000000-0000-0000-0000-000000000000",
     )
 
-    assert identity.id.startswith("ci-")
+    assert str(uuid.UUID(identity.id)) == identity.id
     assert identity.session_id
     assert identity.created_at
     assert identity.updated_at
     assert identity.metadata_json == {"source": "telegram"}
 
-    stored = comms_store.get_identity_by_external("cc-resolve", "new-user")
+    stored = comms_store.get_identity_by_external(
+        "cccccccc-1111-4ccc-8ccc-cccccccc0002", "new-user"
+    )
     assert stored is not None
     assert stored.id == identity.id
     assert stored.created_at == identity.created_at
@@ -182,7 +188,7 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     # Create channel & identity
     comms_store.create_channel(
         ChannelConfig(
-            id="cc-msg",
+            id="cccccccc-1111-4ccc-8ccc-cccccccc0003",
             channel_type="test",
             name="Msg",
             enabled=True,
@@ -193,8 +199,8 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     )
     comms_store.create_identity(
         CommsIdentity(
-            id="ci-msg",
-            channel_id="cc-msg",
+            id="cccccccc-2222-4ccc-8ccc-cccccccc0001",
+            channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0003",
             external_user_id="u1",
             created_at="2024-01-01T00:00:00Z",
             updated_at="2024-01-01T00:00:00Z",
@@ -204,8 +210,8 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     # Create
     message = CommsMessage(
         id="",
-        channel_id="cc-msg",
-        identity_id="ci-msg",
+        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0003",
+        identity_id="cccccccc-2222-4ccc-8ccc-cccccccc0001",
         direction="inbound",
         content="Hello world",
         content_type="text",
@@ -216,7 +222,7 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
         created_at="2024-01-01T00:00:00Z",
     )
     saved = comms_store.create_message(message)
-    assert saved.id.startswith("cm-")
+    assert str(uuid.UUID(saved.id)) == saved.id
 
     # Read
     fetched = comms_store.get_message(saved.id)
@@ -225,11 +231,13 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     assert fetched.direction == "inbound"
 
     # List (Filter and sort)
-    messages = comms_store.list_messages(channel_id="cc-msg", direction="inbound")
+    messages = comms_store.list_messages(
+        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0003", direction="inbound"
+    )
     assert len(messages) == 1
     assert messages[0].id == saved.id
 
-    messages_empty = comms_store.list_messages(session_id="other")
+    messages_empty = comms_store.list_messages(session_id="00000000-0000-0000-0000-0000000000ff")
     assert len(messages_empty) == 0
 
     # Update status
@@ -246,7 +254,7 @@ def test_create_message_deduplicates_channel_platform_message_id(
     """Webhook retries should not create duplicate platform-message rows."""
     comms_store.create_channel(
         ChannelConfig(
-            id="cc-dedup",
+            id="cccccccc-1111-4ccc-8ccc-cccccccc0004",
             channel_type="test",
             name="Dedup",
             enabled=True,
@@ -258,8 +266,8 @@ def test_create_message_deduplicates_channel_platform_message_id(
 
     first = comms_store.create_message(
         CommsMessage(
-            id="first",
-            channel_id="cc-dedup",
+            id="cccccccc-3333-4ccc-8ccc-cccccccc0001",
+            channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0004",
             direction="inbound",
             content="first",
             platform_message_id="platform-1",
@@ -268,8 +276,8 @@ def test_create_message_deduplicates_channel_platform_message_id(
     )
     duplicate = comms_store.create_message(
         CommsMessage(
-            id="second",
-            channel_id="cc-dedup",
+            id="cccccccc-3333-4ccc-8ccc-cccccccc0002",
+            channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0004",
             direction="inbound",
             content="second",
             platform_message_id="platform-1",
@@ -277,7 +285,7 @@ def test_create_message_deduplicates_channel_platform_message_id(
         )
     )
 
-    messages = comms_store.list_messages(channel_id="cc-dedup")
+    messages = comms_store.list_messages(channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0004")
 
     assert duplicate.id == first.id
     assert len(messages) == 1
@@ -289,7 +297,7 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
     # Create channel
     comms_store.create_channel(
         ChannelConfig(
-            id="cc-rule",
+            id="cccccccc-1111-4ccc-8ccc-cccccccc0005",
             channel_type="test",
             name="Rule",
             enabled=True,
@@ -303,7 +311,7 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
     rule = CommsRoutingRule(
         id="",
         name="Test Rule",
-        channel_id="cc-rule",
+        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0005",
         event_pattern="*",
         priority=10,
         enabled=True,
@@ -312,7 +320,7 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
         updated_at="2024-01-01T00:00:00Z",
     )
     saved = comms_store.create_routing_rule(rule)
-    assert saved.id.startswith("cr-")
+    assert str(uuid.UUID(saved.id)) == saved.id
     assert saved.project_id == "00000000-0000-0000-0000-000000000000"
 
     # Read
@@ -322,10 +330,14 @@ def test_routing_rule_crud(comms_store: LocalCommunicationsStore) -> None:
     assert fetched.priority == 10
 
     # List
-    rules = comms_store.list_routing_rules(channel_id="cc-rule", enabled_only=True)
+    rules = comms_store.list_routing_rules(
+        channel_id="cccccccc-1111-4ccc-8ccc-cccccccc0005", enabled_only=True
+    )
     assert len(rules) == 1
 
-    rules_empty = comms_store.list_routing_rules(enabled_only=False, channel_id="other")
+    rules_empty = comms_store.list_routing_rules(
+        enabled_only=False, channel_id="00000000-0000-0000-0000-0000000000ff"
+    )
     assert len(rules_empty) == 0
 
     # Update

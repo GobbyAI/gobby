@@ -25,7 +25,7 @@ def _make_session(
     title: str = "Test Session",
     status: str = "active",
     source: str = "claude",
-    project_id: str = "proj-1",
+    project_id: str = "11111111-1111-4111-8111-111111110001",
     seq_num: int | None = 1,
 ) -> MagicMock:
     session = MagicMock()
@@ -107,7 +107,7 @@ class TestGetHandoffContextProjectScope:
 
     @patch(
         "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
-        return_value={"id": "proj-1"},
+        return_value={"id": "11111111-1111-4111-8111-111111110001"},
     )
     def test_fallback_uses_caller_project_context(
         self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
@@ -116,7 +116,7 @@ class TestGetHandoffContextProjectScope:
             id="parent-session",
             summary_markdown="# Same project\nReady",
             status="handoff_ready",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
         )
         mock_session_manager.find_parent.return_value = parent
         registry = _register_tools(mock_session_manager)
@@ -126,7 +126,10 @@ class TestGetHandoffContextProjectScope:
         assert result["success"] is True
         assert result["session_id"] == "parent-session"
         mock_session_manager.find_parent.assert_called_once()
-        assert mock_session_manager.find_parent.call_args.kwargs["project_id"] == "proj-1"
+        assert (
+            mock_session_manager.find_parent.call_args.kwargs["project_id"]
+            == "11111111-1111-4111-8111-111111110001"
+        )
         mock_session_manager.list.assert_not_called()
 
     @patch("gobby.mcp_proxy.tools.sessions._handoff.get_project_context", return_value=None)
@@ -144,7 +147,7 @@ class TestGetHandoffContextProjectScope:
 
     @patch(
         "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
-        return_value={"id": "proj-1"},
+        return_value={"id": "11111111-1111-4111-8111-111111110001"},
     )
     def test_explicit_cross_project_session_fails_closed(
         self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
@@ -167,7 +170,7 @@ class TestGetHandoffContextProjectScope:
 
     @patch(
         "gobby.mcp_proxy.tools.sessions._handoff.get_project_context",
-        return_value={"id": "proj-1"},
+        return_value={"id": "11111111-1111-4111-8111-111111110001"},
     )
     def test_link_child_session_rejects_cross_project_child(
         self, _mock_project_context: MagicMock, mock_session_manager: MagicMock
@@ -176,9 +179,9 @@ class TestGetHandoffContextProjectScope:
             id="parent-session",
             summary_markdown="# Parent\nReady",
             status="handoff_ready",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
         )
-        child = _make_session(id="child-session", project_id="proj-2")
+        child = _make_session(id="child-session", project_id="11111111-1111-4111-8111-111111110002")
         mock_session_manager.resolve_session_reference.side_effect = [
             "parent-session",
             "child-session",

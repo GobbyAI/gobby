@@ -108,14 +108,16 @@ class TestResolveSessionId:
     @patch("gobby.mcp_proxy.tools.workflows._resolution.get_project_context")
     def test_delegates_to_session_manager(self, mock_ctx: MagicMock) -> None:
         """Verifies the function delegates to session_manager.resolve_session_reference."""
-        mock_ctx.return_value = {"id": "proj-123"}
+        mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110123"}
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "uuid-abc"
 
         result = resolve_session_id(mock_sm, "#42")
 
         assert result == "uuid-abc"
-        mock_sm.resolve_session_reference.assert_called_once_with("#42", "proj-123")
+        mock_sm.resolve_session_reference.assert_called_once_with(
+            "#42", "11111111-1111-4111-8111-111111110123"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +253,7 @@ class TestResolveSessionTaskValueErrors:
     def test_task_not_found_returns_original(self) -> None:
         mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_session.project_id = "proj-123"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110123"
         mock_sm.get.return_value = mock_session
 
         mock_db = MagicMock()
@@ -267,7 +269,7 @@ class TestResolveSessionTaskValueErrors:
     def test_unexpected_error_returns_original(self) -> None:
         mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_session.project_id = "proj-123"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110123"
         mock_sm.get.return_value = mock_session
 
         mock_db = MagicMock()
@@ -283,7 +285,7 @@ class TestResolveSessionTaskValueErrors:
     def test_type_error_returns_original(self) -> None:
         mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_session.project_id = "proj-123"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110123"
         mock_sm.get.return_value = mock_session
 
         mock_db = MagicMock()
@@ -304,7 +306,7 @@ class TestResolveSessionTaskValueNumericRef:
         """'0' is all digits so is treated as a seq_num reference."""
         mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_session.project_id = "proj-123"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110123"
         mock_sm.get.return_value = mock_session
 
         with patch(
@@ -320,7 +322,7 @@ class TestResolveSessionTaskValueNumericRef:
         """'#' starts with # so is_seq_ref is True."""
         mock_sm = MagicMock()
         mock_session = MagicMock()
-        mock_session.project_id = "proj-123"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110123"
         mock_sm.get.return_value = mock_session
 
         with patch(

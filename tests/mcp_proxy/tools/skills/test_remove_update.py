@@ -121,7 +121,7 @@ class TestRemoveSkillTool:
         registry = create_skills_registry(populated_db)
         tool = registry.get_tool("remove_skill")
 
-        result = await tool(skill_id="nonexistent-id")
+        result = await tool(skill_id="00000000-0000-0000-0000-0000000000ff")
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()

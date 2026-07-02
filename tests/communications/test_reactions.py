@@ -21,9 +21,11 @@ def make_waiting_pipeline_step(temp_db: HubDatabase) -> tuple[LocalPipelineExecu
     temp_db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) "
         "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-        ("test-project", "Test Project"),
+        ("11111111-1111-4111-8111-111111110001", "Test Project"),
     )
-    execution_manager = LocalPipelineExecutionManager(temp_db, project_id="test-project")
+    execution_manager = LocalPipelineExecutionManager(
+        temp_db, project_id="11111111-1111-4111-8111-111111110001"
+    )
     execution = execution_manager.create_execution(pipeline_name="test-pipeline")
     step = execution_manager.create_step_execution(execution_id=execution.id, step_id="step_1")
     execution_manager.update_step_execution(

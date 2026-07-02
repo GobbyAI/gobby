@@ -25,25 +25,25 @@ class TestPipelineExecutorNotifiesRegistry:
         registry = CompletionEventRegistry()
 
         pending_exec = PipelineExecution(
-            id="pe-complete",
+            id="1dc281e5-b5f3-5a79-89ad-cc808da561fe",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.PENDING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         running_exec = PipelineExecution(
-            id="pe-complete",
+            id="1dc281e5-b5f3-5a79-89ad-cc808da561fe",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.RUNNING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         completed_exec = PipelineExecution(
-            id="pe-complete",
+            id="1dc281e5-b5f3-5a79-89ad-cc808da561fe",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.COMPLETED,
             created_at="2025-01-01",
             updated_at="2025-01-01",
@@ -67,7 +67,7 @@ class TestPipelineExecutorNotifiesRegistry:
         )
 
         # Register and track the event
-        registry.register("pe-complete", subscribers=[])
+        registry.register("1dc281e5-b5f3-5a79-89ad-cc808da561fe", subscribers=[])
 
         pipeline = PipelineDefinition(
             name="test-pipe",
@@ -77,11 +77,11 @@ class TestPipelineExecutorNotifiesRegistry:
         await executor.execute(
             pipeline=pipeline,
             inputs={},
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
         )
 
         # The registry should have been notified
-        result = registry.get_result("pe-complete")
+        result = registry.get_result("1dc281e5-b5f3-5a79-89ad-cc808da561fe")
         assert result is not None
         assert result["status"] == "completed"
 
@@ -95,25 +95,25 @@ class TestPipelineExecutorNotifiesRegistry:
         registry = CompletionEventRegistry()
 
         pending_exec = PipelineExecution(
-            id="pe-fail",
+            id="e5552960-d7db-5100-ac45-b791d63c9567",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.PENDING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         running_exec = PipelineExecution(
-            id="pe-fail",
+            id="e5552960-d7db-5100-ac45-b791d63c9567",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.RUNNING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         failed_exec = PipelineExecution(
-            id="pe-fail",
+            id="e5552960-d7db-5100-ac45-b791d63c9567",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.FAILED,
             created_at="2025-01-01",
             updated_at="2025-01-01",
@@ -135,7 +135,7 @@ class TestPipelineExecutorNotifiesRegistry:
             completion_registry=registry,
         )
 
-        registry.register("pe-fail", subscribers=[])
+        registry.register("e5552960-d7db-5100-ac45-b791d63c9567", subscribers=[])
 
         pipeline = PipelineDefinition(
             name="failing-pipe",
@@ -148,10 +148,10 @@ class TestPipelineExecutorNotifiesRegistry:
                 await executor.execute(
                     pipeline=pipeline,
                     inputs={},
-                    project_id="proj-1",
+                    project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
                 )
 
-        result = registry.get_result("pe-fail")
+        result = registry.get_result("e5552960-d7db-5100-ac45-b791d63c9567")
         assert result is not None
         assert result["status"] == "failed"
 
@@ -163,25 +163,25 @@ class TestPipelineExecutorNotifiesRegistry:
         from gobby.workflows.pipeline_state import PipelineExecution
 
         pending_exec = PipelineExecution(
-            id="pe-noreg",
+            id="fccf894a-eb14-5c61-b51d-8304116bce55",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.PENDING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         running_exec = PipelineExecution(
-            id="pe-noreg",
+            id="fccf894a-eb14-5c61-b51d-8304116bce55",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.RUNNING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         completed_exec = PipelineExecution(
-            id="pe-noreg",
+            id="fccf894a-eb14-5c61-b51d-8304116bce55",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.COMPLETED,
             created_at="2025-01-01",
             updated_at="2025-01-01",
@@ -213,7 +213,7 @@ class TestPipelineExecutorNotifiesRegistry:
         result = await executor.execute(
             pipeline=pipeline,
             inputs={},
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
         )
         assert result.status == ExecutionStatus.COMPLETED
-        assert result.id == "pe-noreg"
+        assert result.id == "fccf894a-eb14-5c61-b51d-8304116bce55"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -48,24 +49,26 @@ def _step(agent: dict, name: str) -> dict:
     return matches[0]
 
 
-def _create_session(db: HubDatabase, session_id: str = "merge-worker-session") -> None:
+def _create_session(
+    db: HubDatabase, session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002"
+) -> None:
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW()) "
         "ON CONFLICT (id) DO NOTHING",
-        ("project-1", "test-project"),
+        ("11111111-1111-4111-8111-111111110001", "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "machine-1", "claude", "project-1"),
+        (session_id, "ext-1", "machine-1", "claude", "11111111-1111-4111-8111-111111110001"),
     )
 
 
 def _install_merge_worker_workflow(
     db: HubDatabase,
     *,
-    session_id: str = "merge-worker-session",
+    session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
     current_step: str = "merge",
 ) -> WorkflowInstanceManager:
     agent = _agent("merge-worker")
@@ -91,7 +94,7 @@ def _install_merge_worker_workflow(
     instance_manager = WorkflowInstanceManager(db)
     instance_manager.save_instance(
         WorkflowInstance(
-            id=f"inst-{session_id}-{definition.name}",
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}-{definition.name}")),
             session_id=session_id,
             workflow_name=definition.name,
             enabled=True,
@@ -109,7 +112,7 @@ def _mcp_event(
     *,
     event_type: HookEventType,
     arguments: dict[str, Any] | None = None,
-    session_id: str = "merge-worker-session",
+    session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
     is_error: bool = False,
 ) -> HookEvent:
     server, tool = mcp_key.split(":", 1)
@@ -283,12 +286,12 @@ async def test_merge_worker_allows_verify_before_recording_result(temp_db: HubDa
                 "command": "uv run pytest tests/cli/test_postgres_cli.py -v",
             },
         ),
-        session_id="merge-worker-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
     )
 
     assert response.decision == "allow"
-    instance = instance_manager.get_instance("merge-worker-session", "merge-worker")
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
     assert instance.current_step == "merge"
 
@@ -318,11 +321,11 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
                 "failure_reason": "12 conflicts remained unresolved after retry cap",
             },
         ),
-        session_id="merge-worker-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("merge-worker-session", "merge-worker")
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["merge_worker_ready_to_terminate"] is True
@@ -345,10 +348,10 @@ async def test_merge_worker_success_waits_for_issue_close_before_terminate(
             event_type=HookEventType.AFTER_TOOL,
             arguments={"task_id": "#14094", "merge_sha": "abc123"},
         ),
-        session_id="merge-worker-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
     )
-    instance = instance_manager.get_instance("merge-worker-session", "merge-worker")
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
     assert instance.current_step == "merge"
     assert instance.variables["merge_result_recorded"] is True
@@ -359,11 +362,11 @@ async def test_merge_worker_success_waits_for_issue_close_before_terminate(
             event_type=HookEventType.AFTER_TOOL,
             arguments={"task_id": "#14094", "merge_sha": "abc123"},
         ),
-        session_id="merge-worker-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
     )
 
-    instance = instance_manager.get_instance("merge-worker-session", "merge-worker")
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
     assert instance.current_step == "terminate"
 
@@ -376,7 +379,7 @@ async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase)
 
     response = await engine.evaluate(
         _mcp_event("gobby-agents:end_agent_run", event_type=HookEventType.BEFORE_TOOL),
-        session_id="merge-worker-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables={},
     )
 

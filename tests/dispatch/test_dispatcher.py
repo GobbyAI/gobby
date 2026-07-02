@@ -4,6 +4,7 @@ import asyncio
 import logging
 import subprocess
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, NoReturn
@@ -157,7 +158,7 @@ async def test_sweep_expired_leases_pages_all_active_runs(
             parent_session_id=SYSTEM_SESSION_ID,
             provider="codex",
             prompt=f"active run {index}",
-            run_id=f"run-active-{index:04d}",
+            run_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-active-{index:04d}")),
         )
         run_storage.start(run.id)
         started_at = (base_time + timedelta(seconds=index)).isoformat()
@@ -184,7 +185,7 @@ async def test_sweep_expired_leases_pages_all_active_runs(
         holder=DISPATCH_HOLDER,
         kind="spawn",
         ttl_seconds=1,
-        run_id="run-stale-missing",
+        run_id="dc336769-c9eb-5393-8e30-4a36c3538adb",
         now=expired_start,
     )
 
@@ -299,18 +300,18 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
 
 
 class _FakePipeline:
-    name = "expand-task"
+    name = "02e3e743-e572-51b3-a0f4-83e68271282f"
     enabled = True
     deprecated = False
     steps = []
 
     def model_dump_json(self) -> str:
-        return '{"name":"expand-task"}'
+        return '{"name":"02e3e743-e572-51b3-a0f4-83e68271282f"}'
 
 
 class _FakePipelineLoader:
     async def load_pipeline(self, name: str):
-        return _FakePipeline() if name == "expand-task" else None
+        return _FakePipeline() if name == "02e3e743-e572-51b3-a0f4-83e68271282f" else None
 
 
 class _FakePipelineExecutor:
@@ -350,7 +351,7 @@ def _pipeline_action(task_id: str) -> StartPipelineAction:
         task_id=task_id,
         task_ref="#1",
         stage_name="expansion",
-        pipeline_name="expand-task",
+        pipeline_name="02e3e743-e572-51b3-a0f4-83e68271282f",
         dispatch_inputs={"task_id": "${{ task_id }}"},
     )
 
@@ -386,10 +387,10 @@ async def test_stage_pipeline_loader_value_error_escalates() -> None:
         raise AssertionError("pipeline dispatch should have escalated before this call")
 
     result = await start_pipeline_action(
-        _pipeline_action("task-1"),
+        _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
         mutex=mutex,
         db=db,
-        context=SimpleNamespace(project_id="project-1"),
+        context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
         services=SimpleNamespace(
             pipeline_executor=SimpleNamespace(loader=_ValueErrorPipelineLoader())
         ),
@@ -403,7 +404,9 @@ async def test_stage_pipeline_loader_value_error_escalates() -> None:
     )
 
     assert result == {"success": False, "reason": "pipeline_invalid:bad pipeline"}
-    assert escalations == [("task-1", True, True, "pipeline_invalid:bad pipeline")]
+    assert escalations == [
+        ("7d34e462-6ba3-5a6c-b1c6-1584b855cb83", True, True, "pipeline_invalid:bad pipeline")
+    ]
 
 
 @pytest.mark.asyncio
@@ -418,10 +421,10 @@ async def test_stage_pipeline_loader_unexpected_error_propagates() -> None:
 
     with pytest.raises(RuntimeError, match="loader unavailable"):
         await start_pipeline_action(
-            _pipeline_action("task-1"),
+            _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
             mutex=object(),
             db=object(),
-            context=SimpleNamespace(project_id="project-1"),
+            context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
             services=SimpleNamespace(
                 pipeline_executor=SimpleNamespace(loader=_RuntimeErrorPipelineLoader())
             ),
@@ -628,7 +631,7 @@ async def test_heartbeat_dispatches_reopened_review_under_gated_holistic_root(
 
     async def fake_spawn_agent(action: SpawnAgentAction, **_kwargs: object) -> str:
         spawned.append(action)
-        return "run-reopened-review"
+        return "626a0b1f-dfa7-5b3e-989d-30e173917443"
 
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
 
@@ -1069,11 +1072,13 @@ async def test_spawn_action_links_run_id(
         prompt="go",
     )
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
-    monkeypatch.setattr(dispatcher, "spawn_agent", lambda *args, **kwargs: "run-1")
+    monkeypatch.setattr(
+        dispatcher, "spawn_agent", lambda *args, **kwargs: "ac314d27-4314-5fe3-a0ab-01645086e137"
+    )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
-    assert storage.get_mutex(task.id).run_id == "run-1"
+    assert storage.get_mutex(task.id).run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
 
 
 @pytest.mark.asyncio
@@ -1090,7 +1095,7 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
         holder="dispatcher",
         kind="heartbeat",
         ttl_seconds=600,
-        run_id="run-active",
+        run_id="28fb95f3-ad0b-593f-ac6f-e084ad49d2d2",
     )
     action = SpawnAgentAction(
         task_id=task.id,
@@ -1107,7 +1112,7 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
         lambda action, **_kwargs: spawned.append(
             (action.task_id, action.task_ref, action.agent_slug)
         )
-        or "run-duplicate",
+        or "ad91abd1-f0f0-527c-a037-2270467bb189",
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -1117,7 +1122,7 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
     assert spawned == []
     mutex = storage.get_mutex(task.id)
     assert mutex is not None
-    assert mutex.run_id == "run-active"
+    assert mutex.run_id == "28fb95f3-ad0b-593f-ac6f-e084ad49d2d2"
 
 
 @pytest.mark.asyncio
@@ -1145,7 +1150,7 @@ async def test_spawn_attach_failure_terminalizes_created_run(
             prompt="go",
             agent_name="backend-developer",
             task_id=task.id,
-            run_id="run-attach-race",
+            run_id="18bb4c47-8575-5ab2-8b95-05b8ea9fc235",
         )
         run_storage.start(run.id)
         return run.id
@@ -1182,10 +1187,10 @@ async def test_spawn_attach_failure_terminalizes_created_run(
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
-    run = run_storage.get("run-attach-race")
+    run = run_storage.get("18bb4c47-8575-5ab2-8b95-05b8ea9fc235")
     updated = get_task(temp_db, task.id)
     assert result.executed == 1
-    assert killed == ["run-attach-race"]
+    assert killed == ["18bb4c47-8575-5ab2-8b95-05b8ea9fc235"]
     assert run is not None
     assert run.status == "error"
     assert storage.get_mutex(task.id) is None
@@ -1225,7 +1230,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
             prompt=kwargs["prompt"],
             agent_name=kwargs["agent_lookup_name"],
             task_id=task.id,
-            run_id="run-services",
+            run_id="2d6f8387-ee3f-5abb-98f4-70ace5661263",
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
@@ -1247,7 +1252,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
         services=services,
     )
 
-    run = LocalAgentRunManager(temp_db).get("run-services")
+    run = LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263")
     launcher = session_manager.get(run.parent_session_id)
     assert result.executed == 1
     assert run.agent_name == "backend-developer"
@@ -1255,7 +1260,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
     assert spawn_kwargs["task_id"] == task.id
     assert spawn_kwargs["initial_variables"]["_step_workflow_name"] == "backend-developer-steps"
     assert launcher.source == "dispatcher_launcher"
-    assert storage.get_mutex(task.id).run_id == "run-services"
+    assert storage.get_mutex(task.id).run_id == "2d6f8387-ee3f-5abb-98f4-70ace5661263"
 
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
@@ -1283,7 +1288,7 @@ async def test_planning_agents_inherit_task_worktree_isolation(
         isolation="worktree",
         assigned_agent=agent_slug,
     )
-    stale_worktree_id = f"wt-{agent_slug}"
+    stale_worktree_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:wt-{agent_slug}"))
     stale_worktree_path = f"/tmp/missing-{agent_slug}-worktree"
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -1309,7 +1314,7 @@ async def test_planning_agents_inherit_task_worktree_isolation(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id=f"run-{agent_slug}",
+            run_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-{agent_slug}")),
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -1366,7 +1371,7 @@ async def test_expansion_review_inherits_task_worktree_isolation(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/missing-expansion-worktree",
-        worktree_id="wt-expansion",
+        worktree_id="9792b29b-aa8c-5633-a8cb-3cfe44f7de3d",
         base_commit_sha="old-base",
         target_branch="main",
     )
@@ -1387,7 +1392,7 @@ async def test_expansion_review_inherits_task_worktree_isolation(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-expansion-main",
+            run_id="27317c40-a771-5aa5-aff8-1ebe5a326f84",
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -1456,7 +1461,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-backend-inherit",
+            run_id="2960b641-7fd2-51ec-9201-4dbf382eb21b",
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -1526,7 +1531,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-coordinated",
+            run_id="f24030bc-390b-56fd-8e34-a11e20175c22",
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
@@ -1552,10 +1557,12 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
 
     assert result.executed == 1
     completion_registry.register.assert_called_once_with(
-        "run-coordinated",
+        "f24030bc-390b-56fd-8e34-a11e20175c22",
         subscribers=[coordinator.id],
     )
-    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers("run-coordinated")
+    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers(
+        "f24030bc-390b-56fd-8e34-a11e20175c22"
+    )
     assert subscribers == [coordinator.id]
 
 
@@ -1597,13 +1604,13 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
         db=temp_db,
         project_id=sample_project["id"],
         task_id=task.id,
-        run_id="run-cross-project",
+        run_id="56173d59-d5cc-563d-b801-379a49147505",
         services=services,
     )
 
     completion_registry.register.assert_not_called()
     subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers(
-        "run-cross-project"
+        "56173d59-d5cc-563d-b801-379a49147505"
     )
     assert subscribers == []
 
@@ -1650,16 +1657,16 @@ def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion
         db=temp_db,
         project_id=sample_project["id"],
         task_id=task.id,
-        run_id="run-cross-project-explicit",
+        run_id="5bb56995-1d6b-5cf3-837f-eb2c4895cec7",
         services=services,
     )
 
     completion_registry.register.assert_called_once_with(
-        "run-cross-project-explicit",
+        "5bb56995-1d6b-5cf3-837f-eb2c4895cec7",
         subscribers=[coordinator.id],
     )
     subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers(
-        "run-cross-project-explicit"
+        "5bb56995-1d6b-5cf3-837f-eb2c4895cec7"
     )
     assert subscribers == [coordinator.id]
 
@@ -1693,7 +1700,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-unattended",
+            run_id="d3b630c8-9101-5a38-bd1a-2a2da5416055",
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
@@ -1719,7 +1726,9 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
 
     assert result.executed == 1
     completion_registry.register.assert_not_called()
-    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers("run-unattended")
+    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers(
+        "d3b630c8-9101-5a38-bd1a-2a2da5416055"
+    )
     assert subscribers == []
 
 
@@ -1745,7 +1754,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/missing-worktree",
-        worktree_id="wt-missing",
+        worktree_id="4d03aefe-edeb-5f9f-92dc-b3537f07d7bc",
         base_commit_sha="old-base",
         target_branch="main",
     )
@@ -1765,7 +1774,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
             prompt=kwargs["prompt"],
             agent_name=kwargs["agent_lookup_name"],
             task_id=task.id,
-            run_id="run-fresh-worktree",
+            run_id="d734fd14-a12a-5465-bcca-6d3c8f03c4f6",
         )
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
@@ -1854,7 +1863,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=leaf.id,
-            run_id="run-leaf-integration-base",
+            run_id="d0dce129-9dd1-505a-8bab-30728f041b21",
         )
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
@@ -1927,7 +1936,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
     task_artifacts.set_artifacts_atomic(
         root.id,
         target_branch="main",
-        integration_branch="task-root-integration",
+        integration_branch="7d32d628-8a3a-52c4-82cd-9da5f4e79812",
     )
     task_artifacts.set_artifacts_atomic(
         parent.id,
@@ -1954,7 +1963,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=leaf.id,
-            run_id="run-leaf-stale-parent-base",
+            run_id="4a504cc0-f680-5db4-ae37-50e10b3d062e",
         )
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
@@ -1979,8 +1988,8 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
     artifacts = task_artifacts.get_artifacts(leaf.id)
 
     assert result.executed == 1
-    assert spawn_kwargs["base_branch"] == "task-root-integration"
-    assert artifacts.target_branch == "task-root-integration"
+    assert spawn_kwargs["base_branch"] == "7d32d628-8a3a-52c4-82cd-9da5f4e79812"
+    assert artifacts.target_branch == "7d32d628-8a3a-52c4-82cd-9da5f4e79812"
 
 
 @pytest.mark.asyncio
@@ -2090,11 +2099,11 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/stale-parent",
-        worktree_id="wt-stale",
+        worktree_id="e94c1183-5264-5d4d-87c4-6f5b624fe827",
         base_commit_sha="old-base",
         target_branch="main",
         integration_branch="gobby/integration/parent",
-        integration_workspace_id="wt-integration",
+        integration_workspace_id="de982dee-65f9-5a31-a035-b8016c3cd62b",
     )
     action = SpawnAgentAction(
         task_id=task.id,
@@ -2117,7 +2126,7 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-holistic",
+            run_id="b468f448-f935-5d46-bd42-b4f74fb493d6",
         )
         return {
             "success": True,
@@ -2153,7 +2162,7 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     assert result.executed == 1
     assert prepare_calls
     assert prepare_calls[0]["root_task"].id == task.id
-    assert spawn_kwargs["worktree_id"] == "wt-integration"
+    assert spawn_kwargs["worktree_id"] == "de982dee-65f9-5a31-a035-b8016c3cd62b"
     assert spawn_kwargs["clone_id"] is None
     assert artifacts.worktree_id is None
     assert artifacts.worktree_path is None
@@ -2187,7 +2196,7 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
     worktree_path.mkdir()
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-phase",
+        branch_name="4be1ce02-4098-5282-9601-9c5ba6ab0ecd",
         worktree_path=str(worktree_path),
         base_branch="main",
         task_id=task.id,
@@ -2219,7 +2228,7 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-holistic-recovered",
+            run_id="89567d73-7077-56f5-a309-96e7126a2879",
         )
         return {
             "success": True,
@@ -2258,7 +2267,7 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
     assert prepare_calls[0]["target_branch"] == "main"
     assert spawn_kwargs["worktree_id"] == worktree.id
     assert artifacts.target_branch == "main"
-    assert artifacts.integration_branch == "task-phase"
+    assert artifacts.integration_branch == "4be1ce02-4098-5282-9601-9c5ba6ab0ecd"
     assert artifacts.integration_workspace_id == worktree.id
     assert artifacts.worktree_id is None
     assert stored_worktree is not None
@@ -2307,7 +2316,7 @@ async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id="run-holistic-current-branch",
+            run_id="f0b53f7a-9dca-53d1-9d23-b70ba27a4c5c",
         )
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
@@ -2382,7 +2391,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
         task.id,
         target_branch="main",
         integration_branch="gobby/integration/phase",
-        integration_workspace_id="wt-integration",
+        integration_workspace_id="de982dee-65f9-5a31-a035-b8016c3cd62b",
     )
     action = SpawnAgentAction(
         task_id=task.id,
@@ -2485,7 +2494,7 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert task_manager.stage_states.get(task.id, "development").state == "ready"
     assert updated.dispatch_failure_count == 1
     assert "### Dispatch spawn failed" in updated.description
-    assert LocalAgentRunManager(temp_db).get("run-services") is None
+    assert LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263") is None
 
 
 @pytest.mark.asyncio
@@ -2671,7 +2680,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="dev")
 
     default_repo = tmp_path / "default-repo"
-    project_repo = tmp_path / "project-repo"
+    project_repo = tmp_path / "350154ff-e994-55b0-a88a-d9de7970cbc5"
     default_repo.mkdir()
     project_repo.mkdir()
     default_git = SimpleNamespace(repo_path=str(default_repo))
@@ -2681,7 +2690,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
 
     async def fake_spawn_agent_impl(**kwargs):
         captured.update(kwargs)
-        return {"success": True, "run_id": "run-project-git"}
+        return {"success": True, "run_id": "aa37aedd-eea4-5c79-a039-aa80a4a17195"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2703,7 +2712,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
         services=services,
     )
 
-    assert run_id == "run-project-git"
+    assert run_id == "aa37aedd-eea4-5c79-a039-aa80a4a17195"
     assert captured["git_manager"] is project_git
     assert captured["clone_manager"] is not default_clone
     clone_manager = captured["clone_manager"]
@@ -2742,7 +2751,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
 
     async def fake_spawn_agent_impl(**kwargs):
         captured.update(kwargs)
-        return {"success": True, "run_id": "run-target-project"}
+        return {"success": True, "run_id": "4bd0f604-127d-596e-9130-67a92c34f6ef"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2764,7 +2773,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
     )
     launcher = sessions.get(str(captured["parent_session_id"]))
 
-    assert run_id == "run-target-project"
+    assert run_id == "4bd0f604-127d-596e-9130-67a92c34f6ef"
     assert captured["project_path"] == str(target_repo)
     assert launcher is not None
     assert launcher.project_id == target_project.id
@@ -2934,7 +2943,7 @@ def test_dispatch_inputs_invalid_json_logs_debug(
     from gobby.dispatch import rules
 
     registry_entry = SimpleNamespace(
-        id="registry-1",
+        id="63c76849-8ad5-5e57-b9b6-a362883e46c3",
         stage_name="expansion",
         dispatch_inputs_json='{"invalid"',
     )
@@ -2948,7 +2957,10 @@ def test_dispatch_inputs_invalid_json_logs_debug(
         if record.message == "Invalid stage registry dispatch_inputs_json; ignoring"
     ]
     assert len(records) == 1
-    assert records[0].registry_entry == {"id": "registry-1", "stage_name": "expansion"}
+    assert records[0].registry_entry == {
+        "id": "63c76849-8ad5-5e57-b9b6-a362883e46c3",
+        "stage_name": "expansion",
+    }
     assert records[0].raw_dispatch_inputs_json == '{"invalid"'
     assert "Expecting" in records[0].error
 
@@ -3012,7 +3024,8 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.agent_slug) or "run-pr",
+        lambda action, **kwargs: spawned.append(action.agent_slug)
+        or "39ad77a9-2925-5095-a22e-82412ecd6d0c",
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -3048,7 +3061,8 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.agent_slug) or "run-merge",
+        lambda action, **kwargs: spawned.append(action.agent_slug)
+        or "1c750214-6550-592b-b1fd-0b01aa584ad0",
     )
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -3110,9 +3124,11 @@ async def test_expansion_terminal_event_releases_lease_via_handlers(
     task = _task(temp_db, sample_project)
     storage = _mutex_storage(temp_db)
     storage.acquire_mutex(task.id, holder="dispatcher", kind="expansion", ttl_seconds=30)
-    storage.attach_run_id(task.id, "expansion-1")
+    storage.attach_run_id(task.id, "eeeeeeee-eeee-4eee-8eee-eeeeeeee5001")
 
-    _dispatch.on_expansion_run_cancelled(task.id, "expansion-1", storage=storage)
+    _dispatch.on_expansion_run_cancelled(
+        task.id, "eeeeeeee-eeee-4eee-8eee-eeeeeeee5001", storage=storage
+    )
 
     assert storage.get_mutex(task.id) is None
 
@@ -3350,14 +3366,14 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
         temp_db,
         task.id,
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "6a061cb3-f607-55f6-b3eb-04579360a44c",
             "worktree_path": "/tmp/worktree",
             "base_commit_sha": "base-sha",
         },
     )
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
-    assert artifacts.worktree_id == "wt-1"
+    assert artifacts.worktree_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"
     assert artifacts.worktree_path == "/tmp/worktree"
     assert artifacts.base_commit_sha == "base-sha"
 
@@ -3366,16 +3382,16 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
         temp_db,
         clone_task.id,
         {
-            "clone_id": "clone-1",
+            "clone_id": "b30ecba1-7be6-569c-af3e-57e430a37200",
             "clone_path": "/tmp/clone",
-            "base_commit_sha": "clone-base",
+            "base_commit_sha": "ca11cf0f-a8d3-5854-9921-ef59d7946f2c",
         },
     )
 
     clone_artifacts = TaskArtifactManager(temp_db).get_artifacts(clone_task.id)
-    assert clone_artifacts.clone_id == "clone-1"
+    assert clone_artifacts.clone_id == "b30ecba1-7be6-569c-af3e-57e430a37200"
     assert clone_artifacts.clone_path == "/tmp/clone"
-    assert clone_artifacts.base_commit_sha == "clone-base"
+    assert clone_artifacts.base_commit_sha == "ca11cf0f-a8d3-5854-9921-ef59d7946f2c"
 
 
 def test_persist_spawn_artifacts_reraises_persistence_errors(
@@ -3400,7 +3416,7 @@ def test_persist_spawn_artifacts_reraises_persistence_errors(
             temp_db,
             task.id,
             {
-                "worktree_id": "wt-1",
+                "worktree_id": "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "worktree_path": "/tmp/worktree",
                 "base_commit_sha": "base-sha",
             },
@@ -3419,7 +3435,7 @@ def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
     task = _task(temp_db, sample_project, isolation="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
-        worktree_id="wt-1",
+        worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
         worktree_path="/tmp/worktree",
         base_commit_sha="old-base",
     )
@@ -3427,7 +3443,7 @@ def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
     _persist_spawn_artifacts(temp_db, task.id, {"base_commit_sha": "new-base"})
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
-    assert artifacts.worktree_id == "wt-1"
+    assert artifacts.worktree_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"
     assert artifacts.worktree_path == "/tmp/worktree"
     assert artifacts.base_commit_sha == "new-base"
 
@@ -3463,7 +3479,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
     )
 
     async def fake_spawn_agent_impl(**_kwargs):
-        return {"success": True, "run_id": "run-subscribe-failure"}
+        return {"success": True, "run_id": "2130ceda-1787-5c67-8ff4-7232d3b8fbd7"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -3486,7 +3502,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
         services=services,
     )
 
-    assert run_id == "run-subscribe-failure"
+    assert run_id == "2130ceda-1787-5c67-8ff4-7232d3b8fbd7"
 
 
 @pytest.mark.asyncio
@@ -3530,7 +3546,8 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id) or "run-1",
+        lambda action, **kwargs: spawned.append(action.task_id)
+        or "ac314d27-4314-5fe3-a0ab-01645086e137",
     )
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -3639,7 +3656,7 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
         lambda action, **kwargs: spawned.append(
             (action.task_id, action.task_ref, action.agent_slug)
         )
-        or "run-duplicate",
+        or "ad91abd1-f0f0-527c-a037-2270467bb189",
     )
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -3665,7 +3682,7 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
     assert spawned == [(task.id, f"#{task.seq_num}", "backend-developer")]
     mutex = storage.get_mutex(task.id)
     assert mutex is not None
-    assert mutex.run_id == "run-duplicate"
+    assert mutex.run_id == "ad91abd1-f0f0-527c-a037-2270467bb189"
 
 
 @pytest.mark.asyncio
@@ -3703,7 +3720,8 @@ async def test_heartbeat_recovers_expired_no_run_mutex(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id) or "run-recovered",
+        lambda action, **kwargs: spawned.append(action.task_id)
+        or "0dc284d8-ee46-5ebb-961d-881bbee9b1d0",
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -3712,7 +3730,7 @@ async def test_heartbeat_recovers_expired_no_run_mutex(
     assert spawned == [task.id]
     mutex = storage.get_mutex(task.id)
     assert mutex is not None
-    assert mutex.run_id == "run-recovered"
+    assert mutex.run_id == "0dc284d8-ee46-5ebb-961d-881bbee9b1d0"
 
 
 @pytest.mark.asyncio
@@ -3737,7 +3755,8 @@ async def test_heartbeat_preserves_fresh_no_run_mutex(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id) or "run-too-soon",
+        lambda action, **kwargs: spawned.append(action.task_id)
+        or "7747170d-ab96-5f8c-bade-08c58891d57d",
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])

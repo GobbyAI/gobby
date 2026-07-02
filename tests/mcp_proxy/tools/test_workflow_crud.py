@@ -107,17 +107,22 @@ class TestCreateWorkflow:
         db.execute(
             "INSERT INTO projects (id, name, created_at, updated_at) "
             "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
 
         result = create_workflow_definition(
-            def_manager, loader, VALID_WORKFLOW_YAML, project_id="proj-1"
+            def_manager,
+            loader,
+            VALID_WORKFLOW_YAML,
+            project_id="11111111-1111-4111-8111-111111110001",
         )
 
         assert result["success"] is True
-        row = def_manager.get_by_name("test-workflow", project_id="proj-1")
+        row = def_manager.get_by_name(
+            "test-workflow", project_id="11111111-1111-4111-8111-111111110001"
+        )
         assert row is not None
-        assert row.project_id == "proj-1"
+        assert row.project_id == "11111111-1111-4111-8111-111111110001"
 
     def test_create_rejects_invalid_yaml(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader

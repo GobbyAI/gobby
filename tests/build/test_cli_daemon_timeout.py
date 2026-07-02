@@ -80,7 +80,7 @@ def test_daemon_build_payload_carries_project_context(
 
         def json(self) -> dict[str, object]:
             return {
-                "task_id": "task-1",
+                "task_id": "7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
                 "created": True,
                 "initial_lifecycle": "planning",
                 "applied_stages_skipped": [],
@@ -107,10 +107,10 @@ def test_daemon_build_payload_carries_project_context(
     result = _try_daemon_build(
         "plan.md",
         BuildOptions(),
-        project_id="project-2",
+        project_id="485d2f9d-67bd-5553-9145-736f9d881382",
         cwd="/tmp/project-2",
     )
 
     assert result is not None
-    assert calls[0]["project_id"] == "project-2"
+    assert calls[0]["project_id"] == "485d2f9d-67bd-5553-9145-736f9d881382"
     assert calls[0]["cwd"] == "/tmp/project-2"

@@ -17,10 +17,10 @@ def test_stop_pauses_project_automation_without_cron_row(temp_db) -> None:
     from gobby.build.service import build_stop
     from gobby.storage.cron import CronJobStorage
 
-    result = build_stop(db=temp_db, project_id="project-1")
+    result = build_stop(db=temp_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06")
 
     assert result.enabled is False
-    assert is_project_automation_enabled(temp_db, "project-1") is False
+    assert is_project_automation_enabled(temp_db, "0e27d5b7-167e-5a64-8bd9-6b980bd88f06") is False
     assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
 
 
@@ -29,12 +29,12 @@ def test_resume_enables_project_automation_without_cron_row(temp_db) -> None:
     from gobby.build.service import build_resume, build_stop
     from gobby.storage.cron import CronJobStorage
 
-    build_stop(db=temp_db, project_id="project-1")
+    build_stop(db=temp_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06")
 
-    result = build_resume(db=temp_db, project_id="project-1")
+    result = build_resume(db=temp_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06")
 
     assert result.enabled is True
-    assert is_project_automation_enabled(temp_db, "project-1") is True
+    assert is_project_automation_enabled(temp_db, "0e27d5b7-167e-5a64-8bd9-6b980bd88f06") is True
     assert CronJobStorage(temp_db).get_job_by_name("gobby:dispatcher") is None
 
 
@@ -43,22 +43,32 @@ def test_stop_creates_project_row_for_control_event(
 ) -> None:
     from gobby.build.service import build_stop
 
-    assert temp_db.fetchone("SELECT id FROM projects WHERE id = %s", ("project-1",)) is None
+    assert (
+        temp_db.fetchone(
+            "SELECT id FROM projects WHERE id = %s", ("0e27d5b7-167e-5a64-8bd9-6b980bd88f06",)
+        )
+        is None
+    )
 
-    build_stop(db=temp_db, project_id="project-1")
+    build_stop(db=temp_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06")
 
-    assert temp_db.fetchone("SELECT id FROM projects WHERE id = %s", ("project-1",)) is not None
+    assert (
+        temp_db.fetchone(
+            "SELECT id FROM projects WHERE id = %s", ("0e27d5b7-167e-5a64-8bd9-6b980bd88f06",)
+        )
+        is not None
+    )
 
 
 def test_lifecycle_event_appended(temp_db) -> None:
     from gobby.build.service import build_stop
 
-    result = build_stop(db=temp_db, project_id="project-1")
+    result = build_stop(db=temp_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06")
 
     assert result.lifecycle_event.reason == "gobby build stop"
     row = temp_db.fetchone(
         "SELECT reason FROM project_lifecycle_events WHERE project_id = %s",
-        ("project-1",),
+        ("0e27d5b7-167e-5a64-8bd9-6b980bd88f06",),
     )
     assert row["reason"] == "gobby build stop"
 
@@ -92,7 +102,7 @@ def test_lifecycle_event_id_comes_from_returning_row() -> None:
 
     result = _record_project_build_event(
         db,
-        project_id="project-1",
+        project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06",
         event="build_resume",
         reason="gobby build resume",
         by_actor="build",
@@ -101,7 +111,7 @@ def test_lifecycle_event_id_comes_from_returning_row() -> None:
     assert result.id == 42
     assert "RETURNING id" in db.conn.sql
     assert db.conn.params[:4] == (
-        "project-1",
+        "0e27d5b7-167e-5a64-8bd9-6b980bd88f06",
         "build_resume",
         "gobby build resume",
         "build",
@@ -135,7 +145,7 @@ def test_in_flight_agents_unaffected(monkeypatch: pytest.MonkeyPatch, temp_db) -
 
     from gobby.build.service import build_stop
 
-    build_stop(db=temp_db, project_id="project-1")
+    build_stop(db=temp_db, project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06")
 
     assert killed == []
 

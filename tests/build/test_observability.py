@@ -49,7 +49,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         worktree_path=str(missing_path),
-        worktree_id="wt-1",
+        worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
         base_commit_sha="abc123",
     )
     LocalAgentRunManager(temp_db).create(
@@ -70,7 +70,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
         INSERT INTO task_comments (id, task_id, author, author_type, body)
         VALUES (%s, %s, 'dispatcher', 'system', '## Holistic QA Failure\n\nNeeds work')
         """,
-        ("comment-1", task.id),
+        ("cccccccc-0000-4ccc-8ccc-cccccccc0001", task.id),
     )
 
     status = get_build_status(
@@ -84,7 +84,9 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     assert status["summary"]["state"] == "running"
     assert status["summary"]["active_agents"] == 1
     assert status["tasks"][0]["has_build_event"] is True
-    assert status["tasks"][0]["latest_failure_comment"]["id"] == "comment-1"
+    assert (
+        status["tasks"][0]["latest_failure_comment"]["id"] == "cccccccc-0000-4ccc-8ccc-cccccccc0001"
+    )
     assert status["mutexes"][0]["state"] == "active_no_run"
     assert status["artifact_health"]["ok"] is False
     assert status["artifact_health"]["items"][0]["artifacts"][0]["exists"] is False
@@ -256,7 +258,7 @@ def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str)
     artifact_manager.set_artifacts_atomic(
         foreign_task.id,
         worktree_path="/tmp/foreign-worktree",
-        worktree_id="wt-foreign",
+        worktree_id="7cba5bfd-9db0-5984-86ca-b68a0e95d181",
         base_commit_sha="abc123",
         target_branch="foreign-branch",
     )
@@ -294,7 +296,7 @@ def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str)
     assert stage.state == "in_progress"
     artifacts = artifact_manager.get_artifacts(foreign_task.id)
     assert artifacts.worktree_path == "/tmp/foreign-worktree"
-    assert artifacts.worktree_id == "wt-foreign"
+    assert artifacts.worktree_id == "7cba5bfd-9db0-5984-86ca-b68a0e95d181"
     assert artifacts.base_commit_sha == "abc123"
     assert artifacts.target_branch == "foreign-branch"
 

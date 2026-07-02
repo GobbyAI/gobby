@@ -132,7 +132,7 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     _git(repo, "branch", stale_branch)
     manual_branch = f"task-{task.seq_num}-manual"
     _git(repo, "branch", manual_branch)
-    _git(repo, "branch", "task-999-unrelated")
+    _git(repo, "branch", "ff3e4973-2f46-574f-898e-bcd778083b49")
 
     result = await build_clean_target(
         f"#{task.seq_num}",
@@ -145,7 +145,7 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
     branches = _branches(repo)
     assert stale_branch not in branches
     assert manual_branch in branches
-    assert "task-999-unrelated" in branches
+    assert "ff3e4973-2f46-574f-898e-bcd778083b49" in branches
     assert result.branches_deleted == 1
 
 
@@ -206,7 +206,7 @@ async def test_clean_clears_dangling_integration_workspace_id(
         category="code",
     )
     stale_branch = integration_branch_name(epic)
-    stale_worktree_id = "wt-missing-row"
+    stale_worktree_id = "5a540ab5-0ba4-5e8e-ad09-93e63ed828fd"
     _git(repo, "branch", stale_branch)
     task_manager.artifacts.set_artifacts_atomic(
         epic.id,
@@ -246,7 +246,7 @@ async def test_clean_force_defers_dirty_descendant_worktree(
     from gobby.storage.worktrees import LocalWorktreeManager
 
     repo = tmp_path / "repo"
-    worktree_path = tmp_path / "task-worktree"
+    worktree_path = tmp_path / "cbea7016-42cc-58a2-a555-6399b7c3d051"
     repo.mkdir()
     _init_repo(repo)
 
@@ -319,7 +319,7 @@ async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
     from gobby.storage.worktrees import LocalWorktreeManager
 
     repo = tmp_path / "repo"
-    worktree_path = tmp_path / "task-worktree"
+    worktree_path = tmp_path / "cbea7016-42cc-58a2-a555-6399b7c3d051"
     repo.mkdir()
     _init_repo(repo)
 

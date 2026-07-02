@@ -39,7 +39,7 @@ def sample_task_uuid():
     task_id = str(uuid.uuid4())
     return Task(
         id=task_id,
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         title="Test Task",
         priority=2,
         task_type="task",
@@ -62,7 +62,9 @@ class TestResolveTaskIdForMCP:
         mock_task_manager.get_task.return_value = sample_task_uuid
 
         result = resolve_task_id_for_mcp(
-            mock_task_manager, sample_task_uuid.id, project_id="proj-1"
+            mock_task_manager,
+            sample_task_uuid.id,
+            project_id="11111111-1111-4111-8111-111111110001",
         )
 
         assert result == sample_task_uuid.id
@@ -75,10 +77,14 @@ class TestResolveTaskIdForMCP:
         mock_task_manager.resolve_task_reference.return_value = sample_task_uuid.id
         mock_task_manager.get_task.return_value = sample_task_uuid
 
-        result = resolve_task_id_for_mcp(mock_task_manager, "#1", project_id="proj-1")
+        result = resolve_task_id_for_mcp(
+            mock_task_manager, "#1", project_id="11111111-1111-4111-8111-111111110001"
+        )
 
         assert result == sample_task_uuid.id
-        mock_task_manager.resolve_task_reference.assert_called_once_with("#1", "proj-1")
+        mock_task_manager.resolve_task_reference.assert_called_once_with(
+            "#1", "11111111-1111-4111-8111-111111110001"
+        )
 
     def test_resolve_hash_format_not_found(self, mock_task_manager) -> None:
         """Test #N format when task doesn't exist."""
@@ -89,7 +95,9 @@ class TestResolveTaskIdForMCP:
         )
 
         with pytest.raises(TaskNotFoundError) as exc_info:
-            resolve_task_id_for_mcp(mock_task_manager, "#999", project_id="proj-1")
+            resolve_task_id_for_mcp(
+                mock_task_manager, "#999", project_id="11111111-1111-4111-8111-111111110001"
+            )
 
         assert "#999" in str(exc_info.value)
 
@@ -99,10 +107,14 @@ class TestResolveTaskIdForMCP:
 
         mock_task_manager.resolve_task_reference.return_value = sample_task_uuid.id
 
-        result = resolve_task_id_for_mcp(mock_task_manager, "1.2.3", project_id="proj-1")
+        result = resolve_task_id_for_mcp(
+            mock_task_manager, "1.2.3", project_id="11111111-1111-4111-8111-111111110001"
+        )
 
         assert result == sample_task_uuid.id
-        mock_task_manager.resolve_task_reference.assert_called_once_with("1.2.3", "proj-1")
+        mock_task_manager.resolve_task_reference.assert_called_once_with(
+            "1.2.3", "11111111-1111-4111-8111-111111110001"
+        )
 
     def test_resolve_gt_format_returns_error(self, mock_task_manager) -> None:
         """Test gt-* format returns 'task not found' error (treated as invalid UUID)."""
@@ -113,7 +125,9 @@ class TestResolveTaskIdForMCP:
         mock_task_manager.get_task.return_value = None
 
         with pytest.raises(TaskNotFoundError) as exc_info:
-            resolve_task_id_for_mcp(mock_task_manager, "gt-abc123", project_id="proj-1")
+            resolve_task_id_for_mcp(
+                mock_task_manager, "gt-abc123", project_id="11111111-1111-4111-8111-111111110001"
+            )
 
         assert "gt-abc123" in str(exc_info.value)
 
@@ -138,13 +152,15 @@ class TestMCPGetTaskWithHashFormat:
         # Call with #1 format
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
-            return_value={"id": "proj-1"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = get_task_func(task_id="#1")
 
         # Should resolve to UUID and return task data
         assert result.get("id") == sample_task_uuid.id
-        mock_task_manager.resolve_task_reference.assert_called_with("#1", "proj-1")
+        mock_task_manager.resolve_task_reference.assert_called_with(
+            "#1", "11111111-1111-4111-8111-111111110001"
+        )
 
     def test_get_task_with_uuid_format(
         self, mock_task_manager, mock_sync_manager, sample_task_uuid
@@ -160,7 +176,7 @@ class TestMCPGetTaskWithHashFormat:
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
-            return_value={"id": "proj-1"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = get_task_func(task_id=sample_task_uuid.id)
 
@@ -179,7 +195,7 @@ class TestMCPGetTaskWithHashFormat:
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
-            return_value={"id": "proj-1"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             result = get_task_func(task_id="gt-abc123")
 
@@ -206,13 +222,15 @@ class TestMCPUpdateTaskWithHashFormat:
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
-            return_value={"id": "proj-1"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             # Note: status="in_progress", "closed", "review" are blocked
             # Use priority update instead to test #N format resolution
             update_task_func(task_id="#5", priority=1)
 
-        mock_task_manager.resolve_task_reference.assert_called_with("#5", "proj-1")
+        mock_task_manager.resolve_task_reference.assert_called_with(
+            "#5", "11111111-1111-4111-8111-111111110001"
+        )
         assert mock_task_manager.resolve_task_reference.call_count >= 1
         assert mock_task_manager.resolve_task_reference.call_args is not None
         # Update should be called with the resolved UUID
@@ -242,14 +260,16 @@ class TestMCPCloseTaskWithHashFormat:
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
-            return_value={"id": "proj-1"},
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
             await close_task_func(
                 task_id="#10",
                 reason="obsolete",
             )
 
-        mock_task_manager.resolve_task_reference.assert_called_with("#10", "proj-1")
+        mock_task_manager.resolve_task_reference.assert_called_with(
+            "#10", "11111111-1111-4111-8111-111111110001"
+        )
         assert mock_task_manager.resolve_task_reference.call_count >= 1
         assert mock_task_manager.resolve_task_reference.call_args is not None
 

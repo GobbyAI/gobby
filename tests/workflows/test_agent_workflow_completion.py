@@ -256,7 +256,9 @@ class TestAgentWorkflowCompletion:
         _register_agent_workflow(db)
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.agent_lifecycle_monitor = MagicMock()
         runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
@@ -275,14 +277,14 @@ class TestAgentWorkflowCompletion:
         assert response.decision == "allow"
         runner.complete_run.assert_not_called()
         runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
-            "run-123",
+            "ff807256-1906-55de-b7b3-94163bb18352",
             notify_result={
                 "status": "success",
-                "run_id": "run-123",
+                "run_id": "ff807256-1906-55de-b7b3-94163bb18352",
                 "via": "workflow_terminate",
                 "workflow": "plan-adversary-steps",
             },
-            message="Agent run-123 completed via workflow terminate",
+            message="Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow terminate",
         )
         completion_registry.notify.assert_not_awaited()
 
@@ -297,7 +299,9 @@ class TestAgentWorkflowCompletion:
         )
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
@@ -355,7 +359,9 @@ class TestAgentWorkflowCompletion:
         )
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
@@ -436,7 +442,9 @@ class TestAgentWorkflowCompletion:
         )
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
@@ -476,7 +484,9 @@ class TestAgentWorkflowCompletion:
         instance_manager = _register_expansion_qa_workflow(db)
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.agent_lifecycle_monitor = MagicMock()
         runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
@@ -535,14 +545,14 @@ class TestAgentWorkflowCompletion:
         assert "qa_check -> terminate" in (verdict_response.context or "")
         runner.complete_run.assert_not_called()
         runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
-            "run-123",
+            "ff807256-1906-55de-b7b3-94163bb18352",
             notify_result={
                 "status": "success",
-                "run_id": "run-123",
+                "run_id": "ff807256-1906-55de-b7b3-94163bb18352",
                 "via": "workflow_terminate",
                 "workflow": "expansion-qa-steps",
             },
-            message="Agent run-123 completed via workflow terminate",
+            message="Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow terminate",
         )
         completion_registry.notify.assert_not_awaited()
 
@@ -590,10 +600,12 @@ class TestAgentWorkflowCompletion:
         _register_agent_workflow(db)
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.complete_run.return_value = True
         completion_registry = CompletionEventRegistry()
-        completion_registry.register("run-123", subscribers=[])
+        completion_registry.register("ff807256-1906-55de-b7b3-94163bb18352", subscribers=[])
 
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
 
@@ -601,7 +613,7 @@ class TestAgentWorkflowCompletion:
         # must still wake the parent wait path immediately.
         await engine.evaluate(_after_tool_event(), session_id=AGENT_SESSION_ID, variables={})
 
-        result = await completion_registry.wait("run-123", timeout=0.1)
+        result = await completion_registry.wait("ff807256-1906-55de-b7b3-94163bb18352", timeout=0.1)
         assert result["status"] == "success"
         assert result["via"] == "workflow_terminate"
         assert result["workflow"] == "plan-adversary-steps"
@@ -644,7 +656,7 @@ class TestAgentWorkflowCompletion:
             task.id,
             holder="dispatcher",
             kind="spawn_agent",
-            run_id="run-123",
+            run_id="ff807256-1906-55de-b7b3-94163bb18352",
             ttl_seconds=300,
         )
         _register_agent_workflow(db, session_id=child.id)
@@ -655,7 +667,7 @@ class TestAgentWorkflowCompletion:
             child_session_id=child.id,
             provider="codex",
             prompt="do work",
-            run_id="run-123",
+            run_id="ff807256-1906-55de-b7b3-94163bb18352",
             task_id=task.id,
         )
         run_manager.start(run.id)
@@ -714,7 +726,9 @@ class TestAgentWorkflowCompletion:
         )
         runner = MagicMock()
         runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None

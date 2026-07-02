@@ -51,14 +51,14 @@ class TestCaptureBaselineDirtyFiles:
         tool = registry.get_tool("capture_baseline_dirty_files")
         assert tool is not None
 
-        with session_context_for_test("sess-1"):
+        with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
             result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
         assert result["file_count"] == 2
 
         svm = SessionVariableManager(db=db)
-        variables = svm.get_variables("sess-1")
+        variables = svm.get_variables("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005")
         assert sorted(variables["baseline_dirty_files"]) == ["file_a.py", "file_b.py"]
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
@@ -86,7 +86,7 @@ class TestCaptureBaselineDirtyFiles:
         tool = registry.get_tool("capture_baseline_dirty_files")
         assert tool is not None
 
-        with session_context_for_test("sess-1"):
+        with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
             result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
@@ -101,14 +101,14 @@ class TestCaptureBaselineDirtyFiles:
         tool = registry.get_tool("capture_baseline_dirty_files")
         assert tool is not None
 
-        with session_context_for_test("sess-1"):
+        with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
             result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
         assert result["file_count"] == 0
 
         svm = SessionVariableManager(db=db)
-        variables = svm.get_variables("sess-1")
+        variables = svm.get_variables("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005")
         assert variables["baseline_dirty_files"] == []
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
@@ -129,7 +129,7 @@ class TestCaptureBaselineDirtyFiles:
             "gobby.mcp_proxy.tools.sessions._actions.asyncio.to_thread",
             side_effect=fake_to_thread,
         ) as mock_to_thread:
-            with session_context_for_test("sess-1"):
+            with session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"):
                 result = asyncio.run(tool(project_path="/tmp"))
 
         assert result["success"] is True
@@ -139,5 +139,5 @@ class TestCaptureBaselineDirtyFiles:
         merge_call = mock_to_thread.call_args_list[1]
         assert dirty_call.args == (mock_dirty, "/tmp")
         assert merge_call.args[0].__name__ == "merge_variables"
-        assert merge_call.args[1] == "sess-1"
+        assert merge_call.args[1] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4005"
         assert merge_call.args[2]["baseline_dirty_files"] == ["file_a.py"]

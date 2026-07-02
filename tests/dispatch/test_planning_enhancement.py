@@ -49,7 +49,7 @@ def _artifacts(**overrides: Any) -> SimpleNamespace:
 
 def _task(stage: SimpleNamespace | None = None, **overrides: Any) -> SimpleNamespace:
     values: dict[str, Any] = {
-        "id": "task-1",
+        "id": "7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         "ref": "#1",
         "task_type": "task",
         "stages": [stage or _stage()],

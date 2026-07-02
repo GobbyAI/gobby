@@ -106,10 +106,12 @@ def test_completion_emits_terminal_event(temp_db, sample_project) -> None:
             completion_registry=registry,
             triggering_session_id=None,
             task_id=task.id,
-            run_id="run-complete",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4006",
         )
 
-    registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-complete")
+    registry.emit.assert_any_call(
+        "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4006"
+    )
     assert registry.emit.call_count >= 1
     assert registry.emit.call_args is not None
 
@@ -143,13 +145,13 @@ def test_failure_emits_terminal_event(temp_db, sample_project) -> None:
             completion_registry=registry,
             triggering_session_id=None,
             task_id=task.id,
-            run_id="run-failed",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4004",
         )
 
     registry.emit.assert_any_call(
         "expansion_run_failed",
         task_id=task.id,
-        run_id="run-failed",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4004",
         reason="boom",
     )
     assert registry.emit.call_count >= 1
@@ -185,11 +187,11 @@ def test_cancellation_emits_terminal_event(temp_db, sample_project) -> None:
             completion_registry=registry,
             triggering_session_id=None,
             task_id=task.id,
-            run_id="run-cancelled",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4007",
         )
 
     registry.emit.assert_any_call(
-        "expansion_run_cancelled", task_id=task.id, run_id="run-cancelled"
+        "expansion_run_cancelled", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4007"
     )
     assert registry.emit.call_count >= 1
     assert registry.emit.call_args is not None
@@ -224,12 +226,12 @@ def test_start_expansion_accepts_caller_allocated_run_id(temp_db, sample_project
             completion_registry=MagicMock(),
             triggering_session_id=None,
             task_id=task.id,
-            run_id="caller-run-id",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd400d",
         )
 
     assert "run_id" in signature(start_expansion_run_impl).parameters
-    assert result.run_id == "caller-run-id"
-    assert run_manager.get("caller-run-id") is not None
+    assert result.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd400d"
+    assert run_manager.get("dddddddd-dddd-4ddd-8ddd-dddddddd400d") is not None
 
 
 def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> None:
@@ -267,11 +269,11 @@ def test_start_expansion_reset_output_calls_reset(temp_db, sample_project) -> No
             completion_registry=MagicMock(),
             triggering_session_id=None,
             task_id=task.id,
-            run_id="reset-run",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd400a",
             reset_output=True,
         )
 
-    assert result.run_id == "reset-run"
+    assert result.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd400a"
     reset.assert_called_once()
     assert reset.call_count == 1
     assert reset.call_args is not None
@@ -307,12 +309,14 @@ def test_synchronous_terminal_emits_event(temp_db, sample_project) -> None:
             completion_registry=registry,
             triggering_session_id=None,
             task_id=task.id,
-            run_id="run-sync",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4001",
             auto_apply=True,
         )
 
     assert result.status == "completed"
-    registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-sync")
+    registry.emit.assert_any_call(
+        "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4001"
+    )
     assert registry.emit.call_count >= 1
     assert registry.emit.call_args is not None
 
@@ -348,7 +352,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
         holder="dispatcher",
         kind="stage-pipeline:expansion",
         ttl_seconds=300,
-        run_id="pe-expansion",
+        run_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee400c",
     )
     run_manager = LocalExpansionRunManager(temp_db)
     registry = MagicMock()
@@ -377,7 +381,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
             completion_registry=registry,
             triggering_session_id=None,
             task_id=task.id,
-            run_id="run-stage-pipeline",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd400e",
             auto_apply=True,
         )
 
@@ -422,11 +426,13 @@ async def test_async_start_returns_running_and_emits_later(temp_db, sample_proje
             completion_registry=registry,
             triggering_session_id=None,
             task_id=task.id,
-            run_id="run-async",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4008",
         )
         await drain_asyncio_tasks(cycles=2)
 
     assert result.status == "running"
-    registry.emit.assert_any_call("expansion_run_completed", task_id=task.id, run_id="run-async")
+    registry.emit.assert_any_call(
+        "expansion_run_completed", task_id=task.id, run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4008"
+    )
     assert registry.emit.call_count >= 1
     assert registry.emit.call_args is not None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -164,7 +165,7 @@ def _seed_daemon_stop_run(
         prompt="work",
         agent_name="backend-developer",
         task_id=task_id,
-        run_id=f"run-original-{task_id[:4]}",
+        run_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-original-{task_id}")),
         resume_metadata_json={
             "provider": "codex",
             "model": "gpt-5",
@@ -211,7 +212,7 @@ async def test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn(
     async def fake_resume_agent_run(original_run: Any, **kwargs: Any) -> ResumeAgentResult:
         captured["run_id"] = original_run.id
         captured["metadata"] = kwargs["resume_metadata"]
-        return ResumeAgentResult(True, run_id="run-resumed")
+        return ResumeAgentResult(True, run_id="597d1971-2969-504a-b210-edfec22510d3")
 
     monkeypatch.setattr(daemon_resume, "resume_agent_run", fake_resume_agent_run)
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
@@ -230,7 +231,7 @@ async def test_dirty_daemon_stop_workspace_resumes_before_fresh_spawn(
     mutex = TaskDispatchMutexManager(temp_db).get_mutex(task.id)
     assert result.executed == 1
     assert mutex is not None
-    assert mutex.run_id == "run-resumed"
+    assert mutex.run_id == "597d1971-2969-504a-b210-edfec22510d3"
     assert captured["metadata"]["model"] == "gpt-5"  # type: ignore[index]
 
 
@@ -413,7 +414,8 @@ async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **_kwargs: spawned.append(action.task_id) or "run-fresh",
+        lambda action, **_kwargs: spawned.append(action.task_id)
+        or "c38b3e6b-098a-5a5b-b4a6-ce24b9a6e0bd",
     )
 
     result = await dispatcher.run_heartbeat(
@@ -427,7 +429,7 @@ async def test_clean_daemon_stop_resume_failure_allows_fresh_spawn(
     assert result.executed == 1
     assert spawned == [task.id]
     assert mutex is not None
-    assert mutex.run_id == "run-fresh"
+    assert mutex.run_id == "c38b3e6b-098a-5a5b-b4a6-ce24b9a6e0bd"
     assert updated.dispatch_failure_count == 0
     assert "### Agent resume after daemon restart failed" not in (updated.description or "")
 
@@ -467,7 +469,8 @@ async def test_non_daemon_stop_dirty_workspace_uses_existing_spawn_policy(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **_kwargs: spawned.append(action.task_id) or "run-fresh",
+        lambda action, **_kwargs: spawned.append(action.task_id)
+        or "c38b3e6b-098a-5a5b-b4a6-ce24b9a6e0bd",
     )
 
     result = await dispatcher.run_heartbeat(

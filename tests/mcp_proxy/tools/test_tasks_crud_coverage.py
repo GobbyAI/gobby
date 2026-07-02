@@ -724,7 +724,7 @@ class TestListTasksTool:
         mock_task_manager.list_tasks.return_value = [mock_task1, mock_task2]
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             result = await registry.call("list_tasks", {})
 
@@ -743,7 +743,7 @@ class TestListTasksTool:
         mock_task_manager.list_tasks.return_value = []
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             await registry.call(
                 "list_tasks",
@@ -766,7 +766,7 @@ class TestListTasksTool:
                 parent_task_id="550e8400-e29b-41d4-a716-446655440010",
                 title_like="feature",
                 limit=10,
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
             )
             assert mock_task_manager.list_tasks.call_count >= 1
             assert mock_task_manager.list_tasks.call_args is not None
@@ -779,7 +779,7 @@ class TestListTasksTool:
         mock_task_manager.list_tasks.return_value = []
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             await registry.call("list_tasks", {"all_projects": True})
 
@@ -794,7 +794,7 @@ class TestListTasksTool:
         mock_task_manager.list_tasks.return_value = []
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             await registry.call("list_tasks", {"current_stage_state": "ready,in_progress"})
 

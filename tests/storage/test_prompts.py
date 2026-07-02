@@ -1,5 +1,7 @@
 """Tests for prompt storage (LocalPromptManager)."""
 
+import uuid
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -92,7 +94,7 @@ class TestLocalPromptManagerCRUD:
             scope="bundled",
         )
 
-        assert record.id.startswith("pmt-")
+        assert str(uuid.UUID(record.id)) == record.id
         assert record.name == "test/prompt"
         assert record.description == "A test prompt"
         assert record.content == "Hello world"
@@ -113,7 +115,7 @@ class TestLocalPromptManagerCRUD:
 
     def test_get_prompt_not_found(self, manager) -> None:
         """Test getting non-existent prompt returns None."""
-        assert manager.get_prompt("pmt-nonexistent") is None
+        assert manager.get_prompt("00000000-0000-0000-0000-0000000000ff") is None
 
     def test_get_by_name_bundled(self, manager) -> None:
         """Test get_by_name returns bundled prompt."""

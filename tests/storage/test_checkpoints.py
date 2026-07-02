@@ -13,8 +13,8 @@ PROJECT_ID = "11111111-1111-1111-1111-111111111111"
 SESSION_ID = "22222222-2222-2222-2222-222222222222"
 TASK_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
 TASK_2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"
-# Checkpoint ids (checkpoints.id is uuid); run ids stay TEXT by design ('run-N').
 CKPT_IDS = [f"cccccccc-cccc-4ccc-8ccc-ccccccccccc{i}" for i in range(5)]
+RUN_IDS = [f"dddddddd-dddd-4ddd-8ddd-ddddddddddd{i}" for i in range(5)]
 CKPT_1 = CKPT_IDS[1]
 CKPT_2 = CKPT_IDS[2]
 UNKNOWN_ID = "99999999-9999-9999-9999-999999999999"
@@ -47,7 +47,7 @@ def _seed_parents(temp_db: HubDatabase) -> None:
             conn.execute(
                 "INSERT INTO agent_runs (id, parent_session_id, status, provider, prompt) "
                 "VALUES (%s, %s, 'running', 'test', 'test prompt')",
-                (f"run-{i}", SESSION_ID),
+                (RUN_IDS[i], SESSION_ID),
             )
 
 
@@ -55,7 +55,7 @@ def _make_checkpoint(
     checkpoint_id: str = CKPT_1,
     task_id: str = TASK_1,
     session_id: str = SESSION_ID,
-    run_id: str = "run-1",
+    run_id: str = RUN_IDS[1],
     seq: int = 1,
 ) -> Checkpoint:
     return Checkpoint(
@@ -115,7 +115,7 @@ class TestListForTask:
             id=CKPT_2,
             task_id=TASK_1,
             session_id=SESSION_ID,
-            run_id="run-2",
+            run_id=RUN_IDS[2],
             ref_name=f"refs/gobby/ckpt/{TASK_1}/2",
             commit_sha="def456",
             parent_sha="abc123",
@@ -151,7 +151,7 @@ class TestDeleteOld:
                 id=CKPT_IDS[i],
                 task_id=TASK_1,
                 session_id=SESSION_ID,
-                run_id=f"run-{i}",
+                run_id=RUN_IDS[i],
                 ref_name=f"refs/gobby/ckpt/{TASK_1}/{i}",
                 commit_sha=f"sha-{i}",
                 parent_sha="parent",

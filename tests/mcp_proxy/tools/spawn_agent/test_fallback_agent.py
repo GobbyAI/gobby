@@ -51,7 +51,7 @@ class TestFallbackAgent:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.agents.provider_rotation.get_failed_providers_for_task",
@@ -96,7 +96,7 @@ class TestFallbackAgent:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.agents.provider_rotation.get_failed_providers_for_task",
@@ -138,7 +138,7 @@ class TestFallbackAgent:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
@@ -175,7 +175,7 @@ class TestFallbackAgent:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",

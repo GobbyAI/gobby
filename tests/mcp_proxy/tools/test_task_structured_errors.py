@@ -29,7 +29,7 @@ def _make_task(
     }.get(status, status)
     return Task(
         id=task_id,
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         title="Test Task",
         priority=2,
         task_type="task",
@@ -69,7 +69,9 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
     ):
         session_manager = MagicMock()
         session_manager.resolve_session_reference.return_value = "session-abc"
-        session_manager.get.return_value = MagicMock(project_id="proj-1")
+        session_manager.get.return_value = MagicMock(
+            project_id="11111111-1111-4111-8111-111111110001"
+        )
         mock_session_manager_cls.return_value = session_manager
         return create_task_registry(task_manager, sync_manager)
 

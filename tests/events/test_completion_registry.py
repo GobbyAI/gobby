@@ -24,40 +24,50 @@ class TestRegisterAndNotify:
 
     @pytest.mark.asyncio
     async def test_register_creates_event(self, registry: CompletionEventRegistry) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        assert registry.is_registered("pe-abc123")
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        assert registry.is_registered("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
 
     @pytest.mark.asyncio
     async def test_notify_sets_result(self, registry: CompletionEventRegistry) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        await registry.notify("pe-abc123", {"status": "completed", "outputs": {"x": 1}})
-        result = registry.get_result("pe-abc123")
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        await registry.notify(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "completed", "outputs": {"x": 1}}
+        )
+        result = registry.get_result("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
         assert result == {"status": "completed", "outputs": {"x": 1}}
 
     @pytest.mark.asyncio
     async def test_wait_returns_result_after_notify(
         self, registry: CompletionEventRegistry
     ) -> None:
-        registry.register("pe-abc123", subscribers=[])
+        registry.register("55361235-ff5f-5de3-88f4-c98c82f7f0c3", subscribers=[])
 
-        task = asyncio.create_task(registry.wait("pe-abc123", timeout=2.0))
+        task = asyncio.create_task(
+            registry.wait("55361235-ff5f-5de3-88f4-c98c82f7f0c3", timeout=2.0)
+        )
         await drain_asyncio_tasks()
-        await registry.notify("pe-abc123", {"status": "completed"})
+        await registry.notify("55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "completed"})
         result = await task
         assert result == {"status": "completed"}
 
     @pytest.mark.asyncio
     async def test_wait_timeout_raises(self, registry: CompletionEventRegistry) -> None:
-        registry.register("pe-abc123", subscribers=[])
+        registry.register("55361235-ff5f-5de3-88f4-c98c82f7f0c3", subscribers=[])
         with pytest.raises(asyncio.TimeoutError):
-            await registry.wait("pe-abc123", timeout=0.05)
+            await registry.wait("55361235-ff5f-5de3-88f4-c98c82f7f0c3", timeout=0.05)
 
     @pytest.mark.asyncio
     async def test_wait_on_already_notified(self, registry: CompletionEventRegistry) -> None:
         """Wait on an already-notified event returns immediately."""
-        registry.register("pe-abc123", subscribers=[])
-        await registry.notify("pe-abc123", {"done": True})
-        result = await registry.wait("pe-abc123", timeout=0.1)
+        registry.register("55361235-ff5f-5de3-88f4-c98c82f7f0c3", subscribers=[])
+        await registry.notify("55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"done": True})
+        result = await registry.wait("55361235-ff5f-5de3-88f4-c98c82f7f0c3", timeout=0.1)
         assert result == {"done": True}
 
     @pytest.mark.asyncio
@@ -77,15 +87,25 @@ class TestRegisterAndNotify:
             woken.append((session_id, message, result))
 
         registry = CompletionEventRegistry(wake_callback=wake)
-        registry.register("pe-abc123", subscribers=["sess-1"])
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
 
         with caplog.at_level(logging.DEBUG, logger="gobby.events.completion_registry"):
-            await registry.notify("pe-abc123", {"status": "first"}, message="first")
-            await registry.notify("pe-abc123", {"status": "second"}, message="second")
+            await registry.notify(
+                "55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "first"}, message="first"
+            )
+            await registry.notify(
+                "55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "second"}, message="second"
+            )
 
-        assert registry.get_result("pe-abc123") == {"status": "first"}
-        assert woken == [("sess-1", "first", {"status": "first"})]
-        assert "notify() called for completed ID pe-abc123 - ignoring duplicate" in caplog.text
+        assert registry.get_result("55361235-ff5f-5de3-88f4-c98c82f7f0c3") == {"status": "first"}
+        assert woken == [("9264a39c-68db-5eed-917c-6f7babb8e6b1", "first", {"status": "first"})]
+        assert (
+            "notify() called for completed ID 55361235-ff5f-5de3-88f4-c98c82f7f0c3 - ignoring duplicate"
+            in caplog.text
+        )
 
     @pytest.mark.asyncio
     async def test_wait_unregistered_raises(self, registry: CompletionEventRegistry) -> None:
@@ -99,62 +119,105 @@ class TestSubscribers:
 
     @pytest.mark.asyncio
     async def test_register_with_subscribers(self, registry: CompletionEventRegistry) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1", "sess-2"])
-        subs = registry.get_subscribers("pe-abc123")
-        assert set(subs) == {"sess-1", "sess-2"}
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=[
+                "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+            ],
+        )
+        subs = registry.get_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
+        assert set(subs) == {
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+        }
 
     @pytest.mark.asyncio
     async def test_register_merges_existing_subscribers_and_preserves_event(
         self, registry: CompletionEventRegistry
     ) -> None:
         registry.register(
-            "pe-abc123",
-            subscribers=["sess-1", "sess-2"],
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=[
+                "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+            ],
             continuation_prompt="first prompt",
         )
-        original_event = registry._events["pe-abc123"]
+        original_event = registry._events["55361235-ff5f-5de3-88f4-c98c82f7f0c3"]
 
         registry.register(
-            "pe-abc123",
-            subscribers=["sess-2", "sess-3"],
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=[
+                "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+                "204df9de-a672-51b8-811a-0fc1a71bca39",
+            ],
             continuation_prompt="second prompt",
         )
 
-        assert registry._events["pe-abc123"] is original_event
-        assert registry.get_subscribers("pe-abc123") == ["sess-1", "sess-2", "sess-3"]
-        assert registry.get_continuation_prompt("pe-abc123") == "first prompt"
+        assert registry._events["55361235-ff5f-5de3-88f4-c98c82f7f0c3"] is original_event
+        assert registry.get_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3") == [
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+            "204df9de-a672-51b8-811a-0fc1a71bca39",
+        ]
+        assert (
+            registry.get_continuation_prompt("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
+            == "first prompt"
+        )
 
     @pytest.mark.asyncio
     async def test_reregister_preserves_waiter_until_notify(
         self, registry: CompletionEventRegistry
     ) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        waiter = asyncio.create_task(registry.wait("pe-abc123", timeout=1))
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        waiter = asyncio.create_task(
+            registry.wait("55361235-ff5f-5de3-88f4-c98c82f7f0c3", timeout=1)
+        )
         await drain_asyncio_tasks()
 
-        registry.register("pe-abc123", subscribers=["sess-2"])
-        await registry.notify("pe-abc123", {"status": "done"})
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["7a378a57-18dd-56d9-be74-0fcb8a19376d"],
+        )
+        await registry.notify("55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "done"})
 
         assert await waiter == {"status": "done"}
 
     @pytest.mark.asyncio
     async def test_subscribe_adds_to_existing(self, registry: CompletionEventRegistry) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        registry.subscribe("pe-abc123", "sess-2")
-        subs = registry.get_subscribers("pe-abc123")
-        assert set(subs) == {"sess-1", "sess-2"}
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        registry.subscribe(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3", "7a378a57-18dd-56d9-be74-0fcb8a19376d"
+        )
+        subs = registry.get_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
+        assert set(subs) == {
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+        }
 
     @pytest.mark.asyncio
     async def test_subscribe_idempotent(self, registry: CompletionEventRegistry) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        registry.subscribe("pe-abc123", "sess-1")
-        subs = registry.get_subscribers("pe-abc123")
-        assert subs == ["sess-1"]
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        registry.subscribe(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3", "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+        )
+        subs = registry.get_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
+        assert subs == ["9264a39c-68db-5eed-917c-6f7babb8e6b1"]
 
     @pytest.mark.asyncio
     async def test_subscribe_unregistered_raises(self, registry: CompletionEventRegistry) -> None:
         with pytest.raises(KeyError):
-            registry.subscribe("nonexistent", "sess-1")
+            registry.subscribe("nonexistent", "9264a39c-68db-5eed-917c-6f7babb8e6b1")
 
 
 class TestWakeCallback:
@@ -170,15 +233,24 @@ class TestWakeCallback:
             woken.append((session_id, message, result))
 
         registry = CompletionEventRegistry(wake_callback=wake)
-        registry.register("pe-abc123", subscribers=["sess-1", "sess-2"])
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=[
+                "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+            ],
+        )
         await registry.notify(
-            "pe-abc123",
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
             {"status": "completed"},
             message="Pipeline completed",
         )
 
         assert len(woken) == 2
-        assert {w[0] for w in woken} == {"sess-1", "sess-2"}
+        assert {w[0] for w in woken} == {
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+        }
         assert all(w[1] == "Pipeline completed" for w in woken)
         assert all(w[2] == {"status": "completed"} for w in woken)
 
@@ -188,22 +260,33 @@ class TestWakeCallback:
         woken: list[str] = []
 
         async def flaky_wake(session_id: str, message: str, result: dict) -> None:
-            if session_id == "sess-1":
+            if session_id == "9264a39c-68db-5eed-917c-6f7babb8e6b1":
                 raise RuntimeError("tmux session gone")
             woken.append(session_id)
 
         registry = CompletionEventRegistry(wake_callback=flaky_wake)
-        registry.register("pe-abc123", subscribers=["sess-1", "sess-2"])
-        await registry.notify("pe-abc123", {"status": "completed"}, message="done")
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=[
+                "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+            ],
+        )
+        await registry.notify(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "completed"}, message="done"
+        )
 
-        assert woken == ["sess-2"]
+        assert woken == ["7a378a57-18dd-56d9-be74-0fcb8a19376d"]
 
     @pytest.mark.asyncio
     async def test_no_wake_without_callback(self, registry: CompletionEventRegistry) -> None:
         """Registry works fine without a wake callback (pipeline-internal use)."""
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        await registry.notify("pe-abc123", {"status": "completed"})
-        result = await registry.wait("pe-abc123", timeout=0.1)
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        await registry.notify("55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"status": "completed"})
+        result = await registry.wait("55361235-ff5f-5de3-88f4-c98c82f7f0c3", timeout=0.1)
         assert result == {"status": "completed"}
 
 
@@ -214,13 +297,16 @@ class TestCleanup:
     async def test_cleanup_removes_event_and_result(
         self, registry: CompletionEventRegistry
     ) -> None:
-        registry.register("pe-abc123", subscribers=["sess-1"])
-        await registry.notify("pe-abc123", {"done": True})
-        registry.cleanup("pe-abc123")
+        registry.register(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
+        )
+        await registry.notify("55361235-ff5f-5de3-88f4-c98c82f7f0c3", {"done": True})
+        registry.cleanup("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
 
-        assert not registry.is_registered("pe-abc123")
-        assert registry.get_result("pe-abc123") is None
-        assert registry.get_subscribers("pe-abc123") == []
+        assert not registry.is_registered("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
+        assert registry.get_result("55361235-ff5f-5de3-88f4-c98c82f7f0c3") is None
+        assert registry.get_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3") == []
 
     @pytest.mark.asyncio
     async def test_cleanup_unregistered_is_noop(self, registry: CompletionEventRegistry) -> None:
@@ -237,11 +323,11 @@ class TestContinuationPrompt:
         self, registry: CompletionEventRegistry
     ) -> None:
         registry.register(
-            "pe-abc123",
-            subscribers=["sess-1"],
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
             continuation_prompt="Wire dependencies between new subtasks",
         )
-        assert registry.get_continuation_prompt("pe-abc123") == (
+        assert registry.get_continuation_prompt("55361235-ff5f-5de3-88f4-c98c82f7f0c3") == (
             "Wire dependencies between new subtasks"
         )
 
@@ -254,12 +340,12 @@ class TestContinuationPrompt:
 
         registry = CompletionEventRegistry(wake_callback=wake)
         registry.register(
-            "pe-abc123",
-            subscribers=["sess-1"],
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            subscribers=["9264a39c-68db-5eed-917c-6f7babb8e6b1"],
             continuation_prompt="Do the next thing",
         )
         await registry.notify(
-            "pe-abc123",
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
             {"status": "completed"},
             message="Pipeline done",
         )

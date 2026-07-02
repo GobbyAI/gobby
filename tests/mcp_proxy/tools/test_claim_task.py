@@ -47,7 +47,7 @@ def _task(
 ) -> Task:
     return Task(
         id=task_id,
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         title=title,
         priority=2,
         task_type="task",
@@ -125,7 +125,9 @@ class TestClaimTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -201,7 +203,9 @@ class TestClaimTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -246,7 +250,9 @@ class TestClaimTaskTool:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -300,7 +306,9 @@ class TestClaimTaskTool:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -348,7 +356,9 @@ class TestClaimTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -548,7 +558,9 @@ class TestClaimTaskSessionVariables:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -593,7 +605,9 @@ class TestClaimTaskSessionVariables:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -643,7 +657,9 @@ class TestClaimTaskVsUpdateTask:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -718,7 +734,7 @@ class TestClaimTaskCrossProjectBlocking:
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
-            # sample_task has project_id="proj-1"
+            # sample_task has project_id="11111111-1111-4111-8111-111111110001"
             mock_task_manager.get_task.return_value = sample_task
 
             result = await registry.call(
@@ -728,7 +744,7 @@ class TestClaimTaskCrossProjectBlocking:
 
             assert "error" in result
             assert "different project" in result["error"].lower()
-            assert result["task_project"] == "proj-1"
+            assert result["task_project"] == "11111111-1111-4111-8111-111111110001"
             assert result["session_project"] == "proj-OTHER"
             # Should NOT have attempted the update
             mock_task_manager.claim_task.assert_not_called()

@@ -591,7 +591,7 @@ class TestMemoryDreamTools:
         # that need the unscoped (all-due-projects) path re-patch this to None.
         with patch(
             "gobby.mcp_proxy.tools.memory.get_current_project_id",
-            return_value="proj-1",
+            return_value="11111111-1111-4111-8111-111111110001",
         ):
             yield
 
@@ -632,7 +632,7 @@ class TestMemoryDreamTools:
         assert options.dry_run is True
         assert options.skip_consolidation is True
         assert options.memory_type == "fact"
-        assert options.project_id == "proj-1"
+        assert options.project_id == "11111111-1111-4111-8111-111111110001"
 
     @pytest.mark.asyncio
     async def test_memory_dream_unscoped_runs_all_due_projects(

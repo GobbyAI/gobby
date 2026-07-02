@@ -350,7 +350,7 @@ async def test_list_skills_routes_direct_storage_calls_through_run_db() -> None:
         search=MagicMock(),
         updater=MagicMock(),
         loader=MagicMock(),
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         hub_manager=None,
         db_runner=run_db,
     )
@@ -385,7 +385,7 @@ async def test_list_skills_routes_overfetch_batches_through_run_db() -> None:
         search=MagicMock(),
         updater=MagicMock(),
         loader=MagicMock(),
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         hub_manager=None,
         db_runner=run_db,
     )
@@ -413,7 +413,7 @@ async def test_list_skills_ignores_value_error_resolving_active_skills() -> None
         search=MagicMock(),
         updater=MagicMock(),
         loader=MagicMock(),
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         hub_manager=None,
         db_runner=None,
     )
@@ -441,7 +441,7 @@ async def test_list_skills_surfaces_unexpected_active_skill_lookup_errors() -> N
         search=MagicMock(),
         updater=MagicMock(),
         loader=MagicMock(),
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         hub_manager=None,
         db_runner=None,
     )

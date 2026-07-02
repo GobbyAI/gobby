@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -276,7 +277,7 @@ def test_epic_integration_workspace_adopts_pruned_metadata(
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
     integration_branch = _integration_branch(parent)
-    stale_worktree_id = "wt-pruned"
+    stale_worktree_id = "9516a9e0-4615-52ca-9594-38a1c6be96a5"
 
     _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
     task_manager.artifacts.set_artifacts_atomic(
@@ -372,6 +373,7 @@ def test_epic_integration_workspace_recreates_invalid_git_path(
     parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
     integration_branch = _integration_branch(parent)
     invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
+    shutil.rmtree(invalid_path, ignore_errors=True)
     invalid_path.mkdir(parents=True)
     (invalid_path / "not-git.txt").write_text("stale directory\n")
 
@@ -432,6 +434,7 @@ def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_t
     )
     integration_branch = _integration_branch(parent)
     invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
+    shutil.rmtree(invalid_path, ignore_errors=True)
     invalid_path.mkdir(parents=True)
     (invalid_path / "not-git.txt").write_text("stale branch record\n")
 
@@ -481,21 +484,21 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
     integration_branch = _integration_branch(parent)
-    stale_worktree_id = "wt-active"
+    stale_worktree_id = "42281c41-58fa-567b-bd9f-a7ad0341e969"
     temp_db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("parent-session", "ext-active", "machine-1", "codex", project.id),
+        ("ac25647a-384a-5232-8d09-117e2043e20b", "ext-active", "machine-1", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
-        parent_session_id="parent-session",
+        parent_session_id="ac25647a-384a-5232-8d09-117e2043e20b",
         provider="codex",
         prompt="review",
         agent_name="holistic-reviewer",
         task_id=parent.id,
-        run_id="run-active-integration",
+        run_id="b3a0c54a-b2a1-590a-b615-abb42da4a56d",
     )
     run_manager.update_runtime(run.id, worktree_id=stale_worktree_id)
     task_manager.artifacts.set_artifacts_atomic(
@@ -505,7 +508,9 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
         target_branch="main",
     )
 
-    with pytest.raises(BuildWorkspaceError, match="active run run-active-integration"):
+    with pytest.raises(
+        BuildWorkspaceError, match="active run b3a0c54a-b2a1-590a-b615-abb42da4a56d"
+    ):
         ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
@@ -536,6 +541,7 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
     parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
     integration_branch = _integration_branch(parent)
     invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
+    shutil.rmtree(invalid_path, ignore_errors=True)
     invalid_path.mkdir(parents=True)
     (invalid_path / "not-git.txt").write_text("active stale directory\n")
 
@@ -552,16 +558,22 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("parent-session", "ext-active-invalid", "machine-1", "codex", project.id),
+        (
+            "ac25647a-384a-5232-8d09-117e2043e20b",
+            "ext-active-invalid",
+            "machine-1",
+            "codex",
+            project.id,
+        ),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
-        parent_session_id="parent-session",
+        parent_session_id="ac25647a-384a-5232-8d09-117e2043e20b",
         provider="codex",
         prompt="review",
         agent_name="holistic-reviewer",
         task_id=parent.id,
-        run_id="run-active-invalid-integration",
+        run_id="af0adb09-330c-55d2-9e8c-688e28ca4311",
     )
     run_manager.update_runtime(run.id, worktree_id=stale.id)
     task_manager.artifacts.set_artifacts_atomic(
@@ -571,7 +583,9 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
         target_branch="main",
     )
 
-    with pytest.raises(BuildWorkspaceError, match="active run run-active-invalid-integration"):
+    with pytest.raises(
+        BuildWorkspaceError, match="active run af0adb09-330c-55d2-9e8c-688e28ca4311"
+    ):
         ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
@@ -1102,16 +1116,16 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("parent-session-promote", "ext-promote", "machine-1", "codex", project.id),
+        ("565acf01-045f-5737-ad46-c4a57a113dee", "ext-promote", "machine-1", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
-        parent_session_id="parent-session-promote",
+        parent_session_id="565acf01-045f-5737-ad46-c4a57a113dee",
         provider="codex",
         prompt="review",
         agent_name="holistic-reviewer",
         task_id=parent.id,
-        run_id="run-active-task-worktree",
+        run_id="a74fdb9c-fa5e-5a29-b3b2-8c7f24a60258",
     )
     run_manager.update_runtime(run.id, worktree_id=phase.id)
     task_manager.artifacts.set_artifacts_atomic(
@@ -1121,7 +1135,9 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
         base_commit_sha=base_sha,
     )
 
-    with pytest.raises(BuildWorkspaceError, match="active run run-active-task-worktree"):
+    with pytest.raises(
+        BuildWorkspaceError, match="active run a74fdb9c-fa5e-5a29-b3b2-8c7f24a60258"
+    ):
         ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,
@@ -1174,16 +1190,16 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("parent-session-clone", "ext-clone", "machine-1", "codex", project.id),
+        ("958625ad-2cad-5175-bd8d-ac97ced1d681", "ext-clone", "machine-1", "codex", project.id),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
-        parent_session_id="parent-session-clone",
+        parent_session_id="958625ad-2cad-5175-bd8d-ac97ced1d681",
         provider="codex",
         prompt="review",
         agent_name="holistic-reviewer",
         task_id=parent.id,
-        run_id="run-active-task-clone",
+        run_id="9dae75b1-e795-5f8a-b287-cbf256abab62",
     )
     run_manager.update_runtime(run.id, clone_id=phase.id)
     task_manager.artifacts.set_artifacts_atomic(
@@ -1193,7 +1209,9 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
         base_commit_sha=base_sha,
     )
 
-    with pytest.raises(BuildWorkspaceError, match="active run run-active-task-clone"):
+    with pytest.raises(
+        BuildWorkspaceError, match="active run 9dae75b1-e795-5f8a-b287-cbf256abab62"
+    ):
         ensure_epic_integration_workspaces(
             task_manager=task_manager,
             root_task=parent,

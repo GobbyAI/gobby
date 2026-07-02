@@ -128,7 +128,7 @@ def test_postgres_baseline_declares_foreign_keys_deferrable() -> None:
     )
     _assert_matches(
         sql,
-        r"agent_run_id\s+TEXT\s+REFERENCES\s+agent_runs\s*\(\s*id\s*\)"
+        r"agent_run_id\s+UUID\s+REFERENCES\s+agent_runs\s*\(\s*id\s*\)"
         r"[^,\n]*DEFERRABLE\s+INITIALLY\s+IMMEDIATE",
         "sessions.agent_run_id -> agent_runs.id must be deferrable",
     )

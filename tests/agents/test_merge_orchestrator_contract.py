@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -211,17 +212,25 @@ def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _create_session(db: HubDatabase, session_id: str = "agent-session") -> None:
+def _create_session(
+    db: HubDatabase, session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001"
+) -> None:
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW()) "
         "ON CONFLICT (id) DO NOTHING",
-        ("project-1", "test-project"),
+        ("11111111-1111-4111-8111-111111110001", "test-project"),
     )
     db.execute(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-        (session_id, f"ext-{session_id}", "machine-1", "claude", "project-1"),
+        (
+            session_id,
+            f"ext-{session_id}",
+            "machine-1",
+            "claude",
+            "11111111-1111-4111-8111-111111110001",
+        ),
     )
 
 
@@ -229,7 +238,7 @@ def _install_workflow(
     db: HubDatabase,
     *,
     current_step: str,
-    session_id: str = "agent-session",
+    session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
 ) -> WorkflowInstanceManager:
     agent = _agent()
     _create_session(db, session_id=session_id)
@@ -262,7 +271,7 @@ def _install_workflow(
     manager = WorkflowInstanceManager(db)
     manager.save_instance(
         WorkflowInstance(
-            id=f"inst-{session_id}-merge-orchestrator",
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"inst-{session_id}-merge-orchestrator")),
             session_id=session_id,
             workflow_name=agent["name"],
             enabled=True,
@@ -279,7 +288,7 @@ def _before_mcp_tool(mcp_key: str) -> HookEvent:
     server, tool = mcp_key.split(":", 1)
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={
@@ -302,7 +311,7 @@ def _after_mcp_tool(
         tool_input["arguments"] = arguments
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={
@@ -317,7 +326,7 @@ def _after_mcp_tool(
 def _after_set_variable(name: str, value: object) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={
@@ -421,7 +430,7 @@ async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
     for mcp_key in sorted(REQUIRED_EXECUTE_TOOLS):
         response = await engine.evaluate(
             _before_mcp_tool(mcp_key),
-            session_id="agent-session",
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
             variables={},
         )
         assert response.decision == "allow", mcp_key
@@ -429,7 +438,7 @@ async def test_execute_step_allows_contract_tools_and_blocks_lifecycle_hazards(
     for mcp_key in sorted(FORBIDDEN_EXECUTE_TOOLS):
         response = await engine.evaluate(
             _before_mcp_tool(mcp_key),
-            session_id="agent-session",
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
             variables={},
         )
         assert response.decision == "block", mcp_key
@@ -445,7 +454,7 @@ async def test_survey_empty_campaign_can_close_already_implemented(
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-tasks:close_task"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
@@ -459,10 +468,10 @@ async def test_survey_empty_campaign_can_close_already_implemented(
                 "changes_summary": "All phase work already landed through child tasks.",
             },
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -478,7 +487,7 @@ async def test_plan_empty_campaign_can_close_already_implemented(
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-tasks:close_task"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
@@ -492,10 +501,10 @@ async def test_plan_empty_campaign_can_close_already_implemented(
                 "changes_summary": "Merge plan is empty because child merges already landed.",
             },
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -511,7 +520,7 @@ async def test_report_can_close_already_implemented_and_terminate(
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-tasks:close_task"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
@@ -525,10 +534,10 @@ async def test_report_can_close_already_implemented_and_terminate(
                 "changes_summary": "No merge commit required for this parent phase.",
             },
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -547,10 +556,10 @@ async def test_load_skill_step_waits_for_merge_and_build_coordinator_skills(
             "gobby-skills:get_skill",
             arguments={"name": "merge-expert"},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "load_skill"
     assert instance.variables["skill_loaded"] is True
@@ -561,10 +570,10 @@ async def test_load_skill_step_waits_for_merge_and_build_coordinator_skills(
             "gobby-skills:get_skill",
             arguments={"name": "build-coordinator"},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "survey"
     assert instance.variables["build_coordinator_skill_loaded"] is True
@@ -578,44 +587,48 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
 
     await engine.evaluate(
         _after_mcp_tool("gobby-merge:predict_conflicts"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "plan"
 
     for mcp_key in ("gobby-merge:inspect_merge_state", "gobby-tasks-ops:get_artifacts"):
         response = await engine.evaluate(
             _before_mcp_tool(mcp_key),
-            session_id="agent-session",
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
             variables=variables,
         )
         assert response.decision == "allow", mcp_key
 
     await engine.evaluate(
         _after_set_variable("merge_plan", [{"step_no": 1, "worktree_id": "wt-1"}]),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "execute"
 
-    manager = _install_workflow(db, current_step="plan", session_id="agent-session-json")
+    manager = _install_workflow(
+        db, current_step="plan", session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003"
+    )
     await engine.evaluate(
         _after_set_variable("merge_plan_json", "step_no=1 worktree_id=wt-1"),
-        session_id="agent-session-json",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003",
         variables={},
     )
-    json_instance = manager.get_instance("agent-session-json", "merge-orchestrator")
+    json_instance = manager.get_instance(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3003", "merge-orchestrator"
+    )
     assert json_instance is not None
     assert json_instance.current_step == "execute"
 
     for mcp_key in ("gobby-merge:inspect_merge_state", "gobby-agents:spawn_agent"):
         response = await engine.evaluate(
             _before_mcp_tool(mcp_key),
-            session_id="agent-session",
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
             variables=variables,
         )
         assert response.decision == "allow", mcp_key
@@ -626,10 +639,10 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
             arguments={"final": True, "command": "cargo test -p gobby-core search::tests"},
             tool_output={"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "report"
     assert instance.variables["verification_evidence_recorded"] is True
@@ -653,7 +666,7 @@ async def test_report_success_record_merge_result_can_terminate(db: HubDatabase)
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-tasks-ops:record_merge_result"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
@@ -663,10 +676,10 @@ async def test_report_success_record_merge_result_can_terminate(db: HubDatabase)
             "gobby-tasks-ops:record_merge_result",
             arguments={"task_id": "#225", "merge_sha": "abc123", "report_ref": "clean"},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["report_complete"] is True
@@ -682,7 +695,7 @@ async def test_execute_failure_report_can_record_merge_result_and_terminate(
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-tasks-ops:record_merge_result"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
@@ -698,10 +711,10 @@ async def test_execute_failure_report_can_record_merge_result_and_terminate(
                 ),
             },
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "terminate"
     assert instance.variables["execution_complete"] is True
@@ -720,24 +733,24 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
             arguments={"resolution_id": "mr-1"},
             tool_output={"success": True, "result": {"resolved_count": 5, "pending_count": 12}},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
     assert instance.variables["no_progress_merge_status_count"] == 0
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-agents:spawn_agent"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
 
     await engine.evaluate(
         _after_mcp_tool("gobby-agents:spawn_agent"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     await engine.evaluate(
@@ -753,13 +766,13 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
                 },
             },
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-agents:spawn_agent"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "block"
@@ -771,10 +784,10 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
             arguments={"resolution_id": "mr-1"},
             tool_output={"success": True, "result": {"resolved_count": 5, "pending_count": 12}},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.variables["post_worker_merge_status_checked"] is True
     assert instance.variables["no_progress_merge_status_count"] == 1
@@ -782,14 +795,14 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-agents:spawn_agent"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "block"
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-tasks-ops:record_merge_result"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"
@@ -812,11 +825,11 @@ async def test_execute_accepts_normalized_wait_for_agent_output(db: HubDatabase)
                 "result": "",
             },
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
 
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.variables["merge_worker_completed"] is True
     assert instance.variables["post_worker_merge_status_checked"] is False
@@ -837,10 +850,10 @@ async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
             arguments={"resolution_id": "mr-1"},
             tool_output={"success": True, "result": {"resolved_count": 5, "pending_count": 12}},
         ),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
-    instance = manager.get_instance("agent-session", "merge-orchestrator")
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
     assert instance.variables["no_progress_merge_status_count"] == 0
@@ -848,7 +861,7 @@ async def test_execute_allows_fresh_dispatch_with_historical_no_progress_state(
 
     response = await engine.evaluate(
         _before_mcp_tool("gobby-agents:spawn_agent"),
-        session_id="agent-session",
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
         variables=variables,
     )
     assert response.decision == "allow"

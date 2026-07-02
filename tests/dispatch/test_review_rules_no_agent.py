@@ -26,7 +26,7 @@ def _stage(stage_name: str, state: str, position: int = 0) -> SimpleNamespace:
 
 def _task(*stages: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(
-        id="task-review",
+        id="9db7d8dc-1cff-55cd-8757-4258ebb027b8",
         ref="#review",
         task_type="feature",
         stages=list(stages),
@@ -62,5 +62,5 @@ def test_each_review_rule_escalates_specifically_when_reviewer_missing(
     action = rule(_task(_stage(stage, state)), _context())
 
     assert isinstance(action, EscalateAction)
-    assert action.task_id == "task-review"
+    assert action.task_id == "9db7d8dc-1cff-55cd-8757-4258ebb027b8"
     assert action.reason == reason

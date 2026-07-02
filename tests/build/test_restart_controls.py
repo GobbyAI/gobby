@@ -33,18 +33,20 @@ def test_restart_manifest_replacement_rolls_back_when_reinitialize_fails(
         by_session_id=None,
     )
 
-    def fail_initialize(
+    def fail_replace(
         self: StageStatesManager,
         task_id: str,
         specs: Sequence[StageManifestSpec],
-        *,
-        by_session_id: str | None,
-    ) -> list[object]:
-        raise RuntimeError("manifest replacement failed")
+        **_kwargs: object,
+    ) -> None:
+        # replace_manifest returns None when the existing manifest shape
+        # changed underneath the restart; the caller must raise and leave
+        # the prior manifest untouched.
+        return None
 
-    monkeypatch.setattr(StageStatesManager, "initialize_manifest", fail_initialize)
+    monkeypatch.setattr(StageStatesManager, "replace_manifest", fail_replace)
 
-    with pytest.raises(RuntimeError, match="manifest replacement failed"):
+    with pytest.raises(RuntimeError, match="stage manifest changed while restarting"):
         _reset_restart_stage_manifests_from_options(
             temp_db,
             task,

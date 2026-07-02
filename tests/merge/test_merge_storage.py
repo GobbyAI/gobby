@@ -230,8 +230,8 @@ class TestMergeResolutionDataclass:
         from gobby.storage.merge_resolutions import MergeResolution
 
         resolution = MergeResolution(
-            id="mr-1",
-            worktree_id="wt-1",
+            id="89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
             status="pending",
@@ -239,8 +239,8 @@ class TestMergeResolutionDataclass:
             created_at="2026-01-08T00:00:00Z",
             updated_at="2026-01-08T00:00:00Z",
         )
-        assert resolution.id == "mr-1"
-        assert resolution.worktree_id == "wt-1"
+        assert resolution.id == "89701e2d-e85f-5def-aca7-7ccc43d3ddd8"
+        assert resolution.worktree_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"
         assert resolution.source_branch == "feature/test"
         assert resolution.target_branch == "main"
         assert resolution.status == "pending"
@@ -254,27 +254,42 @@ class TestMergeResolutionDataclass:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         # Insert test data
         db.execute(
             """INSERT INTO merge_resolutions (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("mr-1", "wt-1", "feature/test", "main", "pending"),
+            (
+                "89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "feature/test",
+                "main",
+                "pending",
+            ),
         )
 
-        row = db.fetchone("SELECT * FROM merge_resolutions WHERE id = %s", ("mr-1",))
+        row = db.fetchone(
+            "SELECT * FROM merge_resolutions WHERE id = %s",
+            ("89701e2d-e85f-5def-aca7-7ccc43d3ddd8",),
+        )
         assert row is not None
         resolution = MergeResolution.from_row(row)
 
-        assert resolution.id == "mr-1"
-        assert resolution.worktree_id == "wt-1"
+        assert resolution.id == "89701e2d-e85f-5def-aca7-7ccc43d3ddd8"
+        assert resolution.worktree_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"
         assert resolution.source_branch == "feature/test"
 
     def test_merge_resolution_to_dict(self) -> None:
@@ -282,8 +297,8 @@ class TestMergeResolutionDataclass:
         from gobby.storage.merge_resolutions import MergeResolution
 
         resolution = MergeResolution(
-            id="mr-1",
-            worktree_id="wt-1",
+            id="89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
             status="resolved",
@@ -294,8 +309,8 @@ class TestMergeResolutionDataclass:
         result = resolution.to_dict()
 
         assert isinstance(result, dict)
-        assert result["id"] == "mr-1"
-        assert result["worktree_id"] == "wt-1"
+        assert result["id"] == "89701e2d-e85f-5def-aca7-7ccc43d3ddd8"
+        assert result["worktree_id"] == "6a061cb3-f607-55f6-b3eb-04579360a44c"
         assert result["status"] == "resolved"
         assert result["tier_used"] == "conflict_only_ai"
 
@@ -313,8 +328,8 @@ class TestMergeConflictDataclass:
         from gobby.storage.merge_resolutions import MergeConflict
 
         conflict = MergeConflict(
-            id="mc-1",
-            resolution_id="mr-1",
+            id="dfe8727c-8d0e-5233-90f8-5ddb8d546e9c",
+            resolution_id="89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
             file_path="src/main.py",
             status="pending",
             ours_content="our code",
@@ -323,8 +338,8 @@ class TestMergeConflictDataclass:
             created_at="2026-01-08T00:00:00Z",
             updated_at="2026-01-08T00:00:00Z",
         )
-        assert conflict.id == "mc-1"
-        assert conflict.resolution_id == "mr-1"
+        assert conflict.id == "dfe8727c-8d0e-5233-90f8-5ddb8d546e9c"
+        assert conflict.resolution_id == "89701e2d-e85f-5def-aca7-7ccc43d3ddd8"
         assert conflict.file_path == "src/main.py"
         assert conflict.status == "pending"
 
@@ -337,30 +352,51 @@ class TestMergeConflictDataclass:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
         db.execute(
             """INSERT INTO merge_resolutions (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("mr-1", "wt-1", "feature/test", "main", "pending"),
+            (
+                "89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "feature/test",
+                "main",
+                "pending",
+            ),
         )
         db.execute(
             """INSERT INTO merge_conflicts (id, resolution_id, file_path, status, ours_content, theirs_content, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("mc-1", "mr-1", "src/main.py", "pending", "our code", "their code"),
+            (
+                "dfe8727c-8d0e-5233-90f8-5ddb8d546e9c",
+                "89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
+                "src/main.py",
+                "pending",
+                "our code",
+                "their code",
+            ),
         )
 
-        row = db.fetchone("SELECT * FROM merge_conflicts WHERE id = %s", ("mc-1",))
+        row = db.fetchone(
+            "SELECT * FROM merge_conflicts WHERE id = %s", ("dfe8727c-8d0e-5233-90f8-5ddb8d546e9c",)
+        )
         assert row is not None
         conflict = MergeConflict.from_row(row)
 
-        assert conflict.id == "mc-1"
-        assert conflict.resolution_id == "mr-1"
+        assert conflict.id == "dfe8727c-8d0e-5233-90f8-5ddb8d546e9c"
+        assert conflict.resolution_id == "89701e2d-e85f-5def-aca7-7ccc43d3ddd8"
         assert conflict.file_path == "src/main.py"
 
     def test_merge_conflict_to_dict(self) -> None:
@@ -368,8 +404,8 @@ class TestMergeConflictDataclass:
         from gobby.storage.merge_resolutions import MergeConflict
 
         conflict = MergeConflict(
-            id="mc-1",
-            resolution_id="mr-1",
+            id="dfe8727c-8d0e-5233-90f8-5ddb8d546e9c",
+            resolution_id="89701e2d-e85f-5def-aca7-7ccc43d3ddd8",
             file_path="src/main.py",
             status="resolved",
             ours_content="our code",
@@ -381,7 +417,7 @@ class TestMergeConflictDataclass:
         result = conflict.to_dict()
 
         assert isinstance(result, dict)
-        assert result["id"] == "mc-1"
+        assert result["id"] == "dfe8727c-8d0e-5233-90f8-5ddb8d546e9c"
         assert result["file_path"] == "src/main.py"
         assert result["resolved_content"] == "merged code"
 
@@ -403,23 +439,29 @@ class TestMergeResolutionManagerCreate:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
 
         assert isinstance(resolution, MergeResolution)
-        assert resolution.worktree_id == "wt-1"
+        assert resolution.worktree_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"
         assert resolution.source_branch == "feature/test"
         assert resolution.target_branch == "main"
         assert resolution.status == "pending"
@@ -434,17 +476,23 @@ class TestMergeResolutionManagerCreate:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -467,17 +515,23 @@ class TestMergeResolutionManagerGet:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         created = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -495,7 +549,7 @@ class TestMergeResolutionManagerGet:
         db = hub_db
 
         manager = MergeResolutionManager(db)
-        result = manager.get_resolution("nonexistent-id")
+        result = manager.get_resolution("00000000-0000-0000-0000-0000000000ff")
 
         assert result is None
 
@@ -509,12 +563,18 @@ class TestMergeResolutionManagerMergeLookup:
         db = hub_db
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
         return MergeResolutionManager(db), db
 
@@ -522,7 +582,7 @@ class TestMergeResolutionManagerMergeLookup:
         """Exact merge lookup returns the newest worktree/source/target row."""
         manager, db = self._manager_with_worktree(hub_db)
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -531,8 +591,8 @@ class TestMergeResolutionManagerMergeLookup:
                (id, worktree_id, source_branch, target_branch, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (
-                "mr-newer",
-                "wt-1",
+                "0412c952-b6cd-5d82-9d75-55fc9954443a",
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
                 "feature/test",
                 "main",
                 "resolved",
@@ -542,13 +602,13 @@ class TestMergeResolutionManagerMergeLookup:
         )
 
         result = manager.get_resolution_for_merge(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
 
         assert result is not None
-        assert result.id == "mr-newer"
+        assert result.id == "0412c952-b6cd-5d82-9d75-55fc9954443a"
 
     def test_get_or_create_resolution_reuses_duplicate_retry(
         self, hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
@@ -556,7 +616,7 @@ class TestMergeResolutionManagerMergeLookup:
         """Duplicate insert races are retried as exact-match reuse."""
         manager, _db = self._manager_with_worktree(hub_db)
         existing = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -573,7 +633,7 @@ class TestMergeResolutionManagerMergeLookup:
         monkeypatch.setattr(manager, "get_resolution_for_merge", stale_once)
 
         result, created = manager.get_or_create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -585,18 +645,18 @@ class TestMergeResolutionManagerMergeLookup:
         """Exact lookup does not reuse rows for different branches."""
         manager, _db = self._manager_with_worktree(hub_db)
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
 
         different_target = manager.get_resolution_for_merge(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="develop",
         )
         different_source = manager.get_resolution_for_merge(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/other",
             target_branch="main",
         )
@@ -617,17 +677,23 @@ class TestMergeResolutionManagerUpdate:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -650,14 +716,14 @@ class TestMergeResolutionManagerUpdate:
 
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-concurrent-resolution", "Test Project"),
+            ("b605e6f5-eccf-5d9c-8e6f-7105ec9a44db", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
-                "wt-concurrent-resolution",
-                "proj-concurrent-resolution",
+                "453a03f7-e4a0-5d4c-b15b-a67e14f1c180",
+                "b605e6f5-eccf-5d9c-8e6f-7105ec9a44db",
                 "feature",
                 "/tmp/wt-concurrent-resolution",
                 "active",
@@ -667,7 +733,7 @@ class TestMergeResolutionManagerUpdate:
         resolving_manager = MergeResolutionManager(db)
         stale_manager = MergeResolutionManager(db)
         resolution = resolving_manager.create_resolution(
-            worktree_id="wt-concurrent-resolution",
+            worktree_id="453a03f7-e4a0-5d4c-b15b-a67e14f1c180",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -697,17 +763,23 @@ class TestMergeResolutionManagerUpdate:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -732,17 +804,23 @@ class TestMergeResolutionManagerDelete:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -759,7 +837,7 @@ class TestMergeResolutionManagerDelete:
         db = hub_db
 
         manager = MergeResolutionManager(db)
-        result = manager.delete_resolution("nonexistent-id")
+        result = manager.delete_resolution("00000000-0000-0000-0000-0000000000ff")
 
         assert result is False
 
@@ -781,17 +859,23 @@ class TestMergeResolutionManagerCreateConflict:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -821,17 +905,23 @@ class TestMergeResolutionManagerUpdateConflict:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -860,14 +950,14 @@ class TestMergeResolutionManagerUpdateConflict:
 
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-concurrent-conflict", "Test Project"),
+            ("7cf6354c-bef0-5522-b6c3-95e7c1feac99", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
             (
-                "wt-concurrent-conflict",
-                "proj-concurrent-conflict",
+                "13bd814a-d71b-53ed-ae5b-d7949ac6ba9c",
+                "7cf6354c-bef0-5522-b6c3-95e7c1feac99",
                 "feature",
                 "/tmp/wt-concurrent-conflict",
                 "active",
@@ -877,7 +967,7 @@ class TestMergeResolutionManagerUpdateConflict:
         resolving_manager = MergeResolutionManager(db)
         stale_manager = MergeResolutionManager(db)
         resolution = resolving_manager.create_resolution(
-            worktree_id="wt-concurrent-conflict",
+            worktree_id="13bd814a-d71b-53ed-ae5b-d7949ac6ba9c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -922,17 +1012,23 @@ class TestConflictStateTransitions:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -963,17 +1059,23 @@ class TestConflictStateTransitions:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -998,17 +1100,23 @@ class TestConflictStateTransitions:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -1042,17 +1150,23 @@ class TestQueryResolutionsByFile:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -1088,22 +1202,28 @@ class TestQueryResolutionsByBranch:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/auth",
             target_branch="main",
         )
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/api",
             target_branch="main",
         )
@@ -1122,22 +1242,28 @@ class TestQueryResolutionsByBranch:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/auth",
             target_branch="main",
         )
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/api",
             target_branch="develop",
         )
@@ -1160,22 +1286,28 @@ class TestQueryResolutionsByStatus:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         res1 = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/auth",
             target_branch="main",
         )
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/api",
             target_branch="main",
         )  # Second resolution, not updated (remains pending)
@@ -1196,17 +1328,23 @@ class TestQueryResolutionsByStatus:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -1249,17 +1387,23 @@ class TestResolutionHistoryTracking:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -1277,17 +1421,23 @@ class TestResolutionHistoryTracking:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -1308,17 +1458,23 @@ class TestResolutionHistoryTracking:
         # Create prerequisites
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature", "/tmp/wt", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature",
+                "/tmp/wt",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         resolution = manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/test",
             target_branch="main",
         )
@@ -1349,32 +1505,44 @@ class TestResolutionHistoryTracking:
         # Create multiple worktrees
         db.execute(
             "INSERT INTO projects (id, name) VALUES (%s, %s)",
-            ("proj-1", "Test Project"),
+            ("11111111-1111-4111-8111-111111110001", "Test Project"),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-1", "proj-1", "feature1", "/tmp/wt1", "active"),
+            (
+                "6a061cb3-f607-55f6-b3eb-04579360a44c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature1",
+                "/tmp/wt1",
+                "active",
+            ),
         )
         db.execute(
             """INSERT INTO worktrees (id, project_id, branch_name, worktree_path, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            ("wt-2", "proj-1", "feature2", "/tmp/wt2", "active"),
+            (
+                "1b77dc79-b2a0-5404-94ca-6ebac590831c",
+                "11111111-1111-4111-8111-111111110001",
+                "feature2",
+                "/tmp/wt2",
+                "active",
+            ),
         )
 
         manager = MergeResolutionManager(db)
         manager.create_resolution(
-            worktree_id="wt-1",
+            worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c",
             source_branch="feature/auth",
             target_branch="main",
         )
         manager.create_resolution(
-            worktree_id="wt-2",
+            worktree_id="1b77dc79-b2a0-5404-94ca-6ebac590831c",
             source_branch="feature/api",
             target_branch="main",
         )
 
-        results = manager.list_resolutions(worktree_id="wt-1")
+        results = manager.list_resolutions(worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c")
 
         assert len(results) == 1
-        assert results[0].worktree_id == "wt-1"
+        assert results[0].worktree_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"

@@ -42,7 +42,7 @@ def registry(mock_clone_storage: Any, mock_git_manager: Any) -> Any:
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
     )
 
 
@@ -73,7 +73,7 @@ class TestCreateClone:
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
         mock_clone_storage.create.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -122,7 +122,7 @@ class TestCreateClone:
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
         mock_clone_storage.create.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -154,7 +154,7 @@ class TestCreateClone:
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
         mock_clone_storage.create.return_value = Clone(
             id="clone-local",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="feature",
             clone_path="/tmp/clones/local",
             base_branch="main",
@@ -202,7 +202,7 @@ class TestGetClone:
         """Get clone by ID."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -242,7 +242,7 @@ class TestListClones:
         mock_clone_storage.list_clones.return_value = [
             Clone(
                 id="clone-1",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="main",
                 clone_path="/tmp/clones/one",
                 base_branch="main",
@@ -257,7 +257,7 @@ class TestListClones:
             ),
             Clone(
                 id="clone-2",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="feature",
                 clone_path="/tmp/clones/two",
                 base_branch="main",
@@ -313,7 +313,7 @@ class TestDeleteClone:
         """Delete clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -355,7 +355,7 @@ class TestDeleteClone:
         """Delete clone with force flag."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -387,7 +387,7 @@ class TestDeleteClone:
         """Failed file deletion leaves the existing clone record in place."""
         original_clone = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -425,7 +425,7 @@ class TestDeleteClone:
         """Failed record deletion leaves a retryable deleting clone record."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -462,7 +462,7 @@ class TestSyncClone:
         """Sync clone pull successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -489,7 +489,7 @@ class TestSyncClone:
         """Sync clone push successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -525,7 +525,7 @@ class TestSyncClone:
         """Sync clone handles sync failure."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -558,7 +558,7 @@ class TestMergeCloneToTarget:
         # Setup clone
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="feature/test",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -614,7 +614,7 @@ class TestMergeCloneToTarget:
         """Merge fails when fetch from clone path fails."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="feature/test",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -651,7 +651,7 @@ class TestMergeCloneToTarget:
 
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="feature/test",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -693,7 +693,7 @@ class TestMergeCloneToTarget:
 
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="feature/test",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -736,7 +736,7 @@ class TestClaimClone:
         """Claim clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -766,7 +766,7 @@ class TestClaimClone:
         """Claim fails when clone is already claimed by another session."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -794,7 +794,7 @@ class TestClaimClone:
         """Claim succeeds when clone is already claimed by same session."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -838,7 +838,7 @@ class TestReleaseClone:
         """Release clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -877,7 +877,7 @@ class TestGetCloneByTask:
         """Get clone linked to task."""
         mock_clone_storage.get_by_task.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="feature/task",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -919,7 +919,7 @@ class TestLinkTaskToClone:
         """Link task to clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             branch_name="main",
             clone_path="/tmp/clones/test",
             base_branch="main",
@@ -969,11 +969,13 @@ class TestGetCloneStats:
         result = await registry.call("get_clone_stats", {})
 
         assert result["success"] is True
-        assert result["project_id"] == "proj-1"
+        assert result["project_id"] == "11111111-1111-4111-8111-111111110001"
         assert result["counts"]["active"] == 3
         assert result["counts"]["stale"] == 1
         assert result["total"] == 4
-        mock_clone_storage.count_by_status.assert_called_once_with("proj-1")
+        mock_clone_storage.count_by_status.assert_called_once_with(
+            "11111111-1111-4111-8111-111111110001"
+        )
 
     @pytest.mark.asyncio
     async def test_get_clone_stats_empty(self, registry: Any, mock_clone_storage: Any) -> None:
@@ -995,7 +997,7 @@ class TestDetectStaleClones:
         mock_clone_storage.find_stale.return_value = [
             Clone(
                 id="clone-1",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="old-feature",
                 clone_path="/tmp/clones/old",
                 base_branch="main",
@@ -1018,7 +1020,7 @@ class TestDetectStaleClones:
         assert result["stale_clones"][0]["id"] == "clone-1"
         assert result["stale_clones"][0]["task_id"] == "task-1"
         mock_clone_storage.find_stale.assert_called_once_with(
-            project_id="proj-1", hours=48, limit=10
+            project_id="11111111-1111-4111-8111-111111110001", hours=48, limit=10
         )
 
     @pytest.mark.asyncio
@@ -1042,7 +1044,7 @@ class TestCleanupStaleClones:
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
                 id="clone-1",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="old-feature",
                 clone_path="/tmp/clones/old",
                 base_branch="main",
@@ -1065,7 +1067,7 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["marked_stale"] is False
         assert result["cleaned"][0]["files_deleted"] is False
         mock_clone_storage.cleanup_stale.assert_called_once_with(
-            project_id="proj-1", hours=24, dry_run=True
+            project_id="11111111-1111-4111-8111-111111110001", hours=24, dry_run=True
         )
 
     @pytest.mark.asyncio
@@ -1074,7 +1076,7 @@ class TestCleanupStaleClones:
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
                 id="clone-1",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="old-feature",
                 clone_path="/tmp/clones/old",
                 base_branch="main",
@@ -1104,7 +1106,7 @@ class TestCleanupStaleClones:
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
                 id="clone-1",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="old-feature",
                 clone_path="/tmp/clones/old",
                 base_branch="main",
@@ -1138,7 +1140,7 @@ class TestCleanupStaleClones:
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
                 id="clone-1",
-                project_id="proj-1",
+                project_id="11111111-1111-4111-8111-111111110001",
                 branch_name="old-feature",
                 clone_path="/tmp/clones/old",
                 base_branch="main",

@@ -29,7 +29,7 @@ async def test_push_branch_pushes_worktree_branch_with_force_lease() -> None:
     result = await create_sync_registry(ctx).call(
         "push_branch",
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "target_branch": "feature/task",
             "force_with_lease": True,
         },
@@ -66,7 +66,7 @@ async def test_push_branch_omits_force_lease_by_default() -> None:
 
     result = await create_sync_registry(ctx).call(
         "push_branch",
-        {"worktree_id": "wt-1", "target_branch": "feature/task"},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "target_branch": "feature/task"},
     )
 
     assert result["success"] is True
@@ -111,7 +111,7 @@ async def test_push_branch_returns_push_failure() -> None:
 
     result = await create_sync_registry(ctx).call(
         "push_branch",
-        {"worktree_id": "wt-1", "target_branch": "feature/task"},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "target_branch": "feature/task"},
     )
 
     assert result["success"] is False
@@ -137,7 +137,7 @@ async def test_push_branch_uses_custom_remote_and_source_branch() -> None:
     result = await create_sync_registry(ctx).call(
         "push_branch",
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "branch": "local/topic",
             "target_branch": "review/topic",
             "remote": "fork",

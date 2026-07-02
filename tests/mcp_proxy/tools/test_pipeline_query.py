@@ -25,7 +25,7 @@ def _make_execution(
     **kwargs,
 ) -> PipelineExecution:
     defaults = {
-        "project_id": "proj-1",
+        "project_id": "11111111-1111-4111-8111-111111110001",
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:01:00Z",
     }

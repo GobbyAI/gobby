@@ -88,7 +88,10 @@ class TestResolveProjectContext:
         with (
             patch(
                 "gobby.mcp_proxy.tools.worktrees._helpers.get_project_context",
-                return_value={"id": "proj-1", "project_path": str(tmp_path)},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110001",
+                    "project_path": str(tmp_path),
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.worktrees._helpers.WorktreeGitManager",
@@ -135,11 +138,11 @@ class TestResolveProjectContext:
         git_manager, project_id, error = _resolve_project_context(
             project_path=None,
             default_git_manager=mock_manager,
-            default_project_id="proj-123",
+            default_project_id="11111111-1111-4111-8111-111111110123",
         )
         assert error is None
         assert git_manager is mock_manager
-        assert project_id == "proj-123"
+        assert project_id == "11111111-1111-4111-8111-111111110123"
 
 
 class TestCopyProjectJsonToWorktree:
@@ -150,7 +153,9 @@ class TestCopyProjectJsonToWorktree:
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
         repo_gobby.mkdir(parents=True)
-        (repo_gobby / "project.json").write_text('{"id": "proj-1", "name": "test"}')
+        (repo_gobby / "project.json").write_text(
+            '{"id": "11111111-1111-4111-8111-111111110001", "name": "test"}'
+        )
 
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
@@ -162,7 +167,7 @@ class TestCopyProjectJsonToWorktree:
         import json
 
         data = json.loads(worktree_project.read_text())
-        assert data["id"] == "proj-1"
+        assert data["id"] == "11111111-1111-4111-8111-111111110001"
         assert "parent_project_path" in data
 
     def test_skips_if_no_source(self, tmp_path) -> None:
@@ -181,19 +186,21 @@ class TestCopyProjectJsonToWorktree:
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
         repo_gobby.mkdir(parents=True)
-        (repo_gobby / "project.json").write_text('{"id": "proj-1"}')
+        (repo_gobby / "project.json").write_text('{"id": "11111111-1111-4111-8111-111111110001"}')
 
         worktree_path = tmp_path / "worktree"
         worktree_gobby = worktree_path / ".gobby"
         worktree_gobby.mkdir(parents=True)
-        (worktree_gobby / "project.json").write_text('{"id": "proj-1"}')
+        (worktree_gobby / "project.json").write_text(
+            '{"id": "11111111-1111-4111-8111-111111110001"}'
+        )
 
         _copy_project_json_to_worktree(repo_path, worktree_path)
 
         import json
 
         data = json.loads((worktree_gobby / "project.json").read_text())
-        assert data["id"] == "proj-1"
+        assert data["id"] == "11111111-1111-4111-8111-111111110001"
         assert "parent_project_path" in data
 
 

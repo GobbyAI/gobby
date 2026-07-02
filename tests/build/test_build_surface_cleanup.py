@@ -61,7 +61,7 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
         captured["input_ref"] = input_ref
         captured["opts"] = opts
         return BuildResult(
-            task_id="task-1",
+            task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
             created=False,
             initial_lifecycle="development",
             applied_stages_skipped=[],
@@ -70,7 +70,7 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(
         "gobby.cli.build.resolve_project_id",
-        lambda *_args, **_kwargs: "project-1",
+        lambda *_args, **_kwargs: "0e27d5b7-167e-5a64-8bd9-6b980bd88f06",
     )
     monkeypatch.setattr("gobby.cli.build._open_database", lambda: _ClosableDb())
     monkeypatch.setattr("gobby.cli.build._try_daemon_build", lambda *_args, **_kwargs: None)

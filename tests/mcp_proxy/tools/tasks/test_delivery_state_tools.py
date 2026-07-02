@@ -76,7 +76,7 @@ def test_record_pr_state_persists_delivery_unit(
 
     result = record(
         task_id=task.id,
-        worktree_id="wt-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         repo="owner/repo",
         source_branch="feature/task",
         target_branch="main",
@@ -90,7 +90,7 @@ def test_record_pr_state_persists_delivery_unit(
     assert result["delivery"]["campaign"]["state"] == "pr_open"
     state = get_state(task_id=task.id)["delivery"]
     assert state["campaign"]["merge_strategy"] == "squash"
-    assert state["units"][0]["unit_key"] == "worktree:wt-1"
+    assert state["units"][0]["unit_key"] == "worktree:eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
     assert state["units"][0]["protection"] == {"requires_pr": True}
     assert state["units"][0]["pr_state"] == "awaiting_ci"
 

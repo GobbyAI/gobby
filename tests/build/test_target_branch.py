@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,19 @@ async def _build(input_ref: str, opts: object, db: object, project_id: str) -> o
     from gobby.build.service import build
 
     return await build(input_ref, opts, db=db, project_id=project_id)
+
+
+def _init_repo_with_release_branch(repo_path: Path) -> None:
+    def _git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo_path, check=True, capture_output=True)
+
+    _git("init", "-b", "main")
+    _git("config", "user.name", "Test User")
+    _git("config", "user.email", "test@example.com")
+    (repo_path / "README.md").write_text("initial\n")
+    _git("add", "README.md")
+    _git("commit", "-m", "initial")
+    _git("branch", "release")
 
 
 def _project(temp_db, tmp_path: Path) -> tuple[str, Path]:
@@ -119,7 +133,8 @@ async def test_explicit_target_branch_validated(
 
 @pytest.mark.asyncio
 async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path: Path) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
+    project_id, repo_path = _project(temp_db, tmp_path)
+    _init_repo_with_release_branch(repo_path)
     task = LocalTaskManager(temp_db).create_task(
         project_id=project_id,
         title="Epic",
@@ -140,7 +155,8 @@ async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path
 
 @pytest.mark.asyncio
 async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: Path) -> None:
-    project_id, _repo_path = _project(temp_db, tmp_path)
+    project_id, repo_path = _project(temp_db, tmp_path)
+    _init_repo_with_release_branch(repo_path)
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
         project_id=project_id, title="Leaf", task_type="task", category="code"
@@ -154,7 +170,9 @@ async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: 
     )
 
     artifacts = manager.artifacts.get_artifacts(leaf.id)
-    assert artifacts.target_branch is None
+    # Explicit --target-branch wins for every input kind (target_branch.py);
+    # only implicit leaf/none builds skip persisting a target branch.
+    assert artifacts.target_branch == "release"
 
 
 @pytest.mark.asyncio

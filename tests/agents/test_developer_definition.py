@@ -18,4 +18,4 @@ def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: s
     deprecated_path = AGENTS_DIR / "deprecated" / f"{name}.yaml"
 
     assert not active_path.exists(), f"retired agent remains active: {active_path}"
-    assert deprecated_path.exists(), f"retired agent tombstone is missing: {deprecated_path}"
+    assert not deprecated_path.exists(), f"retired agent tombstone lingers: {deprecated_path}"

@@ -18,7 +18,9 @@ async def test_show_file_rejects_symlink_escape(tmp_path: Path) -> None:
     outside.write_text("secret\n", encoding="utf-8")
     link = project / "escape.txt"
     link.symlink_to(outside)
-    token = set_project_context({"id": "proj-1", "project_path": str(project)})
+    token = set_project_context(
+        {"id": "11111111-1111-4111-8111-111111110001", "project_path": str(project)}
+    )
     try:
         registry = create_artifacts_registry()
         result = await registry.call(
@@ -42,7 +44,7 @@ async def test_show_file_allows_explicit_artifact_root(tmp_path: Path) -> None:
     note.write_text("visible\n", encoding="utf-8")
     token = set_project_context(
         {
-            "id": "proj-1",
+            "id": "11111111-1111-4111-8111-111111110001",
             "project_path": str(project),
             "artifact_allowed_roots": [str(allowed)],
         }

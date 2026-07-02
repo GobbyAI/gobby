@@ -390,7 +390,7 @@ class TestDispatchBatch:
             patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body") as mock_load,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl,
         ):
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
             mock_load.return_value = None
             mock_impl.return_value = {"success": True, "run_id": "run-abc"}
 
@@ -444,7 +444,10 @@ class TestDispatchBatch:
                 return_value=2,
             ),
         ):
-            mock_ctx.return_value = {"id": "proj-1", "project_path": "/tmp/proj-1"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110001",
+                "project_path": "/tmp/proj-1",
+            }
             mock_impl_patch.side_effect = mock_impl
 
             from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
@@ -475,7 +478,7 @@ class TestDispatchBatch:
         from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
 
         with patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             registry = create_spawn_agent_registry(
                 runner=runner,
@@ -507,7 +510,7 @@ class TestDispatchBatch:
             patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body") as mock_load,
             patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl_patch,
         ):
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
             mock_load.return_value = None
             mock_impl_patch.side_effect = mock_impl
 

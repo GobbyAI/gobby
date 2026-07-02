@@ -26,7 +26,9 @@ async def _run_inline(func: Any, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
 
-def _seed_project(db: HubDatabase, project_id: str = "project-1") -> None:
+def _seed_project(
+    db: HubDatabase, project_id: str = "11111111-1111-4111-8111-111111110001"
+) -> None:
     db.execute(
         """
         INSERT INTO projects (id, name, created_at, updated_at)
@@ -107,7 +109,7 @@ async def test_eligible_project_work_calls_run_heartbeat(
     calls: list[str] = []
     monkeypatch.setattr(
         "gobby.system_automation.list_automation_candidates",
-        lambda db: [SimpleNamespace(project_id="project-1")],
+        lambda db: [SimpleNamespace(project_id="11111111-1111-4111-8111-111111110001")],
     )
 
     async def run_heartbeat(**kwargs: Any) -> dispatcher.HeartbeatResult:
@@ -125,8 +127,8 @@ async def test_eligible_project_work_calls_run_heartbeat(
 
     summary = await loop.run_once(reason="test")
 
-    assert calls == ["project-1"]
-    assert summary.projects == ["project-1"]
+    assert calls == ["11111111-1111-4111-8111-111111110001"]
+    assert summary.projects == ["11111111-1111-4111-8111-111111110001"]
 
 
 @pytest.mark.asyncio
@@ -186,11 +188,13 @@ async def test_project_dispatch_timeout_returns_summary(
 
     monkeypatch.setattr("gobby.system_automation.run_heartbeat", run_heartbeat)
 
-    summary = await loop.dispatch_project_once(project_id="project-1", reason="timeout-test")
+    summary = await loop.dispatch_project_once(
+        project_id="11111111-1111-4111-8111-111111110001", reason="timeout-test"
+    )
 
-    assert (
-        summary.reason
-        == "project_dispatch_timeout:project_id=project-1:reason=timeout-test:timeout=0.01s"
+    assert summary.reason == (
+        "project_dispatch_timeout:project_id=11111111-1111-4111-8111-111111110001"
+        ":reason=timeout-test:timeout=0.01s"
     )
     assert summary.ticks == 0
     assert loop.status_snapshot()["dispatch_count"] == 0
@@ -208,9 +212,9 @@ async def test_multiple_projects_fan_out_independently(
     monkeypatch.setattr(
         "gobby.system_automation.list_automation_candidates",
         lambda db: [
-            SimpleNamespace(project_id="project-2"),
-            SimpleNamespace(project_id="project-1"),
-            SimpleNamespace(project_id="project-2"),
+            SimpleNamespace(project_id="11111111-1111-4111-8111-111111110002"),
+            SimpleNamespace(project_id="11111111-1111-4111-8111-111111110001"),
+            SimpleNamespace(project_id="11111111-1111-4111-8111-111111110002"),
         ],
     )
 
@@ -229,8 +233,11 @@ async def test_multiple_projects_fan_out_independently(
 
     summary = await loop.run_once(reason="test")
 
-    assert calls == ["project-1", "project-2"]
-    assert summary.projects == ["project-1", "project-2"]
+    assert calls == ["11111111-1111-4111-8111-111111110001", "11111111-1111-4111-8111-111111110002"]
+    assert summary.projects == [
+        "11111111-1111-4111-8111-111111110001",
+        "11111111-1111-4111-8111-111111110002",
+    ]
 
 
 @pytest.mark.asyncio
@@ -309,10 +316,20 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
 
     loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
 
-    assert loop.schedule_project_dispatch(project_id="project-1", reason="first") is True
+    assert (
+        loop.schedule_project_dispatch(
+            project_id="11111111-1111-4111-8111-111111110001", reason="first"
+        )
+        is True
+    )
     await asyncio.wait_for(started.wait(), timeout=1)
 
-    assert loop.schedule_project_dispatch(project_id="project-1", reason="second") is True
+    assert (
+        loop.schedule_project_dispatch(
+            project_id="11111111-1111-4111-8111-111111110001", reason="second"
+        )
+        is True
+    )
     release_first.set()
 
     await wait_for_async_condition(
@@ -326,7 +343,7 @@ async def test_user_cron_jobs_still_create_cron_runs(temp_db: HubDatabase) -> No
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
-        project_id="project-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         name="user-shell",
         schedule_type="interval",
         interval_seconds=60,

@@ -29,7 +29,7 @@ def test_agent_run_persists_resume_metadata(
         parent_session_id=session.id,
         provider="codex",
         prompt="work",
-        run_id="run-resume-meta",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd10",
         resume_metadata_json={
             "provider": "codex",
             "cwd": "/tmp/worktree",
@@ -44,7 +44,7 @@ def test_agent_run_persists_resume_metadata(
     }
 
     updated = manager.update_resume_metadata(
-        "run-resume-meta",
+        "dddddddd-dddd-4ddd-8ddd-dddddddddd10",
         {"provider": "codex", "sandbox_args": ["--sandbox"]},
     )
 
@@ -73,7 +73,7 @@ def test_agent_run_accepts_none_resume_metadata(
         parent_session_id=session.id,
         provider="codex",
         prompt="work",
-        run_id="run-resume-meta-none",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd11",
         resume_metadata_json=None,
     )
 
@@ -85,7 +85,12 @@ def test_agent_run_accepts_none_resume_metadata(
 def test_update_resume_metadata_returns_none_for_missing_run(temp_db: HubDatabase) -> None:
     manager = LocalAgentRunManager(temp_db)
 
-    assert manager.update_resume_metadata("missing-run", {"provider": "codex"}) is None
+    assert (
+        manager.update_resume_metadata(
+            "00000000-0000-0000-0000-0000000000ff", {"provider": "codex"}
+        )
+        is None
+    )
 
 
 def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
@@ -108,7 +113,7 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
         parent_session_id=session.id,
         provider="codex",
         prompt="recent",
-        run_id="run-recent-resume",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd12",
         task_id=task.id,
         resume_metadata_json={"provider": "codex"},
     )
@@ -116,7 +121,7 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
         parent_session_id=session.id,
         provider="codex",
         prompt="consumed",
-        run_id="run-consumed-resume",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd13",
         task_id=task.id,
         resume_metadata_json={
             "provider": "codex",
@@ -127,7 +132,7 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
         parent_session_id=session.id,
         provider="codex",
         prompt="expired",
-        run_id="run-expired-resume",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd14",
         task_id=task.id,
         resume_metadata_json={"provider": "codex"},
     )

@@ -25,7 +25,7 @@ def _stage(stage_name: str, state: str, position: int = 0) -> SimpleNamespace:
 
 def _task(*stages: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(
-        id="task-merge",
+        id="033e524e-547f-51b6-aa24-92a73feca6b3",
         ref="#merge",
         task_type="feature",
         stages=list(stages),
@@ -53,7 +53,7 @@ def test_merge_rule_escalates_when_merge_agent_missing() -> None:
     action = rules.merge_rule(_task(_stage("merge", "in_progress")), _context())
 
     assert isinstance(action, EscalateAction)
-    assert action.task_id == "task-merge"
+    assert action.task_id == "033e524e-547f-51b6-aa24-92a73feca6b3"
     assert action.reason == "merge_no_agent"
 
 
@@ -64,5 +64,5 @@ def test_merge_rule_spawns_when_merge_agent_registered() -> None:
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.task_id == "task-merge"
+    assert action.task_id == "033e524e-547f-51b6-aa24-92a73feca6b3"
     assert action.agent_slug == "merge-orchestrator"

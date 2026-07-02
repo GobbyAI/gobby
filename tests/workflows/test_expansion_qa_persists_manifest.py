@@ -57,7 +57,7 @@ async def test_manifest_written_in_worktree_artifact_workspace(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         case["parent"].id,
         worktree_path=str(worktree_root),
-        worktree_id="wt-test",
+        worktree_id="a819c2d0-7529-577b-a037-855c1e92ec9d",
         base_commit_sha="abc123",
     )
     monkeypatch.setattr(expansion_qa_coverage, "_evaluate_with_a4", lambda **_: covered_report())

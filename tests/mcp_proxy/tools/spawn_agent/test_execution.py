@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -85,7 +86,7 @@ class TestSpawnAgentIsolation:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_handler = MagicMock()
@@ -154,7 +155,7 @@ class TestSpawnAgentIsolation:
         ):
             mock_code_index.return_value = MagicMock(env={"PATH": "/isolated/bin:/usr/bin"})
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_handler = MagicMock()
@@ -200,7 +201,7 @@ class TestSpawnAgentIsolation:
             mock_handler.prepare_environment.assert_awaited_once()
             spawn_config = mock_handler.prepare_environment.await_args.args[0]
             assert spawn_config.prompt == "Test prompt"
-            assert spawn_config.project_id == "proj-123"
+            assert spawn_config.project_id == "11111111-1111-4111-8111-111111110123"
             assert spawn_config.project_path == "/path/to/project"
             assert spawn_config.provider == "claude"
             assert spawn_config.parent_session_id == "parent-789"
@@ -260,7 +261,7 @@ class TestSpawnAgentIsolation:
             ),
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_handler = MagicMock()
@@ -335,7 +336,7 @@ class TestSpawnAgentIsolation:
             ) as mock_code_index,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_handler = MagicMock()
@@ -381,7 +382,7 @@ class TestSpawnAgentIsolation:
             mock_handler.prepare_environment.assert_awaited_once()
             spawn_config = mock_handler.prepare_environment.await_args.args[0]
             assert spawn_config.prompt == "Test prompt"
-            assert spawn_config.project_id == "proj-123"
+            assert spawn_config.project_id == "11111111-1111-4111-8111-111111110123"
             assert spawn_config.project_path == "/path/to/project"
             assert spawn_config.provider == "claude"
             assert spawn_config.parent_session_id == "parent-789"
@@ -506,7 +507,7 @@ class TestSpawnAgentConcurrencyGuards:
             parent_session_id=parent_session_id,
             provider="claude",
             prompt="active",
-            run_id="run-active-cap",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4009",
         )
         mock_runner.run_storage = run_storage
         task_manager = LocalTaskManager(temp_db)
@@ -591,7 +592,10 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=True,
                 run_id="run-123",
@@ -637,7 +641,10 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=False,
                 error="Terminal not found",
@@ -659,7 +666,7 @@ class TestSpawnAgentPreRegistration:
             )
             failed_run_id = mock_runner.run_storage.fail.call_args.args[0]
             assert isinstance(failed_run_id, str)
-            assert failed_run_id.startswith("run-")
+            assert str(uuid.UUID(failed_run_id)) == failed_run_id
             mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -902,7 +909,10 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
             ) as mock_execute,
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=True,
                 run_id="run-canonical",
@@ -957,7 +967,10 @@ class TestSpawnAgentPreRegistration:
             ) as mock_execute,
             patch("gobby.runner_broadcasting.fire_agent_event") as mock_fire_agent_event,
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=True,
                 child_session_id="child-456",
@@ -1011,7 +1024,10 @@ class TestSpawnAgentPreRegistration:
             ) as mock_execute,
             patch("gobby.runner_broadcasting.fire_agent_event") as mock_fire_agent_event,
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=True,
                 child_session_id="child-456",
@@ -1070,7 +1086,10 @@ class TestSpawnAgentPreRegistration:
                 return_value=health_task,
             ),
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=True,
                 run_id="run-canonical",
@@ -1143,7 +1162,10 @@ class TestSpawnAgentPreRegistration:
                 return_value=health_task,
             ),
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=True,
                 run_id="run-canonical",
@@ -1164,7 +1186,7 @@ class TestSpawnAgentPreRegistration:
 
         _health_check_tasks.discard(health_task)
         assert result["success"] is True
-        assert result["run_id"].startswith("run-")
+        assert str(uuid.UUID(result["run_id"])) == result["run_id"]
         mock_runner.run_storage.update_child_session.assert_called_once_with(ANY, "child-456")
         mock_runner.run_storage.update_runtime.assert_called_once_with(
             ANY,
@@ -1200,7 +1222,10 @@ class TestSpawnAgentPreRegistration:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
             ) as mock_execute,
         ):
-            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path",
+            }
             mock_execute.return_value = MagicMock(
                 success=False,
                 error="Terminal not found",

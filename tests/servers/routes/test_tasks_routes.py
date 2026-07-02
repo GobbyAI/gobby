@@ -488,7 +488,7 @@ class TestUpdateTask:
         task_manager.artifacts.set_artifacts_atomic(
             sample_task["id"],
             clone_path="/tmp/gobby-clone",
-            clone_id="clone-row-1",
+            clone_id="cccccccc-cccc-4ccc-8ccc-cccccccccc01",
             base_commit_sha="abc123",
         )
 

@@ -106,7 +106,7 @@ def test_complete_stage_releases_current_running_agent_dispatch_mutex(
         parent_session_id=parent_session_id,
         child_session_id=child_session_id,
         task_id=task.id,
-        run_id="run-current-stage",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4005",
     )
     mutexes = TaskDispatchMutexManager(temp_db)
     assert mutexes.acquire_mutex(
@@ -189,7 +189,7 @@ def test_complete_stage_keeps_other_running_agent_dispatch_mutex_blocking(
         parent_session_id=parent_session_id,
         child_session_id=other_session_id,
         task_id=task.id,
-        run_id="run-other-stage",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4003",
     )
     mutexes = TaskDispatchMutexManager(temp_db)
     assert mutexes.acquire_mutex(

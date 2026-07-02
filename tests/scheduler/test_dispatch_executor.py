@@ -17,7 +17,7 @@ def _seed_project(temp_db: HubDatabase) -> None:
     now = datetime.now(UTC).isoformat()
     temp_db.execute(
         "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, %s, %s)",
-        ("project-1", "Test Project", now, now),
+        ("11111111-1111-4111-8111-111111110001", "Test Project", now, now),
     )
 
 
@@ -38,11 +38,11 @@ async def test_dispatcher_action_invokes_run_heartbeat(
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
-        project_id="project-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         name="Dispatch heartbeat",
         schedule_type="interval",
         action_type="dispatcher",
-        action_config={"project_id": "project-1"},
+        action_config={"project_id": "11111111-1111-4111-8111-111111110001"},
         interval_seconds=60,
     )
     run = storage.create_run(job.id)
@@ -50,7 +50,7 @@ async def test_dispatcher_action_invokes_run_heartbeat(
     result = await CronExecutor(storage).execute(job, run)
 
     assert result.status == "completed"
-    assert calls == ["project-1"]
+    assert calls == ["11111111-1111-4111-8111-111111110001"]
 
 
 @pytest.mark.asyncio
@@ -68,11 +68,11 @@ async def test_idle_dispatcher_cron_run_does_not_park_system_job(
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
-        project_id="project-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         name="gobby:dispatcher",
         schedule_type="interval",
         action_type="dispatcher",
-        action_config={"project_id": "project-1"},
+        action_config={"project_id": "11111111-1111-4111-8111-111111110001"},
         interval_seconds=60,
         is_system=True,
     )
@@ -108,11 +108,11 @@ async def test_dispatcher_cron_run_with_work_does_not_park(
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
-        project_id="project-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         name="gobby:dispatcher",
         schedule_type="interval",
         action_type="dispatcher",
-        action_config={"project_id": "project-1"},
+        action_config={"project_id": "11111111-1111-4111-8111-111111110001"},
         interval_seconds=60,
         is_system=True,
     )
@@ -160,11 +160,11 @@ async def test_dispatcher_cron_burst_aggregates_reason_and_cap(
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
-        project_id="project-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         name="gobby:dispatcher",
         schedule_type="interval",
         action_type="dispatcher",
-        action_config={"project_id": "project-1"},
+        action_config={"project_id": "11111111-1111-4111-8111-111111110001"},
         interval_seconds=60,
         is_system=True,
     )
@@ -189,9 +189,11 @@ async def test_disabled_dispatcher_tick_reports_hard_stop(temp_db) -> None:
 
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
-    build_stop(db=temp_db, project_id="project-1")
+    build_stop(db=temp_db, project_id="11111111-1111-4111-8111-111111110001")
 
-    summary = await kick_dispatcher_tick(db=temp_db, project_id="project-1")
+    summary = await kick_dispatcher_tick(
+        db=temp_db, project_id="11111111-1111-4111-8111-111111110001"
+    )
 
     assert summary.ticks == 0
     assert summary.reason == "automation_disabled"
@@ -203,7 +205,7 @@ async def test_unknown_dispatch_tick_handler_fails_when_row_survives(temp_db) ->
     _seed_project(temp_db)
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
-        project_id="project-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         name="gobby:dispatcher",
         schedule_type="interval",
         action_type="handler",

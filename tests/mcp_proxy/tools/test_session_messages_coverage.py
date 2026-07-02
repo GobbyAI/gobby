@@ -140,13 +140,13 @@ class TestSetHandoffContext:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
-        mock_session.project_id = "proj-1"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110001"
         session_manager.resolve_session_reference.return_value = "sess-123"
         session_manager.get.return_value = mock_session
 
         mock_target = MagicMock()
         mock_target.id = "sess-456"
-        mock_target.project_id = "proj-1"
+        mock_target.project_id = "11111111-1111-4111-8111-111111110001"
 
         def get_side_effect(sid: str) -> Any:
             if sid == "sess-123":
@@ -604,7 +604,12 @@ class TestSearchSessionMessages:
         )
         search = registry.get_tool("search_session_messages")
 
-        result = await search(query="target", project_id="proj-1", status="active", source="codex")
+        result = await search(
+            query="target",
+            project_id="11111111-1111-4111-8111-111111110001",
+            status="active",
+            source="codex",
+        )
 
         assert result["success"] is True
         assert result["searched_sessions"] == 2
@@ -615,7 +620,7 @@ class TestSearchSessionMessages:
             call("sess-2", order="head"),
         ]
         session_manager.list.assert_called_once_with(
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status="active",
             source="codex",
             limit=100,
@@ -742,7 +747,7 @@ class TestGetHandoffContext:
         """Test linking a child session to parent."""
         session_manager = MagicMock()
         mock_session = MagicMock()
-        mock_session.id = "sess-parent"
+        mock_session.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001"
         mock_session.summary_markdown = "## Context"
         mock_session.title = "Parent"
         mock_session.status = "handoff_ready"
@@ -752,12 +757,14 @@ class TestGetHandoffContext:
         registry = create_test_registry(session_manager=session_manager)
         get_context = registry.get_tool("get_handoff_context")
 
-        result = get_context(session_id="sess-parent", link_child_session_id="sess-child")
+        result = get_context(
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001", link_child_session_id="sess-child"
+        )
 
         assert result["found"] is True
         assert result["linked_child"] == "sess-child"
         session_manager.update_parent_session_id.assert_called_once_with(
-            "sess-child", "sess-parent"
+            "sess-child", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001"
         )
 
 
@@ -898,15 +905,20 @@ class TestListSessions:
         registry = create_test_registry(session_manager=session_manager)
         list_sessions = registry.get_tool("list_sessions")
 
-        result = list_sessions(project_id="proj-1", status="active", source="claude_code", limit=10)
+        result = list_sessions(
+            project_id="11111111-1111-4111-8111-111111110001",
+            status="active",
+            source="claude_code",
+            limit=10,
+        )
 
-        assert result["filters"]["project_id"] == "proj-1"
+        assert result["filters"]["project_id"] == "11111111-1111-4111-8111-111111110001"
         assert result["filters"]["status"] == "active"
         assert result["filters"]["source"] == "claude_code"
         assert result["limit"] == 10
 
         session_manager.list.assert_called_once_with(
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status="active",
             source="claude_code",
             machine_id=None,

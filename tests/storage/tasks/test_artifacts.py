@@ -40,7 +40,7 @@ def test_set_artifacts_atomic_enforces_clone_pair_copresence(temp_db, sample_pro
     manager = TaskArtifactManager(temp_db)
 
     with pytest.raises(TaskArtifactConstraintError) as exc_info:
-        manager.set_artifacts_atomic(task.id, clone_id="clone-row-1")
+        manager.set_artifacts_atomic(task.id, clone_id="cccccccc-cccc-4ccc-8ccc-cccccccccc01")
 
     assert exc_info.value.predicate == "clone_pair"
 
@@ -55,7 +55,7 @@ def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_proj
     manager.set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/gobby-wt",
-        worktree_id="worktree-row-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03",
         base_commit_sha="abc123",
     )
 
@@ -63,7 +63,7 @@ def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_proj
         manager.set_artifacts_atomic(
             task.id,
             clone_path="/tmp/gobby-clone",
-            clone_id="clone-row-1",
+            clone_id="cccccccc-cccc-4ccc-8ccc-cccccccccc01",
             base_commit_sha="def456",
         )
 
@@ -80,7 +80,7 @@ def test_clear_isolation_pair_atomically_clears_named_family(temp_db, sample_pro
     manager.set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/gobby-wt",
-        worktree_id="worktree-row-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03",
         base_commit_sha="abc123",
         target_branch="release/0.4",
     )
@@ -94,12 +94,12 @@ def test_clear_isolation_pair_atomically_clears_named_family(temp_db, sample_pro
     manager.set_artifacts_atomic(
         task.id,
         clone_path="/tmp/gobby-clone",
-        clone_id="clone-row-1",
+        clone_id="cccccccc-cccc-4ccc-8ccc-cccccccccc01",
         base_commit_sha="def456",
     )
     artifacts = manager.get_artifacts(task.id)
     assert artifacts.clone_path == "/tmp/gobby-clone"
-    assert artifacts.clone_id == "clone-row-1"
+    assert artifacts.clone_id == "cccccccc-cccc-4ccc-8ccc-cccccccccc01"
 
 
 def test_clear_worktree_references_clears_integration_branch(temp_db, sample_project) -> None:
@@ -112,10 +112,10 @@ def test_clear_worktree_references_clears_integration_branch(temp_db, sample_pro
         task.id,
         target_branch="main",
         integration_branch="gobby/integration/task",
-        integration_workspace_id="wt-integration",
+        integration_workspace_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
     )
 
-    assert manager.clear_worktree_references("wt-integration") == 1
+    assert manager.clear_worktree_references("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01") == 1
 
     artifacts = manager.get_artifacts(task.id)
     assert artifacts.integration_workspace_id is None
@@ -138,7 +138,7 @@ def test_clear_worktree_references_rolls_back_partial_failure(temp_db, sample_pr
         manager.set_artifacts_atomic(
             task.id,
             worktree_path=path,
-            worktree_id="wt-rollback",
+            worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
             base_commit_sha="abc123",
         )
 
@@ -163,15 +163,15 @@ def test_clear_worktree_references_rolls_back_partial_failure(temp_db, sample_pr
         ),
         pytest.raises(RuntimeError, match="injected failure"),
     ):
-        manager.clear_worktree_references("wt-rollback")
+        manager.clear_worktree_references("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02")
 
     assert len(calls) == 2
     artifacts_a = manager.get_artifacts(task_a.id)
     artifacts_b = manager.get_artifacts(task_b.id)
-    assert artifacts_a.worktree_id == "wt-rollback"
+    assert artifacts_a.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02"
     assert artifacts_a.worktree_path == "/tmp/wt-a"
     assert artifacts_a.base_commit_sha == "abc123"
-    assert artifacts_b.worktree_id == "wt-rollback"
+    assert artifacts_b.worktree_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02"
     assert artifacts_b.worktree_path == "/tmp/wt-b"
     assert artifacts_b.base_commit_sha == "abc123"
 

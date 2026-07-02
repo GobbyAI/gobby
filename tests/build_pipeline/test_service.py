@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import textwrap
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -427,7 +428,7 @@ async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         epic.id,
         worktree_path="/tmp/gobby-worktree",
-        worktree_id="worktree-row-1",
+        worktree_id="c4b28b0a-527a-5be5-9fb4-f7dd0c1d1564",
         base_commit_sha="abc123",
     )
 
@@ -640,7 +641,9 @@ async def test_build_plan_file_uses_registered_open_root_task(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=str(kwargs["task_id"]),
-            run_id=f"run-registered-root-{len(spawn_calls)}",
+            run_id=str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-registered-root-{len(spawn_calls)}")
+            ),
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -719,7 +722,7 @@ async def test_build_plan_file_planning_spawn_inherits_worktree_isolation(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=str(kwargs["task_id"]),
-            run_id="run-build-planner",
+            run_id="6999b22f-d065-5323-8c1a-040ef2794312",
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -775,7 +778,7 @@ async def test_build_plan_file_plan_adversary_spawn_inherits_worktree_isolation(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=str(kwargs["task_id"]),
-            run_id="run-build-plan-adversary",
+            run_id="535030c1-bb91-53a6-bc54-822cbc481271",
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -1771,7 +1774,8 @@ async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
         ("merge", 2),
     ]
     assert child_rows[0].state == "in_progress"
-    assert child_rows[0].entered_by_session_id == "dispatcher"
+    assert child_rows[0].entered_by_session_id is None
+    assert child_rows[0].entered_by_actor == "dispatcher"
     assert child_rows[2].max_work_attempts is None
 
 
@@ -1874,7 +1878,7 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
         holder="agent-run",
         kind="development",
         ttl_seconds=3600,
-        run_id="run-busy",
+        run_id="99723989-df80-576e-bac8-97cd704d58bf",
     )
 
     await _build(
@@ -1926,7 +1930,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=leaf.id,
-            run_id="run-build-leaf",
+            run_id="1b777bbd-8f4f-515e-8b86-417fb05afba2",
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
@@ -1949,7 +1953,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
         services=services,
     )
 
-    run = LocalAgentRunManager(temp_db).get("run-build-leaf")
+    run = LocalAgentRunManager(temp_db).get("1b777bbd-8f4f-515e-8b86-417fb05afba2")
     assert run is not None
     assert run.agent_name == "backend-developer"
     assert run.task_id == leaf.id
@@ -2180,7 +2184,13 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
         VALUES (%s, %s, %s, %s, %s)
         """,
-        ("reviewer-session", "reviewer-session", "machine-1", "test", sample_project["id"]),
+        (
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa5001",
+            "reviewer-session",
+            "machine-1",
+            "test",
+            sample_project["id"],
+        ),
     )
     temp_db.execute(
         """
@@ -2188,7 +2198,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
            SET claimed_by_session_id = %s
          WHERE id = %s
         """,
-        ("reviewer-session", child.id),
+        ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa5001", child.id),
     )
     run = LocalExpansionRunManager(temp_db).create(
         parent_task_id=parent.id,
@@ -2266,7 +2276,8 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
         UPDATE task_stage_states
            SET state = 'in_progress',
                entered_at = '2026-05-22T19:02:00+00:00',
-               entered_by_session_id = 'dispatcher',
+               entered_by_session_id = NULL,
+               entered_by_actor = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
          WHERE task_id = %s AND stage_name = 'pr'
@@ -2346,7 +2357,8 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         UPDATE task_stage_states
            SET state = 'in_progress',
                entered_at = '2026-05-22T19:02:00+00:00',
-               entered_by_session_id = 'dispatcher',
+               entered_by_session_id = NULL,
+               entered_by_actor = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
          WHERE task_id = %s AND stage_name = 'pr'
@@ -2369,7 +2381,8 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         UPDATE task_stage_states
            SET state = 'in_progress',
                entered_at = '2026-05-22T19:02:00+00:00',
-               entered_by_session_id = 'dispatcher',
+               entered_by_session_id = NULL,
+               entered_by_actor = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
          WHERE task_id = %s AND stage_name = 'holistic_qa'
@@ -2457,7 +2470,8 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
         UPDATE task_stage_states
            SET state = 'in_progress',
                entered_at = '2026-05-22T19:02:00+00:00',
-               entered_by_session_id = 'dispatcher',
+               entered_by_session_id = NULL,
+               entered_by_actor = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
          WHERE task_id = %s AND stage_name = 'development'

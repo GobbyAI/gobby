@@ -133,7 +133,7 @@ class TestResolveAgentRunId:
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_exact_uuid(self, mock_mgr_fn: MagicMock) -> None:
         mgr = MagicMock()
-        full_id = "a" * 36
+        full_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         mgr.get.return_value = _mock_run(id=full_id)
         mock_mgr_fn.return_value = mgr
         assert resolve_agent_run_id(full_id) == full_id
@@ -147,7 +147,7 @@ class TestResolveAgentRunId:
         mock_db_cls.return_value.fetchall.return_value = [{"id": "run-abc123"}]
         assert resolve_agent_run_id("run-abc") == "run-abc123"
         mock_db_cls.return_value.fetchall.assert_called_once_with(
-            "SELECT id FROM agent_runs WHERE id LIKE %s ESCAPE '\\' LIMIT 5",
+            "SELECT id FROM agent_runs WHERE id::text LIKE %s ESCAPE '\\' LIMIT 5",
             ("run-abc%",),
         )
 
@@ -165,12 +165,12 @@ class TestResolveAgentRunId:
             resolve_agent_run_id("run_%")
 
         mock_db_cls.return_value.fetchall.assert_called_once_with(
-            "SELECT id FROM agent_runs WHERE id LIKE %s ESCAPE '\\' LIMIT 5",
+            "SELECT id FROM agent_runs WHERE id::text LIKE %s ESCAPE '\\' LIMIT 5",
             ("run\\_\\%%",),
         )
 
     @patch("gobby.cli.agents.open_runtime_hub_database")
-    def test_prefix_with_wildcards_resolves_literal_rows(
+    def test_prefix_with_wildcards_does_not_match_rows(
         self,
         mock_db_fn: MagicMock,
         temp_db: HubDatabase,
@@ -183,23 +183,21 @@ class TestResolveAgentRunId:
             source="codex",
             project_id=sample_project["id"],
         )
+        run_id = "dddddddd-dddd-4ddd-8ddd-dddddddd0001"
         temp_db.execute(
             """
             INSERT INTO agent_runs (id, parent_session_id, provider, prompt)
             VALUES (%s, %s, %s, %s)
             """,
-            ("run_%literal", session.id, "codex", "literal wildcard"),
-        )
-        temp_db.execute(
-            """
-            INSERT INTO agent_runs (id, parent_session_id, provider, prompt)
-            VALUES (%s, %s, %s, %s)
-            """,
-            ("run-abc123", session.id, "codex", "unintended wildcard match"),
+            (run_id, session.id, "codex", "wildcard escape target"),
         )
         mock_db_fn.return_value = temp_db
 
-        assert resolve_agent_run_id("run_%") == "run_%literal"
+        # An unescaped '%' would LIKE-match the row; escaping must treat it
+        # literally, so the lookup misses. (Plain-prefix resolution is covered
+        # by test_prefix_match; the resolver closes the db per call.)
+        with pytest.raises(click.ClickException, match="not found"):
+            resolve_agent_run_id(run_id[:-1] + "%")
 
     @patch("gobby.cli.agents.open_runtime_hub_database")
     @patch("gobby.cli.agents.get_agent_run_manager")

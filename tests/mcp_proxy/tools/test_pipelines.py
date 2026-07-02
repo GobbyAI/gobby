@@ -346,7 +346,7 @@ class TestRunPipelineTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.COMPLETED,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
@@ -593,7 +593,7 @@ class TestApprovePipelineTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.COMPLETED,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
@@ -631,7 +631,7 @@ class TestApprovePipelineTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.COMPLETED,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
@@ -732,7 +732,7 @@ class TestRejectPipelineTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.CANCELLED,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
@@ -770,7 +770,7 @@ class TestRejectPipelineTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.CANCELLED,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:00:00Z",
@@ -868,7 +868,7 @@ class TestGetPipelineStatusTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.RUNNING,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:01:00Z",
@@ -910,7 +910,7 @@ class TestGetPipelineStatusTool:
         execution = PipelineExecution(
             id="pe-abc123",
             pipeline_name="deploy",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.RUNNING,
             created_at="2026-01-01T00:00:00Z",
             updated_at="2026-01-01T00:01:00Z",

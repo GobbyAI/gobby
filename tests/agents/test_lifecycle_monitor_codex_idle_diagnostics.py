@@ -159,7 +159,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
         agent_run_manager,
         parent.to_dict(),
         child_session_id=child.id,
-        run_id="run-codex-fallback",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1001",
         tmux_session_name="gobby-codex-fallback",
     )
 
@@ -223,7 +223,7 @@ async def test_idle_reprompt_logs_codex_response_items(
         agent_run_manager,
         parent.to_dict(),
         child_session_id=child.id,
-        run_id="run-codex-idle",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1002",
         tmux_session_name="gobby-codex-idle",
     )
     state = monitor._idle_detector.get_state(run.id)
@@ -295,7 +295,7 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
         agent_run_manager,
         parent.to_dict(),
         child_session_id=child.id,
-        run_id="run-codex-reasoning",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1003",
         tmux_session_name="gobby-codex-reasoning",
         task_id=task.id,
         agent_name="qa-reviewer",
@@ -325,7 +325,7 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
     assert any(
         event.by_actor == "agent_idle_watchdog"
         and event.reason.startswith("agent_idle_watchdog:reasoning_interrupt")
-        and "run_id=run-codex-reasoning" in event.reason
+        and "run_id=dddddddd-dddd-4ddd-8ddd-dddddddd1003" in event.reason
         for event in events
     )
 
@@ -369,7 +369,7 @@ async def test_idle_failure_logs_codex_response_items(
         agent_run_manager,
         parent.to_dict(),
         child_session_id=child.id,
-        run_id="run-codex-fail",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1004",
         tmux_session_name="gobby-codex-fail",
     )
     state = monitor._idle_detector.get_state(run.id)

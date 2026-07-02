@@ -30,8 +30,8 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
         ttl_seconds=30,
         now=datetime(2026, 1, 1, tzinfo=UTC),
     ) as mutex:
-        mutex.attach("run-1")
-        assert storage.get_mutex(task.id).run_id == "run-1"
+        mutex.attach("ac314d27-4314-5fe3-a0ab-01645086e137")
+        assert storage.get_mutex(task.id).run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
 
     assert storage.get_mutex(task.id) is None
 
@@ -48,7 +48,12 @@ def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
     storage.ensure_table()
 
     with RuntimeDispatchMutex(storage, task.id, "dispatcher", "spawn_agent", 30) as mutex:
-        mutex.attach("run-terminal")
-        assert RuntimeDispatchMutex.force_release_for_run(storage, "run-terminal") == 1
+        mutex.attach("a0a76c4c-539f-51e2-b9b3-6bd1333cbd45")
+        assert (
+            RuntimeDispatchMutex.force_release_for_run(
+                storage, "a0a76c4c-539f-51e2-b9b3-6bd1333cbd45"
+            )
+            == 1
+        )
 
     assert storage.get_mutex(task.id) is None

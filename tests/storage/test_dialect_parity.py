@@ -449,7 +449,7 @@ def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
     with db.transaction() as txn:
         _insert_skill(
             txn,
-            skill_id="skl-parity-json",
+            skill_id="abababab-abab-4bab-8bab-abababababab",
             name="parity-json",
             project_id=None,
             source="installed",
@@ -460,7 +460,7 @@ def test_json_path_extraction_dialect_parity(hub_db: Any) -> None:
         nested_expr = json_text_expr(db, "metadata", "nested", "deep")
         cursor = txn.execute(
             f"SELECT {top_expr} AS top, {nested_expr} AS nested FROM skills WHERE id = %s",
-            ("skl-parity-json",),
+            ("abababab-abab-4bab-8bab-abababababab",),
         )
         row = cursor.fetchone()
 
@@ -514,7 +514,7 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
     with db.transaction() as txn:
         _insert_skill(
             txn,
-            skill_id="skl-unique-a",
+            skill_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa0a",
             name="parity-unique-null",
             project_id=None,
             source="installed",
@@ -527,7 +527,7 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
         with db.transaction() as txn:
             _insert_skill(
                 txn,
-                skill_id="skl-unique-b",
+                skill_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb0b",
                 name="parity-unique-null",
                 project_id=None,
                 source="installed",
@@ -542,7 +542,7 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
         )
         _insert_skill(
             txn,
-            skill_id="skl-unique-c",
+            skill_id="cccccccc-cccc-4ccc-8ccc-cccccccccc0c",
             name="parity-unique-null",
             project_id=_PROJ_UNIQUE,
             source="installed",
@@ -555,4 +555,7 @@ def test_unique_nulls_not_distinct_dialect_parity(hub_db: Any) -> None:
             ("parity-unique-null",),
         ).fetchall()
 
-    assert [row["id"] for row in rows] == ["skl-unique-a", "skl-unique-c"]
+    assert [row["id"] for row in rows] == [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa0a",
+        "cccccccc-cccc-4ccc-8ccc-cccccccccc0c",
+    ]

@@ -145,7 +145,7 @@ class TestSpawnAgentPipelineInjection:
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_execute.return_value = MagicMock(
@@ -199,7 +199,7 @@ class TestSpawnAgentPipelineInjection:
             mock_wf_loader_cls.return_value = mock_loader_instance
 
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_execute.return_value = MagicMock(
@@ -249,7 +249,7 @@ class TestSpawnAgentStepVariables:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_execute.return_value = MagicMock(
@@ -571,7 +571,7 @@ class TestDispatchBatchIsolationParity:
             ) as mock_spawn_impl,
         ):
             mock_factory_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_spawn_impl.return_value = {
@@ -697,7 +697,7 @@ class TestDispatchBatchIsolationParity:
             ),
         ):
             project_ctx = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_factory_ctx.return_value = project_ctx
@@ -761,7 +761,7 @@ class TestDispatchBatchIsolationParity:
             ) as mock_execute,
         ):
             project_ctx = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_factory_ctx.return_value = project_ctx

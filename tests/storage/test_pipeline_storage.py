@@ -4,6 +4,8 @@ TDD tests for pipeline execution CRUD operations.
 """
 
 import json
+import os.path
+import uuid
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -64,7 +66,7 @@ class TestCreateExecution:
         """Test creating execution with minimal fields."""
         execution = manager.create_execution(pipeline_name="test-pipeline")
 
-        assert execution.id.startswith("pe-")
+        assert str(uuid.UUID(execution.id)) == execution.id
         assert execution.pipeline_name == "test-pipeline"
         assert execution.project_id == PROJECT_ID
         assert execution.status == ExecutionStatus.PENDING
@@ -122,7 +124,7 @@ class TestGetExecution:
 
     def test_get_execution_not_found(self, manager) -> None:
         """Test getting non-existent execution returns None."""
-        result = manager.get_execution("nonexistent-id")
+        result = manager.get_execution("00000000-0000-0000-0000-0000000000ff")
         assert result is None
 
     def test_get_execution_is_project_scoped(self, db, manager) -> None:
@@ -189,7 +191,9 @@ class TestUpdateExecutionStatus:
 
     def test_update_nonexistent_execution(self, manager) -> None:
         """Test updating non-existent execution returns None."""
-        result = manager.update_execution_status("nonexistent", ExecutionStatus.RUNNING)
+        result = manager.update_execution_status(
+            "00000000-0000-0000-0000-0000000000ff", ExecutionStatus.RUNNING
+        )
         assert result is None
 
 
@@ -529,11 +533,13 @@ class TestResolveExecutionReference:
         assert prefix_params == ("pe-global%", PROJECT_ID)
 
     def test_resolve_uuid_prefix_rejects_ambiguous_matches(self, manager) -> None:
-        manager.create_execution(pipeline_name="first-pipeline")
-        manager.create_execution(pipeline_name="second-pipeline")
+        first = manager.create_execution(pipeline_name="first-pipeline")
+        second = manager.create_execution(pipeline_name="second-pipeline")
 
+        # The shared prefix of two random uuids matches both rows.
+        common = os.path.commonprefix([first.id, second.id])
         with pytest.raises(ValueError, match="ambiguous"):
-            manager.resolve_execution_reference("pe-")
+            manager.resolve_execution_reference(common)
 
     def test_resolve_uuid_prefix_escapes_like_wildcards(self, manager) -> None:
         manager.create_execution(pipeline_name="test-pipeline")

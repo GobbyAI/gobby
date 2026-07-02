@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from gobby.build.resume_lifecycle import (
 )
 from gobby.build.runtime_hooks import RuntimeHooks
 from gobby.build.workspace_common import BuildWorkspaceError
+from gobby.build.workspace_git import _workspace_path
 from gobby.build.workspaces import ensure_epic_integration_workspaces
 from gobby.config.build import StageCapOverride
 from gobby.storage.agents import LocalAgentRunManager
@@ -122,16 +124,22 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-        ("parent-session", "ext-active-resume", "machine-1", "codex", project.id),
+        (
+            "ac25647a-384a-5232-8d09-117e2043e20b",
+            "ext-active-resume",
+            "machine-1",
+            "codex",
+            project.id,
+        ),
     )
     run_manager = LocalAgentRunManager(temp_db)
     run = run_manager.create(
-        parent_session_id="parent-session",
+        parent_session_id="ac25647a-384a-5232-8d09-117e2043e20b",
         provider="codex",
         prompt="review",
         agent_name="backend-developer",
         task_id=child.id,
-        run_id="run-active-resume-integration",
+        run_id="dd49abf3-d60c-533c-8edc-4056c77eba8d",
     )
     run_manager.update_runtime(run.id, worktree_id=worktree.id)
 
@@ -155,7 +163,9 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
     before = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project.id)
     assert before["artifact_health"]["ok"] is True
 
-    with pytest.raises(BuildWorkspaceError, match="active run run-active-resume-integration"):
+    with pytest.raises(
+        BuildWorkspaceError, match="active run dd49abf3-d60c-533c-8edc-4056c77eba8d"
+    ):
         await resume_existing_lifecycle(
             task_manager,
             root,
@@ -205,13 +215,10 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
     )
 
     child_integration_branch = "gobby/integration/child-api"
-    invalid_path = (
-        Path.home()
-        / ".gobby"
-        / "worktrees"
-        / repo.name
-        / child_integration_branch.replace("/", "-")
-    )
+    # Match production _workspace_path (GOBBY_HOME-based) so the repair path
+    # recreates the workspace where this test plants the stale directory.
+    invalid_path = _workspace_path("worktrees", repo.name, child_integration_branch)
+    shutil.rmtree(invalid_path, ignore_errors=True)
     invalid_path.mkdir(parents=True)
     (invalid_path / "not-git.txt").write_text("stale integration workspace\n")
     worktree = LocalWorktreeManager(temp_db).create(

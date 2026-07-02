@@ -67,7 +67,7 @@ class TestSpawnAgentDedup:
             ) as mock_resolve,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_resolve.return_value = "task-uuid-123"
@@ -139,7 +139,7 @@ class TestSpawnAgentDedup:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_resolve.return_value = "task-uuid-closed"
@@ -230,7 +230,7 @@ class TestSpawnAgentDedup:
             lease.attach.return_value = None
             lease.release_unattached.return_value = None
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_resolve.return_value = "task-uuid-14084"
@@ -315,7 +315,7 @@ class TestSpawnAgentDedup:
             ) as mock_resolve,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_resolve.return_value = "task-uuid-14084"

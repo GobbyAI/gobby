@@ -192,7 +192,7 @@ def _stage_pipeline_task(
            SET run_id = %s, action_kind = %s
          WHERE task_id = %s
         """,
-        ("pe-1", "stage-pipeline:expansion", task.id),
+        ("796ce97e-38ee-508a-bdc0-f3ce2dded342", "stage-pipeline:expansion", task.id),
     )
     return manager, task, storage
 
@@ -202,7 +202,9 @@ def test_pipeline_completed_submits_required_stage_for_review(temp_db, sample_pr
 
     manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
 
-    _dispatch.on_pipeline_completed({"execution_id": "pe-1"}, db=temp_db, storage=storage)
+    _dispatch.on_pipeline_completed(
+        {"execution_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342"}, db=temp_db, storage=storage
+    )
 
     assert manager.stage_states.get(task.id, "expansion").state == "needs_review"
     assert storage.get_mutex(task.id) is None
@@ -214,7 +216,9 @@ def test_pipeline_failed_returns_stage_to_ready(temp_db, sample_project) -> None
     manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
 
     _dispatch.on_pipeline_failed(
-        {"execution_id": "pe-1", "error": "boom"}, db=temp_db, storage=storage
+        {"execution_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342", "error": "boom"},
+        db=temp_db,
+        storage=storage,
     )
 
     stage = manager.stage_states.get(task.id, "expansion")
@@ -227,7 +231,9 @@ def test_pipeline_cancelled_escalates_stage_and_releases_mutex(temp_db, sample_p
 
     manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
 
-    _dispatch.on_pipeline_cancelled({"execution_id": "pe-1"}, db=temp_db, storage=storage)
+    _dispatch.on_pipeline_cancelled(
+        {"execution_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342"}, db=temp_db, storage=storage
+    )
 
     stage = manager.stage_states.get(task.id, "expansion")
     assert stage.state == "ready"
@@ -248,7 +254,9 @@ def test_pipeline_failed_illegal_transition_is_ignored_after_mutex_release(
     )
 
     result = _dispatch.on_pipeline_failed(
-        {"execution_id": "pe-1", "error": "boom"}, db=temp_db, storage=storage
+        {"execution_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342", "error": "boom"},
+        db=temp_db,
+        storage=storage,
     )
 
     assert result is None

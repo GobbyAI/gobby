@@ -63,7 +63,7 @@ def _registry(stage_name: str, **overrides):
         values.update(
             {
                 "dispatch_type": "pipeline",
-                "dispatch_target": "expand-task",
+                "dispatch_target": "02e3e743-e572-51b3-a0f4-83e68271282f",
                 "dispatch_inputs_json": '{"task_id": "${{ task_id }}"}',
             }
         )
@@ -88,7 +88,7 @@ def _agents(**overrides):
 
 def _task(**overrides):
     values = {
-        "id": "task-1",
+        "id": "7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         "ref": "#1",
         "task_type": "task",
         "labels": [],
@@ -266,7 +266,7 @@ def test_expansion_work_rule_fires_and_holds_when_cap_reached() -> None:
 
     action = _evaluate(_task_at("expansion", "in_progress"))
     assert isinstance(action, StartPipelineAction)
-    assert action.pipeline_name == "expand-task"
+    assert action.pipeline_name == "02e3e743-e572-51b3-a0f4-83e68271282f"
     assert action.dispatch_inputs == {"task_id": "${{ task_id }}"}
 
     capped = _evaluate(
@@ -479,7 +479,12 @@ def test_dev_rule_blocked_by_missing_isolation_artifacts() -> None:
 
 def test_development_ready_with_dependency_does_not_start_workspace() -> None:
     action = _evaluate(
-        _task_at("development", "ready", isolation="worktree", active_blocked_by={"task-0"}),
+        _task_at(
+            "development",
+            "ready",
+            isolation="worktree",
+            active_blocked_by={"27f6003c-1540-5098-9dfc-272e9497ba0e"},
+        ),
         _context(artifacts=_artifacts()),
     )
 
@@ -503,12 +508,16 @@ def test_non_root_leaf_merge_uses_workspace_merge_action() -> None:
 
     action = _evaluate(
         _task_at("merge", "in_progress", parent_task_id="epic-1"),
-        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="integration/root")),
+        _context(
+            artifacts=_artifacts(
+                worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c", target_branch="integration/root"
+            )
+        ),
     )
 
     assert isinstance(action, MergeWorkspaceAction)
     assert action.backend == "worktree"
-    assert action.source_workspace_id == "wt-1"
+    assert action.source_workspace_id == "6a061cb3-f607-55f6-b3eb-04579360a44c"
     assert action.target_branch == "integration/root"
 
 
@@ -523,7 +532,11 @@ def test_workspace_merge_conflict_label_routes_to_merge_orchestrator() -> None:
             parent_task_id="epic-1",
             labels=[WORKSPACE_MERGE_CONFLICT_LABEL],
         ),
-        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="integration/root")),
+        _context(
+            artifacts=_artifacts(
+                worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c", target_branch="integration/root"
+            )
+        ),
     )
 
     assert isinstance(action, SpawnAgentAction)
@@ -535,7 +548,11 @@ def test_root_merge_still_routes_to_merge_orchestrator() -> None:
 
     action = _evaluate(
         _task_at("merge", "in_progress"),
-        _context(artifacts=_artifacts(worktree_id="wt-1", target_branch="main")),
+        _context(
+            artifacts=_artifacts(
+                worktree_id="6a061cb3-f607-55f6-b3eb-04579360a44c", target_branch="main"
+            )
+        ),
     )
 
     assert isinstance(action, SpawnAgentAction)
@@ -550,7 +567,7 @@ def test_root_epic_integration_workspace_uses_workspace_merge_action() -> None:
         _context(
             artifacts=_artifacts(
                 integration_branch="gobby/integration/root",
-                integration_workspace_id="wt-root",
+                integration_workspace_id="b66893a5-2583-56e1-a0b4-0c96e5bc6917",
                 target_branch="main",
             )
         ),
@@ -558,7 +575,7 @@ def test_root_epic_integration_workspace_uses_workspace_merge_action() -> None:
 
     assert isinstance(action, MergeWorkspaceAction)
     assert action.backend == "worktree"
-    assert action.source_workspace_id == "wt-root"
+    assert action.source_workspace_id == "b66893a5-2583-56e1-a0b4-0c96e5bc6917"
     assert action.source_branch == "gobby/integration/root"
     assert action.target_branch == "main"
 
@@ -672,7 +689,7 @@ def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
     gate = SimpleNamespace(
         blockers=(
             SimpleNamespace(
-                task_id="child-1",
+                task_id="46a005df-b318-5d7b-a5b5-9b843d64909d",
                 task_ref="#2",
                 task_path="1.2",
                 title="Reopened child",

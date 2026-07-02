@@ -24,7 +24,7 @@ async def test_move_skill_tools_route_storage_calls_through_run_db() -> None:
         id="skl-1",
         name="demo",
         source="project",
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
     )
     storage.move_to_installed.return_value = SimpleNamespace(
         id="skl-1",
@@ -45,7 +45,7 @@ async def test_move_skill_tools_route_storage_calls_through_run_db() -> None:
         search=MagicMock(),
         updater=MagicMock(),
         loader=MagicMock(),
-        project_id="proj-1",
+        project_id="11111111-1111-4111-8111-111111110001",
         hub_manager=None,
         db_runner=run_db,
     )
@@ -57,10 +57,10 @@ async def test_move_skill_tools_route_storage_calls_through_run_db() -> None:
     assert move_to_project is not None
     assert move_to_installed is not None
 
-    project_result = await move_to_project("skl-1", "proj-1")
+    project_result = await move_to_project("skl-1", "11111111-1111-4111-8111-111111110001")
     installed_result = await move_to_installed("skl-1")
 
     assert project_result["success"] is True
-    assert project_result["project_id"] == "proj-1"
+    assert project_result["project_id"] == "11111111-1111-4111-8111-111111110001"
     assert installed_result["success"] is True
     assert run_db_calls == [storage.move_to_project, storage.move_to_installed]

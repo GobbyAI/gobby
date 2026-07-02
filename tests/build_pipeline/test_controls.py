@@ -83,7 +83,7 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
         provider="codex",
         prompt="work",
         task_id=task.id,
-        run_id="run-stop-target",
+        run_id="ce6baedb-2edb-5370-b89e-5a3209822b4b",
     )
     run_manager.start(run.id)
 
@@ -152,7 +152,7 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
         provider="codex",
         prompt="work",
         task_id=task.id,
-        run_id="run-phantom",
+        run_id="f85c9cff-c17e-55f2-b1cb-c90710052386",
     )
     run_manager.start(run.id)
     TaskDispatchMutexManager(temp_db).acquire_mutex(
@@ -354,7 +354,7 @@ async def test_clean_dry_run_reports_blockers_and_artifacts(
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
         clone_path=str(clone_path),
-        clone_id="clone-dry-run",
+        clone_id="e167ce28-d39a-5858-82c8-386af9e421aa",
         base_commit_sha="abc123",
     )
 
@@ -392,11 +392,11 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
         task_type="task",
     )
     task_manager.update_task(task.id, allow_automation=False)
-    clone_path = clones_root / "task-1-failed"
+    clone_path = clones_root / "3104e04d-850a-5af3-a5ec-cd6c31fdd129"
     clone_path.mkdir(parents=True)
     clone = LocalCloneManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-1-failed",
+        branch_name="3104e04d-850a-5af3-a5ec-cd6c31fdd129",
         clone_path=str(clone_path),
         task_id=task.id,
     )
@@ -446,7 +446,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
     worktree_path.mkdir()
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-active-worktree",
+        branch_name="2b9ad80b-35ce-5f7a-b0e2-2be94874fdbc",
         worktree_path=str(worktree_path),
         base_branch="0.4.7",
         task_id=task.id,
@@ -479,7 +479,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
         provider="claude",
         prompt="merge",
         task_id=task.id,
-        run_id="run-active-merge-cleanup",
+        run_id="eb07aaa3-4c8f-5ffb-a6c0-aaed9c6fee57",
     )
     run_manager.start(run.id)
     run_manager.update_runtime(run.id, worktree_id=worktree.id)
@@ -542,7 +542,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
     worktree_path.mkdir()
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-inactive-worktree",
+        branch_name="934a9976-71fb-5f24-82e8-b518511ed3ea",
         worktree_path=str(worktree_path),
         base_branch="0.4.7",
         task_id=task.id,
@@ -613,7 +613,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
     (worktree_path / "staged-residue.txt").write_text("merge residue\n")
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-dirty-inactive-worktree",
+        branch_name="55cd95b3-da3e-57fb-9f2d-1d8d092505d1",
         worktree_path=str(worktree_path),
         base_branch="0.4.7",
         task_id=task.id,
@@ -688,7 +688,7 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
     (worktree_path / "scratch.txt").write_text("scratch\n")
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-dirty-closed-integrated",
+        branch_name="97fbb7df-7d06-50fe-b9a1-5d8eb35e71a2",
         worktree_path=str(worktree_path),
         base_branch="main",
         task_id=child.id,
@@ -808,7 +808,7 @@ def test_successful_merge_cleanup_defers_open_dirty_descendant(
     worktree_path.mkdir()
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-dirty-open",
+        branch_name="87bbe6f3-09c3-5069-a89b-285a158ad6f9",
         worktree_path=str(worktree_path),
         base_branch="main",
         task_id=child.id,
@@ -879,7 +879,7 @@ def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
     worktree_path.mkdir()
     worktree = LocalWorktreeManager(temp_db).create(
         project_id=sample_project["id"],
-        branch_name="task-dirty-closed-unintegrated",
+        branch_name="8fb212cb-7692-55a6-b27f-1a431a526f2e",
         worktree_path=str(worktree_path),
         base_branch="main",
         task_id=child.id,
@@ -983,7 +983,7 @@ async def test_clean_force_resets_runtime_state_without_artifacts(
         provider="codex",
         prompt="work",
         task_id=task.id,
-        run_id="run-clean-phantom",
+        run_id="7ee19986-7776-5c3f-aaf1-f1495bfc1499",
     )
     run_manager.start(run.id)
     TaskDispatchMutexManager(temp_db).acquire_mutex(

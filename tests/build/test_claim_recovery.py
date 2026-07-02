@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -52,14 +53,14 @@ def _claimed_review_task(
         artifacts.set_artifacts_atomic(
             task.id,
             clone_path=str(artifact_path),
-            clone_id=f"clone-{task.seq_num}",
+            clone_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:clone-{task.seq_num}")),
             base_commit_sha="abc123",
         )
     else:
         artifacts.set_artifacts_atomic(
             task.id,
             worktree_path=str(artifact_path),
-            worktree_id=f"wt-{task.seq_num}",
+            worktree_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:wt-{task.seq_num}")),
             base_commit_sha="abc123",
         )
     return task
@@ -345,7 +346,7 @@ def test_recovery_preserves_active_agent_owned_claim(
         provider="codex",
         prompt="work",
         task_id=task.id,
-        run_id="run-active-claim-recovery",
+        run_id="95a313d5-3aa5-512b-9730-96926fa48273",
     )
     run_manager.start(run.id)
     monkeypatch.setattr(claim_recovery, "_git_status_lines", lambda _path: ([], None))
@@ -393,7 +394,7 @@ def test_recovery_releases_terminal_reviewer_owned_claim(
         prompt="review",
         task_id=task.id,
         agent_name="qa-reviewer",
-        run_id="run-terminal-claim-recovery",
+        run_id="2ada11b9-5925-5f04-89ae-e8356c4c3679",
     )
     run_manager.start(run.id)
     run_manager.complete(run.id, result="review done")

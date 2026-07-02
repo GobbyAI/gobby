@@ -49,7 +49,7 @@ class TestRegisterSession:
         mock_session.external_id = "ext-abc"
         mock_session.status = "active"
         mock_session.source = "agent-sdk"
-        mock_session.project_id = "proj-1"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110001"
         session_manager.register.return_value = mock_session
 
         registry = _make_registry(session_manager=session_manager)
@@ -60,7 +60,7 @@ class TestRegisterSession:
             external_id="ext-abc",
             source="agent-sdk",
             machine_id="machine-1",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
         )
 
         assert result["session_id"] == "uuid-123"
@@ -73,7 +73,7 @@ class TestRegisterSession:
             external_id="ext-abc",
             machine_id="machine-1",
             source="agent-sdk",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             title=None,
             git_branch=None,
             parent_session_id=None,
@@ -90,15 +90,25 @@ class TestRegisterSession:
         mock_session.external_id = "ext-1"
         mock_session.status = "active"
         mock_session.source = "claude"
-        mock_session.project_id = "proj-1"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110001"
         session_manager.register.return_value = mock_session
 
         registry = _make_registry(session_manager=session_manager)
         register = registry.get_tool("register_session")
         assert register is not None
 
-        r1 = register(external_id="ext-1", source="claude", machine_id="m1", project_id="proj-1")
-        r2 = register(external_id="ext-1", source="claude", machine_id="m1", project_id="proj-1")
+        r1 = register(
+            external_id="ext-1",
+            source="claude",
+            machine_id="m1",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
+        r2 = register(
+            external_id="ext-1",
+            source="claude",
+            machine_id="m1",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
 
         assert r1["session_id"] == r2["session_id"]
         assert session_manager.register.call_count == 2
@@ -177,7 +187,7 @@ class TestRegisterSession:
         mock_session.external_id = "ext-opt"
         mock_session.status = "active"
         mock_session.source = "gemini"
-        mock_session.project_id = "proj-1"
+        mock_session.project_id = "11111111-1111-4111-8111-111111110001"
         session_manager.register.return_value = mock_session
 
         registry = _make_registry(session_manager=session_manager)
@@ -188,7 +198,7 @@ class TestRegisterSession:
             external_id="ext-opt",
             source="gemini",
             machine_id="m1",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
             git_branch="feature/foo",
             parent_session_id="parent-uuid",
@@ -199,7 +209,7 @@ class TestRegisterSession:
             external_id="ext-opt",
             machine_id="m1",
             source="gemini",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
             git_branch="feature/foo",
             parent_session_id="parent-uuid",
@@ -227,7 +237,7 @@ class TestRegisterSession:
             external_id="ext-1",
             source="claude",
             machine_id="m1",
-            project_id="proj-1",
+            project_id="11111111-1111-4111-8111-111111110001",
         )
 
         assert "error" in result

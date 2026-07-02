@@ -45,7 +45,7 @@ def _registry(**overrides: object) -> SimpleNamespace:
 
 def _task(**overrides: object) -> SimpleNamespace:
     values = {
-        "id": "task-1",
+        "id": "7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         "ref": "#1",
         "task_type": "task",
         "labels": ["stage-:planning"],
@@ -124,7 +124,7 @@ def test_auto_advance_first_stage_emits_start_stage_action() -> None:
     action = rules.auto_advance_ready_rule(task, context)
 
     assert isinstance(action, actions.StartStageAction)
-    assert action.task_id == "task-1"
+    assert action.task_id == "7d34e462-6ba3-5a6c-b1c6-1584b855cb83"
     assert action.stage_name == "planning"
 
 

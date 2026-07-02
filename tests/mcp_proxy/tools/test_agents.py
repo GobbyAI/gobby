@@ -35,7 +35,7 @@ pytestmark = pytest.mark.unit
 def _make_mock_agent_run(
     run_id: str = "run-123",
     session_id: str | None = "sess-456",
-    parent_session_id: str = "sess-parent",
+    parent_session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
     status: str = "running",
     pid: int | None = None,
     provider: str = "claude",
@@ -818,7 +818,7 @@ class TestGetRunningAgent:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
             pid=12345,
             provider="claude",
             status="running",
@@ -964,7 +964,7 @@ class TestKillAgent:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.run_storage.get_by_session.return_value = mock_run
         runner.get_run.return_value = mock_run
@@ -1004,7 +1004,7 @@ class TestKillAgent:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
         runner.cancel_run.return_value = True
@@ -1030,7 +1030,7 @@ class TestKillAgent:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
 
@@ -1065,7 +1065,7 @@ class TestKillAgent:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
         runner.cancel_run.return_value = True
@@ -1102,7 +1102,7 @@ class TestEndAgentRun:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.run_storage.get_by_session.return_value = mock_run
         runner.get_run.return_value = mock_run
@@ -1139,7 +1139,7 @@ class TestEndAgentRun:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.run_storage.get_by_session.return_value = mock_run
         runner.get_run.return_value = mock_run
@@ -1194,7 +1194,7 @@ class TestEndAgentRun:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.run_storage.get_by_session.return_value = mock_run
         runner.get_run.return_value = mock_run
@@ -1202,7 +1202,9 @@ class TestEndAgentRun:
 
         ism_manager = InterSessionMessageManager(temp_db)
         session_manager = MagicMock()
-        session_manager.get.return_value = MagicMock(id="sess-parent", agent_depth=0)
+        session_manager.get.return_value = MagicMock(
+            id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001", agent_depth=0
+        )
         wake_dispatcher = WakeDispatcher(session_manager, ism_manager)
         completion_registry = CompletionEventRegistry(wake_callback=wake_dispatcher.wake)
         registry = create_agents_registry(
@@ -1224,9 +1226,9 @@ class TestEndAgentRun:
             result = await registry._tools["end_agent_run"].func()
 
         assert result == {"success": True, "run_id": "run-123", "status": "success"}
-        assert ism_manager.list_messages("sess-parent") == []
+        assert ism_manager.list_messages("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001") == []
         assert not ism_manager.has_completion_notification(
-            "sess-parent",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
             "completion_notification",
             "run-123",
         )
@@ -1242,7 +1244,7 @@ class TestKillAgentSelfTerminationViaRunId:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
         runner.complete_run.return_value = True
@@ -1275,7 +1277,7 @@ class TestKillAgentSelfTerminationViaRunId:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
         runner.cancel_run.return_value = True
@@ -1287,7 +1289,7 @@ class TestKillAgentSelfTerminationViaRunId:
         from gobby.utils.session_context import session_context_for_test
 
         with (
-            session_context_for_test("sess-parent"),
+            session_context_for_test("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001"),
             patch(
                 "gobby.mcp_proxy.tools.agents._kill_agent_process",
                 new_callable=AsyncMock,
@@ -1307,7 +1309,7 @@ class TestKillAgentSelfTerminationViaRunId:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
         runner.cancel_run.return_value = True
@@ -1447,7 +1449,7 @@ class TestFireSyntheticStop:
         mock_run = _make_mock_agent_run(
             run_id="run-123",
             session_id="sess-456",
-            parent_session_id="sess-parent",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.get_run.return_value = mock_run
         runner.cancel_run.return_value = True

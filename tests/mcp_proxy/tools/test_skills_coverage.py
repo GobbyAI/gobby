@@ -360,13 +360,13 @@ class TestMoveSkill:
 
     @pytest.mark.asyncio
     async def test_move_to_project(self, mock_db):
-        skill = _make_skill(source="project", project_id="proj-1")
+        skill = _make_skill(source="project", project_id="11111111-1111-4111-8111-111111110001")
         registry = _create_registry(mock_db)
         registry._mock_storage.move_to_project.return_value = skill
 
         result = await registry.call(
             "move_skill_to_project",
-            {"skill_id": "skill-1", "target_project_id": "proj-1"},
+            {"skill_id": "skill-1", "target_project_id": "11111111-1111-4111-8111-111111110001"},
         )
         assert result["success"] is True
 

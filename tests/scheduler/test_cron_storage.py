@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -96,7 +97,7 @@ def test_create_job(cron_storage: CronJobStorage) -> None:
         action_config={"command": "echo", "args": ["hello"]},
         cron_expr="0 7 * * *",
     )
-    assert job.id.startswith("cj-")
+    assert str(uuid.UUID(job.id)) == job.id
     assert job.name == "Test Job"
     assert job.schedule_type == "cron"
     assert job.action_type == "shell"
@@ -155,7 +156,7 @@ def test_get_job(cron_storage: CronJobStorage) -> None:
 
 def test_get_job_not_found(cron_storage: CronJobStorage) -> None:
     """get_job returns None for non-existent ID."""
-    assert cron_storage.get_job("cj-nonexistent") is None
+    assert cron_storage.get_job("00000000-0000-0000-0000-0000000000ff") is None
 
 
 def test_list_jobs(cron_storage: CronJobStorage) -> None:
@@ -385,7 +386,7 @@ def test_create_run(cron_storage: CronJobStorage) -> None:
     )
     run = cron_storage.create_run(job.id)
     assert run is not None
-    assert run.id.startswith("cr-")
+    assert str(uuid.UUID(run.id)) == run.id
     assert run.cron_job_id == job.id
     assert run.status == "pending"
 
@@ -589,12 +590,12 @@ def test_list_runs_hydrates_pipeline_child(cron_storage: CronJobStorage) -> None
         INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
         VALUES (%s, %s, %s, %s)
         """,
-        ("pe-child", "approval", PROJECT_ID, "waiting_approval"),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0101", "approval", PROJECT_ID, "waiting_approval"),
     )
     cron_storage.update_run(
         run.id,
         status="dispatched",
-        pipeline_execution_id="pe-child",
+        pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0101",
         completed_at=datetime.now(UTC).isoformat(),
     )
 
@@ -603,7 +604,7 @@ def test_list_runs_hydrates_pipeline_child(cron_storage: CronJobStorage) -> None
     assert runs[0].child is not None
     assert runs[0].child.to_dict() == {
         "type": "pipeline_execution",
-        "id": "pe-child",
+        "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeee0101",
         "status": "waiting_approval",
         "terminal": False,
         "missing": False,
@@ -625,7 +626,7 @@ def test_get_run_marks_missing_child(cron_storage: CronJobStorage) -> None:
     cron_storage.update_run(
         run.id,
         status="dispatched",
-        agent_run_id="ar-missing",
+        agent_run_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0106",
         completed_at=datetime.now(UTC).isoformat(),
     )
 
@@ -635,7 +636,7 @@ def test_get_run_marks_missing_child(cron_storage: CronJobStorage) -> None:
     assert refreshed.child is not None
     assert refreshed.child.to_dict() == {
         "type": "agent_run",
-        "id": "ar-missing",
+        "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeee0106",
         "status": None,
         "terminal": False,
         "missing": True,
@@ -661,19 +662,19 @@ def test_active_children_for_job_uses_application_statuses(
         INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
         VALUES (%s, %s, %s, %s)
         """,
-        ("pe-active", "approval", PROJECT_ID, "interrupted"),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0102", "approval", PROJECT_ID, "interrupted"),
     )
     cron_storage.update_run(
         run.id,
         status="dispatched",
-        pipeline_execution_id="pe-active",
+        pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0102",
         completed_at=datetime.now(UTC).isoformat(),
     )
 
     assert cron_storage.active_children_for_job(job.id, "pipeline") == [
         {
             "type": "pipeline_execution",
-            "id": "pe-active",
+            "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeee0102",
             "status": "interrupted",
             "terminal": False,
             "missing": False,
@@ -700,12 +701,12 @@ def test_reconcile_interrupted_runs_preserves_active_children(
         INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
         VALUES (%s, %s, %s, %s)
         """,
-        ("pe-recon", "approval", PROJECT_ID, "running"),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0103", "approval", PROJECT_ID, "running"),
     )
     cron_storage.update_run(
         pipeline_run.id,
         status="running",
-        pipeline_execution_id="pe-recon",
+        pipeline_execution_id="eeeeeeee-eeee-4eee-8eee-eeeeeeee0103",
     )
     stale_job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -756,18 +757,18 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     cron_storage.db.execute(
         """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
         VALUES (%s, %s, %s, 'completed', %s)""",
-        ("cr-old", job.id, old_time, old_time),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0104", job.id, old_time, old_time),
     )
     cron_storage.db.execute(
         """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
         VALUES (%s, %s, %s, 'running', %s)""",
-        ("cr-old-running", running_job.id, old_time, old_time),
+        ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0105", running_job.id, old_time, old_time),
     )
     assert len(cron_storage.list_runs(job.id)) == 2
     deleted = cron_storage.cleanup_old_runs(30)
     assert deleted == 1
     assert len(cron_storage.list_runs(job.id)) == 1
-    assert cron_storage.get_run("cr-old-running") is not None
+    assert cron_storage.get_run("eeeeeeee-eeee-4eee-8eee-eeeeeeee0105") is not None
 
 
 @pytest.mark.parametrize("days", [0, -1, True, 1.5, "7"])
@@ -788,7 +789,7 @@ def test_cleanup_old_runs_rejects_invalid_days_before_delete(
     cron_storage.db.execute(
         """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
         VALUES (%s, %s, %s, 'completed', %s)""",
-        (f"cr-invalid-{days!r}", job.id, old_time, old_time),
+        (str(uuid.uuid4()), job.id, old_time, old_time),
     )
 
     with pytest.raises(ValueError, match="days must be a positive integer"):

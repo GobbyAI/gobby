@@ -27,11 +27,11 @@ pytestmark = pytest.mark.unit
 
 def _make_worktree(
     *,
-    id: str = "wt-1",
+    id: str = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
     branch: str = "feat/x",
     path: str = "/tmp/wt-1",
     base: str = "main",
-    project_id: str = "proj-1",
+    project_id: str = "11111111-1111-4111-8111-111111110001",
     task_id: str | None = None,
     status: str = "active",
 ) -> Worktree:
@@ -136,7 +136,7 @@ async def test_analyze_merge_landscape_happy_path(tmp_path) -> None:
     assert result["success"] is True
     assert len(result["worktrees"]) == 1
     entry = result["worktrees"][0]
-    assert entry["worktree_id"] == "wt-1"
+    assert entry["worktree_id"] == "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
     assert entry["branch"] == "feat/x"
     assert entry["status"] == "active"
     assert entry["commits_ahead"] == 3
@@ -390,7 +390,7 @@ async def test_cherry_pick_success(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
     result = await registry.call(
         "cherry_pick_into_worktree",
-        {"worktree_id": "wt-1", "commits": ["abc123"]},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "commits": ["abc123"]},
     )
 
     assert result["success"] is True
@@ -412,7 +412,7 @@ async def test_cherry_pick_conflict_returns_files(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
     result = await registry.call(
         "cherry_pick_into_worktree",
-        {"worktree_id": "wt-1", "commits": ["abc123"]},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "commits": ["abc123"]},
     )
 
     assert result["success"] is False
@@ -423,7 +423,8 @@ async def test_cherry_pick_conflict_returns_files(tmp_path) -> None:
 async def test_cherry_pick_empty_commits() -> None:
     registry = _make_registry(worktree_manager=MagicMock(), git_manager=MagicMock())
     result = await registry.call(
-        "cherry_pick_into_worktree", {"worktree_id": "wt-1", "commits": []}
+        "cherry_pick_into_worktree",
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "commits": []},
     )
     assert result["success"] is False
     assert "non-empty" in result["error"]
@@ -450,7 +451,7 @@ async def test_merge_subset_success(tmp_path) -> None:
     result = await registry.call(
         "merge_subset",
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "source_branch": "feat/donor",
             "paths": ["src/a.py", "src/b.py"],
         },
@@ -476,7 +477,7 @@ async def test_merge_subset_checkout_failure(tmp_path) -> None:
     result = await registry.call(
         "merge_subset",
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "source_branch": "feat/donor",
             "paths": ["missing.py"],
         },
@@ -499,7 +500,7 @@ async def test_verify_in_worktree_success(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "git status --short"},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "command": "git status --short"},
     )
 
     assert result["success"] is True
@@ -534,7 +535,7 @@ async def test_verify_in_worktree_preserves_assignment_prefix_env(tmp_path, monk
     result = await registry.call(
         "verify_in_worktree",
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v",
         },
     )
@@ -571,7 +572,7 @@ async def test_verify_in_worktree_preserves_env_wrapper_env(tmp_path, monkeypatc
     result = await registry.call(
         "verify_in_worktree",
         {
-            "worktree_id": "wt-1",
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
             "command": "env GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v",
         },
     )
@@ -624,7 +625,7 @@ async def test_verify_in_worktree_allows_recognized_validation_commands(
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": command},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "command": command},
     )
 
     assert result["success"] is True
@@ -654,7 +655,7 @@ async def test_verify_in_worktree_rejects_unscoped_test_commands(
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": command},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "command": command},
     )
 
     assert result["success"] is False
@@ -670,7 +671,10 @@ async def test_verify_in_worktree_rejects_env_wrapper_without_assignments(tmp_pa
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "env uv run pytest tests/tasks/test_validation.py"},
+        {
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "command": "env uv run pytest tests/tasks/test_validation.py",
+        },
     )
 
     assert result["success"] is False
@@ -692,7 +696,11 @@ async def test_verify_in_worktree_final_rejects_dirty_tree(tmp_path) -> None:
     )
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "git status --short", "final": True},
+        {
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "command": "git status --short",
+            "final": True,
+        },
     )
 
     assert result["success"] is False
@@ -716,7 +724,7 @@ async def test_verify_in_worktree_non_final_allows_dirty_tree(tmp_path) -> None:
     )
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "git status --short"},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "command": "git status --short"},
     )
 
     assert result["success"] is True
@@ -733,7 +741,10 @@ async def test_verify_in_worktree_command_failure(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "git rev-parse --verify missing-ref"},
+        {
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "command": "git rev-parse --verify missing-ref",
+        },
     )
 
     assert result["success"] is False
@@ -749,7 +760,7 @@ async def test_verify_in_worktree_rejects_unapproved_command(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "python -c 'print(1)'"},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "command": "python -c 'print(1)'"},
     )
 
     assert result["success"] is False
@@ -765,7 +776,10 @@ async def test_verify_in_worktree_parse_error(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "python -c 'unterminated"},
+        {
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "command": "python -c 'unterminated",
+        },
     )
 
     assert result["success"] is False
@@ -781,7 +795,7 @@ async def test_verify_in_worktree_empty_command(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "   "},
+        {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "command": "   "},
     )
 
     assert result["success"] is False
@@ -818,7 +832,11 @@ async def test_verify_in_worktree_timeout(tmp_path, monkeypatch) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "git status", "timeout": 1},
+        {
+            "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+            "command": "git status",
+            "timeout": 1,
+        },
     )
 
     assert result["success"] is False
@@ -843,7 +861,9 @@ async def test_inspect_merge_state_clean(tmp_path) -> None:
     ]
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
-    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+    result = await registry.call(
+        "inspect_merge_state", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
+    )
 
     assert result["success"] is True
     assert result["state"] == "clean"
@@ -870,7 +890,9 @@ async def test_inspect_merge_state_orphaned_merge(tmp_path) -> None:
     ]
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
-    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+    result = await registry.call(
+        "inspect_merge_state", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
+    )
 
     assert result["success"] is True
     assert result["state"] == "merging"
@@ -899,7 +921,7 @@ async def test_inspect_merge_state_includes_active_resolution_conflicts(tmp_path
     merge_storage = MagicMock()
     merge_storage.get_active_resolution.return_value = MergeResolution(
         id="mr-test123",
-        worktree_id="wt-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         source_branch="feature/test",
         target_branch="0.4.7",
         status="pending",
@@ -926,7 +948,9 @@ async def test_inspect_merge_state_includes_active_resolution_conflicts(tmp_path
         git_manager=git_manager,
         merge_storage=merge_storage,
     )
-    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+    result = await registry.call(
+        "inspect_merge_state", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
+    )
 
     assert result["success"] is True
     assert result["state"] == "merging"
@@ -941,7 +965,9 @@ async def test_inspect_merge_state_includes_active_resolution_conflicts(tmp_path
             "has_resolved_content": False,
         }
     ]
-    merge_storage.get_active_resolution.assert_called_once_with("wt-1")
+    merge_storage.get_active_resolution.assert_called_once_with(
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
+    )
     merge_storage.list_conflicts.assert_called_once_with(resolution_id="mr-test123")
 
 
@@ -968,7 +994,7 @@ async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_m
     merge_storage.get_active_resolution.return_value = None
     merge_storage.get_latest_resolution.return_value = MergeResolution(
         id="mr-stale123",
-        worktree_id="wt-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         source_branch="feature/test",
         target_branch="0.4.7",
         status="resolved",
@@ -995,7 +1021,9 @@ async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_m
         git_manager=git_manager,
         merge_storage=merge_storage,
     )
-    result = await registry.call("inspect_merge_state", {"worktree_id": "wt-1"})
+    result = await registry.call(
+        "inspect_merge_state", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
+    )
 
     assert result["success"] is True
     assert result["active_resolution_id"] == "mr-stale123"
@@ -1007,7 +1035,9 @@ async def test_inspect_merge_state_recovers_latest_resolution_for_orphaned_git_m
             "has_resolved_content": False,
         }
     ]
-    merge_storage.get_latest_resolution.assert_called_once_with("wt-1")
+    merge_storage.get_latest_resolution.assert_called_once_with(
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"
+    )
 
 
 @pytest.mark.asyncio

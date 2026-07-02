@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -202,7 +203,7 @@ def test_attachment_crud(comms_store: LocalCommunicationsStore) -> None:
         created_at="2024-01-01T00:00:00Z",
     )
     saved = comms_store.create_attachment(attachment)
-    assert saved.id.startswith("ca-")
+    assert str(uuid.UUID(saved.id)) == saved.id
 
     fetched = comms_store.get_attachment(saved.id)
     assert fetched is not None

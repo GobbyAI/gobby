@@ -160,7 +160,7 @@ def _create_parent_and_child(
         workflow_name="worker-flow",
         agent_name="worker",
         child_session_id=child_id,
-        run_id="run-worker",
+        run_id="90e65240-4167-55c2-84df-72f933aee3a8",
     )
     return parent_id, child_id
 
@@ -683,13 +683,13 @@ def test_terminal_pickup_metadata_backfills_from_agent_runs(
     session = session_manager.get(child_id)
     assert session is not None
     assert "terminal_pickup_metadata" in result.missing
-    assert session.agent_run_id == "run-worker"
+    assert session.agent_run_id == "90e65240-4167-55c2-84df-72f933aee3a8"
     assert session.workflow_name == "worker-flow"
     assert session.original_prompt == "do the work"
 
 
 def test_agent_run_from_row_returns_none_when_required_keys_are_missing() -> None:
-    assert _agent_run_from_row({"id": "run-worker"}) is None
+    assert _agent_run_from_row({"id": "90e65240-4167-55c2-84df-72f933aee3a8"}) is None
 
 
 def test_agent_run_from_row_rejects_malformed_required_fields() -> None:
@@ -700,7 +700,7 @@ def test_agent_run_from_row_rejects_malformed_required_fields() -> None:
     assert (
         _agent_run_from_row(
             {
-                "id": "run-worker",
+                "id": "90e65240-4167-55c2-84df-72f933aee3a8",
                 "workflow_name": "worker-flow",
                 "agent_name": 123,
                 "prompt": "do the work",
@@ -713,7 +713,7 @@ def test_agent_run_from_row_rejects_malformed_required_fields() -> None:
 def test_agent_run_from_row_returns_recovery_for_valid_row() -> None:
     recovery = _agent_run_from_row(
         {
-            "id": "run-worker",
+            "id": "90e65240-4167-55c2-84df-72f933aee3a8",
             "workflow_name": "worker-flow",
             "agent_name": "worker",
             "prompt": "do the work",
@@ -721,7 +721,7 @@ def test_agent_run_from_row_returns_recovery_for_valid_row() -> None:
     )
 
     assert recovery is not None
-    assert recovery.id == "run-worker"
+    assert recovery.id == "90e65240-4167-55c2-84df-72f933aee3a8"
     assert recovery.workflow_name == "worker-flow"
     assert recovery.agent_name == "worker"
     assert recovery.prompt == "do the work"

@@ -39,7 +39,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             result = await registry.call(
                 "create_task",
@@ -80,7 +80,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             result = await registry.call(
                 "create_task",
@@ -115,7 +115,7 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",
@@ -156,7 +156,7 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",
@@ -202,7 +202,7 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
                 with patch(
                     "gobby.mcp_proxy.tools.tasks._crud.resolve_task_id_for_mcp"
                 ) as mock_resolve:
@@ -250,7 +250,7 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
                 with patch(
                     "gobby.mcp_proxy.tools.tasks._crud.resolve_task_id_for_mcp"
                 ) as mock_resolve:
@@ -293,7 +293,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             await registry.call(
                 "create_task",
@@ -316,7 +316,7 @@ class TestCreateTaskTool:
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             result = await registry.call(
                 "create_task",
@@ -346,7 +346,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             await registry.call(
                 "create_task",
@@ -378,7 +378,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             await registry.call(
                 "create_task",
@@ -412,7 +412,7 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 await registry.call(
                     "create_task",
@@ -490,7 +490,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             result = await registry.call(
                 "create_task",
@@ -528,7 +528,7 @@ class TestCreateTaskTool:
         mock_task_manager.get_task.return_value = mock_task
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
+            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
             result = await registry.call(
                 "create_task",
@@ -574,7 +574,7 @@ class TestCreateTaskTool:
             mock_task_manager.get_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",
@@ -611,7 +611,9 @@ class TestCreateTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -633,7 +635,7 @@ class TestCreateTaskTool:
             mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",
@@ -681,7 +683,9 @@ class TestCreateTaskTool:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -702,7 +706,7 @@ class TestCreateTaskTool:
             mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",
@@ -739,7 +743,9 @@ class TestCreateTaskTool:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -765,7 +771,7 @@ class TestCreateTaskTool:
             mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",
@@ -818,12 +824,16 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
             # Session is in proj-2, but task will be created in proj-1
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-2")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110002"
+            )
             MockSessionManager.return_value = mock_session_manager
 
-            # Mock project resolution so explicit project="proj-1" resolves
+            # Mock project resolution so explicit project="11111111-1111-4111-8111-111111110001" resolves
             mock_proj_instance = MagicMock()
-            mock_proj_instance.resolve_ref.return_value = MagicMock(id="proj-1")
+            mock_proj_instance.resolve_ref.return_value = MagicMock(
+                id="11111111-1111-4111-8111-111111110001"
+            )
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -842,7 +852,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
                     "title": "Cross-project task",
                     "category": "research",
                     "claim": True,
-                    "project": "proj-1",
+                    "project": "11111111-1111-4111-8111-111111110001",
                 },
             )
 
@@ -874,7 +884,9 @@ class TestCreateTaskCrossProjectClaimBlocking:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -891,7 +903,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",

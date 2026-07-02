@@ -58,7 +58,7 @@ def sample_skills(db: HubDatabase) -> list[Skill]:
     """Create sample skills for testing."""
     skills = [
         Skill(
-            id="skl-commit",
+            id="9247ee18-823c-5dcd-a77a-e820367812af",
             name="commit-message",
             description="Generate conventional commit messages",
             content="# Commit Messages\n\nInstructions...",
@@ -70,7 +70,7 @@ def sample_skills(db: HubDatabase) -> list[Skill]:
             },
         ),
         Skill(
-            id="skl-review",
+            id="ac259698-d0d5-5844-92ea-8348c00d7da6",
             name="code-review",
             description="Perform thorough code reviews",
             content="# Code Review\n\nGuidelines...",
@@ -82,7 +82,7 @@ def sample_skills(db: HubDatabase) -> list[Skill]:
             },
         ),
         Skill(
-            id="skl-test",
+            id="1c445cae-59f8-5763-9487-97790f1a08d6",
             name="test-writing",
             description="Write comprehensive unit tests",
             content="# Testing\n\nTest patterns...",
@@ -94,7 +94,7 @@ def sample_skills(db: HubDatabase) -> list[Skill]:
             },
         ),
         Skill(
-            id="skl-git",
+            id="71f6be97-d154-51ce-8f30-cda4a76a7a1f",
             name="git-workflow",
             description="Best practices for git branching and merging",
             content="# Git Workflow\n\nStrategies...",
@@ -116,25 +116,25 @@ class TestSkillSearchResult:
     def test_creation(self) -> None:
         """Test creating a search result."""
         result = SkillSearchResult(
-            skill_id="skl-test",
+            skill_id="1c445cae-59f8-5763-9487-97790f1a08d6",
             skill_name="test-skill",
             similarity=0.85,
         )
 
-        assert result.skill_id == "skl-test"
+        assert result.skill_id == "1c445cae-59f8-5763-9487-97790f1a08d6"
         assert result.skill_name == "test-skill"
         assert result.similarity == 0.85
 
     def test_to_dict(self) -> None:
         """Test converting to dictionary."""
         result = SkillSearchResult(
-            skill_id="skl-test",
+            skill_id="1c445cae-59f8-5763-9487-97790f1a08d6",
             skill_name="test-skill",
             similarity=0.75,
         )
 
         d = result.to_dict()
-        assert d["skill_id"] == "skl-test"
+        assert d["skill_id"] == "1c445cae-59f8-5763-9487-97790f1a08d6"
         assert d["skill_name"] == "test-skill"
         assert d["similarity"] == 0.75
 
@@ -294,7 +294,7 @@ class TestSkillSearch:
         assert search._pending_updates == 0
 
         new_skill = Skill(
-            id="skl-new",
+            id="3424b29c-354d-5ed2-b383-f4a93acaadb6",
             name="new-skill",
             description="A new skill",
             content="Content",
@@ -302,7 +302,7 @@ class TestSkillSearch:
         search.add_skill(new_skill)
 
         assert search._pending_updates == 1
-        assert search._skill_names["skl-new"] == "new-skill"
+        assert search._skill_names["3424b29c-354d-5ed2-b383-f4a93acaadb6"] == "new-skill"
 
     def test_update_skill_marks_update(self, db: HubDatabase, sample_skills: list[Skill]) -> None:
         """Test that update_skill increments pending updates."""
@@ -322,10 +322,10 @@ class TestSkillSearch:
         search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
         search.index_skills(sample_skills)
 
-        search.remove_skill("skl-commit")
+        search.remove_skill("9247ee18-823c-5dcd-a77a-e820367812af")
 
         assert search._pending_updates == 1
-        assert "skl-commit" not in search._skill_names
+        assert "9247ee18-823c-5dcd-a77a-e820367812af" not in search._skill_names
 
     def test_needs_reindex_after_threshold(
         self, db: HubDatabase, sample_skills: list[Skill]
@@ -336,7 +336,12 @@ class TestSkillSearch:
 
         assert not search.needs_reindex()
 
-        new_skill = Skill(id="skl-1", name="skill-1", description="Desc", content="C")
+        new_skill = Skill(
+            id="7ab8825f-f19e-53c2-83b2-a4f5658abfae",
+            name="skill-1",
+            description="Desc",
+            content="C",
+        )
         search.add_skill(new_skill)
         assert search.needs_reindex()
 
@@ -399,7 +404,7 @@ class TestSkillSearchIntegration:
 
         assert len(results) > 0
         # commit-message skill matches name, tag, and category
-        assert results[0].skill_id == "skl-commit"
+        assert results[0].skill_id == "9247ee18-823c-5dcd-a77a-e820367812af"
 
     def test_reindex_after_updates(self, db: HubDatabase, sample_skills: list[Skill]) -> None:
         """Test reindexing after multiple updates."""
@@ -421,7 +426,7 @@ class TestSkillSearchIntegration:
         # Re-index with updated list
         updated_skills = sample_skills + [
             Skill(
-                id="skl-new-0",
+                id="229f6ed4-2989-5a81-80f8-3e0752edfe62",
                 name="new-skill-0",
                 description="Findable description about databases",
                 content="Content",

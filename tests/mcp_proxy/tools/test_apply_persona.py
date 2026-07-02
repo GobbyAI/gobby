@@ -137,13 +137,20 @@ class TestBuildPersonaChanges:
         # Create a project + session so FK constraints are satisfied
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("proj-1", "test-project", "/tmp/test"),
+            ("11111111-1111-4111-8111-111111110001", "test-project", "/tmp/test"),
         )
-        session_id = "sess-step-test"
+        session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4002"
         db.execute(
             "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            (session_id, "ext-1", "proj-1", "machine-1", "test", "active"),
+            (
+                session_id,
+                "ext-1",
+                "11111111-1111-4111-8111-111111110001",
+                "machine-1",
+                "test",
+                "active",
+            ),
         )
 
         agent = AgentDefinitionBody(
@@ -174,13 +181,20 @@ class TestBuildPersonaChanges:
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("proj-2", "test-project-2", "/tmp/test"),
+            ("11111111-1111-4111-8111-111111110002", "test-project-2", "/tmp/test"),
         )
-        session_id = "sess-spawned-step-test"
+        session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4003"
         db.execute(
             "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            (session_id, "ext-2", "proj-2", "machine-1", "test", "active"),
+            (
+                session_id,
+                "ext-2",
+                "11111111-1111-4111-8111-111111110002",
+                "machine-1",
+                "test",
+                "active",
+            ),
         )
 
         agent = AgentDefinitionBody(
@@ -211,19 +225,26 @@ class TestBuildPersonaChanges:
 
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            ("proj-preserve", "test-project-preserve", "/tmp/test"),
+            ("11111111-1111-4111-8111-111111110003", "test-project-preserve", "/tmp/test"),
         )
-        session_id = "sess-spawned-preserve-test"
+        session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4004"
         db.execute(
             "INSERT INTO sessions (id, external_id, project_id, machine_id, source, status) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            (session_id, "ext-preserve", "proj-preserve", "machine-1", "codex", "active"),
+            (
+                session_id,
+                "ext-preserve",
+                "11111111-1111-4111-8111-111111110003",
+                "machine-1",
+                "codex",
+                "active",
+            ),
         )
 
         instance_mgr = WorkflowInstanceManager(db)
         instance_mgr.save_instance(
             WorkflowInstance(
-                id="existing-instance",
+                id="ffffffff-ffff-4fff-8fff-ffffffff4001",
                 session_id=session_id,
                 workflow_name="stepper-steps",
                 enabled=True,
@@ -252,7 +273,7 @@ class TestBuildPersonaChanges:
         assert changes["_step_workflow_name"] == "stepper-steps"
         instance = instance_mgr.get_instance(session_id, "stepper-steps")
         assert instance is not None
-        assert instance.id == "existing-instance"
+        assert instance.id == "ffffffff-ffff-4fff-8fff-ffffffff4001"
         assert instance.current_step == "execute"
         assert instance.variables == {"task_claimed": True, "loaded_skills": ["tech-writer"]}
 
@@ -504,7 +525,7 @@ class TestApplyPersonaImpl:
             ) as mock_merge,
             patch(
                 "gobby.utils.project_context.get_project_context",
-                return_value={"id": "proj-1"},
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",

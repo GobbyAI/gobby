@@ -1,5 +1,6 @@
 """Tests for local clone storage manager."""
 
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
@@ -236,7 +237,7 @@ class TestLocalCloneManagerCreate:
         assert clone.task_id is None
         assert clone.agent_session_id is None
         assert clone.status == "active"
-        assert clone.id.startswith("clone-")
+        assert str(uuid.UUID(clone.id)) == clone.id
         mock_db.execute.assert_called_once()
 
     def test_create_with_all_fields(self, manager, mock_db) -> None:
@@ -272,8 +273,8 @@ class TestLocalCloneManagerCreate:
         )
 
         assert clone1.id != clone2.id
-        assert clone1.id.startswith("clone-")
-        assert clone2.id.startswith("clone-")
+        assert str(uuid.UUID(clone1.id)) == clone1.id
+        assert str(uuid.UUID(clone2.id)) == clone2.id
 
 
 class TestLocalCloneManagerGet:

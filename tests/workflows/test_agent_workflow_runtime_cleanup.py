@@ -60,7 +60,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
         task.id,
         holder="dispatcher",
         kind="spawn_agent",
-        run_id="run-456",
+        run_id="419ed564-7887-5557-8707-10fbb841bcbb",
         ttl_seconds=300,
     )
     instance_manager = WorkflowInstanceManager(temp_db)
@@ -75,7 +75,9 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
     )
 
     runner = MagicMock()
-    runner.run_storage.get_by_session.return_value = SimpleNamespace(id="run-456")
+    runner.run_storage.get_by_session.return_value = SimpleNamespace(
+        id="419ed564-7887-5557-8707-10fbb841bcbb"
+    )
     engine = RuleEngine(db=temp_db, runner=runner)
 
     with patch(
@@ -131,7 +133,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         claimed_session_id=child.id,
         provider="codex",
         prompt="implement",
-        run_id="run-submit",
+        run_id="12f470f2-7232-5d24-bc3b-fda2500e4a6e",
         task_id=task.id,
     )
     run_manager.start(run.id)
@@ -247,11 +249,11 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **_kwargs: spawned.append(action) or "run-reviewer",
+        lambda action, **_kwargs: spawned.append(action) or "175b4656-fe55-571c-b57a-44c83644b57e",
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert result.executed == 1
     assert spawned[0].agent_slug == "qa-reviewer"
-    assert mutex.get_mutex(task.id).run_id == "run-reviewer"
+    assert mutex.get_mutex(task.id).run_id == "175b4656-fe55-571c-b57a-44c83644b57e"

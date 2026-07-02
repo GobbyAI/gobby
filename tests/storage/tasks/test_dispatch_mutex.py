@@ -80,7 +80,7 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
-        run_id="run-1",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd01",
         ttl_seconds=60,
         now=now,
     )
@@ -96,7 +96,7 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
-        run_id="run-1",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd01",
         ttl_seconds=120,
         now=now + timedelta(seconds=20),
     )
@@ -104,14 +104,14 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
-        run_id="run-2",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd02",
         ttl_seconds=300,
         now=now + timedelta(seconds=30),
     )
 
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
-    assert mutex.run_id == "run-1"
+    assert mutex.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddddd01"
     assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=140)
 
 
@@ -138,14 +138,14 @@ def test_same_holder_can_attach_run_to_no_run_mutex(
         task.id,
         holder="dispatcher",
         kind="heartbeat",
-        run_id="run-1",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd01",
         ttl_seconds=120,
         now=now + timedelta(seconds=15),
     )
 
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
-    assert mutex.run_id == "run-1"
+    assert mutex.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddddd01"
     assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=135)
 
 
@@ -232,11 +232,11 @@ def test_attach_run_id_links_run_to_lease(temp_db, sample_project) -> None:
         ttl_seconds=30,
     )
 
-    assert manager.attach_run_id(task.id, "run-123") is True
+    assert manager.attach_run_id(task.id, "dddddddd-dddd-4ddd-8ddd-dddddddd0123") is True
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
-    assert mutex.run_id == "run-123"
-    assert manager.clear_by_run_id("run-123") == 1
+    assert mutex.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddd0123"
+    assert manager.clear_by_run_id("dddddddd-dddd-4ddd-8ddd-dddddddd0123") == 1
     assert manager.get_mutex(task.id) is None
 
 
@@ -252,7 +252,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
         task.id,
         holder="dispatcher",
         kind="heartbeat",
-        run_id="run-123",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd0123",
         ttl_seconds=60,
         now=past,
     )
@@ -260,7 +260,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
         other.id,
         holder="dispatcher",
         kind="heartbeat",
-        run_id="run-456",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd0456",
         ttl_seconds=60,
         now=past,
     )
@@ -268,7 +268,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
     assert (
         manager.refresh_mutex_for_run(
             task.id,
-            "wrong-run",
+            "00000000-0000-0000-0000-0000000000ff",
             lease_holder="dispatcher",
             ttl_seconds=600,
             now=refresh_at,
@@ -278,7 +278,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
     assert (
         manager.refresh_mutex_for_run(
             task.id,
-            "run-123",
+            "dddddddd-dddd-4ddd-8ddd-dddddddd0123",
             lease_holder="other-owner",
             ttl_seconds=600,
             now=refresh_at,
@@ -288,7 +288,7 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
     assert (
         manager.refresh_mutex_for_run(
             task.id,
-            "run-123",
+            "dddddddd-dddd-4ddd-8ddd-dddddddd0123",
             lease_holder="dispatcher",
             ttl_seconds=600,
             now=refresh_at,

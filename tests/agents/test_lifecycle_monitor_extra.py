@@ -929,7 +929,7 @@ class TestPeriodicAgentTerminalEnter:
         )
         WorkflowInstanceManager(temp_db).save_instance(
             WorkflowInstance(
-                id="wf-step",
+                id="ffffffff-ffff-4fff-8fff-ffffffff3001",
                 session_id=child.id,
                 workflow_name="planner-steps",
                 current_step="plan",
@@ -1282,7 +1282,7 @@ class TestTerminalizeCancelledRun:
         workflow_instances = WorkflowInstanceManager(temp_db)
         workflow_instances.save_instance(
             WorkflowInstance(
-                id="inst-child-agent",
+                id="ffffffff-ffff-4fff-8fff-ffffffff3002",
                 session_id=child.id,
                 workflow_name="developer-workflow",
                 enabled=True,
@@ -1300,7 +1300,7 @@ class TestTerminalizeCancelledRun:
             claimed_session_id=child.id,
             provider="claude",
             prompt="do work",
-            run_id="run-cancel-task",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd3001",
             task_id=task.id,
         )
         run_manager.start(run.id)
@@ -1373,7 +1373,7 @@ class TestTerminalizeCancelledRun:
         )
         WorkflowInstanceManager(temp_db).save_instance(
             WorkflowInstance(
-                id="inst-old-child-agent",
+                id="ffffffff-ffff-4fff-8fff-ffffffff3003",
                 session_id=old_child.id,
                 workflow_name="developer-workflow",
                 enabled=True,
@@ -1391,7 +1391,7 @@ class TestTerminalizeCancelledRun:
             claimed_session_id=old_child.id,
             provider="claude",
             prompt="old work",
-            run_id="run-cancel-replaced",
+            run_id="dddddddd-dddd-4ddd-8ddd-dddddddd3002",
             task_id=task.id,
         )
         run_manager.start(run.id)

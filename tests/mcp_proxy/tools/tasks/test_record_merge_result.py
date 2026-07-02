@@ -427,7 +427,7 @@ def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
         temp_db,
         parent_session_id=root_session_id,
         child_session_id=orchestrator_session_id,
-        run_id="run-parent-merge-orchestrator",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4002",
         agent_name="merge-orchestrator",
         task_id=task.id,
     )
@@ -435,7 +435,7 @@ def test_success_releases_parent_merge_orchestrator_mutex_for_worker(
         temp_db,
         parent_session_id=orchestrator_session_id,
         child_session_id=worker_session_id,
-        run_id="run-child-merge-worker",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd400b",
         agent_name="merge-worker",
     )
     mutexes = TaskDispatchMutexManager(temp_db)

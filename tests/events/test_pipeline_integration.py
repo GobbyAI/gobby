@@ -46,10 +46,10 @@ class TestWaitStepDefinition:
 
         step = PipelineStep(
             id="wait_researcher",
-            wait={"completion_id": "run-abc123", "timeout": 600},
+            wait={"completion_id": "2e1dce7b-48d3-5347-8716-4ea1a6365ac8", "timeout": 600},
         )
         assert step.wait is not None
-        assert step.wait["completion_id"] == "run-abc123"
+        assert step.wait["completion_id"] == "2e1dce7b-48d3-5347-8716-4ea1a6365ac8"
         assert step.wait["timeout"] == 600
 
     def test_wait_step_mutually_exclusive_with_exec(self) -> None:
@@ -65,7 +65,9 @@ class TestWaitStepDefinition:
     def test_wait_step_alone_is_valid(self) -> None:
         from gobby.workflows.definitions import PipelineStep
 
-        step = PipelineStep(id="wait_step", wait={"completion_id": "pe-123"})
+        step = PipelineStep(
+            id="wait_step", wait={"completion_id": "775afbe8-2091-5d32-87f1-a90154e4d73e"}
+        )
         assert step.exec is None
         assert step.prompt is None
         assert step.mcp is None
@@ -88,25 +90,25 @@ class TestWaitStepExecution:
         registry = CompletionEventRegistry()
 
         pending_exec = PipelineExecution(
-            id="pe-test",
+            id="4fb328fe-52de-5e0f-bb44-a6737c3306e1",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.PENDING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         running_exec = PipelineExecution(
-            id="pe-test",
+            id="4fb328fe-52de-5e0f-bb44-a6737c3306e1",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.RUNNING,
             created_at="2025-01-01",
             updated_at="2025-01-01",
         )
         completed_exec = PipelineExecution(
-            id="pe-test",
+            id="4fb328fe-52de-5e0f-bb44-a6737c3306e1",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.COMPLETED,
             created_at="2025-01-01",
             updated_at="2025-01-01",
@@ -131,12 +133,15 @@ class TestWaitStepExecution:
         )
 
         # Register the completion event that the wait step will block on
-        registry.register("run-abc", subscribers=[])
+        registry.register("2c7d8902-e936-5c2c-b843-3edc94247a63", subscribers=[])
 
         pipeline = PipelineDefinition(
             name="test-pipeline",
             steps=[
-                PipelineStep(id="wait_agent", wait={"completion_id": "run-abc", "timeout": 2}),
+                PipelineStep(
+                    id="wait_agent",
+                    wait={"completion_id": "2c7d8902-e936-5c2c-b843-3edc94247a63", "timeout": 2},
+                ),
             ],
         )
 
@@ -144,14 +149,16 @@ class TestWaitStepExecution:
             executor.execute(
                 pipeline=pipeline,
                 inputs={},
-                project_id="proj-1",
+                project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             )
         )
         await drain_asyncio_tasks()
-        await registry.notify("run-abc", {"agent_status": "success", "output": "done"})
+        await registry.notify(
+            "2c7d8902-e936-5c2c-b843-3edc94247a63", {"agent_status": "success", "output": "done"}
+        )
         result = await task
         assert result.status == ExecutionStatus.COMPLETED
-        assert result.id == "pe-test"
+        assert result.id == "4fb328fe-52de-5e0f-bb44-a6737c3306e1"
 
     @pytest.mark.asyncio
     async def test_wait_step_timeout_fails_pipeline(self) -> None:
@@ -167,15 +174,15 @@ class TestWaitStepExecution:
 
         mock_em = MagicMock()
         mock_em.create_execution.return_value = MagicMock(
-            id="pe-test",
+            id="4fb328fe-52de-5e0f-bb44-a6737c3306e1",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.PENDING,
         )
         mock_em.update_execution_status.return_value = MagicMock(
-            id="pe-test",
+            id="4fb328fe-52de-5e0f-bb44-a6737c3306e1",
             pipeline_name="test",
-            project_id="proj-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             status=ExecutionStatus.RUNNING,
         )
         mock_em.get_steps_for_execution.return_value = []
@@ -192,14 +199,14 @@ class TestWaitStepExecution:
         )
 
         # Register but never notify — should timeout
-        registry.register("run-timeout", subscribers=[])
+        registry.register("0cfa5c0b-c71d-5bab-bd29-843015259ca9", subscribers=[])
 
         pipeline = PipelineDefinition(
             name="test-pipeline",
             steps=[
                 PipelineStep(
                     id="wait_agent",
-                    wait={"completion_id": "run-timeout", "timeout": 0.05},
+                    wait={"completion_id": "0cfa5c0b-c71d-5bab-bd29-843015259ca9", "timeout": 0.05},
                 ),
             ],
         )
@@ -208,7 +215,7 @@ class TestWaitStepExecution:
             await executor.execute(
                 pipeline=pipeline,
                 inputs={},
-                project_id="proj-1",
+                project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
             )
         assert mock_em.update_execution_status.call_count >= 1
 

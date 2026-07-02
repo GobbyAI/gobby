@@ -39,7 +39,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
@@ -78,7 +78,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.requires_user_review = False  # Avoid review routing
         mock_task.to_brief.return_value = {
             "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -123,7 +123,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440020"
         mock_task.commits = ["abc123"]
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task_manager.get_task.return_value = mock_task
 
@@ -161,7 +161,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task.requires_user_review = False  # Explicitly set to avoid review routing
         mock_task.to_brief.return_value = {
@@ -206,7 +206,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["old-commit", "repair-commit"]
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task.to_brief.return_value = {
             "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -252,7 +252,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.task_type = "epic"
         mock_task.seq_num = 13175
         mock_task.requires_user_review = False
@@ -289,7 +289,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task.to_brief.return_value = {
             "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -345,7 +345,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = "Must pass tests"
         mock_task.to_brief.return_value = {
             "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -413,7 +413,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task.requires_user_review = False
         mock_task_manager.get_task.return_value = mock_task
@@ -446,7 +446,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
@@ -495,7 +495,7 @@ class TestCloseTaskTool:
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
-        mock_task.project_id = "proj-1"
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = None
         mock_task.requires_user_review = False
         mock_task.to_brief.return_value = {
@@ -596,7 +596,7 @@ class TestCloseTaskTool:
             mock_task = MagicMock()
             mock_task.id = task_uuid
             mock_task.commits = ["abc123"]
-            mock_task.project_id = "proj-1"
+            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
             mock_task.validation_criteria = None
             mock_task.requires_user_review = False
             mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
@@ -677,7 +677,7 @@ class TestCloseTaskTool:
             mock_task = MagicMock()
             mock_task.id = task_uuid
             mock_task.commits = ["abc123"]
-            mock_task.project_id = "proj-1"
+            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
             mock_task.validation_criteria = None
             mock_task.requires_user_review = False
             mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
@@ -744,7 +744,7 @@ class TestCloseTaskTool:
             mock_task.id = task_uuid
             mock_task.claimed_by_session_id = "owner-session"
             mock_task.commits = []
-            mock_task.project_id = "proj-1"
+            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
             mock_task.validation_criteria = None
             mock_task.requires_user_review = False
             mock_task_manager.get_task.return_value = mock_task
@@ -818,7 +818,7 @@ class TestCloseTaskTool:
             mock_task.id = task_uuid
             mock_task.claimed_by_session_id = "owner-session"
             mock_task.commits = ["abc123"]
-            mock_task.project_id = "proj-1"
+            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
             mock_task.validation_criteria = None
             mock_task.requires_user_review = False
             mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
@@ -982,7 +982,9 @@ class TestSessionVariableMirroring:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -993,7 +995,7 @@ class TestSessionVariableMirroring:
             mock_task = MagicMock()
             mock_task.id = task_uuid
             mock_task.seq_num = 200
-            mock_task.project_id = "proj-1"
+            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
             mock_task.status = "open"
             mock_task.claimed_by_session_id = None
             mock_task_manager.get_task.return_value = mock_task
@@ -1061,7 +1063,7 @@ class TestSessionVariableMirroring:
             mock_task = MagicMock()
             mock_task.id = task_uuid
             mock_task.commits = ["abc123"]
-            mock_task.project_id = "proj-1"
+            mock_task.project_id = "11111111-1111-4111-8111-111111110001"
             mock_task.validation_criteria = None
             mock_task.requires_user_review = False
             mock_task_manager.get_task.return_value = mock_task
@@ -1106,7 +1108,9 @@ class TestSessionVariableMirroring:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
-            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            mock_session_manager.get.return_value = MagicMock(
+                project_id="11111111-1111-4111-8111-111111110001"
+            )
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -1126,7 +1130,7 @@ class TestSessionVariableMirroring:
             mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
-                mock_ctx.return_value = {"id": "proj-1"}
+                mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
 
                 result = await registry.call(
                     "create_task",

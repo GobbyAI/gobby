@@ -177,7 +177,7 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=str(kwargs["task_id"]),
-            run_id="run-reviewer",
+            run_id="175b4656-fe55-571c-b57a-44c83644b57e",
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
@@ -213,7 +213,7 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
     release_preexisting.set()
 
     await wait_for_async_condition(
-        lambda: run_manager.get("run-reviewer"),
+        lambda: run_manager.get("175b4656-fe55-571c-b57a-44c83644b57e"),
         description="reviewer dispatch",
     )
 

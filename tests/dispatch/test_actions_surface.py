@@ -21,8 +21,8 @@ def test_start_stage_action_shape() -> None:
     assert tuple(field.name for field in fields(cls)) == ("task_id", "stage_name")
     assert cls.__slots__ == ("task_id", "stage_name")
 
-    action = cls(task_id="task-1", stage_name="planning")
-    assert action.task_id == "task-1"
+    action = cls(task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83", stage_name="planning")
+    assert action.task_id == "7d34e462-6ba3-5a6c-b1c6-1584b855cb83"
     assert action.stage_name == "planning"
     with pytest.raises(FrozenInstanceError):
         action.stage_name = "development"
@@ -51,7 +51,11 @@ def test_advance_stage_action_method_literal() -> None:
     hints = get_type_hints(cls)
     assert set(get_args(hints["method"])) == {"complete_stage", "approve_review"}
 
-    action = cls(task_id="task-1", stage_name="planning", method="complete_stage")
+    action = cls(
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
+        stage_name="planning",
+        method="complete_stage",
+    )
     assert action.by_session_id == "dispatcher"
     assert action.validation_override_reason is None
     with pytest.raises(FrozenInstanceError):
@@ -79,13 +83,13 @@ def test_start_pipeline_action_shape() -> None:
     )
 
     action = cls(
-        task_id="task-1",
+        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
         stage_name="expansion",
-        pipeline_name="expand-task",
+        pipeline_name="02e3e743-e572-51b3-a0f4-83e68271282f",
         dispatch_inputs={"task_id": "${{ task_id }}"},
     )
-    assert action.pipeline_name == "expand-task"
+    assert action.pipeline_name == "02e3e743-e572-51b3-a0f4-83e68271282f"
     with pytest.raises(FrozenInstanceError):
         action.pipeline_name = "other"
 

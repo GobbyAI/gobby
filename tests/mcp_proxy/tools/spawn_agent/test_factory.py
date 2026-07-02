@@ -82,7 +82,7 @@ class TestSpawnAgentDefaults:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_execute.return_value = MagicMock(
@@ -126,7 +126,10 @@ class TestSpawnAgentDefaults:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110123",
+                    "project_path": "/path/to/project",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
@@ -172,7 +175,10 @@ class TestSpawnAgentDefaults:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110123",
+                    "project_path": "/path/to/project",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
@@ -382,7 +388,10 @@ class TestSpawnAgentParamOverrides:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110123",
+                    "project_path": "/path/to/project",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
@@ -390,7 +399,10 @@ class TestSpawnAgentParamOverrides:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110123",
+                    "project_path": "/path/to/project",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
@@ -450,7 +462,7 @@ class TestSpawnAgentParamOverrides:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_handler = MagicMock()
@@ -615,7 +627,10 @@ class TestSpawnAgentParamOverrides:
         with (
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
-                return_value={"id": "proj-123", "project_path": "/path/to/project"},
+                return_value={
+                    "id": "11111111-1111-4111-8111-111111110123",
+                    "project_path": "/path/to/project",
+                },
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
@@ -687,7 +702,7 @@ class TestSpawnAgentTaskResolution:
             lease.attach.return_value = None
             lease.release_unattached.return_value = None
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_resolve.return_value = "uuid-123"
@@ -758,7 +773,7 @@ class TestSpawnAgentSandbox:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_handler = MagicMock()
@@ -862,7 +877,7 @@ class TestSpawnAgentPromptPreamble:
             ) as mock_execute,
         ):
             mock_ctx.return_value = {
-                "id": "proj-123",
+                "id": "11111111-1111-4111-8111-111111110123",
                 "project_path": "/path/to/project",
             }
             mock_execute.return_value = MagicMock(

@@ -237,8 +237,8 @@ class TestSendMessageBroadcast:
     ) -> None:
         """Successful send_message triggers agent_message broadcast."""
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-to": MockSession(id="s-to", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-to": MockSession(id="s-to", project_id="11111111-1111-4111-8111-111111110001"),
         }.get(sid)
 
         result = await messaging_registry_with_broadcast.call(
@@ -283,12 +283,16 @@ class TestSendMessageBroadcast:
             broadcast_fn=broadcast_fn,
         )
         mock_session_manager.get.side_effect = lambda sid: {
-            "s-from": MockSession(id="s-from", project_id="proj-1"),
-            "s-child-1": MockSession(id="s-child-1", project_id="proj-1"),
-            "s-child-2": MockSession(id="s-child-2", project_id="proj-1"),
+            "s-from": MockSession(id="s-from", project_id="11111111-1111-4111-8111-111111110001"),
+            "s-child-1": MockSession(
+                id="s-child-1", project_id="11111111-1111-4111-8111-111111110001"
+            ),
+            "s-child-2": MockSession(
+                id="s-child-2", project_id="11111111-1111-4111-8111-111111110001"
+            ),
         }.get(sid)
         mock_db.fetchone.side_effect = lambda sql, params=(): (
-            {"id": "proj-1"} if "FROM projects" in sql else None
+            {"id": "11111111-1111-4111-8111-111111110001"} if "FROM projects" in sql else None
         )
         mock_db.fetchall.return_value = [
             {
@@ -320,7 +324,7 @@ class TestSendMessageBroadcast:
             {
                 "from_session": "s-from",
                 "target": "project",
-                "target_id": "proj-1",
+                "target_id": "11111111-1111-4111-8111-111111110001",
                 "content": "hello agents",
             },
         )

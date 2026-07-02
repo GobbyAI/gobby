@@ -28,7 +28,7 @@ pytestmark = pytest.mark.unit
 def _make_task(
     *,
     id: str = "550e8400-e29b-41d4-a716-446655440000",
-    project_id: str = "proj-1",
+    project_id: str = "11111111-1111-4111-8111-111111110001",
     title: str = "Test Task",
     status: str = "open",
     priority: int = 2,

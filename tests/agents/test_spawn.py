@@ -6,7 +6,7 @@ update_terminal_pickup_metadata.
 """
 
 import os
-import re
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -77,7 +77,7 @@ class TestPrepareTerminalSpawnMetadata:
         assert sm.update_terminal_pickup_metadata.call_args is not None
 
     def test_agent_run_id_format(self) -> None:
-        """agent_run_id starts with 'run-' and is 16 chars (run- + 12 hex)."""
+        """agent_run_id is a canonical uuid string."""
         sm = _make_session_manager()
 
         result = prepare_terminal_spawn(
@@ -87,9 +87,7 @@ class TestPrepareTerminalSpawnMetadata:
             machine_id="machine-1",
         )
 
-        assert result.agent_run_id.startswith("run-")
-        assert len(result.agent_run_id) == 16
-        assert re.match(r"^run-[0-9a-f]{12}$", result.agent_run_id)
+        assert str(uuid.UUID(result.agent_run_id)) == result.agent_run_id
 
     def test_env_includes_spawned_agent_uv_cache_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -768,7 +768,7 @@ class TestWorktreeStats:
 class TestResolveWorktreeId:
     def test_exact_uuid_match(self) -> None:
         mgr = MagicMock()
-        full_id = "a" * 36
+        full_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         mgr.get.return_value = _make_worktree(id=full_id)
         assert resolve_worktree_id(mgr, full_id) == full_id
 

@@ -85,9 +85,11 @@ async def test_worktree_verbosity_reduction():
     with unittest.mock.patch(
         "gobby.mcp_proxy.tools.worktrees._resolve_project_context"
     ) as mock_ctx:
-        mock_ctx.return_value = (mock_git, "proj-123", None)
+        mock_ctx.return_value = (mock_git, "11111111-1111-4111-8111-111111110123", None)
 
-        registry = create_worktrees_registry(mock_storage, mock_git, project_id="proj-123")
+        registry = create_worktrees_registry(
+            mock_storage, mock_git, project_id="11111111-1111-4111-8111-111111110123"
+        )
 
         result = await registry.call("create_worktree", {"branch_name": "feat/test"})
 

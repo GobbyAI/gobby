@@ -92,7 +92,7 @@ class TestAgentRestartReconciliation:
     @pytest.mark.asyncio
     async def test_reconcile_live_tmux_run_refreshes_pid_and_reader(self) -> None:
         run = SimpleNamespace(
-            id="run-1",
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
             tmux_session_name="gobby-run-1",
             pid=111,
             continuation_prompt="continue later",
@@ -122,16 +122,18 @@ class TestAgentRestartReconciliation:
         assert reconciled == 3
         assert run.tmux_session_name == "gobby-run-1"
         runner.completion_registry.register.assert_called_once_with(
-            "run-1",
+            "ac314d27-4314-5fe3-a0ab-01645086e137",
             subscribers=["parent-1"],
             continuation_prompt="continue later",
         )
         run_storage.update_runtime.assert_called_once_with(
-            "run-1",
+            "ac314d27-4314-5fe3-a0ab-01645086e137",
             pid=222,
             tmux_session_name="gobby-run-1",
         )
-        output_reader.start_reader.assert_awaited_once_with("run-1", "gobby-run-1")
+        output_reader.start_reader.assert_awaited_once_with(
+            "ac314d27-4314-5fe3-a0ab-01645086e137", "gobby-run-1"
+        )
         runner.agent_lifecycle_monitor.cleanup_agent.assert_not_awaited()
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
@@ -141,7 +143,9 @@ class TestAgentRestartReconciliation:
             socket_name="unused-name",
             socket_path=str(tmp_path / "gobby-test-reconcile-configured.sock"),
         )
-        run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+        )
         run_storage = SimpleNamespace(
             list_active=MagicMock(return_value=[run]),
             update_runtime=MagicMock(),
@@ -167,18 +171,20 @@ class TestAgentRestartReconciliation:
         list_sessions.assert_awaited_once_with()
         assert reconciled == 2
         runner.completion_registry.register.assert_called_once_with(
-            "run-1",
+            "ac314d27-4314-5fe3-a0ab-01645086e137",
             subscribers=["parent-1"],
             continuation_prompt=None,
         )
         run_storage.update_runtime.assert_not_called()
-        start_reader.assert_awaited_once_with("run-1", "gobby-run-1")
+        start_reader.assert_awaited_once_with("ac314d27-4314-5fe3-a0ab-01645086e137", "gobby-run-1")
         runner.agent_lifecycle_monitor.cleanup_agent.assert_not_awaited()
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_session_cleans_run(self) -> None:
-        run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+        )
         run_storage = SimpleNamespace(
             list_active=MagicMock(return_value=[run]),
             update_runtime=MagicMock(),
@@ -202,7 +208,9 @@ class TestAgentRestartReconciliation:
 
     @pytest.mark.asyncio
     async def test_reconcile_dead_tmux_pane_cleans_run(self) -> None:
-        run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
+        )
         run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
         runner = self._runner(run_storage)
         tmux_manager = SimpleNamespace(
@@ -225,7 +233,11 @@ class TestAgentRestartReconciliation:
 
     @pytest.mark.asyncio
     async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
-        run = SimpleNamespace(id="run-1", tmux_session_name=None, continuation_prompt=None)
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            tmux_session_name=None,
+            continuation_prompt=None,
+        )
         run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
         runner = self._runner(run_storage)
 
@@ -233,7 +245,7 @@ class TestAgentRestartReconciliation:
 
         assert reconciled == 1
         runner.completion_registry.register.assert_called_once_with(
-            "run-1",
+            "ac314d27-4314-5fe3-a0ab-01645086e137",
             subscribers=["parent-1"],
             continuation_prompt=None,
         )
@@ -260,7 +272,7 @@ class TestAgentRestartReconciliation:
             parent_session_id=parent.id,
             provider="codex",
             prompt="work",
-            run_id="run-1",
+            run_id="ac314d27-4314-5fe3-a0ab-01645086e137",
             task_id=task.id,
         )
         run = run_storage.start(run.id)
@@ -283,7 +295,7 @@ class TestAgentRestartReconciliation:
         mutex = mutexes.get_mutex(task.id)
         assert reconciled == 2
         assert mutex is not None
-        assert mutex.run_id == "run-1"
+        assert mutex.run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
         assert mutex.lease_holder == "dispatcher"
         assert datetime.fromisoformat(mutex.lease_until) > datetime.now(UTC)
 
@@ -309,7 +321,7 @@ class TestAgentRestartReconciliation:
             parent_session_id=parent.id,
             provider="codex",
             prompt="work",
-            run_id="run-1",
+            run_id="ac314d27-4314-5fe3-a0ab-01645086e137",
             task_id=task.id,
         )
         run_storage.start(run.id)

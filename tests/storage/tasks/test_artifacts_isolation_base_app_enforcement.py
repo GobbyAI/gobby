@@ -25,7 +25,7 @@ def test_new_isolation_write_without_base_raises(temp_db, sample_project) -> Non
         manager.set_artifacts_atomic(
             task.id,
             worktree_path="/tmp/wt",
-            worktree_id="wt-1",
+            worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         )
 
 
@@ -47,12 +47,14 @@ def test_legacy_row_isolation_modify_requires_base(temp_db, sample_project) -> N
     manager = TaskArtifactManager(temp_db)
 
     with pytest.raises(MissingIsolationBaseError):
-        manager.set_artifacts_atomic(task.id, worktree_path="/tmp/wt2", worktree_id="wt-2")
+        manager.set_artifacts_atomic(
+            task.id, worktree_path="/tmp/wt2", worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02"
+        )
 
     artifacts = manager.set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/wt2",
-        worktree_id="wt-2",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
         base_commit_sha="abc123",
     )
     assert artifacts.base_commit_sha == "abc123"
@@ -65,7 +67,7 @@ def test_clear_isolation_pair_clears_base(temp_db, sample_project) -> None:
     manager.set_artifacts_atomic(
         task.id,
         worktree_path="/tmp/wt",
-        worktree_id="wt-1",
+        worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         base_commit_sha="abc123",
     )
 
@@ -87,7 +89,7 @@ def _insert_legacy_worktree_row(temp_db: HubDatabase, task_id: str) -> None:
     temp_db.execute(
         """
         INSERT INTO task_artifacts (task_id, worktree_path, worktree_id)
-        VALUES (%s, '/tmp/wt', 'wt-1')
+        VALUES (%s, '/tmp/wt', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01')
         """,
         (task_id,),
     )

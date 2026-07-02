@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -248,7 +249,8 @@ async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
     monkeypatch.setattr(
         dispatcher,
         "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.agent_slug) or f"run-{len(spawned)}",
+        lambda action, **kwargs: spawned.append(action.agent_slug)
+        or str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-{len(spawned)}")),
     )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])

@@ -45,7 +45,7 @@ class TestRunPipelineNoWait:
             outputs={},
         )
 
-        mock_execution = MagicMock(id="pe-test123")
+        mock_execution = MagicMock(id="efb0a4a5-34ca-5183-b344-aa1958be7828")
         mock_executor = MagicMock()
         mock_executor.execution_manager.create_execution.return_value = mock_execution
         mock_executor.execute = AsyncMock()
@@ -55,13 +55,13 @@ class TestRunPipelineNoWait:
             executor=mock_executor,
             name="test-pipe",
             inputs={"task_id": "#123"},
-            project_id="proj-1",
-            session_id="sess-1",
+            project_id="aa81136a-134a-5bf3-bcd4-adac1fe28e9b",
+            session_id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
             continuation_prompt="Wire the dependencies",
         )
 
         assert result["success"] is True
-        assert result["execution_id"] == "pe-test123"
+        assert result["execution_id"] == "efb0a4a5-34ca-5183-b344-aa1958be7828"
         assert result["status"] == "running"
         assert (
             "will be notified" in result["message"].lower()
