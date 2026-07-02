@@ -237,13 +237,13 @@ pub use types::{
     ProseRegister, TextGenerator, TextVerifier, VerifyScope,
 };
 pub(crate) use types::{
-    AiGenerationStatus, ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiAiOutcome,
-    CodewikiDocMeta, CodewikiFileSnapshot, CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta,
-    CodewikiSymbolSnapshot, CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded,
-    DeprecatedSymbol, DeprecationIndex, DeprecationsDoc, FeatureCatalogDoc, FileDoc, FileLink,
-    HotspotFinding, HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc,
-    ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc,
-    TestIndex, VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
+    AiGenerationSettings, AiGenerationStatus, ArchitectureDoc, ArchitectureSubsystem, BuiltDoc,
+    CodewikiAiOutcome, CodewikiDocMeta, CodewikiFileSnapshot, CodewikiGraph, CodewikiIndexSnapshot,
+    CodewikiMeta, CodewikiSymbolSnapshot, CodewikiTruthDigest, CodewikiTruthStackEntry,
+    CodewikiTruthSuperseded, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc,
+    FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding, HotspotNode, HotspotsDoc, InfraSection,
+    InfrastructureDoc, ModuleDoc, ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep,
+    SourceSpan, SymbolDoc, TestIndex, VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
 };
 // Feature catalog row/section types (#888) are only named by the catalog's
 // drift-guard tests; the lib builds the page through `FeatureCatalogDoc`.

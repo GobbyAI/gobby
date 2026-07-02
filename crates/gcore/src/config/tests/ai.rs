@@ -510,3 +510,20 @@ fn feature_candidate_rejects_unknown_efforts() {
         assert!(error.contains("low, medium, high, xhigh, max"), "{error}");
     }
 }
+
+#[test]
+fn feature_candidate_cli_label_round_trips_parsed_labels() {
+    // `cli_label` is the recorded canonical form (#17530): parsing a label and
+    // re-rendering it must be a fixed point, including normalization of
+    // padding and effort case.
+    for (input, canonical) in [
+        ("claude/sonnet", "claude/sonnet"),
+        ("claude/sonnet@xhigh", "claude/sonnet@xhigh"),
+        ("  codex / gpt-5.5 @ XHIGH ", "codex/gpt-5.5@xhigh"),
+    ] {
+        let parsed = FeatureCandidate::parse_cli_label(input).expect("label parses");
+        assert_eq!(parsed.cli_label(), canonical, "{input}");
+        let reparsed = FeatureCandidate::parse_cli_label(&parsed.cli_label()).expect("round trip");
+        assert_eq!(reparsed, parsed, "{input}");
+    }
+}

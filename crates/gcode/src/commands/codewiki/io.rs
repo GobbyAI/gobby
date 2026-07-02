@@ -103,6 +103,10 @@ pub(crate) struct DocSink<'a> {
     out_dir: &'a Path,
     ai_mode: String,
     ai_outcome: CodewikiAiOutcome,
+    /// Requested AI generation settings of the current run, recorded into each
+    /// written doc's meta and compared against the previous entry so a
+    /// settings change is never mistaken for "unchanged" (#17530).
+    ai_settings: AiGenerationSettings,
     previous_docs: BTreeMap<String, CodewikiDocMeta>,
     next_docs: BTreeMap<String, CodewikiDocMeta>,
     seen: BTreeSet<String>,
@@ -145,6 +149,7 @@ impl<'a> DocSink<'a> {
             out_dir,
             ai_mode: ai_mode.to_string(),
             ai_outcome: CodewikiAiOutcome::default(),
+            ai_settings: AiGenerationSettings::default(),
             previous_docs: previous.docs.clone(),
             // An interrupted run must not lose entries for docs it never
             // reached, so the next meta starts from the previous entries and
@@ -161,6 +166,13 @@ impl<'a> DocSink<'a> {
 
     pub(crate) fn with_ai_outcome(mut self, ai_outcome: CodewikiAiOutcome) -> Self {
         self.ai_outcome = ai_outcome;
+        self
+    }
+
+    /// Sets the current run's requested AI generation settings, recorded into
+    /// each written doc's meta and part of the unchanged comparison (#17530).
+    pub(crate) fn with_ai_settings(mut self, ai_settings: AiGenerationSettings) -> Self {
+        self.ai_settings = ai_settings;
         self
     }
 
@@ -192,6 +204,7 @@ impl<'a> DocSink<'a> {
             content
         };
         let previous_meta = self.previous_docs.get(&doc.path);
+        let doc_ai_settings = self.ai_settings.for_path(&doc.path);
         if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
             && doc.invalidation_key.is_none()
             && target.exists()
@@ -200,6 +213,7 @@ impl<'a> DocSink<'a> {
             && meta.ai_route == ai_outcome.route_label()
             && meta.ai_fallback == ai_outcome.fallback
             && meta.ai_generation_status == ai_outcome.status.as_str()
+            && doc_ai_settings.matches_meta(meta)
             && meta.render_version == render_version_for_path(&doc.path)
             && !meta.source_hashes.is_empty()
             && (doc.summary.is_none() || meta.summary.is_some())
@@ -236,8 +250,8 @@ impl<'a> DocSink<'a> {
         //   hashes to compare (e.g. code/_ownership.md), so they are always
         //   rewritten. A degraded doc is always rewritten (#687); a summary that
         //   should be recorded but is missing forces a one-time rewrite (#681);
-        //   an AI-mode or render-version change invalidates content hashes
-        //   cannot see.
+        //   an AI-mode, render-version, or generation-settings (#17530) change
+        //   invalidates content hashes cannot see.
         let unchanged = target.exists()
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
@@ -245,6 +259,7 @@ impl<'a> DocSink<'a> {
                     && meta.ai_route == ai_outcome.route_label()
                     && meta.ai_fallback == ai_outcome.fallback
                     && meta.ai_generation_status == ai_outcome.status.as_str()
+                    && doc_ai_settings.matches_meta(meta)
                     && meta.render_version == render_version_for_path(&doc.path)
                     && match &doc.invalidation_key {
                         Some(key) => {
@@ -276,6 +291,7 @@ impl<'a> DocSink<'a> {
                     && meta.ai_route == ai_outcome.route_label()
                     && meta.ai_fallback == ai_outcome.fallback
                     && meta.ai_generation_status == ai_outcome.status.as_str()
+                    && doc_ai_settings.matches_meta(meta)
                     && meta.render_version == render_version_for_path(&doc.path)
                     && source_hash_key_sets_match(&meta.source_hashes, &source_hashes)
                     && source_hash_key_sets_match(&meta.neighbor_hashes, &neighbor_hashes)
@@ -333,6 +349,10 @@ impl<'a> DocSink<'a> {
                 lane: lane.lane,
                 tool_call_count: lane.tool_call_count,
                 turns: lane.turns,
+                ai_prose_depth: doc_ai_settings.prose_depth,
+                ai_register: doc_ai_settings.register,
+                ai_aggregate_profile: doc_ai_settings.aggregate_profile,
+                ai_aggregate_candidates: doc_ai_settings.aggregate_candidates,
             }
         };
         self.next_docs.insert(doc.path.clone(), entry);

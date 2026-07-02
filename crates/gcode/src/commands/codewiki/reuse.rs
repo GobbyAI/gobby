@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::io::{read_codewiki_meta, safe_doc_path};
-use super::{BuiltDoc, CodewikiAiOutcome, CodewikiDocMeta, SourceSpan, render_version_for_path};
+use super::{
+    AiGenerationSettings, BuiltDoc, CodewikiAiOutcome, CodewikiDocMeta, SourceSpan,
+    render_version_for_path,
+};
 use crate::index::hasher;
 
 /// Decides whether a doc's previous content can be reused without any LLM
@@ -13,6 +16,10 @@ pub(crate) struct ReusePlan {
     out_dir: PathBuf,
     ai_mode: String,
     ai_outcome: CodewikiAiOutcome,
+    /// Requested AI generation settings of the current run (#17530). Compared
+    /// per page against the recorded meta — a settings change invalidates the
+    /// pages it re-voices even though their source hashes are unchanged.
+    ai_settings: AiGenerationSettings,
     docs: BTreeMap<String, CodewikiDocMeta>,
     /// Lazy current-content hashes; `None` records an unhashable file so a
     /// missing source is probed once and never reused.
@@ -82,11 +89,19 @@ impl ReusePlan {
             out_dir: out_dir.to_path_buf(),
             ai_mode: ai_mode.to_string(),
             ai_outcome,
+            ai_settings: AiGenerationSettings::default(),
             docs: previous.docs,
             current_hashes: BTreeMap::new(),
             since,
             recorded_hashes,
         })
+    }
+
+    /// Sets the current run's requested AI generation settings so a page whose
+    /// recorded settings differ is regenerated instead of reused (#17530).
+    pub(crate) fn with_ai_settings(mut self, ai_settings: AiGenerationSettings) -> Self {
+        self.ai_settings = ai_settings;
+        self
     }
 
     pub(crate) fn ai_outcome(&self) -> CodewikiAiOutcome {
@@ -124,6 +139,7 @@ impl ReusePlan {
         if entry.degraded
             || entry.ai_mode != self.ai_mode
             || !entry_matches_ai_outcome(entry, ai_outcome)
+            || !self.ai_settings.for_path(doc_path).matches_meta(entry)
             || entry.render_version != render_version_for_path(doc_path)
             || entry.invalidation_key.as_deref() != Some(invalidation_key)
         {
@@ -230,11 +246,13 @@ impl ReusePlan {
         };
         // A degraded doc is never "unchanged" — re-runs must repair it even
         // when its sources match (#687). An empty hash set cannot prove the
-        // doc unchanged (#672), and a mode change invalidates content that
-        // hashes cannot see (#677).
+        // doc unchanged (#672), and a mode, render-version, or generation-
+        // settings change invalidates content that hashes cannot see (#677,
+        // #17530).
         if entry.degraded
             || entry.ai_mode != self.ai_mode
             || !entry_matches_ai_outcome(entry, ai_outcome)
+            || !self.ai_settings.for_path(doc_path).matches_meta(entry)
             || entry.render_version != render_version_for_path(doc_path)
             || entry.source_hashes.is_empty()
         {

@@ -12,12 +12,12 @@ use crate::output::{self, Format};
 use crate::visibility;
 
 use super::{
-    BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput, CodewikiProgress,
-    CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT,
-    ReusePlan, build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
-    build_feature_catalog_doc, build_system_model, build_truth_digest,
-    direct_route_candidate_error, fetch_codewiki_graph_edges, generation, in_scope, io,
-    is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
+    AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput,
+    CodewikiProgress, CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk,
+    MAX_EDGE_LIMIT, ReusePlan, build_audit_context, build_codewiki_changes_doc,
+    build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
+    build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
+    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
     resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
 };
 
@@ -166,17 +166,28 @@ pub fn run(
     } else {
         None
     };
+    // The requested generation settings are part of the reuse comparison
+    // (#17530): flags like `--ai-aggregate-candidate` change what a page would
+    // say without changing any source hash. With AI off they shape nothing, so
+    // they are not recorded and cannot spuriously invalidate structural docs.
+    let ai_settings = if ai_mode == "off" {
+        AiGenerationSettings::default()
+    } else {
+        AiGenerationSettings::from_options(&ai)
+    };
     let mut reuse_plan = ReusePlan::load_with_since_and_ai_outcome(
         &ctx.project_root,
         out_path,
         ai_mode,
         since_changed.clone(),
         ai_outcome,
-    )?;
+    )?
+    .with_ai_settings(ai_settings.clone());
     let mut reuse = Some(&mut reuse_plan);
     let mut sink =
         DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?
             .with_ai_outcome(ai_outcome)
+            .with_ai_settings(ai_settings)
             .with_since(since_changed);
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;

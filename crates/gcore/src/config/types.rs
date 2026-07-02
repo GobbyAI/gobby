@@ -269,6 +269,16 @@ impl FeatureCandidate {
             reasoning_effort,
         })
     }
+
+    /// The canonical `provider/model[@effort]` label for this candidate — the
+    /// inverse of [`FeatureCandidate::parse_cli_label`]. Stable across runs, so
+    /// consumers can record it and compare recorded chains for equality.
+    pub fn cli_label(&self) -> String {
+        match &self.reasoning_effort {
+            Some(effort) => format!("{}@{effort}", self.candidate),
+            None => self.candidate.clone(),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for FeatureCandidate {

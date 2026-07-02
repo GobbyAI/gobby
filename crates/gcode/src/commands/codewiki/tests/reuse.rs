@@ -858,3 +858,445 @@ fn finish_reclaims_on_disk_orphans_absent_from_a_cleared_cache() {
         "GC must not walk or delete outside the `code/` tree"
     );
 }
+
+#[test]
+fn aggregate_settings_apply_only_to_aggregate_writer_pages() {
+    let settings = AiGenerationSettings {
+        prose_depth: "deep".to_string(),
+        register: "newcomer".to_string(),
+        aggregate_profile: "feature-high".to_string(),
+        aggregate_candidates: vec!["claude/sonnet@xhigh".to_string()],
+    };
+    // Aggregate-writer pages carry the full settings.
+    for path in [
+        "code/repo.md",
+        "code/_architecture.md",
+        "code/concepts/index.md",
+        "code/narrative/01-introduction.md",
+    ] {
+        assert_eq!(settings.for_path(path), settings, "{path}");
+    }
+    // Every other page carries only the run-wide prose depth and register, so
+    // aggregate flag changes never invalidate it.
+    for path in [
+        "code/files/src/lib.rs.md",
+        "code/modules/src.md",
+        "code/infrastructure.md",
+        "code/features.md",
+    ] {
+        let projected = settings.for_path(path);
+        assert_eq!(projected.prose_depth, "deep", "{path}");
+        assert_eq!(projected.register, "newcomer", "{path}");
+        assert!(projected.aggregate_profile.is_empty(), "{path}");
+        assert!(projected.aggregate_candidates.is_empty(), "{path}");
+    }
+}
+
+/// Like `write_incremental_doc_set_with_snapshot` but recording the run's
+/// requested AI generation settings into each doc's meta (#17530).
+fn write_docs_with_ai_settings(
+    project_root: &std::path::Path,
+    out_dir: &std::path::Path,
+    docs: &[BuiltDoc],
+    ai_mode: &str,
+    ai_settings: AiGenerationSettings,
+) -> Vec<String> {
+    let mut sink = DocSink::open(project_root, out_dir, ai_mode)
+        .expect("sink opens")
+        .with_ai_settings(ai_settings);
+    for doc in docs {
+        sink.persist(doc).expect("doc persists");
+    }
+    sink.finish(None).expect("run completes")
+}
+
+#[test]
+fn aggregate_profile_change_regenerates_only_aggregate_pages() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    write_docs_with_ai_settings(
+        project.path(),
+        &out_dir,
+        &first,
+        "symbols",
+        AiGenerationSettings {
+            aggregate_profile: "feature-high".to_string(),
+            ..AiGenerationSettings::default()
+        },
+    );
+
+    // Same sources, different aggregate writer: only aggregate-tier prompts
+    // may run — file/module pages must reuse (the bakeoff-arm contract).
+    let mut tiers = Vec::new();
+    let mut second_generator = |_prompt: &str, system: &str, tier: PromptTier| {
+        tiers.push(tier);
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Re-voiced prose.".to_string())
+        }
+    };
+    let repinned = AiGenerationSettings {
+        aggregate_profile: "opus-first".to_string(),
+        ..AiGenerationSettings::default()
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan loads")
+        .with_ai_settings(repinned.clone());
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = generate_hierarchical_docs_with_reuse(
+        &input,
+        Some(&mut second_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+    assert!(!second.is_empty());
+    assert!(
+        !tiers.is_empty(),
+        "an aggregate profile change must regenerate the aggregate pages"
+    );
+    assert!(
+        tiers.iter().all(|tier| *tier == PromptTier::Aggregate),
+        "file/module pages must reuse across an aggregate profile change: {tiers:?}"
+    );
+
+    let changed =
+        write_docs_with_ai_settings(project.path(), &out_dir, &second, "symbols", repinned);
+    assert!(changed.contains(&"code/repo.md".to_string()));
+    assert!(changed.contains(&"code/_architecture.md".to_string()));
+    assert!(
+        changed
+            .iter()
+            .all(|path| { !path.starts_with("code/files/") && !path.starts_with("code/modules/") }),
+        "reused file/module pages must not be rewritten: {changed:?}"
+    );
+}
+
+#[test]
+fn aggregate_candidate_change_regenerates_only_aggregate_pages() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    write_docs_with_ai_settings(
+        project.path(),
+        &out_dir,
+        &first,
+        "symbols",
+        AiGenerationSettings {
+            aggregate_candidates: vec!["claude/sonnet@xhigh".to_string()],
+            ..AiGenerationSettings::default()
+        },
+    );
+
+    // The bakeoff arms: cp the output dir, re-run with a different pinned
+    // candidate chain — aggregates auto-invalidate, file/module pages reuse.
+    let mut tiers = Vec::new();
+    let mut second_generator = |_prompt: &str, system: &str, tier: PromptTier| {
+        tiers.push(tier);
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Opus-voiced prose.".to_string())
+        }
+    };
+    let repinned = AiGenerationSettings {
+        aggregate_candidates: vec!["claude/opus@xhigh".to_string()],
+        ..AiGenerationSettings::default()
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan loads")
+        .with_ai_settings(repinned.clone());
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = generate_hierarchical_docs_with_reuse(
+        &input,
+        Some(&mut second_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+    assert!(!second.is_empty());
+    assert!(
+        !tiers.is_empty(),
+        "a candidate chain change must regenerate the aggregate pages"
+    );
+    assert!(
+        tiers.iter().all(|tier| *tier == PromptTier::Aggregate),
+        "file/module pages must reuse across a candidate chain change: {tiers:?}"
+    );
+
+    let changed =
+        write_docs_with_ai_settings(project.path(), &out_dir, &second, "symbols", repinned);
+    assert!(changed.contains(&"code/repo.md".to_string()));
+    assert!(changed.contains(&"code/_architecture.md".to_string()));
+    assert!(
+        changed
+            .iter()
+            .all(|path| { !path.starts_with("code/files/") && !path.starts_with("code/modules/") }),
+        "reused file/module pages must not be rewritten: {changed:?}"
+    );
+}
+
+#[test]
+fn prose_depth_and_register_changes_regenerate_every_ai_page() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    // Default-settings write: the meta records no depth/register, exactly like
+    // meta written before settings were recorded.
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+
+    // Depth shapes every AI page's budget, so a change regenerates file and
+    // module pages too — unlike the aggregate-only settings above.
+    let mut deep_calls = 0_usize;
+    let mut deep_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        deep_calls += 1;
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Deepened prose.".to_string())
+        }
+    };
+    let deep = AiGenerationSettings {
+        prose_depth: "deep".to_string(),
+        ..AiGenerationSettings::default()
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan loads")
+        .with_ai_settings(deep.clone());
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let deepened = generate_hierarchical_docs_with_reuse(
+        &input,
+        Some(&mut deep_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+    assert!(deep_calls > 0, "a prose-depth change must regenerate");
+    let changed =
+        write_docs_with_ai_settings(project.path(), &out_dir, &deepened, "symbols", deep.clone());
+    assert!(changed.contains(&"code/files/src/lib.rs.md".to_string()));
+    assert!(changed.contains(&"code/modules/src.md".to_string()));
+    assert!(changed.contains(&"code/repo.md".to_string()));
+
+    // Same depth, new register: the recorded depth now matches, so only the
+    // register difference drives the second full regeneration.
+    let mut register_calls = 0_usize;
+    let mut register_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        register_calls += 1;
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Newcomer prose.".to_string())
+        }
+    };
+    let deep_newcomer = AiGenerationSettings {
+        register: "newcomer".to_string(),
+        ..deep
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan reloads")
+        .with_ai_settings(deep_newcomer.clone());
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let revoiced = generate_hierarchical_docs_with_reuse(
+        &input,
+        Some(&mut register_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+    assert!(register_calls > 0, "a register change must regenerate");
+    let changed = write_docs_with_ai_settings(
+        project.path(),
+        &out_dir,
+        &revoiced,
+        "symbols",
+        deep_newcomer,
+    );
+    assert!(changed.contains(&"code/files/src/lib.rs.md".to_string()));
+    assert!(changed.contains(&"code/modules/src.md".to_string()));
+    assert!(changed.contains(&"code/repo.md".to_string()));
+}
+
+#[test]
+fn unchanged_generation_settings_still_reuse_without_llm_calls() {
+    let (project, input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    let pinned = AiGenerationSettings {
+        prose_depth: "deep".to_string(),
+        register: "maintainer".to_string(),
+        aggregate_candidates: vec!["claude/sonnet@xhigh".to_string()],
+        ..AiGenerationSettings::default()
+    };
+    write_docs_with_ai_settings(project.path(), &out_dir, &first, "symbols", pinned.clone());
+
+    let mut calls = 0_usize;
+    let mut counting_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
+        calls += 1;
+        Some("Second-run prose.".to_string())
+    };
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan loads")
+        .with_ai_settings(pinned);
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = generate_hierarchical_docs_with_reuse(
+        &input,
+        Some(&mut counting_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+    assert!(!second.is_empty());
+    assert_eq!(calls, 0, "unchanged settings must make zero LLM calls");
+}
+
+#[test]
+fn keyed_aggregate_page_reuse_honors_generation_settings() {
+    let (project, _input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    // A keyed derived page (architecture with a SystemModel digest) bypasses
+    // source-hash reuse entirely — the settings comparison must still apply.
+    let pinned = AiGenerationSettings {
+        aggregate_candidates: vec!["claude/sonnet@xhigh".to_string()],
+        ..AiGenerationSettings::default()
+    };
+    let mut sink = DocSink::open(project.path(), &out_dir, "symbols")
+        .expect("sink opens")
+        .with_ai_settings(pinned.clone());
+    sink.persist(&BuiltDoc::derived(
+        "code/_architecture.md",
+        "# Architecture\n\nPinned narrative.\n".to_string(),
+        "model-digest".to_string(),
+    ))
+    .expect("keyed page persists");
+    sink.finish(None).expect("run completes");
+
+    let mut same = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan loads")
+        .with_ai_settings(pinned);
+    let outcome = same.ai_outcome();
+    assert!(
+        same.reusable_page_keyed_with_ai_outcome("code/_architecture.md", "model-digest", outcome)
+            .is_some(),
+        "unchanged settings must reuse the keyed page"
+    );
+
+    let repinned = AiGenerationSettings {
+        aggregate_candidates: vec!["claude/opus@xhigh".to_string()],
+        ..AiGenerationSettings::default()
+    };
+    let mut changed = ReusePlan::load(project.path(), &out_dir, "symbols")
+        .expect("reuse plan reloads")
+        .with_ai_settings(repinned);
+    let outcome = changed.ai_outcome();
+    assert!(
+        changed
+            .reusable_page_keyed_with_ai_outcome("code/_architecture.md", "model-digest", outcome)
+            .is_none(),
+        "a candidate change must invalidate the keyed page even when its digest matches"
+    );
+}

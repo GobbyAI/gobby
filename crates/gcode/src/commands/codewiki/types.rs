@@ -611,6 +611,105 @@ pub(crate) struct CodewikiDocMeta {
     pub(crate) tool_call_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) turns: Option<usize>,
+    /// Requested AI generation settings the prose on disk was written under
+    /// (#17530). Content hashes cannot see a settings change — the same sources
+    /// prompt a different writer — so these are part of the reuse comparison:
+    /// a prose-depth or register change re-voices every AI page, while an
+    /// aggregate profile/candidate change re-voices only the aggregate-writer
+    /// pages (see [`AiGenerationSettings::for_path`]). Every field records the
+    /// *requested* value and stays empty for the default, so a default run's
+    /// meta is byte-identical to one written before these fields existed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) ai_prose_depth: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) ai_register: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) ai_aggregate_profile: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) ai_aggregate_candidates: Vec<String>,
+}
+
+/// The requested AI generation settings of the current run, in the canonical
+/// recorded form compared against [`CodewikiDocMeta`] (#17530). All fields are
+/// empty for a default run, matching meta written before settings were
+/// recorded, so default runs never self-invalidate.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AiGenerationSettings {
+    /// Requested `--ai-prose-depth` (`brief`/`deep`); empty for the default
+    /// `standard`, which defers to the provider/profile budget.
+    pub(crate) prose_depth: String,
+    /// Requested `--ai-register` (`newcomer`/`maintainer`/`agent`); empty for
+    /// the default base voice.
+    pub(crate) register: String,
+    /// Requested `--ai-aggregate-profile` override; empty when unset.
+    pub(crate) aggregate_profile: String,
+    /// Requested `--ai-aggregate-candidate` chain as ordered canonical
+    /// `provider/model[@effort]` labels; empty when unset.
+    pub(crate) aggregate_candidates: Vec<String>,
+}
+
+impl AiGenerationSettings {
+    pub(crate) fn from_options(ai: &CodewikiAiOptions) -> Self {
+        Self {
+            prose_depth: match ai.prose_depth {
+                ProseDepth::Standard => String::new(),
+                ProseDepth::Brief => "brief".to_string(),
+                ProseDepth::Deep => "deep".to_string(),
+            },
+            register: match ai.register {
+                None => String::new(),
+                Some(ProseRegister::Newcomer) => "newcomer".to_string(),
+                Some(ProseRegister::Maintainer) => "maintainer".to_string(),
+                Some(ProseRegister::Agent) => "agent".to_string(),
+            },
+            aggregate_profile: ai.aggregate_profile.clone().unwrap_or_default(),
+            aggregate_candidates: ai
+                .aggregate_candidates
+                .iter()
+                .map(FeatureCandidate::cli_label)
+                .collect(),
+        }
+    }
+
+    /// The subset of these settings that shaped `doc_path`: aggregate-writer
+    /// pages carry the aggregate profile/candidate chain, every other page only
+    /// the run-wide prose depth and register — so an aggregate flag change
+    /// invalidates exactly the aggregate pages while file/module pages reuse.
+    pub(crate) fn for_path(&self, doc_path: &str) -> Self {
+        if aggregate_writer_page(doc_path) {
+            self.clone()
+        } else {
+            Self {
+                prose_depth: self.prose_depth.clone(),
+                register: self.register.clone(),
+                ..Self::default()
+            }
+        }
+    }
+
+    /// Whether `meta`'s recorded settings match these per-page expected
+    /// settings. Callers pass the [`AiGenerationSettings::for_path`] projection
+    /// for the page being compared.
+    pub(crate) fn matches_meta(&self, meta: &CodewikiDocMeta) -> bool {
+        meta.ai_prose_depth == self.prose_depth
+            && meta.ai_register == self.register
+            && meta.ai_aggregate_profile == self.aggregate_profile
+            && meta.ai_aggregate_candidates == self.aggregate_candidates
+    }
+}
+
+/// Pages whose prose comes from the aggregate-tier writer (`generate_aggregate`
+/// / `PromptTier::Aggregate`): the repo overview, the architecture narrative,
+/// and the curated concept/narrative pages (whose bodies and navigation plan
+/// are aggregate-tier generations). `--ai-aggregate-profile` and
+/// `--ai-aggregate-candidate` shape exactly these pages. Deterministic derived
+/// pages (infrastructure, features, deprecations) render without an LLM and are
+/// excluded.
+pub(crate) fn aggregate_writer_page(doc_path: &str) -> bool {
+    doc_path == "code/repo.md"
+        || doc_path == "code/_architecture.md"
+        || doc_path.starts_with("code/concepts/")
+        || doc_path.starts_with("code/narrative/")
 }
 
 /// One rendered doc plus the degradation outcome of its generation, carried
