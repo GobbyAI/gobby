@@ -15,7 +15,6 @@ Commands for managing git worktrees:
 """
 
 import json
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from json import JSONDecodeError
@@ -29,6 +28,7 @@ from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.uuid_validation import is_full_uuid
 
 
 def get_worktree_manager() -> LocalWorktreeManager:
@@ -378,20 +378,9 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
 # ... stale/cleanup/stats commands ...
 
 
-def _is_full_uuid(value: str) -> bool:
-    """Return whether a value is a canonical uuid string, safe against uuid columns."""
-    if len(value) != 36:
-        return False
-    try:
-        uuid.UUID(value)
-    except (TypeError, ValueError):
-        return False
-    return True
-
-
 def resolve_worktree_id(manager: LocalWorktreeManager, worktree_ref: str) -> str:
     """Resolve worktree reference (UUID or prefix) to full ID."""
-    if _is_full_uuid(worktree_ref) and manager.get(worktree_ref):
+    if is_full_uuid(worktree_ref) and manager.get(worktree_ref):
         return worktree_ref
 
     # Use list listing since local manager doesn't expose prefix search easily

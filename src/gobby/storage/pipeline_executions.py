@@ -8,20 +8,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 logger = logging.getLogger("gobby.storage.pipelines")
-
-
-def _is_full_uuid(value: str) -> bool:
-    """Return whether a value is a canonical uuid string, safe against uuid columns."""
-    if len(value) != 36:
-        return False
-    try:
-        uuid.UUID(value)
-    except (TypeError, ValueError):
-        return False
-    return True
 
 
 class PipelineExecutionStorageMixin:
@@ -543,7 +533,7 @@ class PipelineExecutionStorageMixin:
         """
         # Try exact match first; short prefixes are not valid uuid literals and
         # would error against the uuid PK column.
-        if _is_full_uuid(ref):
+        if is_full_uuid(ref):
             execution = self.get_execution(ref)
             if execution:
                 return execution.id

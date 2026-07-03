@@ -13,7 +13,6 @@ Commands for managing subagent runs:
 """
 
 import json
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, cast
@@ -27,6 +26,7 @@ from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
@@ -75,17 +75,6 @@ def agent_definition_manager_context() -> Iterator[LocalWorkflowDefinitionManage
 def _escape_like_prefix(prefix: str) -> str:
     """Escape SQL LIKE wildcard characters in an ID prefix."""
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _is_full_uuid(value: str) -> bool:
-    """Return whether a value is a canonical uuid string, safe against uuid columns."""
-    if len(value) != 36:
-        return False
-    try:
-        uuid.UUID(value)
-    except (TypeError, ValueError):
-        return False
-    return True
 
 
 def _agent_body(row: WorkflowDefinitionRow) -> tuple[AgentDefinitionBody, dict[str, Any]]:
@@ -164,7 +153,7 @@ def resolve_agent_run_id(run_ref: str) -> str:
     # Try exact UUID matches before prefix lookup. Avoid opening the manager for
     # short prefixes; tests commonly patch one runtime DB and prefix lookup must
     # not see a connection already closed by the exact-match path.
-    if _is_full_uuid(run_ref):
+    if is_full_uuid(run_ref):
         with agent_run_manager_context() as manager:
             if manager.get(run_ref):
                 return run_ref

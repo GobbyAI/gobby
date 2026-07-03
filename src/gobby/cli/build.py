@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -25,6 +24,7 @@ from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_t
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sessions import SessionManager
 
 from . import _build_daemon as _build_daemon_helpers
@@ -399,7 +399,7 @@ def _coordinator_session_ref(
     ref = coordinator.strip()
     is_current = coordinator == CURRENT_COORDINATOR or ref == "current"
     if not is_current and ref:
-        if project_explicit and not _is_full_uuid(ref):
+        if project_explicit and not is_session_uuid(ref):
             raise click.ClickException(
                 "--coordinator with --project must be `current` or a full session UUID"
             )
@@ -426,14 +426,6 @@ def _coordinator_session_ref(
     raise click.ClickException(
         "--coordinator needs an active Gobby session; pass --coordinator SESSION explicitly"
     )
-
-
-def _is_full_uuid(value: str) -> bool:
-    try:
-        uuid.UUID(value)
-    except ValueError:
-        return False
-    return True
 
 
 @click.command("stop")
