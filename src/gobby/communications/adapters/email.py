@@ -525,7 +525,7 @@ class EmailAdapter(BaseChannelAdapter):
                 channel_id="",
                 direction="inbound",
                 content=content,
-                created_at=datetime.now(UTC).isoformat(),
+                created_at=datetime.now(UTC),
                 identity_id=external_user_id,
                 platform_message_id=msg_id,
                 platform_thread_id=thread_id,

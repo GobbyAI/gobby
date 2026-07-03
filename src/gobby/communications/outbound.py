@@ -88,7 +88,7 @@ class OutboundCommunications:
             status="pending",
             platform_thread_id=platform_thread_id,
             metadata_json=await self.enrich_metadata(channel, channel_name, session_id, metadata),
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         try:
@@ -159,7 +159,7 @@ class OutboundCommunications:
             status="pending",
             platform_thread_id=platform_thread_id,
             metadata_json=await self.enrich_metadata(channel, channel_name, session_id, metadata),
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         attachment = CommsAttachment(
@@ -169,7 +169,7 @@ class OutboundCommunications:
             content_type=content_type,
             size_bytes=size_bytes,
             local_path=str(file_path),
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         try:
@@ -249,7 +249,7 @@ class OutboundCommunications:
             content_type=content_type,
             status="pending",
             metadata_json={"platform_destination": conversation_id},
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
         )
 
         try:

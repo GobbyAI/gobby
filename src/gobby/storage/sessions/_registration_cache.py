@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
@@ -34,7 +35,7 @@ def _recovery_score(session: Session) -> tuple[bool, bool, bool]:
     )
 
 
-def _recovery_rank(session: Session) -> tuple[bool, bool, bool, str, str]:
+def _recovery_rank(session: Session) -> tuple[bool, bool, bool, datetime, str]:
     """Rank cross-source recovery candidates by completeness, then age."""
     return (*_recovery_score(session), session.created_at, session.id)
 

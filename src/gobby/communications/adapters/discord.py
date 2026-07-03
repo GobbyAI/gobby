@@ -545,7 +545,7 @@ class DiscordAdapter(BaseChannelAdapter):
                     channel_id="",
                     direction="inbound",
                     content=json.dumps({"type": 1}),
-                    created_at=datetime.now(UTC).isoformat(),
+                    created_at=datetime.now(UTC),
                     content_type="interaction_ping",
                 )
             )
@@ -575,7 +575,7 @@ class DiscordAdapter(BaseChannelAdapter):
                         channel_id="",
                         direction="inbound",
                         content=reaction,
-                        created_at=datetime.now(UTC).isoformat(),
+                        created_at=datetime.now(UTC),
                         identity_id=user_id,
                         platform_message_id=msg_id,
                         content_type="reaction",
@@ -617,7 +617,7 @@ class DiscordAdapter(BaseChannelAdapter):
                     channel_id="",
                     direction="inbound",
                     content=content,
-                    created_at=datetime.now(UTC).isoformat(),
+                    created_at=datetime.now(UTC),
                     identity_id=user_id,
                     platform_message_id=msg_id,
                     platform_thread_id=thread_id,

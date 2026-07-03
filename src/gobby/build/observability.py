@@ -33,6 +33,7 @@ from gobby.storage.tasks._ancestor_gate import (
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.datetime import parse_stored_datetime
 
 MAX_ACTIVE_AGENTS = 10
 
@@ -634,16 +635,11 @@ def _bounded_limit(value: int) -> int:
     return max(1, min(int(value), 100))
 
 
-def _parse_time(value: str | None) -> datetime | None:
-    if not value:
-        return None
+def _parse_time(value: datetime | str | None) -> datetime | None:
     try:
-        parsed = datetime.fromisoformat(value)
+        return parse_stored_datetime(value)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 __all__ = [

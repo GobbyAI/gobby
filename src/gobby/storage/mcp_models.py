@@ -3,7 +3,10 @@
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+
+from gobby.utils.datetime import normalize_datetime_model
 
 
 def _loads_server_json_field(row: Mapping[str, Any], field: str) -> Any:
@@ -58,6 +61,12 @@ def _loads_tool_input_schema(row: Mapping[str, Any]) -> dict[str, Any] | None:
     return schema
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class MCPServer:
     """MCP server configuration model."""
@@ -75,8 +84,8 @@ class MCPServer:
     requires_oauth: bool
     oauth_provider: str | None
     connect_timeout: float
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     project_id: str  # Required - all servers must belong to a project
 
     @classmethod
@@ -150,6 +159,12 @@ class MCPServer:
         return config
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class Tool:
     """MCP tool model."""
@@ -159,8 +174,8 @@ class Tool:
     name: str
     description: str | None
     input_schema: dict[str, Any] | None
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Tool":

@@ -19,7 +19,7 @@ from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronJob
 from gobby.storage.cron_runs import CronRunStorageMixin
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, utc_now
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +54,6 @@ class _Unset:
 
 
 UNSET = _Unset()
-
-
-def _model_timestamp(value: datetime) -> str:
-    timestamp = datetime_to_iso(value)
-    if timestamp is None:
-        raise AssertionError("datetime_to_iso unexpectedly returned None for a datetime")
-    return timestamp
-
-
-def _optional_model_timestamp(value: datetime | None) -> str | None:
-    return datetime_to_iso(value)
 
 
 def _db_timestamp(value: object) -> object:
@@ -138,22 +127,15 @@ def compute_next_run(job: CronJob) -> datetime | None:
         if not job.run_at:
             logger.debug(f"Job {job.id}: schedule_type='once' but run_at is missing")
             return None
-        try:
-            run_at = datetime.fromisoformat(job.run_at)
-            if run_at.tzinfo is None:
-                run_at = run_at.replace(tzinfo=tz)
-            run_at_utc = run_at.astimezone(ZoneInfo("UTC"))
-            # Expired one-shot
-            now_utc = datetime.now(ZoneInfo("UTC"))
-            if run_at_utc <= now_utc:
-                logger.debug(
-                    f"Job {job.id}: one-shot run_at {run_at_utc} is in the past (now={now_utc})"
-                )
-                return None
-            return run_at_utc
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Job {job.id}: invalid run_at format '{job.run_at}': {e}")
+        run_at_utc = job.run_at.astimezone(ZoneInfo("UTC"))
+        # Expired one-shot
+        now_utc = datetime.now(ZoneInfo("UTC"))
+        if run_at_utc <= now_utc:
+            logger.debug(
+                f"Job {job.id}: one-shot run_at {run_at_utc} is in the past (now={now_utc})"
+            )
             return None
+        return run_at_utc
 
     return None
 
@@ -182,7 +164,7 @@ class CronJobStorage(CronRunStorageMixin):
         """Create a new cron job."""
         job_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = _model_timestamp(now)
+        run_at_value = parse_stored_datetime(run_at)
 
         interval_seconds = _normalize_interval_seconds(schedule_type, interval_seconds)
 
@@ -193,12 +175,12 @@ class CronJobStorage(CronRunStorageMixin):
             schedule_type=schedule_type,
             action_type=action_type,
             action_config=action_config,
-            created_at=now_model,
-            updated_at=now_model,
+            created_at=now,
+            updated_at=now,
             description=description,
             cron_expr=cron_expr,
             interval_seconds=interval_seconds,
-            run_at=run_at,
+            run_at=run_at_value,
             timezone=timezone,
             enabled=enabled,
             is_system=is_system,
@@ -207,7 +189,7 @@ class CronJobStorage(CronRunStorageMixin):
         # Compute initial next_run_at
         next_run = compute_next_run(job)
         if next_run:
-            job.next_run_at = _model_timestamp(next_run)
+            job.next_run_at = next_run
 
         self.db.execute(
             """

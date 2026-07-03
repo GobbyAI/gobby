@@ -7,6 +7,7 @@ Tests cover:
 """
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -44,7 +45,7 @@ class TestInterSessionMessageDataclass:
         assert msg.to_session == "session-child"
         assert msg.content == "Please work on subtask A"
         assert msg.priority == "normal"
-        assert msg.sent_at == "2026-01-19T12:00:00Z"
+        assert msg.sent_at == datetime(2026, 1, 19, 12, tzinfo=UTC)
         assert msg.read_at is None
 
     def test_from_row_creates_instance(self, temp_db: HubDatabase) -> None:
@@ -114,8 +115,8 @@ class TestInterSessionMessageDataclass:
         assert d["to_session"] == "session-2"
         assert d["content"] == "Hello child agent"
         assert d["priority"] == "urgent"
-        assert d["sent_at"] == "2026-01-19T12:30:00Z"
-        assert d["read_at"] == "2026-01-19T12:35:00Z"
+        assert d["sent_at"] == "2026-01-19T12:30:00+00:00"
+        assert d["read_at"] == "2026-01-19T12:35:00+00:00"
 
 
 class TestInterSessionMessageToBrief:
@@ -164,8 +165,8 @@ class TestInterSessionMessageToBrief:
         assert brief["content"] == "Important message"
         assert brief["priority"] == "urgent"
         assert brief["message_type"] == "command_result"
-        assert brief["sent_at"] == "2026-01-19T12:00:00Z"
-        assert brief["read_at"] == "2026-01-19T12:05:00Z"
+        assert brief["sent_at"] == "2026-01-19T12:00:00+00:00"
+        assert brief["read_at"] == "2026-01-19T12:05:00+00:00"
 
     def test_to_brief_excludes_internal_fields(self) -> None:
         """to_brief omits metadata_json and delivered_at."""

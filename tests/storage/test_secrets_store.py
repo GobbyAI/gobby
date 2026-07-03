@@ -109,8 +109,8 @@ class TestSecretInfo:
         assert d["name"] == "API_KEY"
         assert d["category"] == "llm"
         assert d["description"] == "OpenAI key"
-        assert d["created_at"] == "2024-01-01T00:00:00"
-        assert d["updated_at"] == "2024-01-02T00:00:00"
+        assert d["created_at"] == "2024-01-01T00:00:00+00:00"
+        assert d["updated_at"] == "2024-01-02T00:00:00+00:00"
 
     def test_to_dict_none_description(self) -> None:
         info = SecretInfo(
@@ -131,8 +131,8 @@ class TestSecretInfo:
             name="n",
             category="general",
             description=None,
-            created_at="t",
-            updated_at="t",
+            created_at="2024-01-01T00:00:00+00:00",
+            updated_at="2024-01-01T00:00:00+00:00",
         )
         assert hasattr(info, "__slots__")
         with pytest.raises(AttributeError):

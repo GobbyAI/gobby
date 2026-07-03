@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 ACTIVE_STAGE_STATES: tuple[str, ...] = (
@@ -20,6 +21,10 @@ def _read_field(value: Any, *names: str) -> Any:
         if hasattr(value, name):
             return getattr(value, name)
     return None
+
+
+def _has_timestamp(value: Any) -> bool:
+    return isinstance(value, datetime) or (isinstance(value, str) and bool(value))
 
 
 def _stage_position(stage: Any) -> tuple[int, str]:
@@ -80,10 +85,10 @@ def is_task_closed(task: Any) -> bool:
         if state_payload.get("is_closed") is True:
             return True
         state_closed_at = state_payload.get("closed_at")
-        if isinstance(state_closed_at, str) and bool(state_closed_at):
+        if _has_timestamp(state_closed_at):
             return True
     closed_at = _read_field(task, "closed_at")
-    return isinstance(closed_at, str) and bool(closed_at)
+    return _has_timestamp(closed_at)
 
 
 def _task_is_escalated(task: Any) -> bool:
@@ -94,11 +99,11 @@ def _task_is_escalated(task: Any) -> bool:
         if state_payload.get("is_escalated") is True:
             return True
         state_escalated_at = state_payload.get("escalated_at")
-        if isinstance(state_escalated_at, str) and bool(state_escalated_at):
+        if _has_timestamp(state_escalated_at):
             return True
     raw_flag = _read_field(task, "is_escalated")
     escalated_at = _read_field(task, "escalated_at")
-    return raw_flag is True or (isinstance(escalated_at, str) and bool(escalated_at))
+    return raw_flag is True or _has_timestamp(escalated_at)
 
 
 is_task_escalated = _task_is_escalated

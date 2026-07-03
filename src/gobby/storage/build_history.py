@@ -12,13 +12,14 @@ from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
 BuildRunStatus = Literal["started", "completed", "failed", "skipped"]
 
 
+@normalize_datetime_model(required=("started_at",), optional=("completed_at",))
 @dataclass(frozen=True)
 class BuildRun:
     id: str
@@ -30,8 +31,8 @@ class BuildRun:
     actor: str
     summary: dict[str, Any] | None
     error: str | None
-    started_at: str
-    completed_at: str | None
+    started_at: datetime
+    completed_at: datetime | None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> BuildRun:
@@ -45,14 +46,15 @@ class BuildRun:
             actor=str(row["actor"]),
             summary=_json_obj(row["summary_json"]),
             error=_optional_str(row["error"]),
-            started_at=str(row["started_at"]),
-            completed_at=_optional_str(row["completed_at"]),
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
         )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass(frozen=True)
 class BuildHistoryEvent:
     id: int
@@ -64,7 +66,7 @@ class BuildHistoryEvent:
     action: str | None
     message: str | None
     payload: dict[str, Any] | None
-    created_at: str
+    created_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> BuildHistoryEvent:
@@ -78,7 +80,7 @@ class BuildHistoryEvent:
             action=_optional_str(row["action"]),
             message=_optional_str(row["message"]),
             payload=_json_obj(row["payload_json"]),
-            created_at=str(row["created_at"]),
+            created_at=row["created_at"],
         )
 
     def to_dict(self) -> dict[str, Any]:

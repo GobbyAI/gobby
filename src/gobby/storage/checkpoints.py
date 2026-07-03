@@ -7,13 +7,16 @@ preserving their uncommitted work as hidden git refs.
 import logging
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import normalize_datetime_model
 
 logger = logging.getLogger(__name__)
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class Checkpoint:
     id: str
@@ -25,7 +28,7 @@ class Checkpoint:
     parent_sha: str
     files_changed: int
     message: str
-    created_at: str
+    created_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Checkpoint":

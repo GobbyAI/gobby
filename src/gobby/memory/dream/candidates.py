@@ -82,8 +82,8 @@ def memory_to_candidate(memory: Any, now: datetime) -> DreamCandidate:
         tags=list(getattr(memory, "tags", None) or []),
         age_days=age_days if age_days is not None else 0.0,
         access_count=_int_attr(memory, "access_count"),
-        created_at=str(getattr(memory, "created_at", "")),
-        updated_at=str(getattr(memory, "updated_at", "")),
+        created_at=_parse_datetime(getattr(memory, "created_at", None)) or now,
+        updated_at=_parse_datetime(getattr(memory, "updated_at", None)) or now,
         last_accessed_at=getattr(memory, "last_accessed_at", None),
         reasons=reasons,
     )

@@ -10,7 +10,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import require_stored_datetime, utc_now
 
 # Session durations
 SESSION_DURATION = timedelta(hours=12)  # Default (no remember-me)
@@ -59,11 +59,8 @@ class AuthStore:
         if not row:
             return False
 
-        expires_at = datetime.fromisoformat(row["expires_at"])
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-
-        if datetime.now(UTC) > expires_at:
+        expires_at = require_stored_datetime(row["expires_at"], "expires_at")
+        if utc_now() > expires_at:
             self.delete_session(token)
             return False
 

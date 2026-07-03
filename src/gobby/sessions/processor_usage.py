@@ -50,7 +50,7 @@ class ProcessorUsageMixin:
         last_model = last_model if isinstance(last_model, str) and last_model else None
         running_totals = store.get_session_totals(session_id)
         latest_context_snapshot = None
-        latest_event_at: str | None = None
+        latest_event_at: datetime | None = None
         saw_insert = False
         saw_token_usage = False
 

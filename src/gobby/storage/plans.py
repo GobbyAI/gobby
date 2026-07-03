@@ -16,11 +16,19 @@ from gobby.plans.coverage_manifest import coverage_manifest_path, write_manifest
 from gobby.plans.parser import PlanKind, parse_plan
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.datetime import normalize_datetime_model
 
 PlanState = Literal["active", "archived"]
 logger = logging.getLogger(__name__)
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("archived_at",),
+)
 @dataclass(frozen=True)
 class PlanRecord:
     id: str
@@ -31,9 +39,9 @@ class PlanRecord:
     plan_kind: str
     state: PlanState
     root_task_ref: str
-    created_at: str
-    updated_at: str
-    archived_at: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> PlanRecord:

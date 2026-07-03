@@ -2,7 +2,10 @@ import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, cast
+
+from gobby.utils.datetime import normalize_datetime_model
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
@@ -31,6 +34,7 @@ def visibility_predicate(visibility: Visibility, *, column: str = "deleted_at") 
     raise ValueError(f"Invalid visibility: {visibility!r}")
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class MemoryCrossRef:
     """A link between two related memories with a similarity score."""
@@ -38,7 +42,7 @@ class MemoryCrossRef:
     source_id: str
     target_id: str
     similarity: float
-    created_at: str
+    created_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "MemoryCrossRef":
@@ -58,22 +62,33 @@ class MemoryCrossRef:
         }
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "last_accessed_at",
+        "deleted_at",
+        "last_dreamed_at",
+    ),
+)
 @dataclass
 class Memory:
     id: str
     memory_type: Literal["fact", "preference", "pattern", "context"]
     content: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     project_id: str | None = None
     source_type: Literal["user", "agent"] = "agent"
     source_session_id: str | None = None
     access_count: int = 0
-    last_accessed_at: str | None = None
+    last_accessed_at: datetime | None = None
     tags: list[str] | None = None
-    deleted_at: str | None = None  # NULL = visible; non-NULL = dream-hidden (recoverable)
+    deleted_at: datetime | None = None  # NULL = visible; non-NULL = dream-hidden (recoverable)
     dream_action: Literal["review", "delete"] | None = None  # why dream hid the row
-    last_dreamed_at: str | None = None  # cooldown cursor for the nightly active sweep
+    last_dreamed_at: datetime | None = None  # cooldown cursor for the nightly active sweep
     similarity: float | None = None  # Set at search time, not persisted
     search_via: str | None = None  # Set at search time, not persisted
     ranking_score: float | None = None  # Hybrid retrieval rank, not persisted

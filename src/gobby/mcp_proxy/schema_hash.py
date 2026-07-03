@@ -8,10 +8,11 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,13 @@ def compute_schema_hash(input_schema: dict[str, Any] | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+@normalize_datetime_model(
+    required=(
+        "last_verified_at",
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class SchemaHashRecord:
     """A stored schema hash record."""
@@ -46,9 +54,9 @@ class SchemaHashRecord:
     tool_name: str
     project_id: str
     schema_hash: str
-    last_verified_at: str
-    created_at: str
-    updated_at: str
+    last_verified_at: datetime
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Any) -> "SchemaHashRecord":

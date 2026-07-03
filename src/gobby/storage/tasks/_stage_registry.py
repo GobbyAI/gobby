@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -13,13 +14,14 @@ from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
 )
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 ReviewPolicy = Literal["none", "required", "optional"]
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
 DispatchType = Literal["agent", "pipeline"]
 
 
+@normalize_datetime_model(optional=("deleted_at",))
 @dataclass(frozen=True, slots=True)
 class StageRegistryEntry:
     name: str
@@ -39,7 +41,7 @@ class StageRegistryEntry:
     default_max_work_attempts: int
     default_max_review_rounds: int
     bundled_hash: str | None = None
-    deleted_at: str | None = None
+    deleted_at: datetime | None = None
     is_edited: bool = False
 
 

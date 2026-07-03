@@ -16,6 +16,7 @@ from gobby.sync.linear_support import (
     linear_issue_title,
     task_ref,
 )
+from gobby.utils.datetime import datetime_to_iso
 from gobby.utils.project_init import update_project_json_fields
 
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ class LinearProjectOpsMixin:
     def _get_project_synced_at(self) -> str | None:
         """Get the project's linear_synced_at cursor."""
         project = self.project_manager.get(self.project_id)
-        return project.linear_synced_at if project else None
+        return datetime_to_iso(project.linear_synced_at) if project else None
 
     def _get_linear_project_id(self) -> str | None:
         """Get the Linear project binding, preferring the service override."""

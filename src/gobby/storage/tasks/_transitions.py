@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
@@ -39,24 +39,11 @@ def _task_ref(task: Task, fallback: str) -> str:
     return f"#{task.seq_num}" if task.seq_num else fallback
 
 
-def _parse_time(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
-
-
 def _has_active_dispatch_mutex(db: HubDatabase, task_id: str) -> bool:
     mutex = TaskDispatchMutexManager(db).get_mutex(task_id)
     if mutex is None:
         return False
-    lease_until = _parse_time(mutex.lease_until)
-    return lease_until is None or lease_until >= datetime.now(UTC)
+    return mutex.lease_until is None or mutex.lease_until >= utc_now()
 
 
 def _has_active_agent_run(db: HubDatabase, task_id: str) -> bool:

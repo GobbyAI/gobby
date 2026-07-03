@@ -154,8 +154,8 @@ def test_bookkeeping_partial_update_preserves_telemetry(cron_storage: CronJobSto
     )
 
     assert updated is not None
-    assert updated.next_run_at == "2026-05-01T00:00:00+00:00"
-    assert updated.last_run_at == "2026-04-30T00:00:00+00:00"
+    assert updated.next_run_at == datetime(2026, 5, 1, tzinfo=UTC)
+    assert updated.last_run_at == datetime(2026, 4, 30, tzinfo=UTC)
     assert updated.last_status == "completed"
     assert updated.consecutive_failures == 2
 
@@ -174,8 +174,8 @@ def test_bookkeeping_telemetry_update_preserves_next_run_at(
     )
 
     assert updated is not None
-    assert updated.next_run_at == "2026-05-01T00:00:00+00:00"
-    assert updated.last_run_at == "2026-04-30T00:00:00+00:00"
+    assert updated.next_run_at == datetime(2026, 5, 1, tzinfo=UTC)
+    assert updated.last_run_at == datetime(2026, 4, 30, tzinfo=UTC)
     assert updated.last_status == "completed"
     assert updated.consecutive_failures == 0
 
@@ -218,13 +218,13 @@ def test_reconcile_identity_updates_system_name_and_timestamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = _job(cron_storage, is_system=True)
-    monkeypatch.setattr(cron_module, "_utc_now_iso", lambda: "2030-01-01T00:00:00+00:00")
+    monkeypatch.setattr(cron_module, "utc_now", lambda: datetime(2030, 1, 1, tzinfo=UTC))
 
     updated = cron_storage.reconcile_system_job_identity(job.id, name="renamed")
 
     assert updated is not None
     assert updated.name == "renamed"
-    assert updated.updated_at == "2030-01-01T00:00:00+00:00"
+    assert updated.updated_at == datetime(2030, 1, 1, tzinfo=UTC)
 
 
 def test_reconcile_identity_allows_enabled_true_when_next_run_already_set(

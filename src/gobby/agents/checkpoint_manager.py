@@ -14,10 +14,10 @@ import logging
 import re
 import subprocess
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class CheckpointManager:
                 parent_sha=parent_sha,
                 files_changed=files_changed,
                 message=message,
-                created_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                created_at=utc_now(),
             )
             self._storage.create(checkpoint)
 

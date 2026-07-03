@@ -153,7 +153,7 @@ class AdapterLifecycleOperations:
     ) -> ChannelConfig:
         """Create a new channel in DB and initialize its adapter."""
         manager = self._manager
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
         webhook_secret: str | None = None
         config_json = dict(config)
 
@@ -225,7 +225,7 @@ class AdapterLifecycleOperations:
             logger.debug("gobby_chat adapter not registered, skipping auto-create")
             return
 
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
         channel = ChannelConfig(
             id=str(uuid.uuid4()),
             channel_type="gobby_chat",
@@ -253,7 +253,7 @@ class AdapterLifecycleOperations:
     async def update_channel(self, channel: ChannelConfig) -> ChannelConfig:
         """Update channel config and reconcile runtime adapter state."""
         manager = self._manager
-        channel.updated_at = datetime.now(UTC).isoformat()
+        channel.updated_at = datetime.now(UTC)
         updated = await asyncio.to_thread(manager._store.update_channel, channel)
 
         current_names = [

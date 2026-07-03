@@ -40,6 +40,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
+from gobby.utils.datetime import parse_stored_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -562,16 +563,11 @@ def _is_orphan_no_run_dispatch_mutex(mutex: Any, *, now: datetime) -> bool:
     return now - updated_at >= timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS)
 
 
-def _parse_mutex_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
+def _parse_mutex_timestamp(value: datetime | str | None) -> datetime | None:
     try:
-        parsed = datetime.fromisoformat(value)
+        return parse_stored_datetime(value)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def _clear_dispatch_mutexes(db: HubDatabase, task_ids: list[str]) -> int:

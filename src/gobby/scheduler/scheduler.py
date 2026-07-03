@@ -169,10 +169,7 @@ class CronScheduler:
                 if job.consecutive_failures > 0:
                     backoff = self._get_backoff_seconds(job.consecutive_failures)
                     if job.last_run_at:
-                        last = datetime.fromisoformat(job.last_run_at)
-                        if last.tzinfo is None:
-                            last = last.replace(tzinfo=UTC)
-                        elapsed = (datetime.now(UTC) - last).total_seconds()
+                        elapsed = (datetime.now(UTC) - job.last_run_at).total_seconds()
                         if elapsed < backoff:
                             logger.debug(
                                 f"Skipping job {job.id} ({job.name}): "

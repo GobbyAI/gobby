@@ -6,7 +6,10 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
+
+from gobby.utils.datetime import normalize_datetime_model
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +17,17 @@ CronRunStatus = Literal["pending", "running", "completed", "failed", "skipped", 
 CronRunChildType = Literal["agent_run", "pipeline_execution"]
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "run_at",
+        "next_run_at",
+        "last_run_at",
+    ),
+)
 @dataclass
 class CronJob:
     """A scheduled recurring job."""
@@ -24,17 +38,17 @@ class CronJob:
     schedule_type: Literal["cron", "interval", "once"]
     action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"]
     action_config: dict[str, Any]
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     description: str | None = None
     cron_expr: str | None = None
     interval_seconds: int | None = None
-    run_at: str | None = None
+    run_at: datetime | None = None
     timezone: str = "UTC"
     enabled: bool = True
     is_system: bool = False
-    next_run_at: str | None = None
-    last_run_at: str | None = None
+    next_run_at: datetime | None = None
+    last_run_at: datetime | None = None
     last_status: str | None = None
     consecutive_failures: int = 0
 
@@ -135,16 +149,26 @@ class CronRunChild:
         }
 
 
+@normalize_datetime_model(
+    required=(
+        "triggered_at",
+        "created_at",
+    ),
+    optional=(
+        "started_at",
+        "completed_at",
+    ),
+)
 @dataclass
 class CronRun:
     """A single execution of a cron job."""
 
     id: str
     cron_job_id: str
-    triggered_at: str
-    created_at: str
-    started_at: str | None = None
-    completed_at: str | None = None
+    triggered_at: datetime
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     status: CronRunStatus = "pending"
     output: str | None = None
     error: str | None = None

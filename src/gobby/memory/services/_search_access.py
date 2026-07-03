@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -24,23 +24,17 @@ def update_access_stats(
     if not memories:
         return
 
-    now = datetime.now(UTC)
+    now = utc_now()
     debounce_seconds = getattr(config, "access_debounce_seconds", 60)
 
     for memory in memories:
         if memory.last_accessed_at:
-            try:
-                last_access = datetime.fromisoformat(memory.last_accessed_at)
-                if last_access.tzinfo is None:
-                    last_access = last_access.replace(tzinfo=UTC)
-                seconds_since = (now - last_access).total_seconds()
-                if seconds_since < debounce_seconds:
-                    continue
-            except (ValueError, TypeError):
-                pass
+            seconds_since = (now - memory.last_accessed_at).total_seconds()
+            if seconds_since < debounce_seconds:
+                continue
 
         try:
-            storage.update_access_stats(memory.id, now.isoformat())
+            storage.update_access_stats(memory.id, now)
         except Exception as exc:
             if "malformed" in str(exc):
                 logger.warning(

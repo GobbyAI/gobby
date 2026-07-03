@@ -8,6 +8,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
+from datetime import datetime
 from typing import Any, ParamSpec, TypeVar, cast
 
 import psycopg
@@ -76,6 +77,7 @@ from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 from gobby.storage.tasks._updates import update_task
+from gobby.utils.datetime import parse_stored_datetime
 
 logger = logging.getLogger(__name__)
 _HEARTBEAT_LOCK = asyncio.Lock()
@@ -683,7 +685,7 @@ def escalate_task(*, db: HubDatabase, task_id: str, reason: str) -> bool:
 
 def _candidate_stage_snapshot(
     candidate: object | None,
-) -> tuple[str | None, RuntimeStageSnapshotState | None, str | None]:
+) -> tuple[str | None, RuntimeStageSnapshotState | None, datetime | None]:
     stage = _candidate_current_stage(candidate)
     return _stage_name(stage), _stage_snapshot_state(stage), _stage_updated_at(stage)
 
@@ -714,9 +716,11 @@ def _stage_snapshot_state(stage: object | None) -> RuntimeStageSnapshotState | N
     return None
 
 
-def _stage_updated_at(stage: object | None) -> str | None:
+def _stage_updated_at(stage: object | None) -> datetime | None:
     value = _field(stage, "updated_at")
-    return value if isinstance(value, str) else None
+    if isinstance(value, datetime | str):
+        return parse_stored_datetime(value)
+    return None
 
 
 __all__ = [

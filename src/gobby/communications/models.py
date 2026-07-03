@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
+
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 
 def _required(data: Mapping[str, Any], key: str) -> Any:
@@ -13,10 +15,6 @@ def _required(data: Mapping[str, Any], key: str) -> Any:
     if value is None:
         raise ValueError(f"Required communication row field {key!r} is null")
     return value
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 @dataclass
@@ -63,6 +61,12 @@ class ChannelCapabilities:
         }
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class ChannelConfig:
     """Configuration for a communication channel."""
@@ -72,8 +76,8 @@ class ChannelConfig:
     name: str
     enabled: bool
     config_json: dict[str, Any]
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     webhook_secret: str | None = None
 
     @classmethod
@@ -93,11 +97,12 @@ class ChannelConfig:
             enabled=bool(data.get("enabled", False)),
             config_json=config_json or {},
             webhook_secret=data.get("webhook_secret"),
-            created_at=data.get("created_at", _utc_now_iso()),
-            updated_at=data.get("updated_at", _utc_now_iso()),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
         )
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class CommsMessage:
     """A message sent or received via a communication channel.
@@ -120,7 +125,7 @@ class CommsMessage:
     channel_id: str
     direction: Literal["inbound", "outbound"]
     content: str
-    created_at: str
+    created_at: datetime
     identity_id: str | None = None
     content_type: str = "text"
     platform_message_id: str | None = None
@@ -153,10 +158,16 @@ class CommsMessage:
             status=data.get("status", "sent"),
             error=data.get("error"),
             metadata_json=metadata_json or {},
-            created_at=data.get("created_at", _utc_now_iso()),
+            created_at=data.get("created_at", utc_now()),
         )
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class CommsIdentity:
     """An identity (user) on a communication channel."""
@@ -164,8 +175,8 @@ class CommsIdentity:
     id: str
     channel_id: str
     external_user_id: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     external_username: str | None = None
     session_id: str | None = None
     project_id: str | None = None
@@ -189,11 +200,12 @@ class CommsIdentity:
             session_id=data.get("session_id"),
             project_id=data.get("project_id"),
             metadata_json=metadata_json or {},
-            created_at=data.get("created_at", _utc_now_iso()),
-            updated_at=data.get("updated_at", _utc_now_iso()),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
         )
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class CommsAttachment:
     """A file attachment on a communication message."""
@@ -205,7 +217,7 @@ class CommsAttachment:
     size_bytes: int
     local_path: str | None = None
     platform_url: str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: datetime = field(default_factory=utc_now)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CommsAttachment:
@@ -219,10 +231,16 @@ class CommsAttachment:
             size_bytes=int(data.get("size_bytes", 0)),
             local_path=data.get("local_path"),
             platform_url=data.get("platform_url"),
-            created_at=data.get("created_at", _utc_now_iso()),
+            created_at=data.get("created_at", utc_now()),
         )
 
 
+@normalize_datetime_model(
+    optional=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class CommsRoutingRule:
     """A rule for routing inbound communication events."""
@@ -230,8 +248,8 @@ class CommsRoutingRule:
     id: str
     name: str
     channel_id: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     event_pattern: str = "*"
     project_id: str | None = None
     session_id: str | None = None
@@ -259,6 +277,6 @@ class CommsRoutingRule:
             priority=int(data.get("priority", 0)),
             enabled=bool(data.get("enabled", True)),
             config_json=config_json or {},
-            created_at=data.get("created_at", _utc_now_iso()),
-            updated_at=data.get("updated_at", _utc_now_iso()),
+            created_at=data.get("created_at", utc_now()),
+            updated_at=data.get("updated_at", utc_now()),
         )

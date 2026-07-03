@@ -4,13 +4,14 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from gobby.config.bootstrap_io import default_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import parse_uuid_reference
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,16 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
     return project
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "linear_synced_at",
+        "deleted_at",
+    ),
+)
 @dataclass
 class Project:
     """Project data model."""
@@ -63,13 +74,13 @@ class Project:
     name: str
     repo_path: str | None
     github_url: str | None
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     github_repo: str | None = None  # GitHub repo in "owner/repo" format
     linear_team_id: str | None = None  # Linear team ID for project sync
     linear_project_id: str | None = None  # Linear project ID for scoped sync
-    linear_synced_at: str | None = None  # Last bidirectional Linear sync timestamp
-    deleted_at: str | None = None
+    linear_synced_at: datetime | None = None  # Last bidirectional Linear sync timestamp
+    deleted_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Project":
@@ -134,7 +145,6 @@ class LocalProjectManager:
         """
         project_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         self.db.execute(
             """
@@ -149,8 +159,8 @@ class LocalProjectManager:
             name=name,
             repo_path=repo_path,
             github_url=github_url,
-            created_at=now_model,
-            updated_at=now_model,
+            created_at=now,
+            updated_at=now,
         )
 
     def get(self, project_id: str) -> Project | None:

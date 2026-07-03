@@ -9,7 +9,12 @@ from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase, Transaction
-from gobby.utils.datetime import parse_stored_datetime, utc_now
+from gobby.utils.datetime import (
+    normalize_datetime_model,
+    parse_stored_datetime,
+    require_stored_datetime,
+    utc_now,
+)
 
 CHAT_ATTACHMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_attachments (
@@ -65,6 +70,13 @@ END;
 """
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("bound_at",),
+)
 @dataclass(frozen=True)
 class ChatAttachmentRecord:
     id: str
@@ -77,9 +89,9 @@ class ChatAttachmentRecord:
     mime_type: str
     size_bytes: int
     local_path: str
-    created_at: str
-    updated_at: str
-    bound_at: str | None
+    created_at: datetime
+    updated_at: datetime
+    bound_at: datetime | None
 
     @property
     def is_bound(self) -> bool:
@@ -106,6 +118,13 @@ def _row_int(row: Mapping[str, object], key: str) -> int:
     raise TypeError(f"{key} must be int-compatible, got {type(value).__name__}")
 
 
+def _row_datetime(row: Mapping[str, object], key: str) -> datetime | str | None:
+    value = row.get(key)
+    if value is None or isinstance(value, datetime | str):
+        return value
+    raise TypeError(f"{key} must be datetime-compatible, got {type(value).__name__}")
+
+
 def _row_to_record(row: Mapping[str, object]) -> ChatAttachmentRecord:
     return ChatAttachmentRecord(
         id=str(row["id"]),
@@ -118,9 +137,9 @@ def _row_to_record(row: Mapping[str, object]) -> ChatAttachmentRecord:
         mime_type=str(row["mime_type"]),
         size_bytes=_row_int(row, "size_bytes"),
         local_path=str(row["local_path"]),
-        created_at=str(row["created_at"]),
-        updated_at=str(row["updated_at"]),
-        bound_at=_optional_row_str(row, "bound_at"),
+        created_at=require_stored_datetime(_row_datetime(row, "created_at"), "created_at"),
+        updated_at=require_stored_datetime(_row_datetime(row, "updated_at"), "updated_at"),
+        bound_at=parse_stored_datetime(_row_datetime(row, "bound_at")),
     )
 
 

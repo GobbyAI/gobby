@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
+
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 ContextUsageSource = Literal[
     "claude",
@@ -18,6 +20,7 @@ ContextUsageSource = Literal[
 ContextUsageConfidence = Literal["reported", "estimated", "unknown"]
 
 
+@normalize_datetime_model(required=("timestamp",))
 @dataclass(frozen=True)
 class ContextUsageSnapshot:
     """Normalized context usage for current pressure decisions."""
@@ -28,7 +31,7 @@ class ContextUsageSnapshot:
     context_used_tokens: int | None
     context_usage_ratio: float | None
     confidence: ContextUsageConfidence
-    timestamp: str
+    timestamp: datetime
     raw_prompt_footprint: int | None = None
     uncached_prompt_tokens: int | None = None
     cache_read_tokens: int | None = None
@@ -63,7 +66,7 @@ class ContextUsageSnapshot:
             context_used_tokens=None,
             context_usage_ratio=None,
             confidence="unknown",
-            timestamp=_now_iso(),
+            timestamp=utc_now(),
         )
 
     @classmethod
@@ -97,7 +100,7 @@ class ContextUsageSnapshot:
             context_used_tokens=context_used,
             context_usage_ratio=ratio,
             confidence=confidence if context_used is not None else "unknown",
-            timestamp=_now_iso(),
+            timestamp=utc_now(),
             raw_prompt_footprint=context_used,
             uncached_prompt_tokens=uncached,
             cache_read_tokens=cache_read,
@@ -117,11 +120,6 @@ class ContextUsageSnapshot:
         transcripts expose reliable per-turn usage. For v1, record window-only metadata.
         """
         return cls.window_only(source="agy", model=model, context_window=context_window)
-
-
-def _now_iso() -> str:
-    """Get current timestamp in ISO format."""
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _coerce_nonnegative_int(value: Any) -> int | None:

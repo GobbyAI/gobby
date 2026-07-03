@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import CommsIdentity
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.config.communications import CommunicationsConfig
@@ -97,15 +98,16 @@ class IdentityManager:
             if needs_update:
                 self._store.update_identity(identity)
         else:
-            # Store generates the id and fills missing timestamps on insert.
+            # Store generates the id on insert.
+            now = utc_now()
             identity = CommsIdentity(
                 id="",
                 channel_id=channel_id,
                 external_user_id=external_user_id,
                 external_username=external_username,
                 session_id=session_id,
-                created_at="",
-                updated_at="",
+                created_at=now,
+                updated_at=now,
                 metadata_json=metadata or {},
             )
             identity = self._store.create_identity(identity)

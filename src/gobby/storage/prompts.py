@@ -11,12 +11,12 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 # Deterministic id namespace: same (name, scope, project) -> same id, backing
 # the UNIQUE(name, scope, project_id) constraint with id-level stability.
@@ -38,6 +38,7 @@ PromptScope = Literal["bundled", "global", "project"]
 ChangeEventType = Literal["create", "update", "delete"]
 
 
+@normalize_datetime_model(required=("created_at", "updated_at"))
 @dataclass
 class PromptRecord:
     """A prompt record stored in the database.
@@ -67,8 +68,8 @@ class PromptRecord:
     source_path: str | None = None
     project_id: str | None = None
     enabled: bool = True
-    created_at: str = ""
-    updated_at: str = ""
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "PromptRecord":
@@ -139,6 +140,7 @@ class PromptRecord:
         )
 
 
+@normalize_datetime_model(required=("timestamp",))
 @dataclass
 class PromptChangeEvent:
     """A change event fired when a prompt is created, updated, or deleted."""
@@ -146,7 +148,7 @@ class PromptChangeEvent:
     event_type: ChangeEventType
     prompt_id: str
     prompt_name: str
-    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    timestamp: datetime = field(default_factory=utc_now)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert event to dictionary representation."""

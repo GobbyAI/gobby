@@ -17,6 +17,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.datetime import datetime_to_iso
 
 
 def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
@@ -109,7 +110,7 @@ def list_jobs(
         elif job.schedule_type == "interval":
             schedule = f"every {job.interval_seconds}s" if job.interval_seconds else "?"
         else:
-            schedule = job.run_at or "?"
+            schedule = datetime_to_iso(job.run_at) or "?"
         last = job.last_status or "never"
         click.echo(f"  {status_icon} {job.id}  {job.name:<30} {schedule:<20} last: {last}")
 
@@ -258,11 +259,10 @@ def list_runs(job_id: str, limit: int, json_format: bool) -> None:
         )
         duration = ""
         if run.started_at and run.completed_at:
-            start = datetime.fromisoformat(run.started_at)
-            end = datetime.fromisoformat(run.completed_at)
-            secs = (end - start).total_seconds()
+            secs = (run.completed_at - run.started_at).total_seconds()
             duration = f" ({secs:.1f}s)"
-        click.echo(f"  {status_icon} {run.id}  {run.status:<12} {run.triggered_at}{duration}")
+        triggered_at = datetime_to_iso(run.triggered_at) or "?"
+        click.echo(f"  {status_icon} {run.id}  {run.status:<12} {triggered_at}{duration}")
 
 
 @cron.command("remove")

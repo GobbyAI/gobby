@@ -6,10 +6,12 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import normalize_datetime_model, require_stored_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,12 @@ class UnmodeledObservationInput:
     source_line: int | None = None
 
 
+@normalize_datetime_model(
+    required=(
+        "first_seen_at",
+        "last_seen_at",
+    )
+)
 @dataclass(frozen=True)
 class UnmodeledObservationRow:
     source: str
@@ -54,8 +62,8 @@ class UnmodeledObservationRow:
     server_name: str
     tool_type: str
     count: int
-    first_seen_at: str
-    last_seen_at: str
+    first_seen_at: datetime
+    last_seen_at: datetime
     example_session_id: str | None
     sample_keys: list[str]
     sample_hash: str
@@ -440,8 +448,8 @@ def _row_from_db(row: Any) -> UnmodeledObservationRow:
         server_name=row["server_name"] or "",
         tool_type=row["tool_type"] or "",
         count=int(row["count"]),
-        first_seen_at=str(row["first_seen_at"]),
-        last_seen_at=str(row["last_seen_at"]),
+        first_seen_at=require_stored_datetime(row["first_seen_at"], "first_seen_at"),
+        last_seen_at=require_stored_datetime(row["last_seen_at"], "last_seen_at"),
         example_session_id=row["example_session_id"],
         sample_keys=[str(key) for key in decoded],
         sample_hash=row["sample_hash"],

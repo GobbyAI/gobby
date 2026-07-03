@@ -8,6 +8,7 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +17,7 @@ import yaml
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.paths import get_install_dir
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import normalize_datetime_model
 from gobby.utils.sql import sql_placeholders
 
 BuildProfileSource = Literal["installed", "project"]
@@ -29,6 +31,13 @@ class BuildProfileError(ValueError):
     """Raised when a build profile cannot be resolved or mutated."""
 
 
+@normalize_datetime_model(
+    optional=(
+        "deleted_at",
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass(frozen=True, slots=True)
 class BuildProfile:
     id: str
@@ -46,9 +55,9 @@ class BuildProfile:
     project_id: str | None = None
     tags: list[str] | None = None
     bundled_hash: str | None = None
-    deleted_at: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     state: BuildProfileState = "custom"
 
 

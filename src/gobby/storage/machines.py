@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import parse_stored_datetime, utc_now
+from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
 from gobby.utils.machine_id import is_legacy_missing_machine_id
 
 _PLACEHOLDER_MACHINE_IDS = {
@@ -37,6 +37,12 @@ def _clean_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
+@normalize_datetime_model(
+    required=(
+        "first_seen",
+        "last_seen",
+    )
+)
 @dataclass(frozen=True)
 class Machine:
     """Machine registry row."""
@@ -47,8 +53,8 @@ class Machine:
     label: str | None
     tailscale_name: str | None
     owner_user_id: str | None
-    first_seen: str
-    last_seen: str
+    first_seen: datetime
+    last_seen: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> Machine:

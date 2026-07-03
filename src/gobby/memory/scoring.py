@@ -5,9 +5,11 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime
 
+from gobby.utils.datetime import parse_stored_datetime
+
 
 def temporal_decay(
-    updated_at: str,
+    updated_at: datetime | str,
     half_life_days: float,
     now: datetime | None = None,
 ) -> float:
@@ -16,7 +18,7 @@ def temporal_decay(
     Uses a half-life model: ``factor = 0.5 ^ (age_days / half_life_days)``.
 
     Args:
-        updated_at: ISO-format timestamp of last memory update.
+        updated_at: Timestamp of last memory update.
         half_life_days: Number of days after which the factor reaches 0.5.
             Set to 0 (or negative) to disable decay (returns 1.0).
         now: Reference time for age calculation. Defaults to ``datetime.now(UTC)``.
@@ -28,9 +30,9 @@ def temporal_decay(
     if half_life_days <= 0:
         return 1.0
     try:
-        updated = datetime.fromisoformat(updated_at)
-        if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=UTC)
+        updated = parse_stored_datetime(updated_at)
+        if updated is None:
+            return 1.0
         if now is None:
             now = datetime.now(UTC)
         age_days = max((now - updated).total_seconds() / 86400.0, 0.0)

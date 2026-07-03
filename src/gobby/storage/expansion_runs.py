@@ -7,10 +7,11 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import datetime_to_required_iso, normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,16 @@ ExpansionRunStatus = Literal[
 ExpansionInputSource = Literal["task", "plan"]
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "started_at",
+        "completed_at",
+    ),
+)
 @dataclass
 class ExpansionRun:
     """Expansion run data model."""
@@ -36,8 +47,8 @@ class ExpansionRun:
     triggering_session_id: str | None
     status: ExpansionRunStatus
     input_source: ExpansionInputSource
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     plan_file: str | None = None
     provider: str | None = None
     model: str | None = None
@@ -49,8 +60,8 @@ class ExpansionRun:
     error: str | None = None
     logs: list[dict[str, Any]] | None = None
     checkpoints: dict[str, Any] | None = None
-    started_at: str | None = None
-    completed_at: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> ExpansionRun:
@@ -340,7 +351,7 @@ class LocalExpansionRunManager:
         """Append a structured log entry to a run."""
         now = utc_now()
         entry = {
-            "timestamp": now,
+            "timestamp": datetime_to_required_iso(now),
             "level": level,
             "message": message,
             "extra": extra or {},

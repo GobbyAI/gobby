@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gobby.utils.datetime import datetime_to_required_iso
+
 logger = logging.getLogger(__name__)
 
 
@@ -211,7 +213,7 @@ def initialize_project(
             cwd,
             existing.id,
             existing.name,
-            existing.created_at,
+            datetime_to_required_iso(existing.created_at),
             verification,
             linear_team_id=_optional_str(existing.linear_team_id),
             linear_project_id=_optional_str(existing.linear_project_id),
@@ -220,7 +222,7 @@ def initialize_project(
             project_id=existing.id,
             project_name=existing.name,
             project_path=str(cwd),
-            created_at=existing.created_at,
+            created_at=datetime_to_required_iso(existing.created_at),
             already_existed=True,
             verification=verification if verification.to_dict() else None,
         )
@@ -234,7 +236,8 @@ def initialize_project(
     )
 
     # Write local .gobby/project.json
-    _write_project_json(cwd, project.id, project.name, project.created_at, verification)
+    project_created_at = datetime_to_required_iso(project.created_at)
+    _write_project_json(cwd, project.id, project.name, project_created_at, verification)
 
     logger.info(f"Initialized project '{name}' in {cwd}")
 
@@ -242,7 +245,7 @@ def initialize_project(
         project_id=project.id,
         project_name=project.name,
         project_path=str(cwd),
-        created_at=project.created_at,
+        created_at=project_created_at,
         already_existed=False,
         verification=verification if verification.to_dict() else None,
     )

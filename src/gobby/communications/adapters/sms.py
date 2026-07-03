@@ -219,7 +219,7 @@ class SMSAdapter(BaseChannelAdapter):
                 channel_id="",
                 direction="inbound",
                 content=body,
-                created_at=datetime.now(UTC).isoformat(),
+                created_at=datetime.now(UTC),
                 identity_id=from_number,
                 platform_message_id=message_sid,
                 content_type="text",

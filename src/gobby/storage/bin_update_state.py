@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import normalize_datetime_model
 
 BinUpdateStatus = Literal[
     "updated",
@@ -82,6 +84,7 @@ def _row_to_record(row: Mapping[str, Any]) -> BinUpdateRecord:
     )
 
 
+@normalize_datetime_model(required=("checked_at",), optional=("installed_at",))
 @dataclass(frozen=True)
 class BinUpdateRecord:
     """Persisted update state for one managed native binary."""
@@ -94,8 +97,8 @@ class BinUpdateRecord:
     target: str | None
     last_status: BinUpdateStatus
     last_error: str | None
-    checked_at: str
-    installed_at: str | None
+    checked_at: datetime
+    installed_at: datetime | None
     source_url: str | None
     is_dev: bool
     floor_drift: bool

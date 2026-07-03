@@ -1,6 +1,6 @@
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import MemoryCrossRef
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import utc_now
 
 
 class MemoryCrossRefMixin(MemoryStoreBase):
@@ -29,7 +29,6 @@ class MemoryCrossRefMixin(MemoryStoreBase):
             raise ValueError("similarity must be between 0.0 and 1.0")
 
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -46,7 +45,7 @@ class MemoryCrossRefMixin(MemoryStoreBase):
             source_id=source_id,
             target_id=target_id,
             similarity=similarity,
-            created_at=now_model,
+            created_at=now,
         )
 
     def get_crossrefs(

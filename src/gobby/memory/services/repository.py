@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.storage.memories import LocalMemoryManager, Memory, Visibility
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -46,21 +47,17 @@ class MemoryRepository:
                 Literal["fact", "preference", "pattern", "context"], record.memory_type
             ),
             content=record.content,
-            created_at=record.created_at.isoformat() if record.created_at else "",
-            updated_at=record.updated_at.isoformat() if record.updated_at else "",
+            created_at=record.created_at or utc_now(),
+            updated_at=record.updated_at or utc_now(),
             project_id=record.project_id,
             source_type=cast(Literal["user", "agent"], record.source_type or "agent"),
             source_session_id=record.source_session_id,
             access_count=record.access_count,
-            last_accessed_at=(
-                record.last_accessed_at.isoformat() if record.last_accessed_at else None
-            ),
+            last_accessed_at=record.last_accessed_at,
             tags=record.tags or [],
-            deleted_at=record.deleted_at.isoformat() if record.deleted_at else None,
+            deleted_at=record.deleted_at,
             dream_action=cast(Literal["review", "delete"] | None, record.dream_action),
-            last_dreamed_at=(
-                record.last_dreamed_at.isoformat() if record.last_dreamed_at else None
-            ),
+            last_dreamed_at=record.last_dreamed_at,
         )
 
     def count_memories(

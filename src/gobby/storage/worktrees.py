@@ -6,12 +6,12 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,16 @@ class WorktreeStatus(str, Enum):
     ABANDONED = "abandoned"
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "merged_at",
+        "cleanup_after",
+    ),
+)
 @dataclass
 class Worktree:
     """Worktree data model."""
@@ -37,11 +47,11 @@ class Worktree:
     base_branch: str
     agent_session_id: str | None
     status: str
-    created_at: str
-    updated_at: str
-    merged_at: str | None
+    created_at: datetime
+    updated_at: datetime
+    merged_at: datetime | None
     merge_state: str | None = None  # "pending", "resolved", or None
-    cleanup_after: str | None = None  # ISO timestamp for auto-cleanup after merge
+    cleanup_after: datetime | None = None  # ISO timestamp for auto-cleanup after merge
     workspace_role: str = "task"
 
     @classmethod
@@ -127,7 +137,6 @@ class LocalWorktreeManager:
         """
         worktree_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         self.db.execute(
             """
@@ -162,8 +171,8 @@ class LocalWorktreeManager:
             base_branch=base_branch,
             agent_session_id=agent_session_id,
             status=WorktreeStatus.ACTIVE.value,
-            created_at=now_model,
-            updated_at=now_model,
+            created_at=now,
+            updated_at=now,
             merged_at=None,
             workspace_role=workspace_role,
         )

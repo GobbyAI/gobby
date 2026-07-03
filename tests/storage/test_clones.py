@@ -1,6 +1,7 @@
 """Tests for local clone storage manager."""
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +9,29 @@ import pytest
 from gobby.storage.clones import Clone, CloneStatus, LocalCloneManager
 
 pytestmark = pytest.mark.unit
+
+CLONE_CREATED_AT = "2026-01-22T00:00:00+00:00"
+CLONE_UPDATED_AT = "2026-01-22T00:00:00+00:00"
+
+
+def _clone_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": "clone-123",
+        "project_id": "proj-abc",
+        "branch_name": "feature/test",
+        "clone_path": "/tmp/clones/test",
+        "base_branch": "main",
+        "task_id": None,
+        "agent_session_id": None,
+        "status": "active",
+        "remote_url": None,
+        "last_sync_at": None,
+        "cleanup_after": None,
+        "created_at": CLONE_CREATED_AT,
+        "updated_at": CLONE_UPDATED_AT,
+    }
+    row.update(overrides)
+    return row
 
 
 class TestCloneStatus:
@@ -58,8 +82,8 @@ class TestClone:
         assert clone.agent_session_id == "sess-xyz"
         assert clone.status == "active"
         assert clone.remote_url == "https://github.com/user/repo.git"
-        assert clone.last_sync_at == "2026-01-22T12:00:00+00:00"
-        assert clone.cleanup_after == "2026-01-23T12:00:00+00:00"
+        assert clone.last_sync_at == datetime(2026, 1, 22, 12, tzinfo=UTC)
+        assert clone.cleanup_after == datetime(2026, 1, 23, 12, tzinfo=UTC)
 
     def test_from_row_with_nulls(self) -> None:
         """from_row handles NULL values correctly."""
@@ -257,7 +281,7 @@ class TestLocalCloneManagerCreate:
         assert clone.task_id == "gt-task123"
         assert clone.agent_session_id == "sess-xyz"
         assert clone.remote_url == "https://github.com/user/repo.git"
-        assert clone.cleanup_after == "2026-01-23T12:00:00+00:00"
+        assert clone.cleanup_after == datetime(2026, 1, 23, 12, tzinfo=UTC)
 
     def test_create_generates_unique_id(self, manager, mock_db) -> None:
         """Create generates unique clone ID."""
@@ -450,6 +474,8 @@ class TestLocalCloneManagerUpdate:
 
     def test_update_status(self, manager, mock_db) -> None:
         """Update clone status."""
+        mock_db.fetchone.return_value = _clone_row(status="stale")
+
         manager.update("clone-123", status="stale")
 
         mock_db.execute.assert_called_once()
@@ -460,6 +486,8 @@ class TestLocalCloneManagerUpdate:
 
     def test_update_agent_session(self, manager, mock_db) -> None:
         """Update clone agent session."""
+        mock_db.fetchone.return_value = _clone_row(agent_session_id="sess-new")
+
         manager.update("clone-123", agent_session_id="sess-new")
 
         mock_db.execute.assert_called_once()
@@ -469,6 +497,8 @@ class TestLocalCloneManagerUpdate:
 
     def test_update_last_sync(self, manager, mock_db) -> None:
         """Update clone last_sync_at."""
+        mock_db.fetchone.return_value = _clone_row(last_sync_at="2026-01-22T12:00:00+00:00")
+
         manager.update("clone-123", last_sync_at="2026-01-22T12:00:00+00:00")
 
         mock_db.execute.assert_called_once()
@@ -521,6 +551,8 @@ class TestLocalCloneManagerStatusMethods:
 
     def test_mark_syncing(self, manager, mock_db) -> None:
         """mark_syncing updates status to syncing."""
+        mock_db.fetchone.return_value = _clone_row(status="syncing")
+
         manager.mark_syncing("clone-123")
 
         mock_db.execute.assert_called_once()
@@ -530,6 +562,8 @@ class TestLocalCloneManagerStatusMethods:
 
     def test_mark_stale(self, manager, mock_db) -> None:
         """mark_stale updates status to stale."""
+        mock_db.fetchone.return_value = _clone_row(status="stale")
+
         manager.mark_stale("clone-123")
 
         mock_db.execute.assert_called_once()
@@ -539,6 +573,8 @@ class TestLocalCloneManagerStatusMethods:
 
     def test_mark_cleanup(self, manager, mock_db) -> None:
         """mark_cleanup updates status to cleanup."""
+        mock_db.fetchone.return_value = _clone_row(status="cleanup")
+
         manager.mark_cleanup("clone-123")
 
         mock_db.execute.assert_called_once()

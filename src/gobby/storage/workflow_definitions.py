@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
@@ -12,7 +13,7 @@ from uuid import uuid4
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,13 @@ def bump_workflow_definitions_revision() -> None:
     clear_active_rule_names_cache()
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("deleted_at",),
+)
 @dataclass
 class WorkflowDefinitionRow:
     """Represents a workflow definition row from the database."""
@@ -57,15 +65,15 @@ class WorkflowDefinitionRow:
     priority: int
     definition_json: str
     source: DefinitionSource
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     project_id: str | None = None
     description: str | None = None
     version: str = "1.0"
     sources: list[str] | None = None
     tags: list[str] | None = None
     canvas_json: str | None = None
-    deleted_at: str | None = None
+    deleted_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "WorkflowDefinitionRow":

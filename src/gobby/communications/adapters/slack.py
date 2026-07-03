@@ -307,7 +307,7 @@ class SlackAdapter(BaseChannelAdapter):
                     channel_id="",
                     direction="inbound",
                     content=challenge,
-                    created_at=datetime.now(UTC).isoformat(),
+                    created_at=datetime.now(UTC),
                     content_type="url_verification",
                     metadata_json=payload_dict,
                 )
@@ -340,7 +340,7 @@ class SlackAdapter(BaseChannelAdapter):
                             channel_id="",
                             direction="inbound",
                             content=text,
-                            created_at=datetime.now(UTC).isoformat(),
+                            created_at=datetime.now(UTC),
                             identity_id=user,
                             platform_message_id=ts,
                             platform_thread_id=thread_ts,
@@ -370,7 +370,7 @@ class SlackAdapter(BaseChannelAdapter):
                                 channel_id="",
                                 direction="inbound",
                                 content=reaction,
-                                created_at=datetime.now(UTC).isoformat(),
+                                created_at=datetime.now(UTC),
                                 identity_id=user,
                                 platform_message_id=ts,  # ID of message being reacted to
                                 content_type="reaction",

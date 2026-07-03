@@ -53,14 +53,8 @@ def get_stats(
 
     for m in memories:
         by_type[m.memory_type] = by_type.get(m.memory_type, 0) + 1
-        try:
-            created = datetime.fromisoformat(m.created_at)
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=UTC)
-            if created > cutoff:
-                recent_count += 1
-        except (ValueError, AttributeError, TypeError):
-            pass
+        if m.created_at > cutoff:
+            recent_count += 1
 
     stats: dict[str, Any] = {
         "total_count": len(memories),
@@ -149,11 +143,7 @@ def _append_metadata(lines: list[str], memory: Memory) -> None:
     if memory.source_type:
         lines.append(f"- **Source:** {memory.source_type}")
 
-    try:
-        created = datetime.fromisoformat(memory.created_at)
-        created_str = created.strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError):
-        created_str = memory.created_at
+    created_str = memory.created_at.strftime("%Y-%m-%d %H:%M:%S")
     lines.append(f"- **Created:** {created_str}")
 
     if memory.access_count > 0:

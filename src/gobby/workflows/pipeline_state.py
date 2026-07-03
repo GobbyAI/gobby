@@ -8,8 +8,11 @@ ApprovalRequired exception for approval gates.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any
+
+from gobby.utils.datetime import normalize_datetime_model
 
 
 class ExecutionStatus(Enum):
@@ -49,6 +52,13 @@ class StepStatus(Enum):
     CANCELLED = "cancelled"
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("completed_at",),
+)
 @dataclass
 class PipelineExecution:
     """Execution state for a pipeline.
@@ -61,11 +71,11 @@ class PipelineExecution:
     pipeline_name: str
     project_id: str
     status: ExecutionStatus
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     inputs_json: str | None = None
     outputs_json: str | None = None
-    completed_at: str | None = None
+    completed_at: datetime | None = None
     resume_token: str | None = None  # Token for resuming after approval
     session_id: str | None = None  # Session that triggered execution
     parent_execution_id: str | None = None  # For nested pipeline invocations
@@ -117,6 +127,13 @@ class PipelineExecution:
         }
 
 
+@normalize_datetime_model(
+    optional=(
+        "started_at",
+        "completed_at",
+        "approved_at",
+    )
+)
 @dataclass
 class StepExecution:
     """Execution state for a single pipeline step.
@@ -129,14 +146,14 @@ class StepExecution:
     execution_id: str  # Parent pipeline execution ID
     step_id: str  # Step ID from pipeline definition
     status: StepStatus
-    started_at: str | None = None
-    completed_at: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     input_json: str | None = None
     output_json: str | None = None
     error: str | None = None
     approval_token: str | None = None  # Unique token for this step's approval
     approved_by: str | None = None  # Who approved (email, user ID, etc.)
-    approved_at: str | None = None
+    approved_at: datetime | None = None
     approval_timeout_seconds: int | None = None  # Timeout for approval gate
 
     @classmethod

@@ -76,6 +76,7 @@ def _auto_link_session_commits(
 ) -> None:
     try:
         from gobby.tasks.commits import auto_link_commits
+        from gobby.utils.datetime import datetime_to_required_iso
 
         session = ctx.session_manager.get(session_id)
         repo_path = ctx.get_project_repo_path(project_id)
@@ -83,7 +84,7 @@ def _auto_link_session_commits(
             auto_link_commits(
                 task_manager=ctx.task_manager,
                 task_id=task_id,
-                since=session.created_at,
+                since=datetime_to_required_iso(session.created_at),
                 cwd=repo_path,
                 project_id=project_id,
             )

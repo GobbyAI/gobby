@@ -9,9 +9,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -42,6 +43,13 @@ def normalize_message_direction(direction: str) -> str:
     return normalized
 
 
+@normalize_datetime_model(
+    required=("sent_at",),
+    optional=(
+        "read_at",
+        "delivered_at",
+    ),
+)
 @dataclass
 class InterSessionMessage:
     """A message sent between sessions.
@@ -61,11 +69,11 @@ class InterSessionMessage:
     to_session: str
     content: str
     priority: str
-    sent_at: str
-    read_at: str | None
+    sent_at: datetime
+    read_at: datetime | None
     message_type: str = "message"
     metadata_json: str | None = None
-    delivered_at: str | None = None
+    delivered_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> InterSessionMessage:
@@ -162,7 +170,6 @@ class InterSessionMessageManager:
         """
         message_id = str(uuid.uuid4())
         sent_at = utc_now()
-        sent_at_model = datetime_to_required_iso(sent_at)
 
         self.db.execute(
             """
@@ -189,7 +196,7 @@ class InterSessionMessageManager:
             to_session=to_session,
             content=content,
             priority=priority,
-            sent_at=sent_at_model,
+            sent_at=sent_at,
             read_at=None,
             message_type=message_type,
             metadata_json=metadata_json,

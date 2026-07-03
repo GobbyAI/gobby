@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import utc_now
 from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
@@ -58,7 +58,6 @@ class PipelineExecutionStorageMixin:
         project_id = self._require_project_id()
         execution_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         with self.db.transaction():
             self.db.execute(
@@ -95,8 +94,8 @@ class PipelineExecutionStorageMixin:
             parent_execution_id=parent_execution_id,
             continuation_prompt=continuation_prompt,
             definition_json=definition_json,
-            created_at=now_model,
-            updated_at=now_model,
+            created_at=now,
+            updated_at=now,
         )
 
     def get_execution(self, execution_id: str) -> PipelineExecution | None:

@@ -54,9 +54,11 @@ class SessionEndMixin(EventHandlersBase):
         if session and self._task_manager:
             try:
                 cwd = event.data.get("cwd")
+                from gobby.utils.datetime import datetime_to_required_iso
+
                 link_result = auto_link_commits(
                     task_manager=self._task_manager,
-                    since=session.created_at,
+                    since=datetime_to_required_iso(session.created_at),
                     cwd=cwd,
                 )
                 if link_result.total_linked > 0:

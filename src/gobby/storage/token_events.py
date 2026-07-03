@@ -12,6 +12,7 @@ from typing import Any, Literal
 from gobby.sessions.model_family import normalize_model
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import is_postgres, newer_than_now_expr
+from gobby.utils.datetime import datetime_to_required_iso, normalize_datetime_model, to_aware_utc
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ TimeSeriesGranularity = Literal["30m", "1h", "1d"]
 VALID_GRANULARITIES: frozenset[TimeSeriesGranularity] = frozenset({"30m", "1h", "1d"})
 
 
+@normalize_datetime_model(required=("event_at",))
 @dataclass(frozen=True)
 class TokenEvent:
     """Canonical token event payload."""
@@ -33,7 +35,7 @@ class TokenEvent:
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
-    event_at: str
+    event_at: datetime
     context_window: int | None = None
     metadata: dict[str, Any] | None = None
     model_family: str | None = None
@@ -42,8 +44,8 @@ class TokenEvent:
         return self.model_family or normalize_model(self.model)
 
 
-def canonicalize_event_timestamp(value: datetime | str | None) -> str:
-    """Return a stable UTC RFC3339 timestamp for token event storage."""
+def canonicalize_event_timestamp(value: datetime | str | None) -> datetime:
+    """Return a stable UTC datetime for token event storage."""
     if isinstance(value, datetime):
         dt = value
     elif isinstance(value, str) and value.strip():
@@ -54,11 +56,7 @@ def canonicalize_event_timestamp(value: datetime | str | None) -> str:
     else:
         dt = datetime.now(UTC)
 
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    else:
-        dt = dt.astimezone(UTC)
-    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return to_aware_utc(dt).replace(microsecond=0)
 
 
 def _bucket_expression(db: object, granularity: TimeSeriesGranularity) -> str:
@@ -513,7 +511,7 @@ def build_session_usage_payload(
         "usage_output_tokens": totals.get("output_tokens", 0),
         "usage_cache_creation_tokens": totals.get("cache_creation_tokens", 0),
         "usage_cache_read_tokens": totals.get("cache_read_tokens", 0),
-        "updated_at": canonicalize_event_timestamp(updated_at),
+        "updated_at": datetime_to_required_iso(canonicalize_event_timestamp(updated_at)),
     }
 
 

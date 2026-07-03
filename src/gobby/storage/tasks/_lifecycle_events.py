@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import normalize_datetime_model
 
 # Reason recorded by ``gobby build`` (see gobby.build.lifecycle_state.record_build_event).
 # This is the durable, append-only signal that automation was ever started for a
@@ -15,6 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 BUILD_EVENT_REASON = "gobby build"
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass(frozen=True)
 class TaskLifecycleEvent:
     id: int
@@ -23,7 +26,7 @@ class TaskLifecycleEvent:
     to_state: str
     reason: str
     by_actor: str
-    created_at: str
+    created_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> TaskLifecycleEvent:

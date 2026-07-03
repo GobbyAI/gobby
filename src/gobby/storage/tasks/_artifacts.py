@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.utils.datetime import normalize_datetime_model
 
 _ARTIFACT_FIELDS = frozenset(
     {
@@ -63,6 +65,7 @@ class MissingIsolationBaseError(TaskArtifactConstraintError):
         )
 
 
+@normalize_datetime_model(optional=("updated_at",))
 @dataclass(frozen=True)
 class TaskArtifacts:
     task_id: str
@@ -82,7 +85,7 @@ class TaskArtifacts:
     plan_enhancement_rounds: int = 0
     plan_enhancement_rounds_completed: int = 0
     plan_enhancement_converged: bool = False
-    updated_at: str | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> TaskArtifacts:

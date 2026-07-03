@@ -77,7 +77,7 @@ def _record_project_build_event(
     reason: str,
     by_actor: str,
 ) -> BuildLifecycleEvent:
-    created_at = datetime.now(UTC).isoformat()
+    created_at = datetime.now(UTC)
     with db.transaction() as conn:
         row = conn.execute(
             """

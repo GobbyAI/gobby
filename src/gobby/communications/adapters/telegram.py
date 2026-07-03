@@ -276,7 +276,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 platform_thread_id=platform_thread_id,
                 identity_id=user_id,
                 metadata_json=metadata,
-                created_at=datetime.now(UTC).isoformat(),
+                created_at=datetime.now(UTC),
             )
         ]
 

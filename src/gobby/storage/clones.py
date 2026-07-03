@@ -15,7 +15,11 @@ from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import datetime_to_required_iso, parse_stored_datetime, utc_now
+from gobby.utils.datetime import (
+    normalize_datetime_model,
+    parse_stored_datetime,
+    utc_now,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,16 @@ class CloneStatus(str, Enum):
     DELETING = "deleting"
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "last_sync_at",
+        "cleanup_after",
+    ),
+)
 @dataclass
 class Clone:
     """Clone data model."""
@@ -44,10 +58,10 @@ class Clone:
     agent_session_id: str | None
     status: str
     remote_url: str | None
-    last_sync_at: str | None
-    cleanup_after: str | None
-    created_at: str
-    updated_at: str
+    last_sync_at: datetime | None
+    cleanup_after: datetime | None
+    created_at: datetime
+    updated_at: datetime
     workspace_role: str = "task"
 
     @classmethod
@@ -150,7 +164,6 @@ class LocalCloneManager:
         """
         clone_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
         cleanup_after_value = parse_stored_datetime(cleanup_after)
 
         self.db.execute(
@@ -192,11 +205,9 @@ class LocalCloneManager:
             status=CloneStatus.ACTIVE.value,
             remote_url=remote_url,
             last_sync_at=None,
-            cleanup_after=datetime_to_required_iso(cleanup_after_value)
-            if cleanup_after_value is not None
-            else None,
-            created_at=now_model,
-            updated_at=now_model,
+            cleanup_after=cleanup_after_value,
+            created_at=now,
+            updated_at=now,
             workspace_role=workspace_role,
         )
 

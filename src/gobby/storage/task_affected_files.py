@@ -8,24 +8,27 @@ import logging
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import normalize_datetime_model
 
 logger = logging.getLogger(__name__)
 
 AnnotationSource = Literal["expansion", "manual", "observed"]
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class TaskAffectedFile:
     id: int
     task_id: str
     file_path: str
     annotation_source: AnnotationSource
-    created_at: str
+    created_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "TaskAffectedFile":

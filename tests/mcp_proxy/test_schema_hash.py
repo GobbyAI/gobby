@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -10,6 +11,24 @@ import pytest
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, SchemaHashRecord, compute_schema_hash
 
 pytestmark = pytest.mark.unit
+
+HASH_TIMESTAMP = datetime(2025, 1, 1, tzinfo=UTC)
+
+
+def _hash_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": 1,
+        "server_name": "srv",
+        "tool_name": "tool",
+        "project_id": "proj",
+        "schema_hash": "h1",
+        "last_verified_at": HASH_TIMESTAMP,
+        "created_at": HASH_TIMESTAMP,
+        "updated_at": HASH_TIMESTAMP,
+    }
+    row.update(overrides)
+    return row
+
 
 # --- compute_schema_hash ---
 
@@ -71,9 +90,9 @@ def test_schema_hash_record_to_dict() -> None:
         tool_name="tool",
         project_id="proj",
         schema_hash="hash",
-        last_verified_at="t1",
-        created_at="t1",
-        updated_at="t1",
+        last_verified_at=HASH_TIMESTAMP,
+        created_at=HASH_TIMESTAMP,
+        updated_at=HASH_TIMESTAMP,
     )
     d = record.to_dict()
     assert d["server_name"] == "srv"
@@ -95,16 +114,7 @@ def manager(mock_db: MagicMock) -> SchemaHashManager:
 
 
 def test_store_hash(manager: SchemaHashManager, mock_db: MagicMock) -> None:
-    mock_db.fetchone.return_value = {
-        "id": 1,
-        "server_name": "srv",
-        "tool_name": "tool",
-        "project_id": "proj",
-        "schema_hash": "h1",
-        "last_verified_at": "t",
-        "created_at": "t",
-        "updated_at": "t",
-    }
+    mock_db.fetchone.return_value = _hash_row()
 
     result = manager.store_hash("srv", "tool", "proj", "h1")
     assert result.schema_hash == "h1"
@@ -119,16 +129,7 @@ def test_store_hash_retrieve_fails(manager: SchemaHashManager, mock_db: MagicMoc
 
 
 def test_get_hash_found(manager: SchemaHashManager, mock_db: MagicMock) -> None:
-    mock_db.fetchone.return_value = {
-        "id": 1,
-        "server_name": "srv",
-        "tool_name": "tool",
-        "project_id": "proj",
-        "schema_hash": "h1",
-        "last_verified_at": "t",
-        "created_at": "t",
-        "updated_at": "t",
-    }
+    mock_db.fetchone.return_value = _hash_row()
 
     result = manager.get_hash("srv", "tool", "proj")
     assert result is not None
@@ -142,26 +143,8 @@ def test_get_hash_not_found(manager: SchemaHashManager, mock_db: MagicMock) -> N
 
 def test_get_hashes_for_server(manager: SchemaHashManager, mock_db: MagicMock) -> None:
     mock_db.fetchall.return_value = [
-        {
-            "id": 1,
-            "server_name": "srv",
-            "tool_name": "t1",
-            "project_id": "proj",
-            "schema_hash": "h1",
-            "last_verified_at": "t",
-            "created_at": "t",
-            "updated_at": "t",
-        },
-        {
-            "id": 2,
-            "server_name": "srv",
-            "tool_name": "t2",
-            "project_id": "proj",
-            "schema_hash": "h2",
-            "last_verified_at": "t",
-            "created_at": "t",
-            "updated_at": "t",
-        },
+        _hash_row(id=1, tool_name="t1", schema_hash="h1"),
+        _hash_row(id=2, tool_name="t2", schema_hash="h2"),
     ]
 
     results = manager.get_hashes_for_server("srv", "proj")
@@ -174,57 +157,25 @@ def test_needs_reindexing_no_stored(manager: SchemaHashManager, mock_db: MagicMo
 
 
 def test_needs_reindexing_hash_changed(manager: SchemaHashManager, mock_db: MagicMock) -> None:
-    mock_db.fetchone.return_value = {
-        "id": 1,
-        "server_name": "srv",
-        "tool_name": "tool",
-        "project_id": "proj",
-        "schema_hash": "old_hash",
-        "last_verified_at": "t",
-        "created_at": "t",
-        "updated_at": "t",
-    }
+    mock_db.fetchone.return_value = _hash_row(schema_hash="old_hash")
     assert manager.needs_reindexing("srv", "tool", "proj", {"type": "string"}) is True
 
 
 def test_needs_reindexing_hash_same(manager: SchemaHashManager, mock_db: MagicMock) -> None:
     schema: dict[str, Any] = {"type": "string"}
     h = compute_schema_hash(schema)
-    mock_db.fetchone.return_value = {
-        "id": 1,
-        "server_name": "srv",
-        "tool_name": "tool",
-        "project_id": "proj",
-        "schema_hash": h,
-        "last_verified_at": "t",
-        "created_at": "t",
-        "updated_at": "t",
-    }
+    mock_db.fetchone.return_value = _hash_row(schema_hash=h)
     assert manager.needs_reindexing("srv", "tool", "proj", schema) is False
 
 
 def test_check_tools_for_changes(manager: SchemaHashManager, mock_db: MagicMock) -> None:
     mock_db.fetchall.return_value = [
-        {
-            "id": 1,
-            "server_name": "srv",
-            "tool_name": "existing",
-            "project_id": "proj",
-            "schema_hash": compute_schema_hash({"type": "string"}),
-            "last_verified_at": "t",
-            "created_at": "t",
-            "updated_at": "t",
-        },
-        {
-            "id": 2,
-            "server_name": "srv",
-            "tool_name": "changed",
-            "project_id": "proj",
-            "schema_hash": "old_hash",
-            "last_verified_at": "t",
-            "created_at": "t",
-            "updated_at": "t",
-        },
+        _hash_row(
+            id=1,
+            tool_name="existing",
+            schema_hash=compute_schema_hash({"type": "string"}),
+        ),
+        _hash_row(id=2, tool_name="changed", schema_hash="old_hash"),
     ]
 
     tools = [

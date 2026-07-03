@@ -640,18 +640,19 @@ class TestCreateMemoryPassesMemoryId:
 
         from gobby.memory.protocol import MemoryRecord
 
-        mock_record = MagicMock(spec=MemoryRecord)
-        mock_record.id = "test-mem-id"
-        mock_record.memory_type = "fact"
-        mock_record.content = "test content"
-        mock_record.created_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
-        mock_record.updated_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
-        mock_record.project_id = None
-        mock_record.source_type = "user"
-        mock_record.source_session_id = None
-        mock_record.access_count = 0
-        mock_record.last_accessed_at = None
-        mock_record.tags = []
+        mock_record = MemoryRecord(
+            id="test-mem-id",
+            memory_type="fact",
+            content="test content",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            project_id=None,
+            source_type="user",
+            source_session_id=None,
+            access_count=0,
+            last_accessed_at=None,
+            tags=[],
+        )
         manager._backend.create = AsyncMock(return_value=mock_record)
 
         manager._kg_service.add_to_graph = AsyncMock()

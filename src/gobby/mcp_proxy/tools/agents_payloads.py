@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol
 
 from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
+from gobby.utils.datetime import datetime_to_iso
 
 
 class AgentRunProtocol(Protocol):
@@ -16,8 +18,8 @@ class AgentRunProtocol(Protocol):
     model: str | None
     tool_calls_count: int
     turns_used: int
-    started_at: str | None
-    completed_at: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
     child_session_id: str | None
     terminal_reason: AgentRunTerminalReason | None
     prompt: str
@@ -37,8 +39,8 @@ def _agent_result_payload(
         "model": run.model,
         "tool_calls_count": run.tool_calls_count,
         "turns_used": run.turns_used,
-        "started_at": run.started_at,
-        "completed_at": run.completed_at,
+        "started_at": datetime_to_iso(run.started_at),
+        "completed_at": datetime_to_iso(run.completed_at),
         "child_session_id": run.child_session_id,
         "terminal_reason": run.terminal_reason,
     }

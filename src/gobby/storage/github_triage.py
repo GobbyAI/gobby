@@ -13,7 +13,7 @@ import psycopg
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 DeliveryStatus = Literal["pending", "processing", "processed", "ignored", "duplicate", "error"]
 TriageVerdict = Literal["implement", "skip", "escalate", "dedup"]
@@ -27,6 +27,12 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+@normalize_datetime_model(
+    optional=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass(frozen=True)
 class GitHubTriageConfig:
     """Per-project GitHub issue triage configuration."""
@@ -37,8 +43,8 @@ class GitHubTriageConfig:
     repositories: tuple[str, ...] = ()
     reconcile_interval_seconds: int = 3600
     webhook_secret_ref: str | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> GitHubTriageConfig:
@@ -77,6 +83,13 @@ class GitHubTriageConfig:
         }
 
 
+@normalize_datetime_model(
+    required=(
+        "received_at",
+        "updated_at",
+    ),
+    optional=("processed_at",),
+)
 @dataclass(frozen=True)
 class GitHubTriageDelivery:
     """Persisted GitHub webhook delivery."""
@@ -93,9 +106,9 @@ class GitHubTriageDelivery:
     headers_json: str
     raw_body: str
     error: str | None
-    received_at: str
-    processed_at: str | None
-    updated_at: str
+    received_at: datetime
+    processed_at: datetime | None
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> GitHubTriageDelivery:
@@ -118,6 +131,14 @@ class GitHubTriageDelivery:
         )
 
 
+@normalize_datetime_model(
+    required=(
+        "last_triaged_at",
+        "created_at",
+        "updated_at",
+    ),
+    optional=("issue_updated_at",),
+)
 @dataclass(frozen=True)
 class GitHubIssueTriageRecord:
     """Audit row for the latest triage of one GitHub issue."""
@@ -129,7 +150,7 @@ class GitHubIssueTriageRecord:
     issue_url: str | None
     issue_state: str | None
     labels: tuple[str, ...]
-    issue_updated_at: str | None
+    issue_updated_at: datetime | None
     content_hash: str
     verdict: TriageVerdict
     decision_json: str
@@ -138,9 +159,9 @@ class GitHubIssueTriageRecord:
     dedup_issue_key: str | None
     source: str
     source_text: str | None
-    last_triaged_at: str
-    created_at: str
-    updated_at: str
+    last_triaged_at: datetime
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> GitHubIssueTriageRecord:

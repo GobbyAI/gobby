@@ -11,11 +11,24 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
+
+from gobby.utils.datetime import normalize_datetime_model
 
 logger = logging.getLogger(__name__)
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "summary_generated_at",
+        "context_usage_updated_at",
+    ),
+)
 @dataclass
 class Session:
     """Session data model."""
@@ -32,13 +45,13 @@ class Session:
     summary_markdown: str | None
     git_branch: str | None
     parent_session_id: str | None
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     summary_revision_id: str | None = None
     summary_source_context_hash: str | None = None
     summary_digest_turn_count: int | None = None
     summary_generation_mode: str | None = None
-    summary_generated_at: str | None = None
+    summary_generated_at: datetime | None = None
     title_source: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
@@ -57,7 +70,7 @@ class Session:
     context_usage_ratio: float | None = None
     context_usage_source: str | None = None
     context_usage_confidence: str | None = None
-    context_usage_updated_at: str | None = None
+    context_usage_updated_at: datetime | None = None
     last_prompt_input_tokens: int | None = None
     last_prompt_uncached_input_tokens: int | None = None
     last_prompt_cache_read_tokens: int | None = None

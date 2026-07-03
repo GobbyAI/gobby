@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
+
+from gobby.utils.datetime import normalize_datetime_model
 
 # Planner prompt content budget per candidate; keep prompts bounded and deterministic.
 CONTENT_TRUNCATE_LIMIT = 1600
@@ -12,6 +15,13 @@ CONTENT_TRUNCATION_MARKER = "\n... [truncated]"
 DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review", "promote"]
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("last_accessed_at",),
+)
 @dataclass(frozen=True)
 class DreamCandidate:
     """A memory selected for dream review."""
@@ -25,9 +35,9 @@ class DreamCandidate:
     tags: list[str]
     age_days: float
     access_count: int
-    created_at: str
-    updated_at: str
-    last_accessed_at: str | None
+    created_at: datetime
+    updated_at: datetime
+    last_accessed_at: datetime | None
     reasons: list[str] = field(default_factory=list)
 
     def to_prompt_dict(self) -> dict[str, Any]:

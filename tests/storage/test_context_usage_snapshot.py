@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -40,7 +42,8 @@ def test_token_breakdown_counts_cache_toward_prompt_footprint() -> None:
     assert snapshot.confidence == "reported"
     assert snapshot.source == "codex"
     assert snapshot.model == "gpt-5.3-codex"
-    assert snapshot.timestamp.endswith("Z")
+    assert isinstance(snapshot.timestamp, datetime)
+    assert snapshot.timestamp.tzinfo is UTC
 
 
 def test_window_only_snapshot_keeps_pressure_unknown() -> None:

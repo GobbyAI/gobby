@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import Any, cast
 
 from gobby.memory.protocol import (
@@ -22,6 +21,7 @@ from gobby.memory.protocol import (
     MemoryRecord,
 )
 from gobby.storage.memories import LocalMemoryManager, Visibility
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
 class StorageAdapter:
@@ -173,17 +173,11 @@ class StorageAdapter:
         user_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
-        created_at = (
-            datetime.fromisoformat(memory.created_at) if memory.created_at else datetime.now(UTC)
-        )
-        updated_at = datetime.fromisoformat(memory.updated_at) if memory.updated_at else None
-        last_accessed = (
-            datetime.fromisoformat(memory.last_accessed_at) if memory.last_accessed_at else None
-        )
-        deleted_at = datetime.fromisoformat(memory.deleted_at) if memory.deleted_at else None
-        last_dreamed_at = (
-            datetime.fromisoformat(memory.last_dreamed_at) if memory.last_dreamed_at else None
-        )
+        created_at = parse_stored_datetime(memory.created_at) or utc_now()
+        updated_at = parse_stored_datetime(memory.updated_at)
+        last_accessed = parse_stored_datetime(memory.last_accessed_at)
+        deleted_at = parse_stored_datetime(memory.deleted_at)
+        last_dreamed_at = parse_stored_datetime(memory.last_dreamed_at)
 
         return MemoryRecord(
             id=memory.id,

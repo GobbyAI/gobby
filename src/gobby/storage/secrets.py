@@ -14,6 +14,7 @@ import re
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime, utc_now
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -128,15 +129,15 @@ class SecretInfo:
         name: str,
         category: str,
         description: str | None,
-        created_at: str,
-        updated_at: str,
+        created_at: datetime | str,
+        updated_at: datetime | str,
     ):
         self.id = id
         self.name = name
         self.category = category
         self.description = description
-        self.created_at = created_at
-        self.updated_at = updated_at
+        self.created_at = require_stored_datetime(created_at, "created_at")
+        self.updated_at = require_stored_datetime(updated_at, "updated_at")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,8 +145,8 @@ class SecretInfo:
             "name": self.name,
             "category": self.category,
             "description": self.description,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
+            "created_at": datetime_to_required_iso(self.created_at),
+            "updated_at": datetime_to_required_iso(self.updated_at),
         }
 
 

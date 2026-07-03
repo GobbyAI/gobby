@@ -6,6 +6,7 @@ import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.storage.tasks import IllegalStageTransitionError, StageState
+from gobby.utils.datetime import datetime_to_iso
 
 
 def _transition_error(error: IllegalStageTransitionError) -> click.ClickException:
@@ -25,7 +26,7 @@ def _render_stage_table(rows: list[StageState]) -> str:
             row.review_policy,
             str(row.work_attempt_count),
             str(row.review_round_count),
-            (row.updated_at or "-")[:10],
+            (datetime_to_iso(row.updated_at) or "-")[:10],
         )
         for row in rows
     ]

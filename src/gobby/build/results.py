@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from gobby.build.dispatch_tick import DispatcherTickSummary
+from gobby.utils.datetime import normalize_datetime_model
 
 
 @dataclass
@@ -20,6 +22,7 @@ class BuildResult:
     dry_run: bool = False
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass(frozen=True)
 class BuildLifecycleEvent:
     """Project-level build lifecycle audit event."""
@@ -29,7 +32,7 @@ class BuildLifecycleEvent:
     event: str
     reason: str
     by_actor: str
-    created_at: str
+    created_at: datetime
 
 
 @dataclass(frozen=True)

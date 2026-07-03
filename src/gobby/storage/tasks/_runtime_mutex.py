@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Literal, cast
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.datetime import parse_stored_datetime
 
 CandidateLoader = Callable[[str], object | None]
 RuntimeStageSnapshotState = Literal["ready", "in_progress", "needs_review", "review_approved"]
@@ -43,7 +44,7 @@ class RuntimeDispatchMutex:
     now: datetime | str | None = None
     expected_stage_name: str | None = None
     expected_stage_state: RuntimeStageSnapshotState | None = None
-    expected_stage_updated_at: str | None = None
+    expected_stage_updated_at: datetime | None = None
     candidate_loader: CandidateLoader | None = None
     _acquired: bool = field(default=False, init=False)
     _released: bool = field(default=False, init=False)
@@ -117,7 +118,7 @@ class RuntimeDispatchMutex:
         self,
         current_stage_name: str | None = None,
         current_stage_state: str | None = None,
-        current_stage_updated_at: str | None = None,
+        current_stage_updated_at: datetime | str | None = None,
     ) -> bool:
         """True iff current-stage values still match this mutex's snapshot."""
         return _stage_snapshot_matches(
@@ -135,7 +136,7 @@ class RuntimeDispatchMutex:
         *,
         stage_name: str | None,
         stage_state: str | None,
-        stage_updated_at: str | None,
+        stage_updated_at: datetime | str | None,
     ) -> bool:
         """True iff a candidate object still matches a captured stage snapshot."""
         current_stage_name, current_stage_state, current_stage_updated_at = (
@@ -144,7 +145,7 @@ class RuntimeDispatchMutex:
         return _stage_snapshot_matches(
             expected_stage_name=stage_name,
             expected_stage_state=_coerce_actionable_stage_state(stage_state),
-            expected_stage_updated_at=stage_updated_at,
+            expected_stage_updated_at=parse_stored_datetime(stage_updated_at),
             current_stage_name=current_stage_name,
             current_stage_state=current_stage_state,
             current_stage_updated_at=current_stage_updated_at,
@@ -165,10 +166,10 @@ def _stage_snapshot_matches(
     *,
     expected_stage_name: str | None,
     expected_stage_state: str | None,
-    expected_stage_updated_at: str | None,
+    expected_stage_updated_at: datetime | None,
     current_stage_name: str | None,
     current_stage_state: str | None,
-    current_stage_updated_at: str | None,
+    current_stage_updated_at: datetime | str | None,
 ) -> bool:
     if (
         expected_stage_name is None
@@ -179,16 +180,19 @@ def _stage_snapshot_matches(
         or current_stage_updated_at is None
     ):
         return False
+    current_updated_at = parse_stored_datetime(current_stage_updated_at)
+    if current_updated_at is None:
+        return False
     return (
         current_stage_name == expected_stage_name
         and current_stage_state == expected_stage_state
-        and current_stage_updated_at == expected_stage_updated_at
+        and current_updated_at == expected_stage_updated_at
     )
 
 
 def _read_candidate_stage_snapshot(
     candidate: object | None,
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, datetime | None]:
     stage = _read_candidate_current_stage(candidate)
     return _read_stage_name(stage), _read_stage_state(stage), _read_stage_updated_at(stage)
 
@@ -218,9 +222,11 @@ def _read_stage_state(stage: object | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _read_stage_updated_at(stage: object | None) -> str | None:
+def _read_stage_updated_at(stage: object | None) -> datetime | None:
     value = _read_field(stage, "updated_at")
-    return value if isinstance(value, str) else None
+    if isinstance(value, datetime | str):
+        return parse_stored_datetime(value)
+    return None
 
 
 def _read_stage_position(stage: object) -> int:

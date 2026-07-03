@@ -8,17 +8,18 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
-from gobby.utils.datetime import parse_stored_datetime, utc_now
+from gobby.utils.datetime import normalize_datetime_model, parse_stored_datetime, utc_now
 
 
+@normalize_datetime_model(required=("updated_at",), optional=("lease_until",))
 @dataclass(frozen=True)
 class DispatchMutex:
     task_id: str
-    lease_until: str | None
+    lease_until: datetime | None
     lease_holder: str | None
     run_id: str | None
     action_kind: str | None
-    updated_at: str
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> DispatchMutex:

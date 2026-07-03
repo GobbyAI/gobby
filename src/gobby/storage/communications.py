@@ -17,7 +17,6 @@ from gobby.communications.models import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import (
-    datetime_to_required_iso,
     parse_stored_datetime,
     to_aware_utc,
     utc_now,
@@ -140,9 +139,9 @@ class LocalCommunicationsStore:
 
         now = utc_now()
         if not identity.created_at:
-            identity.created_at = datetime_to_required_iso(now)
+            identity.created_at = now
         if not identity.updated_at:
-            identity.updated_at = datetime_to_required_iso(now)
+            identity.updated_at = now
         created_at_value = parse_stored_datetime(identity.created_at)
         updated_at_value = parse_stored_datetime(identity.updated_at)
 

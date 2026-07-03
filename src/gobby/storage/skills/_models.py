@@ -3,13 +3,16 @@
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
+
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 SkillSourceType = Literal["local", "github", "url", "zip", "filesystem", "hub"]
 SkillScope = Literal["installed", "project"]
 
 
+@normalize_datetime_model(required=("created_at", "updated_at"), optional=("deleted_at",))
 @dataclass
 class Skill:
     """A skill following the Agent Skills specification.
@@ -83,11 +86,11 @@ class Skill:
 
     # Source scope
     source: SkillScope = "installed"
-    deleted_at: str | None = None
+    deleted_at: datetime | None = None
 
     # Timestamps
-    created_at: str = ""
-    updated_at: str = ""
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Skill":
@@ -240,6 +243,7 @@ class Skill:
         return False
 
 
+@normalize_datetime_model(required=("created_at", "updated_at"), optional=("deleted_at",))
 @dataclass
 class SkillFile:
     """A file belonging to a multi-file skill.
@@ -264,9 +268,9 @@ class SkillFile:
     content: str
     content_hash: str
     size_bytes: int = 0
-    deleted_at: str | None = None
-    created_at: str = ""
-    updated_at: str = ""
+    deleted_at: datetime | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "SkillFile":
@@ -305,6 +309,7 @@ class SkillFile:
 ChangeEventType = Literal["create", "update", "delete"]
 
 
+@normalize_datetime_model(required=("timestamp",))
 @dataclass
 class ChangeEvent:
     """A change event fired when a skill is created, updated, or deleted.
@@ -323,7 +328,7 @@ class ChangeEvent:
     event_type: ChangeEventType
     skill_id: str
     skill_name: str
-    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    timestamp: datetime = field(default_factory=utc_now)
     metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:

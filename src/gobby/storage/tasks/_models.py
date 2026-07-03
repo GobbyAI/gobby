@@ -10,12 +10,14 @@ This module contains:
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
 from gobby.tasks import task_types as _task_types
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.utils.datetime import normalize_datetime_model
 
 # Priority name to numeric value mapping
 PRIORITY_MAP = {"backlog": 4, "low": 3, "medium": 2, "high": 1, "critical": 0}
@@ -158,6 +160,16 @@ class TaskHasDependentsError(ValueError):
     pass
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "closed_at",
+        "escalated_at",
+    ),
+)
 @dataclass
 class Task:
     id: str
@@ -167,8 +179,8 @@ class Task:
     # task, bug, feature, epic, chore, refactor, simple_fix, research_spike,
     # architecture_doc, prd_doc, review_anchor
     task_type: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     # Optional fields
     description: str | None = None
     parent_task_id: str | None = None
@@ -176,7 +188,7 @@ class Task:
     claimed_by_session_id: str | None = None
     closed_in_session_id: str | None = None
     closed_commit_sha: str | None = None
-    closed_at: str | None = None
+    closed_at: datetime | None = None
     labels: list[str] | None = None
     closed_reason: str | None = None
     validation_status: Literal["pending", "valid", "invalid", "error"] | None = None
@@ -191,7 +203,7 @@ class Task:
     # Commit linking
     commits: list[str] | None = None
     # Escalation fields
-    escalated_at: str | None = None
+    escalated_at: datetime | None = None
     escalation_reason: str | None = None
     is_escalated: bool = False
     # GitHub integration fields

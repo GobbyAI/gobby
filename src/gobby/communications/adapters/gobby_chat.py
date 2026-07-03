@@ -193,7 +193,7 @@ class GobbyChatAdapter(BaseChannelAdapter):
             channel_id="",
             direction="inbound",
             content=content,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
             session_id=data.get("conversation_id"),
             identity_id=user_id,
             content_type="text",

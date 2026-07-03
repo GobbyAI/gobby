@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 from gobby.storage.tasks._stage_registry import ReviewPolicy
+from gobby.utils.datetime import normalize_datetime_model
 
 StageState5 = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
 ManifestMutation = Literal["add_stage", "remove_stage"]
@@ -90,6 +92,7 @@ class ManifestAlreadyInitializedError(ValueError):
         )
 
 
+@normalize_datetime_model(required=("updated_at",), optional=("completed_at",))
 @dataclass(frozen=True, slots=True)
 class StageState:
     task_id: str
@@ -100,7 +103,7 @@ class StageState:
     reviewer_agent: str | None
     entered_at: str | None
     entered_by_session_id: str | None
-    completed_at: str | None
+    completed_at: datetime | None
     completed_by_session_id: str | None
     completed_commit_sha: str | None
     work_attempt_count: int
@@ -109,7 +112,7 @@ class StageState:
     max_review_rounds: int | None
     artifact_refs: dict[str, str] | None
     notes: str | None
-    updated_at: str
+    updated_at: datetime
     entered_by_actor: str | None = None
     completed_by_actor: str | None = None
     display_name: str | None = None

@@ -291,7 +291,7 @@ class TeamsAdapter(BaseChannelAdapter):
             channel_id="",
             direction="inbound",
             content=text,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(UTC),
             identity_id=identity_id,
             platform_message_id=message_id,
             platform_thread_id=reply_to_id,

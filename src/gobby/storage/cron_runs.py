@@ -19,7 +19,7 @@ from gobby.storage.cron_children import (
 from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronRun
 from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 CRON_RUN_ERROR_MAX_CHARS = 5000
@@ -47,13 +47,12 @@ class CronRunStorageMixin:
         """Create a cron run unless this job already has pending/running work."""
         run_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
-            triggered_at=now_model,
-            created_at=now_model,
+            triggered_at=now,
+            created_at=now,
         )
 
         row = self.db.fetchone(
@@ -98,13 +97,12 @@ class CronRunStorageMixin:
 
         run_id = str(uuid.uuid4())
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
-            triggered_at=now_model,
-            created_at=now_model,
+            triggered_at=now,
+            created_at=now,
         )
 
         with self.db.transaction_immediate(lock=CronRunAdmission()) as conn:

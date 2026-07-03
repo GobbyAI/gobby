@@ -4,13 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from gobby.agents.resume_metadata import normalize_resume_metadata
+from gobby.utils.datetime import normalize_datetime_model
 
 from ._constants import AgentRunStatus, AgentRunTerminalReason
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=(
+        "started_at",
+        "completed_at",
+    ),
+)
 @dataclass
 class AgentRun:
     """Agent run data model."""
@@ -20,8 +32,8 @@ class AgentRun:
     provider: str
     prompt: str
     status: AgentRunStatus
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     # Optional fields
     child_session_id: str | None = None
     claimed_session_id: str | None = None
@@ -38,8 +50,8 @@ class AgentRun:
     error: str | None = None
     tool_calls_count: int = 0
     turns_used: int = 0
-    started_at: str | None = None
-    completed_at: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     sdk_session_id: str | None = None
     continuation_prompt: str | None = None
     task_id: str | None = None

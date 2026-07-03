@@ -5,15 +5,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
+
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 # Stable namespace for deterministic symbol UUIDs
 CODE_INDEX_UUID_NAMESPACE = uuid.UUID("c0de1de0-0000-4000-8000-000000000000")
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def make_unresolved_callee_id(project_id: str, callee_name: str) -> str:
@@ -29,6 +27,13 @@ def make_external_symbol_id(project_id: str, callee_name: str, module: str | Non
     return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("summary_attempted_at",),
+)
 @dataclass
 class Symbol:
     """A code symbol extracted from AST parsing.
@@ -56,15 +61,15 @@ class Symbol:
     parent_symbol_id: str | None = None
     content_hash: str = ""
     summary: str | None = None
-    summary_attempted_at: str | None = None
-    created_at: str = ""
-    updated_at: str = ""
+    summary_attempted_at: datetime | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         if not self.created_at:
-            self.created_at = _now_iso()
+            self.created_at = utc_now()
         if not self.updated_at:
-            self.updated_at = _now_iso()
+            self.updated_at = utc_now()
 
     @staticmethod
     def make_id(project_id: str, file_path: str, name: str, kind: str, byte_start: int) -> str:
@@ -143,6 +148,13 @@ class Symbol:
         return result
 
 
+@normalize_datetime_model(
+    required=("indexed_at",),
+    optional=(
+        "graph_sync_attempted_at",
+        "vector_sync_attempted_at",
+    ),
+)
 @dataclass
 class IndexedFile:
     """A file that has been indexed.
@@ -161,13 +173,13 @@ class IndexedFile:
     byte_size: int = 0
     graph_synced: bool = False
     vectors_synced: bool = False
-    graph_sync_attempted_at: str | None = None
-    vector_sync_attempted_at: str | None = None
-    indexed_at: str = ""
+    graph_sync_attempted_at: datetime | None = None
+    vector_sync_attempted_at: datetime | None = None
+    indexed_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         if not self.indexed_at:
-            self.indexed_at = _now_iso()
+            self.indexed_at = utc_now()
 
     @staticmethod
     def make_id(project_id: str, file_path: str) -> str:
@@ -214,6 +226,7 @@ class IndexedFile:
         }
 
 
+@normalize_datetime_model(required=("last_indexed_at",))
 @dataclass
 class IndexedProject:
     """Statistics for an indexed project."""
@@ -222,7 +235,7 @@ class IndexedProject:
     root_path: str
     total_files: int = 0
     total_symbols: int = 0
-    last_indexed_at: str = ""
+    last_indexed_at: datetime = field(default_factory=utc_now)
     index_duration_ms: int = 0
 
     @classmethod
@@ -232,7 +245,7 @@ class IndexedProject:
             root_path=row["root_path"],
             total_files=row["total_files"],
             total_symbols=row["total_symbols"],
-            last_indexed_at=row["last_indexed_at"] or "",
+            last_indexed_at=row["last_indexed_at"] or utc_now(),
             index_duration_ms=row["index_duration_ms"] or 0,
         )
 
@@ -250,6 +263,12 @@ class IndexedProject:
 ProjectionCleanupStore = Literal["graph", "vector"]
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class ProjectionCleanupPending:
     """Project-level projection cleanup that must be retried."""
@@ -258,8 +277,8 @@ class ProjectionCleanupPending:
     store: ProjectionCleanupStore
     attempts: int = 0
     last_error: str | None = None
-    created_at: str = ""
-    updated_at: str = ""
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> ProjectionCleanupPending:
@@ -273,6 +292,12 @@ class ProjectionCleanupPending:
         )
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class CodeIndexPruneDirtyProject:
     """Project root that needs a gcode prune retry."""
@@ -282,8 +307,8 @@ class CodeIndexPruneDirtyProject:
     reason: str
     attempts: int = 0
     last_error: str | None = None
-    created_at: str = ""
-    updated_at: str = ""
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CodeIndexPruneDirtyProject:
@@ -298,6 +323,7 @@ class CodeIndexPruneDirtyProject:
         )
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class ContentChunk:
     """A chunk of file content for full-text search."""
@@ -310,11 +336,11 @@ class ContentChunk:
     line_end: int
     content: str
     language: str | None = None
-    created_at: str = ""
+    created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         if not self.created_at:
-            self.created_at = _now_iso()
+            self.created_at = utc_now()
 
     @staticmethod
     def make_id(project_id: str, file_path: str, chunk_index: int) -> str:

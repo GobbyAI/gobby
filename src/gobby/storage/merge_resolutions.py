@@ -8,13 +8,14 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
 import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,12 @@ class ConflictStatus(Enum):
     HUMAN_REVIEW = "human_review"
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class MergeResolution:
     """A merge resolution record tracking a merge operation."""
@@ -43,8 +50,8 @@ class MergeResolution:
     target_branch: str
     status: str
     tier_used: str | None
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "MergeResolution":
@@ -74,6 +81,12 @@ class MergeResolution:
         }
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    )
+)
 @dataclass
 class MergeConflict:
     """A merge conflict record for a specific file."""
@@ -85,8 +98,8 @@ class MergeConflict:
     ours_content: str | None
     theirs_content: str | None
     resolved_content: str | None
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "MergeConflict":

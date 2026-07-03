@@ -1,23 +1,25 @@
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import datetime_to_required_iso, utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
 DependencyType = Literal["blocks", "related", "discovered-from"]
 
 
+@normalize_datetime_model(required=("created_at",))
 @dataclass
 class TaskDependency:
     id: int
     task_id: str
     depends_on: str
     dep_type: DependencyType
-    created_at: str
+    created_at: datetime
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "TaskDependency":
@@ -64,7 +66,6 @@ class TaskDependencyManager:
             )
 
         now = utc_now()
-        now_model = datetime_to_required_iso(now)
 
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -80,7 +81,7 @@ class TaskDependencyManager:
                 raise ValueError("Failed to retrieve dependency ID")
 
             dep_id = int(row["id"])
-            return TaskDependency(dep_id, task_id, depends_on, dep_type, now_model)
+            return TaskDependency(dep_id, task_id, depends_on, dep_type, now)
 
     def remove_dependency(self, task_id: str, depends_on: str) -> bool:
         """Remove a dependency."""

@@ -3,11 +3,11 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import normalize_datetime_model, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETENTION_DAYS = 7
 
 
+@normalize_datetime_model(
+    required=(
+        "created_at",
+        "updated_at",
+    ),
+    optional=("last_called_at",),
+)
 @dataclass
 class ToolMetrics:
     """Tool metrics data model."""
@@ -28,9 +35,9 @@ class ToolMetrics:
     failure_count: int
     total_latency_ms: float
     avg_latency_ms: float | None
-    last_called_at: str | None
-    created_at: str
-    updated_at: str
+    last_called_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_row(cls, row: Any) -> "ToolMetrics":
