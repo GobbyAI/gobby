@@ -229,6 +229,7 @@ def _render_restore_result(result: dict[str, Any]) -> None:
         click.echo("  Verified: SHA256SUMS")
     click.echo(f"  pg_search: {'yes' if probes.get('pg_search_present') else 'no'}")
     click.echo(f"  pgaudit:   {'yes' if probes.get('pgaudit_present') else 'no'}")
+    click.echo(f"  pgcrypto:  {'yes' if probes.get('pgcrypto_present') else 'no'}")
 
 
 def _install_mode(value: str) -> InstallMode:

@@ -23,6 +23,7 @@ _PHASE6_PGAUDIT_ASSET_FILES = (
     "initdb.d/02-pgaudit.sql",
     "scripts/pg_audit_export.sh",
 )
+_BASELINE_EXTENSION_ASSET_FILES = ("initdb.d/03-pgcrypto.sql",)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -61,6 +62,10 @@ def test_source_tree_has_phase1_assets(repo_root: Path) -> None:
 
 def test_source_tree_has_phase6_pgaudit_assets(repo_root: Path) -> None:
     _assert_asset_files_exist(_source_asset_root(repo_root), _PHASE6_PGAUDIT_ASSET_FILES)
+
+
+def test_source_tree_has_baseline_extension_assets(repo_root: Path) -> None:
+    _assert_asset_files_exist(_source_asset_root(repo_root), _BASELINE_EXTENSION_ASSET_FILES)
 
 
 def test_version_manifest_schema_is_canonical(repo_root: Path) -> None:
@@ -129,6 +134,12 @@ def test_pgaudit_seed_installs_extension_and_probe_table(repo_root: Path) -> Non
     assert "ON CONFLICT (id) DO NOTHING" in seed_sql
 
 
+def test_pgcrypto_seed_installs_extension(repo_root: Path) -> None:
+    seed_sql = _read_source_asset(repo_root, "initdb.d/03-pgcrypto.sql")
+
+    assert "CREATE EXTENSION IF NOT EXISTS pgcrypto;" in seed_sql
+
+
 def test_package_data_recursively_includes_gobby_data(repo_root: Path) -> None:
     pyproject = _load_toml(repo_root / "pyproject.toml")
 
@@ -165,6 +176,13 @@ def test_installed_wheel_ships_phase6_pgaudit_asset_tree() -> None:
     asset_root = resources.files("gobby").joinpath("data/postgres-pgsearch")
 
     for relative_path in _PHASE6_PGAUDIT_ASSET_FILES:
+        assert asset_root.joinpath(relative_path).is_file(), f"missing {relative_path}"
+
+
+def test_installed_wheel_ships_baseline_extension_asset_tree() -> None:
+    asset_root = resources.files("gobby").joinpath("data/postgres-pgsearch")
+
+    for relative_path in _BASELINE_EXTENSION_ASSET_FILES:
         assert asset_root.joinpath(relative_path).is_file(), f"missing {relative_path}"
 
 
@@ -234,7 +252,9 @@ def test_sync_copies_complete_tree_at_install_time(tmp_path: Path) -> None:
     resource_root = resources.files("gobby").joinpath("data/postgres-pgsearch")
     target_root = tmp_path / "services/postgres-pgsearch"
 
-    for relative_path in _PHASE1_ASSET_FILES + _PHASE6_PGAUDIT_ASSET_FILES:
+    for relative_path in (
+        _PHASE1_ASSET_FILES + _PHASE6_PGAUDIT_ASSET_FILES + _BASELINE_EXTENSION_ASSET_FILES
+    ):
         assert (
             target_root.joinpath(relative_path).read_bytes()
             == resource_root.joinpath(relative_path).read_bytes()

@@ -82,8 +82,8 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     )
     monkeypatch.setattr(
         installer,
-        "_probe_create_pg_search_extension",
-        lambda **_kwargs: helper_calls.append("probe_pg_search"),
+        "_probe_create_extension",
+        lambda **kwargs: helper_calls.append(f"probe:{kwargs['sql']}"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -96,7 +96,13 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     result = installer._install_docker(gobby_home=tmp_path, port=60991)
 
     assert result["success"] is True
-    assert helper_calls == ["sync_assets", "write_env", "pg_isready", "probe_pg_search"]
+    assert helper_calls == [
+        "sync_assets",
+        "write_env",
+        "pg_isready",
+        "probe:CREATE EXTENSION IF NOT EXISTS pg_search",
+        "probe:CREATE EXTENSION IF NOT EXISTS pgcrypto",
+    ]
     assert subprocess_calls
     compose_up = subprocess_calls[0]
     assert compose_up[:2] == ["docker", "compose"]
@@ -181,10 +187,18 @@ def test_write_bootstrap_defaults_surfaces_bootstrap_errors_as_click_error(
 
 
 class _FakeCursor:
-    def __init__(self, statements: list[str], *, pg_search_present: bool = True) -> None:
+    def __init__(
+        self,
+        statements: list[str],
+        *,
+        pg_search_present: bool = True,
+        pgcrypto_present: bool = True,
+    ) -> None:
         self.statements = statements
         self.pg_search_present = pg_search_present
+        self.pgcrypto_present = pgcrypto_present
         self.current_sql = ""
+        self.current_params: object | None = None
 
     def __enter__(self) -> _FakeCursor:
         return self
@@ -194,6 +208,7 @@ class _FakeCursor:
 
     def execute(self, sql: str, _params: object | None = None) -> _FakeCursor:
         self.current_sql = sql
+        self.current_params = _params
         self.statements.append(sql)
         return self
 
@@ -212,6 +227,10 @@ class _FakeCursor:
             return []
         if "pg_extension" in sql and "pg_search" in sql:
             return [(1,)] if self.pg_search_present else []
+        if "pg_extension" in sql and self.current_params == ("pg_search",):
+            return [(1,)] if self.pg_search_present else []
+        if "pg_extension" in sql and self.current_params == ("pgcrypto",):
+            return [(1,)] if self.pgcrypto_present else []
         if "pg_available_extensions" in sql:
             return [("pgaudit",)]
         if "version()" in sql:
@@ -220,8 +239,18 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    def __init__(self, statements: list[str], *, pg_search_present: bool = True) -> None:
-        self.cursor_obj = _FakeCursor(statements, pg_search_present=pg_search_present)
+    def __init__(
+        self,
+        statements: list[str],
+        *,
+        pg_search_present: bool = True,
+        pgcrypto_present: bool = True,
+    ) -> None:
+        self.cursor_obj = _FakeCursor(
+            statements,
+            pg_search_present=pg_search_present,
+            pgcrypto_present=pgcrypto_present,
+        )
         self.committed = False
 
     def __enter__(self) -> _FakeConnection:
@@ -271,7 +300,7 @@ async def test_get_postgres_status_returns_stable_payload(
     assert status["dsn_host"] == "example.com"
     assert status["dsn_db"] == "gobby"
     assert isinstance(status["healthy"], bool)
-    assert set(status["extensions"]) == {"pg_search", "pgaudit"}
+    assert set(status["extensions"]) == {"pg_search", "pgaudit", "pgcrypto"}
     assert isinstance(status["preload_libraries"], list)
     assert "keyring" not in status
 
@@ -285,9 +314,10 @@ def test_render_postgres_status_omits_keyring_preflight() -> None:
             "dsn_host": "localhost",
             "dsn_db": "gobby",
             "healthy": True,
-            "extensions": {"pg_search": True, "pgaudit": False},
+            "extensions": {"pg_search": True, "pgaudit": False, "pgcrypto": True},
         }
     )
 
     assert "Keyring:" not in rendered
     assert "Migration:" not in rendered
+    assert "pgcrypto:    yes" in rendered

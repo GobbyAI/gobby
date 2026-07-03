@@ -75,7 +75,9 @@ def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
         return None
 
     missing = [
-        name for name in ("pg_search", "pgaudit") if name in extensions and not extensions.get(name)
+        name
+        for name in ("pg_search", "pgaudit", "pgcrypto")
+        if name in extensions and not extensions.get(name)
     ]
     if missing:
         return f"missing {', '.join(missing)}"

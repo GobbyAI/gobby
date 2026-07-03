@@ -199,7 +199,7 @@ class TestStatusUtils:
                     "dsn_db": "gobby",
                     "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
                     "healthy": True,
-                    "extensions": {"pg_search": True, "pgaudit": True},
+                    "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
                 }
             },
         )
@@ -218,13 +218,13 @@ class TestStatusUtils:
                     "dsn_host": "db.example.com",
                     "dsn_db": "gobby",
                     "healthy": False,
-                    "extensions": {"pg_search": False, "pgaudit": False},
+                    "extensions": {"pg_search": False, "pgaudit": False, "pgcrypto": False},
                 }
             },
         )
 
         assert "unhealthy (external; db.example.com/gobby" in msg
-        assert "missing pg_search, pgaudit" in msg
+        assert "missing pg_search, pgaudit, pgcrypto" in msg
         assert "Health Issues:" in msg
         assert "PostgreSQL: unhealthy" in msg
 

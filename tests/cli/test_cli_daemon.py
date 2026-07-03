@@ -1826,7 +1826,7 @@ class TestEdgeCases:
                 "dsn_db": "gobby",
                 "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
                 "healthy": True,
-                "extensions": {"pg_search": True, "pgaudit": True},
+                "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
             },
         }
 

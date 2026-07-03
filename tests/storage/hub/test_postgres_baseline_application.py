@@ -114,9 +114,16 @@ class _ConnectionContext:
 
 
 class _ApplyConnection:
-    def __init__(self, state: str, *, pg_search_present: bool = True) -> None:
+    def __init__(
+        self,
+        state: str,
+        *,
+        pg_search_present: bool = True,
+        pgcrypto_present: bool = True,
+    ) -> None:
         self.state = state
         self.pg_search_present = pg_search_present
+        self.pgcrypto_present = pgcrypto_present
         self.statements: list[str] = []
         self.transaction_entered = False
         self.transaction_exited = False
@@ -130,9 +137,13 @@ class _ApplyConnection:
             self.transaction_exited = True
 
     def execute(self, sql: str, params=()):
-        self.statements.append(sql)
-        if "pg_extension" in sql and "pg_search" in sql:
+        rendered = f"{sql} {params!r}" if params else sql
+        self.statements.append(rendered)
+        extension = params[0] if params else None
+        if "pg_extension" in sql and extension == "pg_search":
             return _Result([(1,)] if self.pg_search_present else [])
+        if "pg_extension" in sql and extension == "pgcrypto":
+            return _Result([(1,)] if self.pgcrypto_present else [])
         return _Result()
 
 
@@ -582,6 +593,31 @@ def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl
     assert resources.read_count == 0
 
 
+def test_apply_postgres_baseline_rejects_missing_pgcrypto_without_extension_ddl(
+    monkeypatch,
+) -> None:
+    module = _postgres_module()
+    fast = _ApplyConnection("fresh")
+    locked = _ApplyConnection("fresh", pgcrypto_present=False)
+    resources = _Resources()
+
+    monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
+    monkeypatch.setattr(module.importlib, "resources", resources)
+    db = _new_db(module, _Pool(fast, locked))
+
+    with pytest.raises(MigrationUnsupportedError) as exc_info:
+        db._apply_postgres_baseline()
+
+    assert str(exc_info.value) == module._PGCRYPTO_MISSING_MESSAGE
+    upper_statements = [statement.upper() for statement in locked.statements]
+    assert any(
+        "PG_EXTENSION" in statement and "PGCRYPTO" in statement for statement in upper_statements
+    )
+    assert all("CREATE EXTENSION" not in statement for statement in upper_statements)
+    assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
+    assert resources.read_count == 0
+
+
 def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
     module = _postgres_module()
     calls: list[str] = []
@@ -608,7 +644,9 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
     assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
 
 
-def test_apply_postgres_baseline_probe_only_when_pg_search_preinstalled(monkeypatch) -> None:
+def test_apply_postgres_baseline_probe_only_when_required_extensions_preinstalled(
+    monkeypatch,
+) -> None:
     module = _postgres_module()
     fast = _ApplyConnection("fresh")
     locked = _ApplyConnection("fresh", pg_search_present=True)
@@ -619,12 +657,11 @@ def test_apply_postgres_baseline_probe_only_when_pg_search_preinstalled(monkeypa
 
     db._apply_postgres_baseline()
 
-    probe_statements = [
-        statement
-        for statement in locked.statements
-        if "pg_extension" in statement and "pg_search" in statement
+    probe_statements = [statement for statement in locked.statements if "pg_extension" in statement]
+    assert probe_statements == [
+        "SELECT 1 FROM pg_extension WHERE extname = %s ('pg_search',)",
+        "SELECT 1 FROM pg_extension WHERE extname = %s ('pgcrypto',)",
     ]
-    assert probe_statements == ["SELECT 1 FROM pg_extension WHERE extname = 'pg_search'"]
     assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
 
 

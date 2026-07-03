@@ -176,6 +176,7 @@ def _collect_source_metadata(*, database_url: str, mode: InstallMode) -> dict[st
                 "database_name": _dsn_db(database_url),
                 "pg_search_present": _extension_present(conn, "pg_search"),
                 "pgaudit_present": _extension_present(conn, "pgaudit"),
+                "pgcrypto_present": _extension_present(conn, "pgcrypto"),
                 "dump_file": POSTGRES_DUMP_NAME,
                 "dump_format": "custom",
             }
@@ -276,10 +277,12 @@ def _run_post_restore_probes(
         with psycopg.connect(database_url, connect_timeout=10) as conn:
             pg_search_present = _extension_present(conn, "pg_search")
             pgaudit_present = _extension_present(conn, "pgaudit")
+            pgcrypto_present = _extension_present(conn, "pgcrypto")
             probes: dict[str, Any] = {
                 "connectivity": True,
                 "pg_search_present": pg_search_present,
                 "pgaudit_present": pgaudit_present,
+                "pgcrypto_present": pgcrypto_present,
                 "bootstrap_resolved": bool(resolved_bootstrap_url),
                 "target_dsn_redacted": _redact_dsn(resolved_bootstrap_url),
             }
@@ -287,6 +290,8 @@ def _run_post_restore_probes(
                 raise click.ClickException("PostgreSQL restore probe failed: pg_search missing")
             if not pgaudit_present:
                 raise click.ClickException("PostgreSQL restore probe failed: pgaudit missing")
+            if not pgcrypto_present:
+                raise click.ClickException("PostgreSQL restore probe failed: pgcrypto missing")
             return probes
     except psycopg.Error as exc:
         raise click.ClickException(f"PostgreSQL restore probe failed: {exc}") from exc

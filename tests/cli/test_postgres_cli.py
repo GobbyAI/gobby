@@ -104,7 +104,7 @@ def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.Monke
             "dsn_host": "localhost",
             "dsn_db": "gobby",
             "healthy": True,
-            "extensions": {"pg_search": True, "pgaudit": True},
+            "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
             "preload_libraries": ["pg_search", "pgaudit"],
         }
 
@@ -202,6 +202,7 @@ def test_postgres_restore_command_invokes_restore_helper(
             "probes": {
                 "pg_search_present": True,
                 "pgaudit_present": True,
+                "pgcrypto_present": True,
             },
         }
 
@@ -226,6 +227,7 @@ def test_postgres_restore_command_invokes_restore_helper(
     assert "PostgreSQL restore completed." in result.output
     assert "Verified: SHA256SUMS" in result.output
     assert "pg_search: yes" in result.output
+    assert "pgcrypto:  yes" in result.output
 
 
 def test_postgres_restore_command_decline_skips_restore_helper(

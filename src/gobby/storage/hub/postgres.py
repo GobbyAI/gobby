@@ -74,6 +74,10 @@ _PG_SEARCH_MISSING_MESSAGE = (
     "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
     "image with `gobby postgres install --mode docker`."
 )
+_PGCRYPTO_MISSING_MESSAGE = (
+    "pgcrypto extension is not present on this database. Rebuild the Docker PostgreSQL "
+    "image with `gobby postgres install --mode docker`."
+)
 _BaselineState = Literal[
     "fresh",
     "fresh_with_install_infra",
@@ -299,7 +303,7 @@ class PostgresHubDatabase:
                     f"Pre-0.5 PostgreSQL hub databases below schema version {BASELINE_VERSION} "
                     f"require backup/export and recreation under Gobby baseline {BASELINE_VERSION}."
                 )
-            _require_pg_search_extension(conn)
+            _require_baseline_extensions(conn)
 
             sql = (
                 importlib.resources.files("gobby.storage")
@@ -553,10 +557,15 @@ def _has_baseline_version(conn: Any, version: int) -> bool:
     return max_version is not None and int(max_version) >= version
 
 
-def _require_pg_search_extension(conn: Any) -> None:
-    row = conn.execute("SELECT 1 FROM pg_extension WHERE extname = 'pg_search'").fetchone()
+def _require_extension(conn: Any, extension: str, message: str) -> None:
+    row = conn.execute("SELECT 1 FROM pg_extension WHERE extname = %s", (extension,)).fetchone()
     if row is None:
-        raise MigrationUnsupportedError(_PG_SEARCH_MISSING_MESSAGE)
+        raise MigrationUnsupportedError(message)
+
+
+def _require_baseline_extensions(conn: Any) -> None:
+    _require_extension(conn, "pg_search", _PG_SEARCH_MISSING_MESSAGE)
+    _require_extension(conn, "pgcrypto", _PGCRYPTO_MISSING_MESSAGE)
 
 
 def _row_value(row: Any, key: str, index: int = 0) -> Any:

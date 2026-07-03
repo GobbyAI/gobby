@@ -30,6 +30,7 @@ DEFAULT_POSTGRES_PORT = 60891
 DEFAULT_POSTGRES_DB = "gobby"
 DEFAULT_POSTGRES_USER = "gobby"
 DEFAULT_POSTGRES_PASSWORD = "gobby_dev"
+_BASELINE_EXTENSIONS = ("pg_search", "pgaudit", "pgcrypto")
 
 
 def install_postgres(
@@ -100,10 +101,11 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
         return {"success": False, "error": "PostgreSQL did not become ready before timeout"}
 
     database_url = _docker_database_url(port)
-    _probe_create_pg_search_extension(
-        dsn=database_url,
-        sql="CREATE EXTENSION IF NOT EXISTS pg_search",
-    )
+    for extension in ("pg_search", "pgcrypto"):
+        _probe_create_extension(
+            dsn=database_url,
+            sql=f"CREATE EXTENSION IF NOT EXISTS {extension}",
+        )
     _write_bootstrap_defaults(gobby_home=home, mode="docker", database_url=database_url)
 
     return {
@@ -141,7 +143,7 @@ async def get_postgres_status(
             "dsn_db": None,
             "healthy": False,
             "error": bootstrap_error,
-            "extensions": {"pg_search": False, "pgaudit": False},
+            "extensions": dict.fromkeys(_BASELINE_EXTENSIONS, False),
             "preload_libraries": [],
         }
     database_url = database_url or _docker_database_url(DEFAULT_POSTGRES_PORT)
@@ -155,7 +157,7 @@ async def get_postgres_status(
             timeout=readiness_timeout,
             connect_timeout=connect_timeout,
         ),
-        "extensions": {"pg_search": False, "pgaudit": False},
+        "extensions": dict.fromkeys(_BASELINE_EXTENSIONS, False),
         "preload_libraries": [],
     }
     if bootstrap_error:
@@ -164,8 +166,7 @@ async def get_postgres_status(
     try:
         with psycopg.connect(database_url, connect_timeout=connect_timeout) as conn:
             payload["extensions"] = {
-                "pg_search": _extension_present(conn, "pg_search"),
-                "pgaudit": _extension_present(conn, "pgaudit"),
+                extension: _extension_present(conn, extension) for extension in _BASELINE_EXTENSIONS
             }
             payload["preload_libraries"] = _preload_libraries(conn)
     except psycopg.Error as exc:
@@ -185,6 +186,7 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
     extensions = cast(dict[str, bool], payload.get("extensions", {}))
     lines.append(f"pg_search:   {'yes' if extensions.get('pg_search') else 'no'}")
     lines.append(f"pgaudit:     {'yes' if extensions.get('pgaudit') else 'no'}")
+    lines.append(f"pgcrypto:    {'yes' if extensions.get('pgcrypto') else 'no'}")
     ownership = payload.get("ownership")
     if isinstance(ownership, dict):
         lines.append(
@@ -342,13 +344,13 @@ def _pg_isready(dsn: str, *, timeout: float = 10.0, connect_timeout: int = 5) ->
             return False
 
 
-def _probe_create_pg_search_extension(*, dsn: str, sql: str) -> None:
+def _probe_create_extension(*, dsn: str, sql: str) -> None:
     try:
         with psycopg.connect(dsn, connect_timeout=10) as conn:
             conn.execute(sql)
             _commit_if_supported(conn)
     except psycopg.Error as exc:
-        raise click.ClickException(f"pg_search probe failed: {exc}") from exc
+        raise click.ClickException(f"PostgreSQL extension probe failed: {exc}") from exc
 
 
 def _extension_present(conn: Any, extension: str) -> bool:

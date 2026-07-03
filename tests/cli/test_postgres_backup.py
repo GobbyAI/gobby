@@ -35,7 +35,7 @@ class _FakeConnection:
             return _Result(("17.6",))
         if "pg_extension" in lowered:
             assert params is not None
-            return _Result((1,) if params[0] in {"pg_search", "pgaudit"} else None)
+            return _Result((1,) if params[0] in {"pg_search", "pgaudit", "pgcrypto"} else None)
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
@@ -89,6 +89,7 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
     assert metadata["source_dsn_redacted"] == "postgresql://gobby:****@localhost:60891/gobby"
     assert metadata["install_mode"] == "docker"
     assert metadata["pg_search_present"] is True
+    assert metadata["pgcrypto_present"] is True
     assert "migration_marker" not in metadata
     assert metadata["dump_sha256"] == hashlib.sha256(b"PGDMP").hexdigest()
     assert f"{metadata['dump_sha256']}  {backup.POSTGRES_DUMP_NAME}" in sums_path.read_text()
@@ -203,6 +204,7 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
     assert commands[1][4:8] == ["pg_restore", "--no-owner", "--no-privileges", "--clean"]
     assert "--if-exists" in commands[1]
     assert result["probes"]["pg_search_present"] is True
+    assert result["probes"]["pgcrypto_present"] is True
 
 
 def test_restore_rejects_unverified_dump_without_sidecar_before_pg_restore(
