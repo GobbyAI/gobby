@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any, TypeGuard
@@ -20,6 +19,7 @@ from gobby.servers.websocket.voice.warmup import (
     _WARMUP_IDLE,
     VoiceWarmupMixin,
 )
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -233,7 +233,7 @@ class VoiceMixin(VoiceWarmupMixin):
 
         if not audio_data_b64:
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     _voice_status_payload(
                         conversation_id,
                         request_id,
@@ -257,7 +257,7 @@ class VoiceMixin(VoiceWarmupMixin):
                     "Install it with: pip install faster-whisper"
                 )
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     _voice_status_payload(
                         conversation_id,
                         request_id,
@@ -270,7 +270,7 @@ class VoiceMixin(VoiceWarmupMixin):
 
         # Send transcribing status
         await websocket.send(
-            json.dumps(_voice_status_payload(conversation_id, request_id, "transcribing"))
+            json_dumps(_voice_status_payload(conversation_id, request_id, "transcribing"))
         )
 
         voice_config = self._get_voice_config()
@@ -291,13 +291,13 @@ class VoiceMixin(VoiceWarmupMixin):
                     f"Voice transcription empty for {conversation_id[:8]}... ({duration_ms}ms)"
                 )
                 await websocket.send(
-                    json.dumps(_voice_status_payload(conversation_id, request_id, "empty"))
+                    json_dumps(_voice_status_payload(conversation_id, request_id, "empty"))
                 )
                 return
 
             # Send transcription result
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     {
                         "type": "voice_transcription",
                         "conversation_id": conversation_id,
@@ -328,7 +328,7 @@ class VoiceMixin(VoiceWarmupMixin):
                     error = "Voice attached-session routing requires a session-control host"
                     logger.error(error)
                     await websocket.send(
-                        json.dumps(
+                        json_dumps(
                             _voice_status_payload(
                                 conversation_id,
                                 request_id,
@@ -358,7 +358,7 @@ class VoiceMixin(VoiceWarmupMixin):
             )
             try:
                 await websocket.send(
-                    json.dumps(
+                    json_dumps(
                         _voice_status_payload(
                             conversation_id,
                             request_id,
@@ -373,7 +373,7 @@ class VoiceMixin(VoiceWarmupMixin):
             logger.info("Voice transcription rejected: %s", e)
             try:
                 await websocket.send(
-                    json.dumps(
+                    json_dumps(
                         _voice_status_payload(
                             conversation_id,
                             request_id,
@@ -388,7 +388,7 @@ class VoiceMixin(VoiceWarmupMixin):
             logger.error("Voice transcription error", exc_info=True)
             try:
                 await websocket.send(
-                    json.dumps(
+                    json_dumps(
                         _voice_status_payload(
                             conversation_id,
                             request_id,
@@ -421,7 +421,7 @@ class VoiceMixin(VoiceWarmupMixin):
             await self._cancel_tts(conversation_id)
 
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "voice_status",
                     "conversation_id": conversation_id,
@@ -452,7 +452,7 @@ class VoiceMixin(VoiceWarmupMixin):
         warmup_started = self.start_voice_warmup(want_stt=want_stt, want_tts=want_tts)
 
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "voice_status",
                     "conversation_id": conversation_id,

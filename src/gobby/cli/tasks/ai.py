@@ -9,6 +9,7 @@ import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed
+from gobby.utils.json_helpers import json_dumps
 
 
 @click.command("validate")
@@ -218,8 +219,6 @@ def validate_task_cmd(
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def suggest_cmd(task_type: str | None, no_prefer_subtasks: bool, json_format: bool) -> None:
     """Suggest the next task to work on based on priority and readiness."""
-    import json as json_mod
-
     manager = get_task_manager()
     prefer_subtasks = not no_prefer_subtasks
 
@@ -227,7 +226,7 @@ def suggest_cmd(task_type: str | None, no_prefer_subtasks: bool, json_format: bo
 
     if not ready_tasks:
         if json_format:
-            click.echo(json_mod.dumps({"suggestion": None, "reason": "No ready tasks found"}))
+            click.echo(json_dumps({"suggestion": None, "reason": "No ready tasks found"}))
         else:
             click.echo("No ready tasks found.")
         return
@@ -276,7 +275,7 @@ def suggest_cmd(task_type: str | None, no_prefer_subtasks: bool, json_format: bo
                 {"task_id": t.id, "title": t.title, "score": s} for t, s, _ in scored[1:4]
             ],
         }
-        click.echo(json_mod.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     click.echo("Suggested next task:\n")

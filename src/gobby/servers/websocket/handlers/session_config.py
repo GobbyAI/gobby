@@ -6,7 +6,6 @@ message types.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -16,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -227,7 +227,7 @@ async def _set_attached_session_agent(
         return
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "agent_changed",
                 "target_session_id": target_session_id,
@@ -369,7 +369,7 @@ async def handle_set_project(
     mixin._pending_projects[conversation_id] = new_project_id
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "project_switched",
                 "conversation_id": conversation_id,
@@ -462,7 +462,7 @@ async def handle_set_worktree(
     new_branch, _ = await _resolve_git_branch(worktree_path)
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "worktree_switched",
                 "conversation_id": conversation_id,
@@ -577,7 +577,7 @@ async def handle_set_agent(
     mixin._pending_agents[conversation_id] = agent_name
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "agent_changed",
                 "conversation_id": conversation_id,
@@ -638,7 +638,7 @@ async def handle_set_provider(
     mixin._pending_providers[conversation_id] = provider
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "provider_switched",
                 "conversation_id": conversation_id,

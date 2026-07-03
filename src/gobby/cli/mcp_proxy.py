@@ -21,6 +21,7 @@ import click
 
 from gobby.cli.utils_config import get_daemon_client as _shared_daemon_client
 from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.json_helpers import json_dumps
 
 
 def get_daemon_client(ctx: click.Context) -> DaemonClient:
@@ -87,7 +88,7 @@ def list_servers(ctx: click.Context, json_format: bool) -> None:
     servers = result.get("servers", [])
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     if not servers:
@@ -123,7 +124,7 @@ def list_tools(ctx: click.Context, server: str | None, json_format: bool) -> Non
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     tools_by_server = result.get("tools", {})
@@ -169,7 +170,7 @@ def get_schema(ctx: click.Context, server_name: str, tool_name: str) -> None:
         sys.exit(1)
 
     # Always output as JSON for schema (it's complex)
-    click.echo(json.dumps(result, indent=2))
+    click.echo(json_dumps(result, indent=2))
 
 
 @mcp_proxy.command("call-tool")
@@ -234,13 +235,13 @@ def call_tool(
         sys.exit(1)
 
     if raw:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
     else:
         # Format result nicely
         if result.get("success"):
             content = result.get("result", result)
             if isinstance(content, dict):
-                click.echo(json.dumps(content, indent=2))
+                click.echo(json_dumps(content, indent=2))
             else:
                 click.echo(content)
         else:
@@ -416,7 +417,7 @@ def recommend_tools(
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     recommendations = result.get("recommendations", [])
@@ -478,7 +479,7 @@ def search_tools(
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     results = result.get("results", [])
@@ -550,7 +551,7 @@ def import_server(
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     # Handle different result statuses
@@ -639,7 +640,7 @@ def refresh_tools(ctx: click.Context, force: bool, server: str | None, json_form
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     if not result.get("success"):
@@ -688,7 +689,7 @@ def proxy_status(ctx: click.Context, json_format: bool) -> None:
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     click.echo("MCP Proxy Status:")

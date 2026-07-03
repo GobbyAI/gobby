@@ -18,6 +18,7 @@ from gobby.servers.websocket.handlers import plan_approval as _plan
 from gobby.servers.websocket.handlers import session_config as _config
 from gobby.servers.websocket.handlers import session_lifecycle as _lifecycle
 from gobby.servers.websocket.handlers import session_observe as _observe
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -104,8 +105,6 @@ class SessionControlMixin:
         self, websocket: Any, conversation_ids: list[str]
     ) -> None:
         """Rebroadcast pending interactions for active conversations on reconnect."""
-        import json as _json
-
         manager = getattr(self, "_pending_interaction_manager", None)
 
         for conv_id in conversation_ids:
@@ -119,7 +118,7 @@ class SessionControlMixin:
                 plan_source = raw_source if isinstance(raw_source, str) else None
                 try:
                     await websocket.send(
-                        _json.dumps(
+                        json_dumps(
                             {
                                 "type": "plan_pending_approval",
                                 "conversation_id": conv_id,
@@ -156,7 +155,7 @@ class SessionControlMixin:
                             interaction,
                         )
                         continue
-                    msg = _json.dumps(
+                    msg = json_dumps(
                         {
                             "type": "tool_status"
                             if interaction.get("kind") == "tool"

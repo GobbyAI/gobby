@@ -1,5 +1,6 @@
 """Tests for JSON extraction and decoding utilities."""
 
+from datetime import UTC, datetime
 from enum import Enum
 
 import msgspec
@@ -9,6 +10,7 @@ from gobby.utils.json_helpers import (
     decode_llm_response,
     extract_json_from_text,
     extract_json_object,
+    json_dumps,
     json_equal,
 )
 
@@ -139,6 +141,21 @@ class TestJsonEqual:
         """Test non-JSON strings fall back to normal equality."""
         assert json_equal("same", "same")
         assert not json_equal("same", "different")
+
+
+class TestJsonDumps:
+    """Tests for JSON-boundary serialization."""
+
+    def test_serializes_nested_datetimes_to_iso_strings(self) -> None:
+        value = {
+            "created_at": datetime(2026, 7, 3, 12, 34, tzinfo=UTC),
+            "items": [{"updated_at": datetime(2026, 7, 3, 12, 35, tzinfo=UTC)}],
+        }
+
+        assert json_dumps(value, sort_keys=True) == (
+            '{"created_at": "2026-07-03T12:34:00+00:00", '
+            '"items": [{"updated_at": "2026-07-03T12:35:00+00:00"}]}'
+        )
 
 
 class TaskStatus(str, Enum):

@@ -13,7 +13,6 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, Field
 
 from gobby.ai import (
@@ -30,6 +29,7 @@ from gobby.config.feature_base import (
     FeatureCandidateInput,
     FeatureProfile,
 )
+from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer

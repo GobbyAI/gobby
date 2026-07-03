@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import importlib
-import json
 import time
 import urllib.parse
 from types import ModuleType
 
 import click
 import httpx
+
+from gobby.utils.json_helpers import json_dumps
 
 
 def _facade() -> ModuleType:
@@ -124,7 +125,7 @@ def graph_counts(ctx: click.Context, project_ref: str | None, json_output: bool)
         raise click.ClickException(f"Invalid response from daemon: {e}") from e
 
     if json_output:
-        click.echo(json.dumps(data, sort_keys=True))
+        click.echo(json_dumps(data, sort_keys=True))
         return
 
     scope = f"project {project_id}" if project_id else "all projects"

@@ -7,9 +7,9 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
+from gobby.servers.responses import JSONResponse
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.storage.tasks._stage_types import (
     IllegalManifestMutationError,
@@ -17,6 +17,7 @@ from gobby.storage.tasks._stage_types import (
     StageManifestSpec,
     StageState,
 )
+from gobby.utils.datetime import to_json_safe_dict
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -135,13 +136,15 @@ def register_task_stage_routes(
         """Get the denormalized stage manifest for a task."""
         try:
             task = resolve_task(task_id)
-            return {
-                "task_id": task.id,
-                "stages": [
-                    stage_view(row)
-                    for row in server.task_manager.stage_states.list_for_task(task.id)
-                ],
-            }
+            return to_json_safe_dict(
+                {
+                    "task_id": task.id,
+                    "stages": [
+                        stage_view(row)
+                        for row in server.task_manager.stage_states.list_for_task(task.id)
+                    ],
+                }
+            )
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -238,14 +241,16 @@ def register_task_stage_routes(
                 stage_row = None
                 event = "stage_manifest_changed"
 
-            response = {
-                "task_id": task.id,
-                "stage": stage_view(stage_row) if stage_row else None,
-                "stages": [
-                    stage_view(row)
-                    for row in server.task_manager.stage_states.list_for_task(task.id)
-                ],
-            }
+            response = to_json_safe_dict(
+                {
+                    "task_id": task.id,
+                    "stage": stage_view(stage_row) if stage_row else None,
+                    "stages": [
+                        stage_view(row)
+                        for row in server.task_manager.stage_states.list_for_task(task.id)
+                    ],
+                }
+            )
             await broadcast_task(
                 event,
                 {

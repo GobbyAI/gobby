@@ -1,12 +1,12 @@
 """Inspection commands for workflows."""
 
-import json
 import logging
 
 import click
 import yaml
 
 from gobby.cli.workflows import common
+from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.definitions import WorkflowDefinition
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ def list_workflows(
                 )
 
     if json_format:
-        click.echo(json.dumps({"workflows": workflows, "count": len(workflows)}, indent=2))
+        click.echo(json_dumps({"workflows": workflows, "count": len(workflows)}, indent=2))
         return
 
     if not workflows:
@@ -113,7 +113,7 @@ def show_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
         raise SystemExit(1)
 
     if json_format:
-        click.echo(json.dumps(definition.model_dump(), indent=2, default=str))
+        click.echo(json_dumps(definition.model_dump(), indent=2, default=str))
         return
 
     click.echo(f"Workflow: {definition.name}")
@@ -166,14 +166,14 @@ def workflow_status(ctx: click.Context, session_id: str | None, json_format: boo
 
         if not variables:
             if json_format:
-                click.echo(json.dumps({"session_id": session_id, "has_variables": False}))
+                click.echo(json_dumps({"session_id": session_id, "has_variables": False}))
             else:
                 click.echo(f"No variables set for session: {common.truncate_id(session_id)}")
             return
 
         if json_format:
             click.echo(
-                json.dumps(
+                json_dumps(
                     {
                         "session_id": session_id,
                         "has_variables": True,

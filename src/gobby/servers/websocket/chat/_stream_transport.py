@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosed
+
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,14 @@ class ChatStreamTransport:
 
     async def send_direct(self, msg: dict[str, Any]) -> None:
         """Send directly to the request websocket."""
-        await self.websocket.send(json.dumps(msg))
+        await self.websocket.send(json_dumps(msg))
 
     async def safe_send(self, msg: dict[str, Any]) -> bool:
         """Broadcast to all WebSocket clients bound to this conversation."""
         if not self.ws_connected:
             return False
 
-        encoded = json.dumps(msg)
+        encoded = json_dumps(msg)
         any_sent = False
         for ws, meta in list(self.owner.clients.items()):
             cid = meta.get("conversation_id") if meta else None

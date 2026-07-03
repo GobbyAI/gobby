@@ -22,6 +22,7 @@ from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.tool_approvals import normalize_approved_tool_keys
 from gobby.servers.websocket.db import run_db
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -430,7 +431,7 @@ class ChatSessionMixin:
         # Wire mode-change callback so agent-initiated plan mode transitions
         # (EnterPlanMode/ExitPlanMode) are broadcast to conversation clients only
         async def _notify_mode_changed(mode: str, reason: str) -> None:
-            msg = json.dumps(
+            msg = json_dumps(
                 {
                     "type": "mode_changed",
                     "conversation_id": session_key,
@@ -462,7 +463,7 @@ class ChatSessionMixin:
             )
             raw_source = getattr(session, "provider", None)
             plan_source = raw_source if isinstance(raw_source, str) else None
-            msg = json.dumps(
+            msg = json_dumps(
                 {
                     "type": "plan_pending_approval",
                     "conversation_id": session_key,
@@ -848,7 +849,7 @@ class ChatSessionMixin:
         # Skip if the mode came from a pending client set_mode — echoing it back
         # triggers a set_mode → mode_changed → set_mode feedback loop.
         if not pending_mode:
-            mode_msg = json.dumps(
+            mode_msg = json_dumps(
                 {
                     "type": "mode_changed",
                     "conversation_id": session_key,

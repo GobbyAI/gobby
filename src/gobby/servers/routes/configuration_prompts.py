@@ -6,9 +6,9 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
 
 from gobby.prompts.models import parse_frontmatter
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SavePromptOverrideRequest
 

@@ -2,13 +2,12 @@
 Search commands for task management.
 """
 
-import json
-
 import click
 
 from gobby.cli.tasks._utils import get_task_manager
 from gobby.cli.utils import resolve_project_ref
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.utils.json_helpers import json_dumps
 
 
 @click.command("search")
@@ -107,7 +106,7 @@ def search_tasks(
                 for task, score in results
             ],
         }
-        click.echo(json.dumps(output, indent=2, default=str))
+        click.echo(json_dumps(output, indent=2, default=str))
         return
 
     if not results:

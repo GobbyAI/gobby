@@ -1,12 +1,11 @@
 """Task detail and validation-history command implementations."""
 
-import json
-
 import click
 
 from gobby.cli.tasks._crud_common import current_stage_display
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.utils.json_helpers import json_dumps
 
 
 def show_task_impl(services: CrudServices, task_id: str) -> None:
@@ -102,7 +101,7 @@ def validation_history_impl(
                 for it in iterations
             ],
         }
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if not iterations:

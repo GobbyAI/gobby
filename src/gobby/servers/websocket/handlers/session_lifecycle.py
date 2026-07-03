@@ -6,7 +6,6 @@ Handles stop_chat, clear_chat, delete_chat, and idle session cleanup.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -17,6 +16,7 @@ from gobby.servers.websocket.models import (
     CLEANUP_INTERVAL_SECONDS,
     IDLE_TIMEOUT_SECONDS,
 )
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -82,7 +82,7 @@ async def handle_clear_chat(
     if not session:
         # No active session — just acknowledge
         await websocket.send(
-            json.dumps({"type": "chat_cleared", "conversation_id": conversation_id})
+            json_dumps({"type": "chat_cleared", "conversation_id": conversation_id})
         )
         return
 
@@ -127,7 +127,7 @@ async def handle_clear_chat(
         await mixin._check_voice_idle()
 
     # Notify frontend
-    await websocket.send(json.dumps({"type": "chat_cleared", "conversation_id": conversation_id}))
+    await websocket.send(json_dumps({"type": "chat_cleared", "conversation_id": conversation_id}))
     logger.info(f"Chat cleared for conversation {conversation_id[:8]}")
 
 
@@ -182,7 +182,7 @@ async def handle_delete_chat(
             logger.warning(f"Failed to soft-delete session from DB: {e}")
 
     # Notify frontend
-    await websocket.send(json.dumps({"type": "chat_deleted", "conversation_id": conversation_id}))
+    await websocket.send(json_dumps({"type": "chat_deleted", "conversation_id": conversation_id}))
     logger.info(f"Chat deleted for conversation {conversation_id[:8]}")
 
 

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.utils.json_helpers import json_dumps
 from gobby.voice.text_normalizer import normalize_tts_text
 
 if TYPE_CHECKING:
@@ -41,7 +41,7 @@ async def _broadcast_tts_status(
     if error:
         payload["error"] = error
 
-    message = json.dumps(payload)
+    message = json_dumps(payload)
     for ws, meta in list(clients.items()):
         if not _client_matches_conversation(meta, conversation_id):
             continue
@@ -142,7 +142,7 @@ class TTSPipeline:
         try:
             async for pcm_bytes, sample_rate in self.tts.synthesize_stream(spoken_text):
                 # Send metadata frame (JSON)
-                meta = json.dumps(
+                meta = json_dumps(
                     {
                         "type": "tts_audio",
                         "conversation_id": self.conversation_id,

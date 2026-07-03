@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
+from gobby.utils.json_helpers import json_dumps
+
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
@@ -175,7 +177,7 @@ def list_rules(
 
     if json_output:
         summaries = [_rule_summary(r) for r in rows]
-        click.echo(json.dumps({"rules": summaries, "count": len(summaries)}, indent=2))
+        click.echo(json_dumps({"rules": summaries, "count": len(summaries)}, indent=2))
         return
 
     if not rows:
@@ -207,7 +209,7 @@ def show_rule(name: str, json_output: bool) -> None:
     detail = _rule_detail(row)
 
     if json_output:
-        click.echo(json.dumps(detail, indent=2))
+        click.echo(json_dumps(detail, indent=2))
         return
 
     click.echo(f"Name: {detail['name']}")
@@ -224,9 +226,9 @@ def show_rule(name: str, json_output: bool) -> None:
     if detail.get("tags"):
         click.echo(f"Tags: {', '.join(detail['tags'])}")
     if detail.get("match"):
-        click.echo(f"Match: {json.dumps(detail['match'], indent=2)}")
+        click.echo(f"Match: {json_dumps(detail['match'], indent=2)}")
     if detail.get("effects"):
-        click.echo(f"Effects: {json.dumps(detail['effects'], indent=2)}")
+        click.echo(f"Effects: {json_dumps(detail['effects'], indent=2)}")
 
 
 @rules.command("enable")
@@ -347,7 +349,7 @@ def audit_rules(session_id: str | None, limit: int, json_output: bool) -> None:
                     "reason": getattr(entry, "reason", None),
                 }
             )
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json_dumps(output, indent=2))
         return
 
     if not entries:

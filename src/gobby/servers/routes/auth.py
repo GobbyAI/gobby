@@ -9,9 +9,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.auth import AuthStore
 from gobby.storage.config_store import config_key_to_secret_name

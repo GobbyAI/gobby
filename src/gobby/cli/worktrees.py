@@ -14,7 +14,6 @@ Commands for managing git worktrees:
 - cleanup: Clean up stale worktrees
 """
 
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from json import JSONDecodeError
@@ -28,6 +27,7 @@ from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.uuid_validation import is_full_uuid
 
 
@@ -141,7 +141,7 @@ def create_worktree(
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):
@@ -174,7 +174,7 @@ def list_worktrees(
         worktrees_list = manager.list_worktrees(status=status, project_id=project_id)
 
     if json_format:
-        click.echo(json.dumps([w.to_dict() for w in worktrees_list], indent=2, default=str))
+        click.echo(json_dumps([w.to_dict() for w in worktrees_list], indent=2, default=str))
         return
 
     if not worktrees_list:
@@ -207,7 +207,7 @@ def show_worktree(worktree_ref: str, json_format: bool) -> None:
         raise click.ClickException(f"Worktree not found: {worktree_id}")
 
     if json_format:
-        click.echo(json.dumps(worktree.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(worktree.to_dict(), indent=2, default=str))
         return
 
     click.echo(f"Worktree: {worktree.id}")
@@ -364,7 +364,7 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
         raise click.ClickException(str(e)) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):
@@ -420,7 +420,7 @@ def detect_stale(days: int, json_format: bool) -> None:
         raise click.ClickException(str(e)) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     stale = result.get("stale_worktrees", [])
@@ -512,7 +512,7 @@ def worktree_stats(json_format: bool) -> None:
         raise click.ClickException(str(e)) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     counts = result.get("counts", {})

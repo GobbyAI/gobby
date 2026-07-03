@@ -7,10 +7,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
+from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer

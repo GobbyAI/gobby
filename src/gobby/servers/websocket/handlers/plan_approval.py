@@ -6,7 +6,6 @@ Handles plan_approval_response and recovered plan approval after daemon restart.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +19,7 @@ from gobby.adapters.plan_keystrokes import (
 from gobby.adapters.plan_options import get_plan_accept_option
 from gobby.servers.websocket.db import run_db
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.adapters.plan_keystrokes import PlanKeystrokeRegistry
@@ -50,7 +50,7 @@ async def _send_mode_changed(
 ) -> None:
     try:
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "mode_changed",
                     "conversation_id": conversation_id,
@@ -117,7 +117,7 @@ async def _send_injection_failed(
             await sender(websocket, message, code="PLAN_CONTINUATION_FAILED")
             return
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "error",
                     "code": "PLAN_CONTINUATION_FAILED",
@@ -346,7 +346,7 @@ async def handle_attached_plan_approval(
         return
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "plan_approval_dispatched",
                 "target_session_id": target_session_id,
@@ -568,7 +568,7 @@ async def handle_recovered_plan_approval(
         )
         try:
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     {
                         "type": "plan_approved_recovered",
                         "conversation_id": conversation_id,

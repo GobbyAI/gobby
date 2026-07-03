@@ -8,7 +8,6 @@ pattern.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -19,6 +18,7 @@ from websockets.exceptions import ConnectionClosed
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,7 @@ class TmuxMixin:
             response["request_id"] = request_id
 
         try:
-            await websocket.send(json.dumps(response))
+            await websocket.send(json_dumps(response))
         except ConnectionClosed:
             logger.debug("Client disconnected before tmux session list response was sent")
 
@@ -393,7 +393,7 @@ class TmuxMixin:
             if request_id:
                 response["request_id"] = request_id
 
-            await websocket.send(json.dumps(response))
+            await websocket.send(json_dumps(response))
 
         except Exception as e:
             logger.error(f"Failed to attach tmux session '{session_name}': {e}")
@@ -427,7 +427,7 @@ class TmuxMixin:
         if request_id:
             response["request_id"] = request_id
 
-        await websocket.send(json.dumps(response))
+        await websocket.send(json_dumps(response))
 
     async def _handle_tmux_create_session(self, websocket: Any, data: dict[str, Any]) -> None:
         """Create a new tmux session."""
@@ -464,7 +464,7 @@ class TmuxMixin:
             if request_id:
                 response["request_id"] = request_id
 
-            await websocket.send(json.dumps(response))
+            await websocket.send(json_dumps(response))
 
         except Exception as e:
             logger.error(f"Failed to create tmux session: {e}")
@@ -536,7 +536,7 @@ class TmuxMixin:
             if request_id:
                 response["request_id"] = request_id
 
-            await websocket.send(json.dumps(response))
+            await websocket.send(json_dumps(response))
 
         except Exception as e:
             logger.error(f"Failed to kill tmux session '{session_name}': {e}")
@@ -609,7 +609,7 @@ class TmuxMixin:
 
         from websockets.exceptions import ConnectionClosed
 
-        message = json.dumps(
+        message = json_dumps(
             {
                 "type": "tmux_session_event",
                 "event": event,

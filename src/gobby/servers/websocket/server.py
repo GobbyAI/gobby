@@ -29,6 +29,7 @@ from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 websockets_logger = logging.getLogger("websockets.server")
@@ -203,7 +204,7 @@ class WebSocketServer(
             # Send welcome message with active conversation IDs
             active_conversations = list(self._chat_sessions.keys())
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     {
                         "type": "connection_established",
                         "client_id": client_id,

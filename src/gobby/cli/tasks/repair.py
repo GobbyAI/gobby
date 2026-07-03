@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.tasks.lifecycle_repair import LifecycleRepair, LifecycleRepairResult
+from gobby.utils.json_helpers import json_dumps
 
 
 @click.command("repair-lifecycle")
@@ -44,7 +43,7 @@ def repair_lifecycle_cmd(
         raise click.ClickException(str(exc)) from exc
 
     if json_format:
-        click.echo(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        click.echo(json_dumps(result.to_dict(), indent=2, sort_keys=True))
         return
     click.echo(_render_repair_result(result))
 

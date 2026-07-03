@@ -12,7 +12,6 @@ import time
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from starlette.requests import ClientDisconnect
 
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
@@ -26,6 +25,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     read_envelope_marker,
 )
+from gobby.servers.responses import JSONResponse
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,

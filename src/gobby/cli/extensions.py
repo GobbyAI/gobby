@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import click
 
 from gobby.cli.mcp_proxy import call_mcp_api, check_daemon_running, get_daemon_client
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def hooks_list(ctx: click.Context, json_format: bool) -> None:
     hook_types = [{"name": e.value, "description": _get_hook_description(e)} for e in HookEventType]
 
     if json_format:
-        click.echo(json.dumps(hook_types, indent=2))
+        click.echo(json_dumps(hook_types, indent=2))
         return
 
     click.echo("Supported Hook Event Types:")
@@ -134,7 +135,7 @@ def hooks_test(ctx: click.Context, hook_type: str, source: str, json_format: boo
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     click.echo(f"Hook test: {hook_type}")
@@ -227,7 +228,7 @@ def hooks_run(stage: str, verbose: bool, dry_run: bool, json_format: bool) -> No
                 for r in result.results
             ],
         }
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json_dumps(output, indent=2))
         sys.exit(0 if result.success else 1)
 
     # Handle skipped stage
@@ -328,7 +329,7 @@ def hooks_status(json_format: bool) -> None:
                 ),
             },
         }
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json_dumps(output, indent=2))
         return
 
     # Display global install status
@@ -483,7 +484,7 @@ def webhooks_list(ctx: click.Context, json_format: bool) -> None:
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     enabled = result.get("enabled", False)
@@ -554,7 +555,7 @@ def webhooks_test(ctx: click.Context, webhook_name: str, event: str, json_format
         sys.exit(1)
 
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     if result.get("success"):

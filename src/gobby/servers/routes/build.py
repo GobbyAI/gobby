@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from gobby.build import (
@@ -35,6 +34,7 @@ from gobby.build.options import resolve_build_isolation
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import DeliveryMode
 from gobby.config.build import StageCapOverride as BuildStageCapOverride
+from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer

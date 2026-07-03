@@ -1,12 +1,11 @@
 """Validation and debugging commands for workflows."""
 
-import json
-
 import click
 import httpx
 
 from gobby.cli.utils_config import get_daemon_client
 from gobby.cli.workflows import common
+from gobby.utils.json_helpers import json_dumps
 
 
 @click.command("check")
@@ -50,7 +49,7 @@ def check_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
         raise SystemExit(1) from None
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     # Formatted output
@@ -163,7 +162,7 @@ def audit_workflow(
                     "context": entry.context,
                 }
             )
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json_dumps(output, indent=2))
         return
 
     # Human-readable output

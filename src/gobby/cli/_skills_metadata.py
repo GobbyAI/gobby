@@ -10,6 +10,7 @@ from typing import Any
 import click
 
 from gobby.storage.skills import LocalSkillManager
+from gobby.utils.json_helpers import json_dumps
 
 StorageFactory = Callable[[], LocalSkillManager]
 _FACADE_MODULE = "gobby.cli.skills"
@@ -37,7 +38,7 @@ def get_metadata(storage_factory: StorageFactory, name: str, key: str) -> None:
         click.echo(f"Key not found: {key}")
         sys.exit(1)
     if isinstance(value, dict | list):
-        click.echo(json.dumps(value, indent=2))
+        click.echo(json_dumps(value, indent=2))
     else:
         click.echo(str(value))
 

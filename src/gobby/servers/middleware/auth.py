@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING, Any
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
+
+from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer

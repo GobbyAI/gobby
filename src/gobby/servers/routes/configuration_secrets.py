@@ -6,10 +6,10 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 
 from gobby.config.embedding_keys import runtime_embedding_config_keys_to_storage
 from gobby.config.persistence import validate_falkordb_password
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name

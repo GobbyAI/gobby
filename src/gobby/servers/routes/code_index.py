@@ -9,7 +9,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
@@ -21,6 +20,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeVersionError,
 )
 from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
+from gobby.servers.responses import JSONResponse
 from gobby.storage.projects import LocalProjectManager, Project
 
 if TYPE_CHECKING:

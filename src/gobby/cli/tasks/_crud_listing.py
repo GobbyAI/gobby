@@ -1,12 +1,11 @@
 """List and report task CLI command implementations."""
 
-import json
-
 import click
 
 from gobby.cli.tasks._crud_common import current_stage_display
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.tasks.state_semantics import is_task_closed, serialize_task_state
+from gobby.utils.json_helpers import json_dumps
 
 
 def list_tasks_impl(
@@ -110,7 +109,7 @@ def list_tasks_impl(
         empty_msg = "No tasks found."
 
     if json_format:
-        click.echo(json.dumps([t.to_dict() for t in tasks_list], indent=2, default=str))
+        click.echo(json_dumps([t.to_dict() for t in tasks_list], indent=2, default=str))
         return
 
     if not tasks_list:
@@ -175,7 +174,7 @@ def ready_tasks_impl(
     )
 
     if json_format:
-        click.echo(json.dumps([t.to_dict() for t in tasks_list], indent=2, default=str))
+        click.echo(json_dumps([t.to_dict() for t in tasks_list], indent=2, default=str))
         return
 
     if not tasks_list:
@@ -230,7 +229,7 @@ def blocked_tasks_impl(
                     "blocked_by": tree.get("blockers", []),
                 }
             )
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if not blocked_list:
@@ -323,7 +322,7 @@ def task_stats_impl(services: CrudServices, project_ref: str | None, json_format
     }
 
     if json_format:
-        click.echo(json.dumps(stats, indent=2))
+        click.echo(json_dumps(stats, indent=2))
         return
 
     click.echo("Task Statistics:")

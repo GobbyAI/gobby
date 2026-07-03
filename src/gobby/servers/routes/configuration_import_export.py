@@ -12,7 +12,6 @@ from typing import Any, Literal, cast
 import psycopg
 import yaml
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -23,6 +22,7 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_key_to_runtime_key,
 )
 from gobby.prompts.models import parse_frontmatter
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import ImportConfigRequest
 from gobby.servers.routes.configuration_secrets import (

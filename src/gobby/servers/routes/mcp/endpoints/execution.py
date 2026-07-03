@@ -8,7 +8,7 @@ These endpoints handle tool listing, schema retrieval, and tool execution.
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import Depends, HTTPException, Request
 
@@ -20,6 +20,7 @@ from gobby.mcp_proxy.wait_tools import (
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
+from gobby.utils.datetime import to_json_safe
 from gobby.utils.session_context import (
     SeededContextTokens,
     get_current_session_id,
@@ -33,6 +34,10 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return cast(dict[str, Any], to_json_safe(payload))
 
 
 def _stale_stdio_wrapper_wait_result(
@@ -254,7 +259,7 @@ def _process_tool_proxy_result(
                 },
             )
 
-        return {**result, "response_time_ms": response_time_ms}
+        return _json_safe_payload({**result, "response_time_ms": response_time_ms})
     else:
         inc_counter("mcp_tool_calls_succeeded_total")
         logger.debug(
@@ -267,11 +272,13 @@ def _process_tool_proxy_result(
         )
 
     # Return 200 with wrapped result for success cases
-    return {
-        "success": True,
-        "result": result,
-        "response_time_ms": response_time_ms,
-    }
+    return _json_safe_payload(
+        {
+            "success": True,
+            "result": result,
+            "response_time_ms": response_time_ms,
+        }
+    )
 
 
 async def _call_internal_tool(
@@ -313,11 +320,13 @@ async def _call_internal_tool(
         result = normalize_internal_success_result(await registry.call(tool_name, arguments or {}))
         response_time_ms = (time.perf_counter() - start_time) * 1000
         inc_counter("mcp_tool_calls_succeeded_total")
-        return {
-            "success": True,
-            "result": result,
-            "response_time_ms": response_time_ms,
-        }
+        return _json_safe_payload(
+            {
+                "success": True,
+                "result": result,
+                "response_time_ms": response_time_ms,
+            }
+        )
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
         error_msg = str(e) or f"{type(e).__name__}: (no message)"
@@ -684,11 +693,13 @@ async def call_mcp_tool(
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("mcp_tool_calls_succeeded_total")
 
-                return {
-                    "success": True,
-                    "result": result,
-                    "response_time_ms": response_time_ms,
-                }
+                return _json_safe_payload(
+                    {
+                        "success": True,
+                        "result": result,
+                        "response_time_ms": response_time_ms,
+                    }
+                )
 
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
@@ -799,11 +810,13 @@ async def mcp_proxy(
 
                 inc_counter("mcp_tool_calls_succeeded_total")
 
-                return {
-                    "success": True,
-                    "result": result,
-                    "response_time_ms": response_time_ms,
-                }
+                return _json_safe_payload(
+                    {
+                        "success": True,
+                        "result": result,
+                        "response_time_ms": response_time_ms,
+                    }
+                )
 
             except ValueError as e:
                 inc_counter("mcp_tool_calls_failed_total")

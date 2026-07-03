@@ -7,8 +7,8 @@ from typing import Any
 
 import psycopg
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
 from typing import Any
 
@@ -11,6 +10,7 @@ import click
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import StageRegistryManager
+from gobby.utils.json_helpers import json_dumps
 
 
 def _open_manager() -> tuple[HubDatabase, StageRegistryManager]:
@@ -23,7 +23,7 @@ def _open_manager() -> tuple[HubDatabase, StageRegistryManager]:
 
 
 def _echo(data: Any) -> None:
-    click.echo(json.dumps(data, indent=2, sort_keys=True))
+    click.echo(json_dumps(data, indent=2, sort_keys=True))
 
 
 @click.group("stages")

@@ -11,6 +11,7 @@ import click
 
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager, Project
+from gobby.utils.json_helpers import json_dumps
 
 
 def get_project_manager() -> LocalProjectManager:
@@ -65,7 +66,7 @@ def list_projects(json_format: bool, show_all: bool) -> None:
         projects_list = [p for p in projects_list if not p.name.startswith("_")]
 
     if json_format:
-        click.echo(json.dumps([p.to_dict() for p in projects_list], indent=2, default=str))
+        click.echo(json_dumps([p.to_dict() for p in projects_list], indent=2, default=str))
         return
 
     if not projects_list:
@@ -91,7 +92,7 @@ def show_project(project_ref: str, json_format: bool) -> None:
     project = resolve_project(manager, project_ref)
 
     if json_format:
-        click.echo(json.dumps(project.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(project.to_dict(), indent=2, default=str))
         return
 
     click.echo(f"Project: {project.name}")
@@ -301,13 +302,13 @@ def refresh_verification(
             )
     except ProjectVerificationAIError as exc:
         if json_format:
-            click.echo(json.dumps({"error": str(exc)}, indent=2))
+            click.echo(json_dumps({"error": str(exc)}, indent=2))
         else:
             click.echo(str(exc), err=True)
         raise SystemExit(1) from exc
 
     if json_format:
-        click.echo(json.dumps(result.to_dict(), indent=2))
+        click.echo(json_dumps(result.to_dict(), indent=2))
         return
 
     if result.changed:

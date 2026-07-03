@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shlex
 import shutil
@@ -33,6 +32,7 @@ from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
 from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
+from gobby.utils.json_helpers import json_dumps
 
 _TICKET_CAPTURE_KINDS = {"pgaudit-managed"}
 _PGAUDIT_CONTAINER = "gobby-postgres"
@@ -75,7 +75,7 @@ def status_cmd(as_json: bool) -> None:
     """Show PostgreSQL health, extension, and ownership status."""
     payload = asyncio.run(get_postgres_status())
     if as_json:
-        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        click.echo(json_dumps(payload, indent=2, sort_keys=True))
     else:
         click.echo(render_postgres_status(payload))
 
@@ -401,7 +401,7 @@ def _write_cutover_ticket(ticket: dict[str, Any]) -> None:
     path = migrations_dir / f"cutover-{_ticket_timestamp(ticket)}.json"
     tmp_path = path.with_suffix(".json.tmp")
     payload = {key: value for key, value in ticket.items() if key != "_path"}
-    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp_path.write_text(json_dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp_path, path)
     ticket["_path"] = str(path)
 

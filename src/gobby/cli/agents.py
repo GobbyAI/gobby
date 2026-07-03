@@ -26,6 +26,7 @@ from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -295,7 +296,7 @@ def spawn_agent_cmd(
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         if not result.get("success"):
             raise SystemExit(1)
         return
@@ -355,7 +356,7 @@ def list_agent_definitions(
 
     if json_format:
         click.echo(
-            json.dumps({"agents": summaries, "count": len(summaries)}, indent=2, default=str)
+            json_dumps({"agents": summaries, "count": len(summaries)}, indent=2, default=str)
         )
         return
 
@@ -391,7 +392,7 @@ def show_agent_definition(name: str, json_format: bool) -> None:
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(detail, indent=2, default=str))
+        click.echo(json_dumps(detail, indent=2, default=str))
         return
 
     click.echo(f"Agent: {detail['name']}")
@@ -453,7 +454,7 @@ def list_agent_runs(
             runs = manager.list_by_status(status=status, limit=limit)
 
     if json_format:
-        click.echo(json.dumps([r.to_dict() for r in runs], indent=2, default=str))
+        click.echo(json_dumps([r.to_dict() for r in runs], indent=2, default=str))
         return
 
     if not runs:
@@ -492,7 +493,7 @@ def show_agent_run(run_ref: str, json_format: bool) -> None:
         raise click.ClickException(f"Agent run not found: {run_id}")
 
     if json_format:
-        click.echo(json.dumps(run.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(run.to_dict(), indent=2, default=str))
         return
 
     click.echo(f"Agent Run: {run.id}")
@@ -707,7 +708,7 @@ def check_agent(
         raise click.ClickException(f"{e}\nStart with: gobby start") from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         if not result.get("can_spawn", False):
             raise SystemExit(1)
         return

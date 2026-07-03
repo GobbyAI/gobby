@@ -1,10 +1,9 @@
 """Variable management commands for workflows."""
 
-import json
-
 import click
 
 from gobby.cli.workflows import common
+from gobby.utils.json_helpers import json_dumps
 
 
 @click.command("set-var")
@@ -56,7 +55,7 @@ def set_variable(
         if json_format:
             all_variables = session_var_manager.get_variables(session_id)
             click.echo(
-                json.dumps(
+                json_dumps(
                     {
                         "success": True,
                         "session_id": session_id,
@@ -106,7 +105,7 @@ def get_variable(
 
             if json_format:
                 click.echo(
-                    json.dumps(
+                    json_dumps(
                         {
                             "success": True,
                             "session_id": session_id,
@@ -127,7 +126,7 @@ def get_variable(
             # Get all variables
             if json_format:
                 click.echo(
-                    json.dumps(
+                    json_dumps(
                         {
                             "success": True,
                             "session_id": session_id,

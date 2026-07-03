@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +13,7 @@ from gobby.cli._skills_daemon import (
     DaemonClientFactory,
     SkillToolCaller,
 )
+from gobby.utils.json_helpers import json_dumps
 
 RuntimeDatabaseFactory = Callable[..., Any]
 
@@ -44,7 +44,7 @@ def list_hubs(
     hubs_list = result.get("hubs", [])
 
     if json_output:
-        click.echo(json.dumps(hubs_list, indent=2))
+        click.echo(json_dumps(hubs_list, indent=2))
         return
 
     if not hubs_list:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -20,6 +19,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
     _session_meta_payload,
 )
 from gobby.sessions.context_usage import effective_context_window_for_session
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -180,7 +180,7 @@ async def handle_attach_to_session(
         context_window=context_window,
     )
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "attach_to_session_result",
                 "session_id": session_id,
@@ -346,7 +346,7 @@ async def handle_send_to_cli_session(
 
     # Respond to the client
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "send_to_cli_session_result",
                 "session_id": session_id,
@@ -392,7 +392,7 @@ async def handle_detach_from_session(
         metadata.pop("attached_session_id", None)
 
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "detach_from_session_result",
                 "session_id": session_id,

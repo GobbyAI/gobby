@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import NoReturn
 
@@ -15,6 +14,7 @@ from gobby.llm import LLMService
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.tasks.expansion_service import ExpansionService
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
@@ -122,7 +122,7 @@ def compile_cmd(
         detail = run.error or f"run finished with status {run.status}"
         raise click.ClickException(f"Expansion compile failed: {detail}")
     if json_output:
-        click.echo(json.dumps(run.to_dict()))
+        click.echo(json_dumps(run.to_dict()))
         return
     summary = run.compiled_spec or {}
     click.echo(f"Run: {run.id}")
@@ -145,7 +145,7 @@ def apply_cmd(run_id: str, session_id: str | None, json_output: bool) -> None:
     except Exception as exc:
         _fail_run_and_raise(run_manager, run_id, exc)
     if json_output:
-        click.echo(json.dumps(run.to_dict()))
+        click.echo(json_dumps(run.to_dict()))
         return
     click.echo(f"Run: {run.id}")
     click.echo(f"Status: {run.status}")
@@ -178,7 +178,7 @@ def reset_cmd(
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     if json_output:
-        click.echo(json.dumps(result.to_dict()))
+        click.echo(json_dumps(result.to_dict()))
         return
     click.echo(f"Task: {task.id}")
     click.echo(f"Run: {result.run_id or 'none'}")
@@ -196,7 +196,7 @@ def status_cmd(run_id: str, json_output: bool) -> None:
     if run is None:
         raise click.ClickException(f"Expansion run not found: {run_id}")
     if json_output:
-        click.echo(json.dumps(run.to_dict()))
+        click.echo(json_dumps(run.to_dict()))
         return
     click.echo(f"Run: {run.id}")
     click.echo(f"Status: {run.status}")
@@ -226,7 +226,7 @@ def resume_cmd(run_id: str, session_id: str | None, json_output: bool) -> None:
     except Exception as exc:
         _fail_run_and_raise(run_manager, run.id, exc)
     if json_output:
-        click.echo(json.dumps(run.to_dict()))
+        click.echo(json_dumps(run.to_dict()))
         return
     click.echo(f"Run: {run.id}")
     click.echo(f"Status: {run.status}")

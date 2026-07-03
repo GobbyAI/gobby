@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +11,7 @@ import click
 import psycopg
 
 from gobby.storage.skills import LocalSkillManager
+from gobby.utils.json_helpers import json_dumps
 
 StorageFactory = Callable[[], LocalSkillManager]
 JsonOutput = Callable[[list[Any]], None]
@@ -87,7 +87,7 @@ def show_skill(storage_factory: StorageFactory, name: str, json_output: bool) ->
 
     if skill is None:
         if json_output:
-            click.echo(json.dumps({"error": "Skill not found", "name": name}))
+            click.echo(json_dumps({"error": "Skill not found", "name": name}))
         else:
             click.echo(f"Skill not found: {name}")
         sys.exit(1)
@@ -107,7 +107,7 @@ def show_skill(storage_factory: StorageFactory, name: str, json_output: bool) ->
             "category": facade.get_skill_category(skill),
             "tags": facade.get_skill_tags(skill),
         }
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json_dumps(output, indent=2))
         return
 
     click.echo(f"Name: {skill.name}")

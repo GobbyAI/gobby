@@ -93,8 +93,8 @@ def test_list_worktrees(runner, mock_worktree_manager) -> None:
             task_id="task-1",
             base_branch="main",
             agent_session_id=None,
-            created_at="",
-            updated_at="",
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
             merged_at=None,
         ),
         Worktree(
@@ -106,8 +106,8 @@ def test_list_worktrees(runner, mock_worktree_manager) -> None:
             task_id="task-2",
             base_branch="main",
             agent_session_id=None,
-            created_at="",
-            updated_at="",
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
             merged_at=None,
         ),
     ]
@@ -132,8 +132,8 @@ def test_show_worktree(runner, mock_worktree_manager, mock_resolve_worktree_id) 
         project_id="proj-1",
         task_id="task-1",
         agent_session_id=None,
-        created_at="",
-        updated_at="",
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
         merged_at=None,
     )
     mock_worktree_manager.get.return_value = worktree

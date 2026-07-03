@@ -15,6 +15,7 @@ from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.utils.json_helpers import json_dumps
 
 
 def get_session_manager() -> SessionManager:
@@ -143,7 +144,7 @@ def list_sessions(
         )
 
     if json_format:
-        click.echo(json.dumps([s.to_dict() for s in sessions_list], indent=2, default=str))
+        click.echo(json_dumps([s.to_dict() for s in sessions_list], indent=2, default=str))
         return
 
     if not sessions_list:
@@ -197,7 +198,7 @@ def show_session(session_id: str, json_format: bool) -> None:
             raise SystemExit(1)
 
     if json_format:
-        click.echo(json.dumps(session.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(session.to_dict(), indent=2, default=str))
         return
 
     click.echo(f"Session: {session.id}")
@@ -272,7 +273,7 @@ def show_messages(
         )
 
     if json_format:
-        click.echo(json.dumps(messages, indent=2, default=str))
+        click.echo(json_dumps(messages, indent=2, default=str))
         return
 
     if not messages:
@@ -702,7 +703,7 @@ def restore_transcript(
                 raise SystemExit(1)
 
     if json_format:
-        click.echo(json.dumps(results, indent=2, default=str))
+        click.echo(json_dumps(results, indent=2, default=str))
         return
 
     restored_list = [r for r in results if r["status"] == "restored"]

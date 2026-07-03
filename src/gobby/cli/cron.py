@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.daemon_client import DaemonClient
 from gobby.utils.datetime import datetime_to_iso
+from gobby.utils.json_helpers import json_dumps
 
 
 def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
@@ -95,7 +96,7 @@ def list_jobs(
     )
 
     if json_format:
-        click.echo(json.dumps([j.to_dict() for j in jobs], indent=2, default=str))
+        click.echo(json_dumps([j.to_dict() for j in jobs], indent=2, default=str))
         return
 
     if not jobs:
@@ -170,7 +171,7 @@ def add_job(
     )
 
     if json_format:
-        click.echo(json.dumps(job.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(job.to_dict(), indent=2, default=str))
         return
 
     click.echo(f"Created cron job: {job.id}")
@@ -205,7 +206,7 @@ def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
     run = cast(dict[str, Any], payload["run"])
 
     if json_format:
-        click.echo(json.dumps(run, indent=2, default=str))
+        click.echo(json_dumps(run, indent=2, default=str))
         return
 
     click.echo(f"Triggered run {run.get('id', '<unknown>')} for job {job_id}")
@@ -223,7 +224,7 @@ def toggle_job(job_id: str, json_format: bool) -> None:
         raise SystemExit(1)
 
     if json_format:
-        click.echo(json.dumps(job.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(job.to_dict(), indent=2, default=str))
         return
 
     state = "enabled" if job.enabled else "disabled"
@@ -245,7 +246,7 @@ def list_runs(job_id: str, limit: int, json_format: bool) -> None:
     runs = storage.list_runs(job_id, limit=limit)
 
     if json_format:
-        click.echo(json.dumps([r.to_dict() for r in runs], indent=2, default=str))
+        click.echo(json_dumps([r.to_dict() for r in runs], indent=2, default=str))
         return
 
     if not runs:
@@ -333,7 +334,7 @@ def edit_job(
         raise SystemExit(1)
 
     if json_format:
-        click.echo(json.dumps(updated.to_dict(), indent=2, default=str))
+        click.echo(json_dumps(updated.to_dict(), indent=2, default=str))
         return
 
     click.echo(f"Updated cron job: {updated.id} ({updated.name})")

@@ -5,7 +5,6 @@ Provides commands for syncing gobby tasks with GitHub issues and PRs.
 """
 
 import asyncio
-import json
 import logging
 
 import click
@@ -16,6 +15,7 @@ from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github import GitHubSyncService
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def github_status(json_format: bool) -> None:
 
         if json_format:
             click.echo(
-                json.dumps(
+                json_dumps(
                     {
                         "project_id": project_id,
                         "github_repo": github_repo,
@@ -186,7 +186,7 @@ def github_import(repo: str | None, labels: str | None, state: str, json_format:
         tasks = asyncio.run(service.import_github_issues(repo=repo, labels=label_list, state=state))
 
         if json_format:
-            click.echo(json.dumps({"tasks": tasks, "count": len(tasks)}, indent=2))
+            click.echo(json_dumps({"tasks": tasks, "count": len(tasks)}, indent=2))
         else:
             click.echo(f"✓ Imported {len(tasks)} issues from {repo}")
             for task in tasks:
@@ -211,7 +211,7 @@ def github_sync(task_id: str, json_format: bool) -> None:
         result = asyncio.run(service.sync_task_to_github(task_id))
 
         if json_format:
-            click.echo(json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             click.echo(f"✓ Synced task {task_id} to GitHub")
 
@@ -249,7 +249,7 @@ def github_pr(
         )
 
         if json_format:
-            click.echo(json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             pr_number = result.get("number", "unknown")
             pr_url = result.get("html_url") or result.get("url", "")

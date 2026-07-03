@@ -12,8 +12,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from starlette.responses import JSONResponse
 
+from gobby.servers.responses import JSONResponse
 from gobby.storage.memories import Memory, Visibility
 
 if TYPE_CHECKING:

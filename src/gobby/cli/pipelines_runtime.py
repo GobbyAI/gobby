@@ -10,6 +10,7 @@ from typing import Any
 import click
 import httpx
 
+from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def _daemon_error_message(response: Any) -> str:
         if isinstance(detail, str) and detail.strip():
             return detail.strip()
         if detail:
-            return json.dumps(detail)
+            return json_dumps(detail)
 
     return fallback
 

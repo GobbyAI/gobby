@@ -6,12 +6,13 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from websockets.exceptions import ConnectionClosed
+
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ class BroadcastMixin:
         if not self.clients:
             return
 
-        message_str = json.dumps(message)
+        message_str = json_dumps(message)
         sent_count = 0
         failed_count = 0
 

@@ -10,6 +10,7 @@ from typing import Any
 
 import click
 
+from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.pipeline_state import ApprovalRequired
 
 _FACADE_MODULE = "gobby.cli.pipelines"
@@ -44,9 +45,7 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
                     "step_count": len(wf.definition.steps),
                 }
             )
-        click.echo(
-            facade.json.dumps({"pipelines": pipeline_list, "count": len(pipeline_list)}, indent=2)
-        )
+        click.echo(json_dumps({"pipelines": pipeline_list, "count": len(pipeline_list)}, indent=2))
         return
 
     if not discovered:
@@ -94,7 +93,7 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
             "inputs": pipeline.inputs,
             "outputs": pipeline.outputs,
         }
-        click.echo(facade.json.dumps(pipeline_dict, indent=2, default=str))
+        click.echo(json_dumps(pipeline_dict, indent=2, default=str))
         return
 
     click.echo(f"Pipeline: {pipeline.name}")
@@ -188,7 +187,7 @@ def run_pipeline(
         status = daemon_result.get("status", "")
         if status == "waiting_approval":
             if json_format:
-                click.echo(facade.json.dumps(daemon_result, indent=2))
+                click.echo(json_dumps(daemon_result, indent=2))
             else:
                 click.echo(f"⏸ Pipeline '{display_name}' waiting for approval")
                 click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
@@ -199,7 +198,7 @@ def run_pipeline(
                 click.echo(f"To reject:  gobby pipelines reject {token}")
             return
         if json_format:
-            click.echo(facade.json.dumps(daemon_result, indent=2))
+            click.echo(json_dumps(daemon_result, indent=2))
         else:
             click.echo(f"✓ Pipeline '{display_name}' completed")
             click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
@@ -231,7 +230,7 @@ def run_pipeline(
                     result["outputs"] = facade.json.loads(execution.outputs_json)
                 except facade.json.JSONDecodeError:
                     result["outputs"] = execution.outputs_json
-            click.echo(facade.json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             click.echo(f"✓ Pipeline '{display_name}' completed")
             click.echo(f"  Execution ID: {execution.id}")
@@ -247,7 +246,7 @@ def run_pipeline(
                 "token": e.token,
                 "message": e.message,
             }
-            click.echo(facade.json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             click.echo(f"⏸ Pipeline '{display_name}' waiting for approval")
             click.echo(f"  Execution ID: {e.execution_id}")

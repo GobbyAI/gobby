@@ -9,6 +9,8 @@ from typing import Any
 
 import click
 
+from gobby.utils.json_helpers import json_dumps
+
 
 def _facade() -> Any:
     return sys.modules["gobby.cli.pipelines"]
@@ -73,7 +75,7 @@ def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) 
                 for step in steps
             ],
         }
-        click.echo(facade.json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     # Human-readable output
@@ -213,7 +215,7 @@ def history_pipeline(
             "limit": limit,
             "offset": offset,
         }
-        click.echo(facade.json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     if not executions:
@@ -314,7 +316,7 @@ def list_pipeline_runs(
             "offset": offset,
             "status_summary": status_summary,
         }
-        click.echo(facade.json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     if not executions:
@@ -428,7 +430,7 @@ def search_executions(
             "offset": offset,
             "query": query,
         }
-        click.echo(facade.json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     if not executions:

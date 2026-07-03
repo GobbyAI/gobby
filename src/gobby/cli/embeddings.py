@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 from typing import Any
 
@@ -15,6 +14,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_CONFIG_KEYS,
     AI_EMBEDDINGS_CONFIG_PREFIX,
 )
+from gobby.utils.json_helpers import json_dumps
 
 HEALTHY: int = 0
 CONFIG_NOT_RESOLVED: int = 10
@@ -32,7 +32,7 @@ def doctor(ctx: click.Context) -> None:
     """Emit embedding config health as JSON."""
     config = ctx.obj.get("config") if ctx.obj else None
     result = _doctor_payload(config)
-    click.echo(json.dumps(result, sort_keys=True))
+    click.echo(json_dumps(result, sort_keys=True))
     raise click.exceptions.Exit(HEALTHY if result["namespace_resolved"] else CONFIG_NOT_RESOLVED)
 
 
@@ -99,7 +99,7 @@ def catalog(ctx: click.Context) -> None:
     from gobby.ai.embedding_catalog import catalog_summary
 
     entries = catalog_summary()
-    click.echo(json.dumps(entries, indent=2, sort_keys=True))
+    click.echo(json_dumps(entries, indent=2, sort_keys=True))
 
 
 def _switch_status(store: Any) -> None:
@@ -111,7 +111,7 @@ def _switch_status(store: Any) -> None:
         click.echo("No active embedding switch.")
         return
     click.echo(
-        json.dumps(
+        json_dumps(
             {
                 "run_id": journal.run_id,
                 "catalog_key": journal.catalog_key,

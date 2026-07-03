@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import click
+
+from gobby.utils.json_helpers import json_dumps
 
 
 def validate_skill(path: str, json_output: bool) -> None:
@@ -18,7 +19,7 @@ def validate_skill(path: str, json_output: bool) -> None:
 
     if not source_path.exists():
         if json_output:
-            click.echo(json.dumps({"error": "Path not found", "path": path}))
+            click.echo(json_dumps({"error": "Path not found", "path": path}))
         else:
             click.echo(f"Error: Path not found: {path}")
         sys.exit(1)
@@ -28,7 +29,7 @@ def validate_skill(path: str, json_output: bool) -> None:
         parsed_skill = loader.load_skill(source_path, validate=False, check_dir_name=False)
     except SkillLoadError as exc:
         if json_output:
-            click.echo(json.dumps({"error": str(exc), "path": path}))
+            click.echo(json_dumps({"error": str(exc), "path": path}))
         else:
             click.echo(f"Error loading skill: {exc}")
         sys.exit(1)
@@ -39,7 +40,7 @@ def validate_skill(path: str, json_output: bool) -> None:
         output = result.to_dict()
         output["path"] = path
         output["skill_name"] = parsed_skill.name
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json_dumps(output, indent=2))
         if not result.valid:
             sys.exit(1)
         return

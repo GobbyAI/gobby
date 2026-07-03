@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,6 +19,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
 )
 from gobby.sessions.transcript_archive import restore_transcript
 from gobby.storage import agents as agent_storage
+from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -361,7 +361,7 @@ async def handle_continue_in_chat(
 
     # Send confirmation
     await websocket.send(
-        json.dumps(
+        json_dumps(
             {
                 "type": "session_continued",
                 "conversation_id": conversation_id,

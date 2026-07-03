@@ -26,6 +26,7 @@ from gobby.cli.pipelines_runs import (
     show_pipeline_run,
 )
 from gobby.utils.daemon_url import DaemonUrlError
+from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipelines_import
     LobsterImporter,
@@ -102,7 +103,7 @@ def _daemon_error_message(response: Any) -> str:
         if isinstance(detail, str) and detail.strip():
             return detail.strip()
         if detail:
-            return json.dumps(detail)
+            return json_dumps(detail)
 
     return fallback
 
@@ -185,7 +186,7 @@ def _pipeline_result_dict(execution: Any) -> dict[str, Any]:
 
 def _echo_approval_result(action: str, result: dict[str, Any], json_format: bool) -> None:
     if json_format:
-        click.echo(json.dumps(result, indent=2))
+        click.echo(json_dumps(result, indent=2))
         return
 
     icon = "✓" if action == "approve" else "✗"

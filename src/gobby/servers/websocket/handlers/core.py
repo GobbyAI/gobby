@@ -7,12 +7,12 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class HandlerMixin:
         if request_id:
             error_msg["request_id"] = request_id
 
-        await websocket.send(json.dumps(error_msg))
+        await websocket.send(json_dumps(error_msg))
 
     async def _handle_tool_call(self, websocket: Any, data: dict[str, Any]) -> None:
         """
@@ -119,7 +119,7 @@ class HandlerMixin:
 
             # Send result back to client
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     {
                         "type": "tool_result",
                         "request_id": request_id,
@@ -147,7 +147,7 @@ class HandlerMixin:
             data: Ping message (ignored)
         """
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "pong",
                     "latency": getattr(websocket, "latency", 0.0),
@@ -175,7 +175,7 @@ class HandlerMixin:
         logger.debug(f"Client {websocket.user_id} subscribed to: {events}")
 
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "subscribe_success",
                     "events": list(websocket.subscriptions),
@@ -208,7 +208,7 @@ class HandlerMixin:
         logger.debug(f"Client {websocket.user_id} unsubscribed from: {events}")
 
         await websocket.send(
-            json.dumps(
+            json_dumps(
                 {
                     "type": "unsubscribe_success",
                     "events": list(current_subscriptions),
@@ -260,7 +260,7 @@ class HandlerMixin:
 
             # Send acknowledgment
             await websocket.send(
-                json.dumps(
+                json_dumps(
                     {
                         "type": "stop_response",
                         "session_id": session_id,

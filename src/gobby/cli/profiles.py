@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -20,6 +19,7 @@ from gobby.storage.build_profiles import (
     BuildProfileSource,
 )
 from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _parse_csv(raw: str | None) -> list[str]:
 
 
 def _echo(data: Any) -> None:
-    click.echo(json.dumps(data, indent=2, sort_keys=True))
+    click.echo(json_dumps(data, indent=2, sort_keys=True))
 
 
 @click.group("profiles")

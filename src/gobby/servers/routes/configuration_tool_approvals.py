@@ -7,9 +7,9 @@ from functools import partial
 
 import psycopg
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveApprovalRulesRequest
 from gobby.servers.tool_approvals import (

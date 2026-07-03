@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import click
 
 from gobby.storage.hub.runtime import open_runtime_hub_database
@@ -11,6 +9,7 @@ from gobby.storage.unmodeled_observations import (
     COUNT_SEMANTICS,
     UnmodeledObservationStore,
 )
+from gobby.utils.json_helpers import json_dumps
 
 
 @click.group("observations")
@@ -41,7 +40,7 @@ def list_observations(
         "observations": [row.__dict__ for row in rows],
     }
     if json_format:
-        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        click.echo(json_dumps(payload, indent=2, sort_keys=True))
         return
 
     click.echo(f"Count semantics: {COUNT_SEMANTICS}")

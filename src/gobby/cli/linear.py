@@ -5,7 +5,6 @@ Provides commands for syncing gobby tasks with Linear issues.
 """
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.linear import LinearSyncService
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import update_project_json_fields
 
@@ -259,7 +259,7 @@ def linear_teams(json_format: bool) -> None:
         teams = asyncio.run(service.list_teams())
 
         if json_format:
-            click.echo(json.dumps({"teams": teams, "count": len(teams)}, indent=2))
+            click.echo(json_dumps({"teams": teams, "count": len(teams)}, indent=2))
             return
 
         if not teams:
@@ -305,7 +305,7 @@ def linear_status(json_format: bool) -> None:
 
         if json_format:
             click.echo(
-                json.dumps(
+                json_dumps(
                     {
                         "project_id": project_id,
                         "linear_team_id": linear_team_id,
@@ -414,7 +414,7 @@ def linear_setup(
             result["auto_sync_interval"] = interval
 
         if json_format:
-            click.echo(json.dumps(result, indent=2, default=str))
+            click.echo(json_dumps(result, indent=2, default=str))
             return
 
         click.echo("✓ Linear setup complete")
@@ -472,7 +472,7 @@ def linear_import(
         )
 
         if json_format:
-            click.echo(json.dumps({"tasks": tasks, "count": len(tasks)}, indent=2))
+            click.echo(json_dumps({"tasks": tasks, "count": len(tasks)}, indent=2))
         else:
             click.echo(f"✓ Imported {len(tasks)} issues from Linear team {team_id}")
             for task in tasks:
@@ -502,7 +502,7 @@ def linear_sync(task_id: str, json_format: bool) -> None:
         result = asyncio.run(service.sync_task_to_linear(resolved.id))
 
         if json_format:
-            click.echo(json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             click.echo(f"✓ Synced task {task_id} to Linear")
 
@@ -548,7 +548,7 @@ def linear_sync_all(team_id: str | None, json_format: bool, forward: bool) -> No
             push = result["push"]
 
             if json_format:
-                click.echo(json.dumps(result, indent=2))
+                click.echo(json_dumps(result, indent=2))
             else:
                 click.echo("✓ Forward active Linear sync complete")
                 click.echo(f"  Created missing issues: {result['created_count']}")
@@ -564,7 +564,7 @@ def linear_sync_all(team_id: str | None, json_format: bool, forward: bool) -> No
         push = result["push"]
 
         if json_format:
-            click.echo(json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             click.echo("✓ Linear sync complete")
             click.echo(
@@ -644,7 +644,7 @@ def linear_create(task_id: str, team_id: str | None, json_format: bool) -> None:
         result = asyncio.run(service.create_issue_for_task(task_id=resolved.id, team_id=team_id))
 
         if json_format:
-            click.echo(json.dumps(result, indent=2))
+            click.echo(json_dumps(result, indent=2))
         else:
             gobby_ref = result.get("gobby_ref") or task_id
             linear_key = (

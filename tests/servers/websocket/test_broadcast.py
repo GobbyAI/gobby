@@ -6,6 +6,7 @@ Tests broadcast edge cases, subscription filtering, and event methods.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -157,8 +158,14 @@ class TestBroadcast:
         ws = _make_ws(subscriptions={"*"})
         b.clients[ws] = {}
 
-        await b.broadcast({"type": "test", "data": "hello"})
-        assert _sent_message(ws) == {"type": "test", "data": "hello"}
+        await b.broadcast(
+            {"type": "test", "data": "hello", "created_at": datetime(2026, 7, 3, tzinfo=UTC)}
+        )
+        assert _sent_message(ws) == {
+            "type": "test",
+            "data": "hello",
+            "created_at": "2026-07-03T00:00:00+00:00",
+        }
 
     @pytest.mark.asyncio
     async def test_broadcast_skips_unsubscribed_clients(self) -> None:

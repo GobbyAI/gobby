@@ -23,6 +23,7 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 """
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -289,8 +290,10 @@ class FakeInternalRegistry:
         self,
         name: str = "gobby-tasks",
         tools: list[dict[str, Any]] | None = None,
+        result: dict[str, Any] | None = None,
     ) -> None:
         self.name = name
+        self.result = result
         self._tools = tools or [
             {"name": "list_tasks", "description": "List tasks"},
             {"name": "create_task", "description": "Create a task"},
@@ -309,6 +312,8 @@ class FakeInternalRegistry:
         """Call a tool."""
         if tool_name not in self._schemas:
             raise ValueError(f"Tool not found: {tool_name}")
+        if self.result is not None:
+            return self.result
         return {"success": True, "tool": tool_name}
 
 
@@ -910,7 +915,14 @@ class TestGetToolSchema:
         )
         server._internal_manager = FakeInternalManager(
             [
-                FakeInternalRegistry(name="gobby-tasks"),
+                FakeInternalRegistry(
+                    name="gobby-tasks",
+                    result={
+                        "success": True,
+                        "tool": "list_tasks",
+                        "created_at": datetime(2026, 7, 3, 12, 34, tzinfo=UTC),
+                    },
+                ),
             ]
         )
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
@@ -1146,7 +1158,14 @@ class TestCallMCPTool:
         )
         server._internal_manager = FakeInternalManager(
             [
-                FakeInternalRegistry(name="gobby-tasks"),
+                FakeInternalRegistry(
+                    name="gobby-tasks",
+                    result={
+                        "success": True,
+                        "tool": "list_tasks",
+                        "created_at": datetime(2026, 7, 3, 12, 34, tzinfo=UTC),
+                    },
+                ),
             ]
         )
 
@@ -1163,7 +1182,10 @@ class TestCallMCPTool:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["result"] == {"tool": "list_tasks"}
+        assert data["result"] == {
+            "tool": "list_tasks",
+            "created_at": "2026-07-03T12:34:00+00:00",
+        }
         assert "response_time_ms" in data
 
     def test_call_tool_allows_structured_wait_without_wrapper_fingerprint(
@@ -2249,7 +2271,14 @@ class TestMCPProxy:
         )
         server._internal_manager = FakeInternalManager(
             [
-                FakeInternalRegistry(name="gobby-tasks"),
+                FakeInternalRegistry(
+                    name="gobby-tasks",
+                    result={
+                        "success": True,
+                        "tool": "list_tasks",
+                        "updated_at": datetime(2026, 7, 3, 12, 35, tzinfo=UTC),
+                    },
+                ),
             ]
         )
 
@@ -2262,7 +2291,10 @@ class TestMCPProxy:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["result"] == {"tool": "list_tasks"}
+        assert data["result"] == {
+            "tool": "list_tasks",
+            "updated_at": "2026-07-03T12:35:00+00:00",
+        }
 
     def test_proxy_rejects_missing_wait_wrapper_fingerprint(
         self, session_storage: SessionManager

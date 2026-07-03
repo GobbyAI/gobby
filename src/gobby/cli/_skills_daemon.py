@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -10,6 +9,7 @@ from typing import Any, Protocol
 import click
 
 from gobby.utils.daemon_client import DaemonClient
+from gobby.utils.json_helpers import json_dumps
 
 DaemonClientFactory = Callable[[click.Context], DaemonClient]
 DaemonChecker = Callable[[DaemonClient], bool]
@@ -186,7 +186,7 @@ def search_hub(
     results_list = result.get("results", [])
 
     if json_output:
-        click.echo(json.dumps(results_list, indent=2))
+        click.echo(json_dumps(results_list, indent=2))
         return
 
     if not results_list:

@@ -7,8 +7,9 @@ Registers global exception handlers on the FastAPI application.
 import logging
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from starlette.requests import ClientDisconnect
+
+from gobby.servers.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 

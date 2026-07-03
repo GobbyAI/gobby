@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from gobby.config.app import DaemonConfig, deep_merge
@@ -16,6 +15,7 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_entries_to_runtime,
     storage_embedding_config_key_to_runtime_key,
 )
+from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveConfigRequest
 from gobby.servers.routes.configuration_secrets import (

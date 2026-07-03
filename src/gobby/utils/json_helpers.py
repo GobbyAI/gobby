@@ -14,9 +14,16 @@ from typing import Any
 
 import msgspec
 
+from gobby.utils.datetime import to_json_safe
+
 logger = logging.getLogger(__name__)
 
 type JSONValue = str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
+
+
+def json_dumps(value: Any, **kwargs: Any) -> str:
+    """Serialize JSON-boundary payloads after normalizing datetime/date values."""
+    return json.dumps(to_json_safe(value), **kwargs)
 
 
 def extract_json_from_text(text: str | None) -> str | None:

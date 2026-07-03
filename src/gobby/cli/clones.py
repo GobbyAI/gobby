@@ -10,8 +10,6 @@ Commands for managing git clones:
 - delete: Delete a clone
 """
 
-import json
-
 import click
 import httpx
 
@@ -19,6 +17,7 @@ from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.utils.json_helpers import json_dumps
 from gobby.utils.uuid_validation import is_full_uuid
 
 
@@ -49,7 +48,7 @@ def list_clones(
     clones_list = manager.list_clones(status=status, project_id=project_id)
 
     if json_format:
-        click.echo(json.dumps([c.to_dict() for c in clones_list], indent=2, default=str))
+        click.echo(json_dumps([c.to_dict() for c in clones_list], indent=2, default=str))
         return
 
     if not clones_list:
@@ -122,7 +121,7 @@ def create_clone(
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):
@@ -210,7 +209,7 @@ def spawn_agent(
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):
@@ -266,7 +265,7 @@ def sync_clone(clone_ref: str, direction: str, json_format: bool) -> None:
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):
@@ -317,7 +316,7 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):
@@ -353,7 +352,7 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
 
     if not clone_id:
         if json_format:
-            click.echo(json.dumps({"success": False, "error": f"Clone not found: {clone_ref}"}))
+            click.echo(json_dumps({"success": False, "error": f"Clone not found: {clone_ref}"}))
         else:
             click.echo(f"Clone not found: {clone_ref}", err=True)
         raise SystemExit(1)
@@ -361,7 +360,7 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
     if force and not yes:
         error = "Force deleting a clone requires --yes"
         if json_format:
-            click.echo(json.dumps({"success": False, "error": error}))
+            click.echo(json_dumps({"success": False, "error": error}))
         else:
             click.echo(f"Error: {error}", err=True)
         raise SystemExit(1)
@@ -369,7 +368,7 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
     if not yes:
         if json_format:
             click.echo(
-                json.dumps(
+                json_dumps(
                     {
                         "success": False,
                         "error": "Deleting a clone requires --yes or interactive confirmation",
@@ -391,14 +390,14 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
         result = response.json()
     except httpx.ConnectError:
         if json_format:
-            click.echo(json.dumps({"success": False, "error": "Cannot connect to Gobby daemon"}))
+            click.echo(json_dumps({"success": False, "error": "Cannot connect to Gobby daemon"}))
         else:
             click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         raise SystemExit(1) from None
     except httpx.HTTPStatusError as e:
         if json_format:
             click.echo(
-                json.dumps(
+                json_dumps(
                     {
                         "success": False,
                         "error": f"HTTP Error {e.response.status_code}",
@@ -411,13 +410,13 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
         raise SystemExit(1) from None
     except Exception as e:
         if json_format:
-            click.echo(json.dumps({"success": False, "error": str(e)}))
+            click.echo(json_dumps({"success": False, "error": str(e)}))
         else:
             click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e
 
     if json_format:
-        click.echo(json.dumps(result, indent=2, default=str))
+        click.echo(json_dumps(result, indent=2, default=str))
         return
 
     if result.get("success"):

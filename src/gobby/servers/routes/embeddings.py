@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from gobby.ai import (
@@ -17,6 +16,7 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
 )
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig

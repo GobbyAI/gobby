@@ -10,7 +10,6 @@ Commands for managing merge operations:
 """
 
 import asyncio
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,6 +20,7 @@ import click
 from gobby.mcp_proxy.tools.merge_conflict_hydration import conflict_hunks_for_ai
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
+from gobby.utils.json_helpers import json_dumps
 
 
 def get_merge_manager() -> MergeResolutionManager:
@@ -254,7 +254,7 @@ def merge_start(
         )
 
         if json_format:
-            click.echo(json.dumps(resolution.to_dict(), indent=2, default=str))
+            click.echo(json_dumps(resolution.to_dict(), indent=2, default=str))
             return
 
         click.echo(f"Started merge: {resolution.id}")
@@ -305,7 +305,7 @@ def merge_status(verbose: bool, json_format: bool) -> None:
                 c.to_dict() for c in manager.list_conflicts(resolution_id=res.id)
             ]
             output.append(res_dict)
-        click.echo(json.dumps(output, indent=2, default=str))
+        click.echo(json_dumps(output, indent=2, default=str))
         return
 
     if not resolutions:
@@ -375,7 +375,7 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
         if json_format:
             updated = manager.get_conflict(conflict.id)
             if updated:
-                click.echo(json.dumps(updated.to_dict(), indent=2, default=str))
+                click.echo(json_dumps(updated.to_dict(), indent=2, default=str))
             return
 
         click.echo(f"Resolved: {file_path}")
@@ -428,13 +428,13 @@ def merge_apply(force: bool, json_format: bool) -> None:
         result = asyncio.run(_apply_active_resolution(manager, resolution.id))
         if not result.get("success"):
             if json_format:
-                click.echo(json.dumps(result, indent=2, default=str))
+                click.echo(json_dumps(result, indent=2, default=str))
             else:
                 _echo_tool_error("Error applying merge", result)
             raise SystemExit(1)
 
         if json_format:
-            click.echo(json.dumps(result, indent=2, default=str))
+            click.echo(json_dumps(result, indent=2, default=str))
             return
 
         files_merged = result.get("files_merged", [])
@@ -483,7 +483,7 @@ def merge_abort(json_format: bool) -> None:
         deleted = manager.delete_resolution(resolution_id)
 
         if json_format:
-            click.echo(json.dumps({"aborted": deleted, "resolution_id": resolution_id}))
+            click.echo(json_dumps({"aborted": deleted, "resolution_id": resolution_id}))
             return
 
         if deleted:
