@@ -38,12 +38,7 @@ impl<'a> PostgresWikiStore<'a> {
     }
 
     fn scope_params(&self) -> Result<(String, String, Option<Uuid>, Option<String>), StoreError> {
-        Ok((
-            self.scope.scope_kind().to_string(),
-            self.scope.scope_id().to_string(),
-            project_uuid(self.scope.project_id())?,
-            self.scope.topic_name(),
-        ))
+        scope_params(&self.scope)
     }
 
     fn document_meta(&mut self, path: &Path) -> Result<DocumentMeta, StoreError> {
@@ -90,6 +85,17 @@ fn project_uuid(project_id: Option<String>) -> Result<Option<Uuid>, StoreError> 
                 message: format!("{value} is not a valid UUID: {error}"),
             }),
     }
+}
+
+fn scope_params(
+    scope: &WikiStoreScope,
+) -> Result<(String, String, Option<Uuid>, Option<String>), StoreError> {
+    Ok((
+        scope.scope_kind().to_string(),
+        scope.scope_id().to_string(),
+        project_uuid(scope.project_id())?,
+        scope.topic_name(),
+    ))
 }
 
 impl WikiIndexStore for PostgresWikiStore<'_> {
@@ -174,12 +180,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let document = self.document_meta(path)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
-        let (scope_kind, scope_id, project_id, topic_name) = (
-            scope.scope_kind().to_string(),
-            scope.scope_id().to_string(),
-            project_uuid(scope.project_id())?,
-            scope.topic_name(),
-        );
+        let (scope_kind, scope_id, project_id, topic_name) = scope_params(&scope)?;
         let chunks = chunks
             .into_iter()
             .map(|chunk| {
@@ -271,12 +272,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         validate_link_paths(path, &links)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
-        let (scope_kind, scope_id, project_id, topic_name) = (
-            scope.scope_kind().to_string(),
-            scope.scope_id().to_string(),
-            project_uuid(scope.project_id())?,
-            scope.topic_name(),
-        );
+        let (scope_kind, scope_id, project_id, topic_name) = scope_params(&scope)?;
         let mut tx = self.conn.transaction()?;
         if let Err(error) = tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
@@ -468,5 +464,43 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         tx.commit()?;
         self.documents.remove(&platform_path_from_display(&path));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_uuid_none_maps_to_null() {
+        assert_eq!(project_uuid(None).unwrap(), None);
+    }
+
+    #[test]
+    fn project_uuid_empty_maps_to_null() {
+        assert_eq!(project_uuid(Some(String::new())).unwrap(), None);
+    }
+
+    #[test]
+    fn project_uuid_valid_id_parses() {
+        let id = "018f3b18-6a80-7c18-9d43-8f21b4e89f24";
+
+        assert_eq!(
+            project_uuid(Some(id.to_string())).unwrap(),
+            Some(Uuid::parse_str(id).unwrap())
+        );
+    }
+
+    #[test]
+    fn project_uuid_invalid_id_is_rejected() {
+        let error = project_uuid(Some("not-a-uuid".to_string())).unwrap_err();
+
+        match error {
+            StoreError::InvalidData { field, message } => {
+                assert_eq!(field, "project_id");
+                assert!(message.contains("not-a-uuid is not a valid UUID"));
+            }
+            StoreError::Postgres(message) => panic!("unexpected postgres error: {message}"),
+        }
     }
 }

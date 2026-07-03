@@ -99,16 +99,17 @@ def shutdown_providers() -> None:
     """Shutdown all providers and clear cache."""
     global _TRACER_PROVIDER, _METER_PROVIDER, _LOGGER_PROVIDER, _SPAN_STORAGE_EXPORTER_REGISTERED
 
-    if _TRACER_PROVIDER is not None:
-        _TRACER_PROVIDER.shutdown()
-        _TRACER_PROVIDER = None
-        _SPAN_STORAGE_EXPORTER_REGISTERED = False
+    with _PROVIDER_LOCK:
+        if _TRACER_PROVIDER is not None:
+            _TRACER_PROVIDER.shutdown()
+            _TRACER_PROVIDER = None
+            _SPAN_STORAGE_EXPORTER_REGISTERED = False
 
-    if _METER_PROVIDER is not None:
-        _METER_PROVIDER.shutdown()
-        _METER_PROVIDER = None
+        if _METER_PROVIDER is not None:
+            _METER_PROVIDER.shutdown()
+            _METER_PROVIDER = None
 
-    if _LOGGER_PROVIDER is not None:
-        # OpenTelemetry exposes shutdown with a broader callable shape than this sync path needs.
-        cast(Callable[[], None], _LOGGER_PROVIDER.shutdown)()
-        _LOGGER_PROVIDER = None
+        if _LOGGER_PROVIDER is not None:
+            # OpenTelemetry exposes shutdown with a broader callable shape than this sync path needs.
+            cast(Callable[[], None], _LOGGER_PROVIDER.shutdown)()
+            _LOGGER_PROVIDER = None

@@ -29,6 +29,7 @@ fn sync_session_archives_ingests_gzip_and_indexes_once() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-16T20:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync archives");
 
@@ -66,6 +67,7 @@ fn sync_session_archives_treats_missing_archive_dir_as_empty() {
         None,
         RawArchiveMode::Skip,
         "2026-06-16T20:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync missing archive dir");
 
@@ -97,6 +99,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-16T20:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
     assert_eq!(first.accepted.len(), 1);
@@ -110,6 +113,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-16T20:06:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
 
@@ -141,6 +145,7 @@ fn sync_session_archives_reports_bad_gzip_without_blocking_good_archives() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-16T20:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync archives");
 
@@ -216,6 +221,7 @@ fn synthesis_first_ingests_wiki_page() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 
@@ -269,6 +275,7 @@ fn raw_archive_without_synthesis_uses_session_location() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 
@@ -308,6 +315,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 
@@ -338,6 +346,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("initial sync");
     assert_eq!(initial.accepted.len(), 1);
@@ -352,6 +361,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:06:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("rerun sync");
 
@@ -409,6 +419,7 @@ fn synthesis_suppresses_matching_raw_archive() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 
@@ -461,6 +472,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
     assert_eq!(first.accepted.len(), 1);
@@ -482,6 +494,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
 
@@ -530,6 +543,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
     assert_eq!(first.accepted.len(), 1);
@@ -557,6 +571,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
 
@@ -615,6 +630,7 @@ fn synthesis_supersedes_legacy_raw_location_page() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 
@@ -654,6 +670,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
     assert_eq!(first.accepted.len(), 2);
@@ -687,6 +704,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
 
@@ -745,6 +763,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("initial sync");
     assert_eq!(initial.accepted.len(), 2);
@@ -761,6 +780,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         Some(1),
         RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("capped sync");
 
@@ -797,6 +817,7 @@ fn empty_discovery_preserves_existing_manifest_sessions() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("initial sync");
     assert_eq!(first.accepted.len(), 1);
@@ -811,6 +832,7 @@ fn empty_discovery_preserves_existing_manifest_sessions() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("empty discovery sync");
 
@@ -851,6 +873,7 @@ fn same_content_at_two_session_locations_ingests_twice() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 
@@ -915,6 +938,7 @@ fn legacy_raw_entry_sharing_hash_is_superseded_by_id() {
         None,
         RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
 

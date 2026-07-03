@@ -1031,8 +1031,8 @@ fn aggregate_candidate_change_regenerates_only_aggregate_pages() {
         },
     );
 
-    // The bakeoff arms: cp the output dir, re-run with a different pinned
-    // candidate chain — aggregates auto-invalidate, file/module pages reuse.
+    // Simulate the bakeoff rerun with an existing output dir and a different
+    // pinned candidate chain: aggregates auto-invalidate, file/module pages reuse.
     let mut tiers = Vec::new();
     let mut second_generator = |_prompt: &str, system: &str, tier: PromptTier| {
         tiers.push(tier);

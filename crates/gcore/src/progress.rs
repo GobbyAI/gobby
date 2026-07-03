@@ -12,6 +12,7 @@ pub struct ProgressBar<W = io::Stderr> {
     bar_width: usize,
     line_width: usize,
     writer: W,
+    render_error: Option<io::Error>,
 }
 
 impl ProgressBar<io::Stderr> {
@@ -32,6 +33,7 @@ where
             bar_width: DEFAULT_BAR_WIDTH,
             line_width: DEFAULT_LINE_WIDTH,
             writer,
+            render_error: None,
         }
     }
 
@@ -46,14 +48,24 @@ where
         }
 
         let line = self.render_line(item.as_ref());
-        let _ = write!(self.writer, "{line}");
-        let _ = self.writer.flush();
+        if let Err(error) = write!(self.writer, "{line}") {
+            self.record_render_error(error);
+            return;
+        }
+        if let Err(error) = self.writer.flush() {
+            self.record_render_error(error);
+        }
     }
 
     pub fn finish(&mut self) {
         if self.enabled {
-            let _ = write!(self.writer, "\r\x1b[K");
-            let _ = self.writer.flush();
+            if let Err(error) = write!(self.writer, "\r\x1b[K") {
+                self.record_render_error(error);
+                return;
+            }
+            if let Err(error) = self.writer.flush() {
+                self.record_render_error(error);
+            }
         }
     }
 
@@ -63,6 +75,10 @@ where
 
     pub fn position(&self) -> usize {
         self.current
+    }
+
+    pub fn render_error(&self) -> Option<&io::Error> {
+        self.render_error.as_ref()
     }
 
     pub fn into_writer(self) -> W {
@@ -78,6 +94,13 @@ where
         let max_item_width = self.line_width.saturating_sub(prefix_width);
         let display_item = truncate_left(item, max_item_width);
         format!("\r[{bar}] {counter} : {display_item}\x1b[K")
+    }
+
+    fn record_render_error(&mut self, error: io::Error) {
+        if self.render_error.is_none() {
+            self.render_error = Some(error);
+        }
+        self.enabled = false;
     }
 }
 
@@ -108,6 +131,22 @@ fn truncate_left(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct FailingWriter {
+        writes: usize,
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn output_from(bar: ProgressBar<Vec<u8>>) -> String {
         String::from_utf8(bar.into_writer()).expect("progress output is utf8")
@@ -195,5 +234,21 @@ mod tests {
         assert!(!bar.is_enabled());
         assert_eq!(bar.position(), 1);
         assert_eq!(output_from(bar), "");
+    }
+
+    #[test]
+    fn first_render_error_disables_progress_and_is_observable() {
+        let mut bar = ProgressBar::with_writer(2, false, true, FailingWriter::default());
+
+        bar.tick("src/lib.rs");
+
+        assert!(!bar.is_enabled());
+        assert_eq!(bar.position(), 1);
+        assert_eq!(
+            bar.render_error().map(io::Error::kind),
+            Some(io::ErrorKind::BrokenPipe)
+        );
+        bar.tick("src/main.rs");
+        assert_eq!(bar.into_writer().writes, 1);
     }
 }

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 use crate::commands::index::{
-    connect_postgres_index, indexed_counts_for_postgres, postgres_store_for_search,
-    sync_falkor_graph, sync_qdrant_vectors,
+    StderrWikiProgress, connect_postgres_index, indexed_counts_for_postgres,
+    postgres_store_for_search, sync_falkor_graph, sync_qdrant_vectors,
 };
 use crate::ingest::{self, session_archive};
 use crate::progress::ProgressOptions;
@@ -15,7 +15,8 @@ use crate::support::scope::{
 };
 use crate::support::time::collect_timestamp;
 use crate::{
-    CommandOutcome, ScopeIdentity, ScopeSelection, SyncSessionsOptions, WikiError, store, vault,
+    CommandOutcome, RunOptions, ScopeIdentity, ScopeSelection, SyncSessionsOptions, WikiError,
+    store, vault,
 };
 
 const COMMAND: &str = "gwiki sync-sessions";
@@ -41,6 +42,7 @@ fn default_sessions_scope(selection: ScopeSelection) -> ScopeSelection {
 pub(crate) fn execute(
     selection: ScopeSelection,
     options: SyncSessionsOptions,
+    run_options: RunOptions,
 ) -> Result<CommandOutcome, WikiError> {
     let selection = default_sessions_scope(selection);
     let scope = resolve_command_scope(&selection)?;
@@ -70,6 +72,8 @@ pub(crate) fn execute(
     } else {
         session_archive::RawArchiveMode::Skip
     };
+    let mut stderr_progress = StderrWikiProgress::new(run_options.quiet);
+    let mut progress = ProgressOptions::with_sink(&mut stderr_progress);
     if let Some(database_url) = database_url_for(COMMAND)? {
         let mut conn = connect_postgres_index(&database_url, COMMAND)?;
         let search_scope = search_scope_for_resolved(&scope);
@@ -83,13 +87,13 @@ pub(crate) fn execute(
                 options.limit,
                 raw_mode,
                 &fetched_at,
+                &mut progress,
             )?
         };
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
         // Reconciled deletions change the index just like accepted ingests, so
         // gate Qdrant/Falkor sync on any change, not only newly accepted pages.
         if result.has_changes() {
-            let mut progress = ProgressOptions::default();
             sync_qdrant_vectors(&mut conn, &search_scope, COMMAND, &mut progress)?;
             sync_falkor_graph(&mut conn, &search_scope, COMMAND, &mut progress)?;
         }
@@ -105,6 +109,7 @@ pub(crate) fn execute(
         options.limit,
         raw_mode,
         &fetched_at,
+        &mut progress,
     )?;
     let counts = index_counts(&store);
     Ok(render_sync_sessions(output_scope, &result, counts))
@@ -275,7 +280,8 @@ mod tests {
             ..Default::default()
         };
 
-        let outcome = execute(ScopeSelection::Detect, options).expect("execute sync-sessions");
+        let outcome = execute(ScopeSelection::Detect, options, RunOptions { quiet: true })
+            .expect("execute sync-sessions");
         assert_eq!(outcome.result.payload["scope"]["kind"], "topic");
         assert_eq!(outcome.result.payload["scope"]["id"], SESSIONS_TOPIC);
     }

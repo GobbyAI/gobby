@@ -10,6 +10,7 @@ from typing import Any
 
 from gobby.config.bootstrap_io import default_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
 
@@ -153,9 +154,7 @@ class LocalProjectManager:
 
     def get(self, project_id: str) -> Project | None:
         """Get project by ID."""
-        try:
-            uuid.UUID(str(project_id))
-        except (TypeError, ValueError):
+        if parse_uuid_reference(project_id) is None:
             return None
         row = self.db.fetchone("SELECT * FROM projects WHERE id = %s", (project_id,))
         return Project.from_row(row) if row else None

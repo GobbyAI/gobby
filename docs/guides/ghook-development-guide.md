@@ -15,7 +15,7 @@ main.rs::run_gobby_owned
   │     ── Stop only; fresh marker + unreachable health endpoint exits 0
   │
   ├─ project::find_project_root + read_project_id      (gobby-core)
-  │     ── walk-up BEFORE any detach; sandbox-safe.
+  │     ── walk-up BEFORE any detach; accepts project.json or gcode.json.
   │
   ├─ stdin → serde_json::from_slice
   │     ── on malformed: transport::quarantine_malformed → exit
@@ -109,7 +109,7 @@ pub struct Envelope {
 
 | Header | When Present | Source |
 |--------|--------------|--------|
-| `X-Gobby-Project-Id` | Project root resolved AND `project.json` has an `id`/`project_id` field | `gobby_core::project::read_project_id` |
+| `X-Gobby-Project-Id` | Project root resolved AND `.gobby/project.json` or `.gobby/gcode.json` has an `id`/`project_id` field | `gobby_core::project::read_project_id` |
 | `X-Gobby-Session-Id` | `input_data.session_id` is a non-empty string | `input_data["session_id"]` |
 
 Both are inserted only when non-empty. The schema enforces `minLength: 1` on header values to match.

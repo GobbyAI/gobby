@@ -12,15 +12,19 @@ import uuid
 from gobby.storage.hub.protocol import HubDatabase
 
 
+def parse_uuid_reference(value: object) -> uuid.UUID | None:
+    """Parse a UUID-like storage reference without raising on invalid input."""
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def is_session_uuid(value: str | None) -> bool:
     """Return whether a value can be safely used against session UUID columns."""
-    if not value:
-        return False
-    try:
-        uuid.UUID(str(value))
-    except (TypeError, ValueError):
-        return False
-    return True
+    return parse_uuid_reference(value) is not None
 
 
 def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None = None) -> str:
@@ -92,13 +96,8 @@ def resolve_session_reference(db: HubDatabase, ref: str, project_id: str | None 
         return str(row["id"])
 
     # Full UUID check
-    try:
-        uuid_obj = uuid.UUID(ref)
-        is_valid_uuid = True
-    except ValueError:
-        is_valid_uuid = False
-
-    if is_valid_uuid:
+    uuid_obj = parse_uuid_reference(ref)
+    if uuid_obj is not None:
         canonical = str(uuid_obj)
         # Primary-key lookup wins.
         row = db.fetchone("SELECT id FROM sessions WHERE id = %s", (canonical,))

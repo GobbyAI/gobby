@@ -39,13 +39,13 @@ struct IndexReport {
     degradations: Vec<DegradationKind>,
 }
 
-struct StderrWikiProgress {
+pub(crate) struct StderrWikiProgress {
     quiet: bool,
     bar: Option<ProgressBar>,
 }
 
 impl StderrWikiProgress {
-    fn new(quiet: bool) -> Self {
+    pub(crate) fn new(quiet: bool) -> Self {
         Self { quiet, bar: None }
     }
 }
@@ -75,6 +75,7 @@ fn phase_label(phase: ProgressPhase) -> &'static str {
     match phase {
         ProgressPhase::IngestFile => "ingest-file",
         ProgressPhase::IngestUrl => "ingest-url",
+        ProgressPhase::SessionArchive => "session-archive",
         ProgressPhase::VaultIndex => "index",
         ProgressPhase::VectorSync => "qdrant",
         ProgressPhase::GraphSync => "falkor",

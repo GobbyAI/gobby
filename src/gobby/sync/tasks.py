@@ -88,6 +88,11 @@ def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str 
     return None
 
 
+def _github_issue_uuid_seed(owner: str, repo: str, issue_num: object) -> str:
+    normalized_repo = repo.removesuffix(".git").lower()
+    return f"{owner.lower()}/{normalized_repo}/issues/{issue_num}"
+
+
 class TaskSyncManager:
     """
     Manages synchronization of tasks to the filesystem (JSONL) for Git versioning.
@@ -563,7 +568,7 @@ class TaskSyncManager:
                 }
 
             owner, repo = match.groups()
-            repo = repo.rstrip(".git")  # Handle .git suffix
+            repo = repo.removesuffix(".git")
 
             # Resolve project ID if not provided
             if not project_id:
@@ -615,9 +620,15 @@ class TaskSyncManager:
                     if not issue_num:
                         continue
 
-                    # Deterministic id keyed on the issue URL: re-imports upsert
-                    # the same row (tasks.id is a native uuid column).
-                    task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{repo_url}/issues/{issue_num}"))
+                    # Deterministic id keyed on normalized owner/repo/issue:
+                    # re-imports upsert the same row even if URL casing or
+                    # trailing slash differs.
+                    task_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            _github_issue_uuid_seed(owner, repo, issue_num),
+                        )
+                    )
                     title = issue.get("title", "Untitled Issue")
                     body = issue.get("body") or ""
                     desc = f"{body}\n\nSource: {repo_url}/issues/{issue_num}".strip()

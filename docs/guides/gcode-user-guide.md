@@ -309,7 +309,11 @@ with `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, and
 `GOBBY_FALKORDB_PASSWORD`. Without FalkorDB, graph read commands report the
 degraded state and callers that can preserve lexical results do so.
 
-All read-side graph commands resolve fuzzy input — you don't need the exact symbol name. Resolution tries exact match, then substring match, then BM25 search across names, signatures, and docstrings. When multiple matches are found, the best is used and alternatives are shown on stderr.
+All read-side graph commands resolve fuzzy input — you don't need the exact
+symbol name. Resolution tries exact match, then substring match, then BM25
+search across names, signatures, and docstrings. When graph resolution remains
+ambiguous, the command fails closed and prints the candidate matches; rerun
+with a more specific query, UUID, or path scope to disambiguate.
 
 For Python, JavaScript, and TypeScript, graph edges are import-aware. Calls to
 external packages/modules stay external instead of being misclassified as local
@@ -493,9 +497,11 @@ gcode index --files src/config.rs docs/notes.md Dockerfile
 `gcode index` writes symbols, files, chunks, imports, and calls to the
 PostgreSQL hub. It marks graph/vector sync flags dirty; `gcode index
 --sync-projections` updates FalkorDB graph edges and Qdrant code-symbol vectors
-from Rust. Deleted-file cleanup removes code graph/vector projection rows before
-PostgreSQL facts are deleted, including explicit `--files <deleted-file>` and
-whole-project orphan cleanup.
+from Rust. Indexing and projection sync share one per-project lock for the full
+operation, so overlapping daemon refreshes or freshness checks should skip with
+`SkippedBusy` and keep serving the existing index. Deleted-file cleanup removes
+code graph/vector projection rows before PostgreSQL facts are deleted, including
+explicit `--files <deleted-file>` and whole-project orphan cleanup.
 BM25-specific modes (`search-text`, `search-content`) work as soon as the
 transaction commits. Full hybrid search uses the required PostgreSQL, FalkorDB,
 Qdrant, and embedding stack once graph and vector projections sync; configured

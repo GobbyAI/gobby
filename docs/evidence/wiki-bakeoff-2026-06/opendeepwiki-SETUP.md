@@ -41,8 +41,9 @@ docker compose up -d opendeepwiki
 ```
 
 ## Submission
-Seeded admin (`DbInitializer`): `admin@routin.ai` / `Admin@123`. Login →
-`POST /api/auth/login` → JWT. Submit the mounted clone →
+Seeded admin credentials come from OpenDeepWiki's local `DbInitializer` and are
+redacted from this evidence note. Login → `POST /api/auth/login` → JWT. Submit
+the mounted clone →
 `POST /api/v1/repositories/submit-local`
 `{orgName:"gobby", repoName:"gobby-cli", localPath:"/data/inputs/gobby-cli",
 branchName:"main", languageCode:"en"}`. A background worker prepares the workspace (Copy),

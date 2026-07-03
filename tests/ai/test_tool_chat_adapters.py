@@ -304,7 +304,7 @@ async def test_claude_adapter_constrains_tools_and_maps_result() -> None:
     assert result.stop_reason == "completed"
 
 
-async def test_claude_adapter_preserves_explicit_zero_max_turns() -> None:
+async def test_claude_adapter_prefers_request_max_turns_over_limits() -> None:
     provider = _FakeClaudeProvider()
     adapter = ClaudeToolChatAdapter(provider_factory=lambda _binding: provider)
     request = ToolChatRequest(
@@ -318,7 +318,7 @@ async def test_claude_adapter_preserves_explicit_zero_max_turns() -> None:
     await adapter.chat(request, _claude_binding())
 
     assert provider.kwargs is not None
-    assert provider.kwargs["max_turns"] == 0
+    assert provider.kwargs["max_turns"] == 12
 
 
 @pytest.mark.asyncio

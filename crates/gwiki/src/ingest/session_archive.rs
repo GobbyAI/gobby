@@ -128,6 +128,7 @@ pub(crate) fn sync_session_transcript_archives(
     limit: Option<usize>,
     raw_mode: RawArchiveMode,
     fetched_at: &str,
+    progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<SessionArchiveBatchIngest, WikiError> {
     if matches!(limit, Some(0)) {
         return Err(WikiError::InvalidInput {
@@ -190,202 +191,220 @@ pub(crate) fn sync_session_transcript_archives(
     let mut skipped = Vec::new();
     let mut failed = Vec::new();
 
-    for item in work {
-        match item {
-            SessionSourceFile::Synthesis(path) => {
-                let Some(external_id) = session_external_id(&path, SESSION_WIKI_SUFFIX) else {
-                    failed.push(SessionArchiveFailure::new(
-                        &path,
-                        "session_wiki_name",
-                        "session wiki file name has no external id stem",
-                    ));
-                    continue;
-                };
-                let bytes = match fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
+    {
+        let mut progress = crate::progress::ActiveProgress::new(
+            progress,
+            crate::progress::ProgressPhase::SessionArchive,
+            scanned,
+        );
+        for item in work {
+            match item {
+                SessionSourceFile::Synthesis(path) => {
+                    progress.advance(&path.display().to_string());
+                    let Some(external_id) = session_external_id(&path, SESSION_WIKI_SUFFIX) else {
                         failed.push(SessionArchiveFailure::new(
                             &path,
-                            "session_wiki_read",
-                            format!("failed to read session wiki file: {error}"),
+                            "session_wiki_name",
+                            "session wiki file name has no external id stem",
                         ));
                         continue;
-                    }
-                };
-                let content_hash = gobby_core::indexing::content_hash(&bytes);
-                // Dedup per canonical location, not globally: identical content
-                // at different session locations must ingest independently.
-                let canonical_location = format!("session:{external_id}");
-                if known_session_hashes
-                    .contains(&(canonical_location.clone(), content_hash.clone()))
-                {
-                    skipped.push(SkippedSessionArchive {
-                        archive_path: path,
-                        content_hash,
-                        reason: "content_hash_already_ingested".to_string(),
-                    });
-                    continue;
-                }
-                let snapshot = SessionWikiFileSnapshot {
-                    external_id: external_id.clone(),
-                    path: path.clone(),
-                    fetched_at: fetched_at.to_string(),
-                    bytes,
-                };
-                match ingest_session_wiki_file_without_index(vault_root, snapshot) {
-                    Ok(result) => {
-                        let archive_path = path.clone();
-                        let new_id = result.record.id.clone();
-                        known_session_hashes.insert((
-                            result.record.canonical_location.clone(),
-                            result.record.content_hash.clone(),
-                        ));
-                        accepted.push(AcceptedSessionArchive {
-                            archive_path: path,
-                            result,
-                        });
-                        if let Err(error) =
-                            supersede_session_page(vault_root, &manifest, &external_id, &new_id)
-                        {
-                            failed
-                                .push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
+                    };
+                    let bytes = match fs::read(&path) {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            failed.push(SessionArchiveFailure::new(
+                                &path,
+                                "session_wiki_read",
+                                format!("failed to read session wiki file: {error}"),
+                            ));
+                            continue;
                         }
-                    }
-                    Err(error) => failed.push(SessionArchiveFailure::from_wiki_error(&path, error)),
-                }
-            }
-            SessionSourceFile::RawArchive(path) => {
-                let external_id = session_external_id(&path, SESSION_ARCHIVE_SUFFIX);
-                if let Some(external_id) = &external_id
-                    && synthesized.contains(external_id)
-                {
-                    skipped.push(SkippedSessionArchive {
-                        archive_path: path,
-                        content_hash: String::new(),
-                        reason: "superseded_by_synthesis".to_string(),
-                    });
-                    continue;
-                }
-                // Only `Skip` mode ignores raw archives; both Skeleton and
-                // Summarize process them (Summarize even without --raw).
-                if raw_mode == RawArchiveMode::Skip {
-                    skipped.push(SkippedSessionArchive {
-                        archive_path: path,
-                        content_hash: String::new(),
-                        reason: "raw_fallback_disabled".to_string(),
-                    });
-                    continue;
-                }
-                let bytes = match read_gzipped_archive(&path) {
-                    Ok(bytes) => bytes,
-                    Err(failure) => {
-                        failed.push(failure);
-                        continue;
-                    }
-                };
-                let content_hash = gobby_core::indexing::content_hash(&bytes);
-                let file_name = archive_file_name(&path);
-                // Key the raw fallback on the canonical `session:{external_id}` too,
-                // so a later synthesis (or re-run) supersedes this page. `file_name`
-                // still seeds the title and the `source_archive` provenance field.
-                let external_id = external_id.unwrap_or_else(|| file_name.clone());
-                let canonical_location = format!("session:{external_id}");
-
-                // Standalone summary path: generate the daemon-format page once per
-                // session. Gated on page existence (idempotent) because LLM output
-                // is nondeterministic; a later daemon synthesis still supersedes it.
-                if raw_mode == RawArchiveMode::Summarize {
-                    if existing_session_pages.contains(&canonical_location) {
+                    };
+                    let content_hash = gobby_core::indexing::content_hash(&bytes);
+                    // Dedup per canonical location, not globally: identical content
+                    // at different session locations must ingest independently.
+                    let canonical_location = format!("session:{external_id}");
+                    if known_session_hashes
+                        .contains(&(canonical_location.clone(), content_hash.clone()))
+                    {
                         skipped.push(SkippedSessionArchive {
                             archive_path: path,
                             content_hash,
-                            reason: "session_page_present".to_string(),
+                            reason: "content_hash_already_ingested".to_string(),
                         });
                         continue;
                     }
-                    if let Some(summarizer) = &summarizer
-                        && let Some(md_bytes) =
-                            summarizer.summarize_archive(&path, &bytes, &external_id)
-                    {
-                        let snapshot = SessionWikiFileSnapshot {
-                            external_id: external_id.clone(),
-                            path: path.clone(),
-                            fetched_at: fetched_at.to_string(),
-                            bytes: md_bytes,
-                        };
-                        match ingest_session_wiki_file_without_index(vault_root, snapshot) {
-                            Ok(result) => {
-                                let archive_path = path.clone();
-                                let new_id = result.record.id.clone();
-                                known_session_hashes.insert((
-                                    result.record.canonical_location.clone(),
-                                    result.record.content_hash.clone(),
+                    let snapshot = SessionWikiFileSnapshot {
+                        external_id: external_id.clone(),
+                        path: path.clone(),
+                        fetched_at: fetched_at.to_string(),
+                        bytes,
+                    };
+                    match ingest_session_wiki_file_without_index(vault_root, snapshot) {
+                        Ok(result) => {
+                            let archive_path = path.clone();
+                            let new_id = result.record.id.clone();
+                            known_session_hashes.insert((
+                                result.record.canonical_location.clone(),
+                                result.record.content_hash.clone(),
+                            ));
+                            accepted.push(AcceptedSessionArchive {
+                                archive_path: path,
+                                result,
+                            });
+                            if let Err(error) =
+                                supersede_session_page(vault_root, &manifest, &external_id, &new_id)
+                            {
+                                failed.push(SessionArchiveFailure::from_wiki_error(
+                                    &archive_path,
+                                    error,
                                 ));
-                                accepted.push(AcceptedSessionArchive {
-                                    archive_path: path,
-                                    result,
-                                });
-                                if let Err(error) = supersede_session_page(
-                                    vault_root,
-                                    &manifest,
-                                    &external_id,
-                                    &new_id,
-                                ) {
-                                    failed.push(SessionArchiveFailure::from_wiki_error(
-                                        &archive_path,
-                                        error,
+                            }
+                        }
+                        Err(error) => {
+                            failed.push(SessionArchiveFailure::from_wiki_error(&path, error))
+                        }
+                    }
+                }
+                SessionSourceFile::RawArchive(path) => {
+                    progress.advance(&path.display().to_string());
+                    let external_id = session_external_id(&path, SESSION_ARCHIVE_SUFFIX);
+                    if let Some(external_id) = &external_id
+                        && synthesized.contains(external_id)
+                    {
+                        skipped.push(SkippedSessionArchive {
+                            archive_path: path,
+                            content_hash: String::new(),
+                            reason: "superseded_by_synthesis".to_string(),
+                        });
+                        continue;
+                    }
+                    // Only `Skip` mode ignores raw archives; both Skeleton and
+                    // Summarize process them (Summarize even without --raw).
+                    if raw_mode == RawArchiveMode::Skip {
+                        skipped.push(SkippedSessionArchive {
+                            archive_path: path,
+                            content_hash: String::new(),
+                            reason: "raw_fallback_disabled".to_string(),
+                        });
+                        continue;
+                    }
+                    let bytes = match read_gzipped_archive(&path) {
+                        Ok(bytes) => bytes,
+                        Err(failure) => {
+                            failed.push(failure);
+                            continue;
+                        }
+                    };
+                    let content_hash = gobby_core::indexing::content_hash(&bytes);
+                    let file_name = archive_file_name(&path);
+                    // Key the raw fallback on the canonical `session:{external_id}` too,
+                    // so a later synthesis (or re-run) supersedes this page. `file_name`
+                    // still seeds the title and the `source_archive` provenance field.
+                    let external_id = external_id.unwrap_or_else(|| file_name.clone());
+                    let canonical_location = format!("session:{external_id}");
+
+                    // Standalone summary path: generate the daemon-format page once per
+                    // session. Gated on page existence (idempotent) because LLM output
+                    // is nondeterministic; a later daemon synthesis still supersedes it.
+                    if raw_mode == RawArchiveMode::Summarize {
+                        if existing_session_pages.contains(&canonical_location) {
+                            skipped.push(SkippedSessionArchive {
+                                archive_path: path,
+                                content_hash,
+                                reason: "session_page_present".to_string(),
+                            });
+                            continue;
+                        }
+                        if let Some(summarizer) = &summarizer
+                            && let Some(md_bytes) =
+                                summarizer.summarize_archive(&path, &bytes, &external_id)
+                        {
+                            let snapshot = SessionWikiFileSnapshot {
+                                external_id: external_id.clone(),
+                                path: path.clone(),
+                                fetched_at: fetched_at.to_string(),
+                                bytes: md_bytes,
+                            };
+                            match ingest_session_wiki_file_without_index(vault_root, snapshot) {
+                                Ok(result) => {
+                                    let archive_path = path.clone();
+                                    let new_id = result.record.id.clone();
+                                    known_session_hashes.insert((
+                                        result.record.canonical_location.clone(),
+                                        result.record.content_hash.clone(),
                                     ));
+                                    accepted.push(AcceptedSessionArchive {
+                                        archive_path: path,
+                                        result,
+                                    });
+                                    if let Err(error) = supersede_session_page(
+                                        vault_root,
+                                        &manifest,
+                                        &external_id,
+                                        &new_id,
+                                    ) {
+                                        failed.push(SessionArchiveFailure::from_wiki_error(
+                                            &archive_path,
+                                            error,
+                                        ));
+                                    }
+                                }
+                                Err(error) => {
+                                    failed
+                                        .push(SessionArchiveFailure::from_wiki_error(&path, error));
                                 }
                             }
-                            Err(error) => {
-                                failed.push(SessionArchiveFailure::from_wiki_error(&path, error));
-                            }
+                            continue;
                         }
+                        // Summary unavailable (AI off/empty/error): fall through to the
+                        // skeleton below so the session still lands as a page.
+                    }
+
+                    // Skeleton page: the default --raw path, or the summarize fallback.
+                    // Dedup per canonical location keeps raw re-ingests idempotent.
+                    if known_session_hashes
+                        .contains(&(canonical_location.clone(), content_hash.clone()))
+                    {
+                        skipped.push(SkippedSessionArchive {
+                            archive_path: path,
+                            content_hash,
+                            reason: "content_hash_already_ingested".to_string(),
+                        });
                         continue;
                     }
-                    // Summary unavailable (AI off/empty/error): fall through to the
-                    // skeleton below so the session still lands as a page.
-                }
-
-                // Skeleton page: the default --raw path, or the summarize fallback.
-                // Dedup per canonical location keeps raw re-ingests idempotent.
-                if known_session_hashes
-                    .contains(&(canonical_location.clone(), content_hash.clone()))
-                {
-                    skipped.push(SkippedSessionArchive {
-                        archive_path: path,
-                        content_hash,
-                        reason: "content_hash_already_ingested".to_string(),
-                    });
-                    continue;
-                }
-                let snapshot = SessionFileSnapshot {
-                    location: canonical_location,
-                    file_name,
-                    fetched_at: fetched_at.to_string(),
-                    path: path.clone(),
-                    bytes,
-                };
-                match ingest_session_file_without_index(vault_root, snapshot) {
-                    Ok(result) => {
-                        let archive_path = path.clone();
-                        let new_id = result.record.id.clone();
-                        known_session_hashes.insert((
-                            result.record.canonical_location.clone(),
-                            result.record.content_hash.clone(),
-                        ));
-                        accepted.push(AcceptedSessionArchive {
-                            archive_path: path,
-                            result,
-                        });
-                        if let Err(error) =
-                            supersede_session_page(vault_root, &manifest, &external_id, &new_id)
-                        {
-                            failed
-                                .push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
+                    let snapshot = SessionFileSnapshot {
+                        location: canonical_location,
+                        file_name,
+                        fetched_at: fetched_at.to_string(),
+                        path: path.clone(),
+                        bytes,
+                    };
+                    match ingest_session_file_without_index(vault_root, snapshot) {
+                        Ok(result) => {
+                            let archive_path = path.clone();
+                            let new_id = result.record.id.clone();
+                            known_session_hashes.insert((
+                                result.record.canonical_location.clone(),
+                                result.record.content_hash.clone(),
+                            ));
+                            accepted.push(AcceptedSessionArchive {
+                                archive_path: path,
+                                result,
+                            });
+                            if let Err(error) =
+                                supersede_session_page(vault_root, &manifest, &external_id, &new_id)
+                            {
+                                failed.push(SessionArchiveFailure::from_wiki_error(
+                                    &archive_path,
+                                    error,
+                                ));
+                            }
+                        }
+                        Err(error) => {
+                            failed.push(SessionArchiveFailure::from_wiki_error(&path, error))
                         }
                     }
-                    Err(error) => failed.push(SessionArchiveFailure::from_wiki_error(&path, error)),
                 }
             }
         }
@@ -427,11 +446,7 @@ pub(crate) fn sync_session_transcript_archives(
     // Deletions alone still need downstream sync, so index on any change
     // (accepted or reconciled), not just newly accepted sessions.
     if batch.has_changes() {
-        index_after_ingest(
-            vault_root,
-            store,
-            &mut crate::progress::ProgressOptions::default(),
-        )?;
+        index_after_ingest(vault_root, store, progress)?;
     }
 
     Ok(batch)

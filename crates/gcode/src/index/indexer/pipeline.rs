@@ -328,12 +328,18 @@ fn index_explicit_files_with_connection(
 
 struct ActiveIndexProgress<'a> {
     sink: Option<&'a mut dyn IndexProgressSink>,
+    started: bool,
 }
 
 impl<'a> ActiveIndexProgress<'a> {
     fn new(sink: Option<&'a mut dyn IndexProgressSink>, total: usize) -> Self {
-        let mut progress = Self { sink };
-        if let Some(sink) = progress.sink.as_deref_mut() {
+        let mut progress = Self {
+            sink,
+            started: total > 0,
+        };
+        if progress.started
+            && let Some(sink) = progress.sink.as_deref_mut()
+        {
             sink.start(total);
         }
         progress
@@ -348,7 +354,9 @@ impl<'a> ActiveIndexProgress<'a> {
 
 impl Drop for ActiveIndexProgress<'_> {
     fn drop(&mut self) {
-        if let Some(sink) = self.sink.as_deref_mut() {
+        if self.started
+            && let Some(sink) = self.sink.as_deref_mut()
+        {
             sink.finish();
         }
     }
@@ -433,5 +441,15 @@ mod progress_tests {
                 "finish"
             ]
         );
+    }
+
+    #[test]
+    fn index_progress_zero_total_is_noop() {
+        let mut sink = RecordingProgress::default();
+        {
+            let _progress = ActiveIndexProgress::new(Some(&mut sink), 0);
+        }
+
+        assert!(sink.events.is_empty());
     }
 }

@@ -11,7 +11,7 @@ from gobby.memory.services._search_backfill import collect_active_results
 from gobby.memory.services._search_constants import DEFAULT_SEARCH_LIMIT
 from gobby.memory.services._search_debug import emit_search_debug
 from gobby.memory.services._search_graph import search_graph_scored
-from gobby.memory.services._search_keyword import keyword_fallback, keyword_ranked
+from gobby.memory.services._search_keyword import KeywordSearch, keyword_fallback, keyword_ranked
 from gobby.memory.services._search_models import SearchDebugHit, SearchDebugSnapshot, _Candidates
 from gobby.memory.services._search_paths import search_qdrant_keyword, search_with_graph
 from gobby.memory.services._search_results import build_results
@@ -42,7 +42,7 @@ class SearchService:
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Any] | None,
         kg_service: KnowledgeGraphService | None,
-        keyword_search: Callable[..., list[tuple[str, float]]],
+        keyword_search: KeywordSearch,
         config: MemoryConfig,
         falkordb_graph_search: bool,
         falkordb_graph_min_score: float,

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg_pool import PoolTimeout
 
+from gobby.telemetry._span_drop import log_pool_timeout_drop
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -59,11 +61,7 @@ class SpanStorage:
         try:
             self.db.executemany(query, rows)
         except PoolTimeout as e:
-            logger.warning(
-                "Dropping %d telemetry spans because hub pool acquisition timed out: %s",
-                len(spans),
-                e,
-            )
+            log_pool_timeout_drop(logger, span_count=len(spans), error=e)
             raise
         except Exception as e:
             logger.error("Failed to save spans: %s", e)

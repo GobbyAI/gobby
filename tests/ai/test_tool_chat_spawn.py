@@ -615,7 +615,7 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "--always-approve" in command
     assert "--no-subagents" in command
     assert command[command.index("--model") + 1] == "grok-4"
-    assert command[command.index("--max-turns") + 1] == "4"
+    assert command[command.index("--max-turns") + 1] == "99"
     disabled = command[command.index("--disallowed-tools") + 1]
     for blocked in ("Edit", "Write", "Task"):
         assert blocked in disabled
@@ -626,7 +626,7 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "gobby-index" not in prompt
 
 
-def test_grok_build_command_preserves_explicit_zero_max_turns() -> None:
+def test_grok_build_command_prefers_request_max_turns_over_limits() -> None:
     adapter = GrokSpawnToolChatAdapter(command_path="grok")
 
     command = adapter._build_command(
@@ -634,7 +634,7 @@ def test_grok_build_command_preserves_explicit_zero_max_turns() -> None:
         model=None,
     )
 
-    assert command[command.index("--max-turns") + 1] == "0"
+    assert command[command.index("--max-turns") + 1] == "12"
 
 
 @pytest.mark.asyncio

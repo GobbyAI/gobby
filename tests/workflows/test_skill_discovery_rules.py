@@ -2969,6 +2969,35 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
+    async def test_unnormalized_repo_search_with_cwd_and_project_path_still_blocks(
+        self,
+        db,
+        tmp_path,
+    ) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._event(
+            HookEventType.BEFORE_TOOL,
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "rg pattern src", "cwd": str(repo)},
+                "cwd": str(repo),
+                "project_path": str(repo),
+                "canonical_tool_kind": "search",
+                "canonical_code_navigation_action": "search",
+                "canonical_code_navigation_broad": True,
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
     async def test_gcode_navigation_is_allowed_and_sets_turn_flag(self, db) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=True)

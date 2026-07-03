@@ -328,7 +328,7 @@ async def _build_service(
         vector_store=vector_store,
         embed_fn=embed_fn,
         kg_service=service,
-        keyword_search=lambda query, limit, project_id: [],
+        keyword_search=lambda query, limit, project_id, *, include_global=True: [],
         config=MemoryConfig(
             cluster_recall_expansion=arm.cluster_recall_expansion,
             cluster_expansion_per_entity=arm.cluster_expansion_per_entity,

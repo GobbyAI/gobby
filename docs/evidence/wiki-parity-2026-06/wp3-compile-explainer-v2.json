@@ -9,11 +9,11 @@
     "route": "daemon",
     "status": "generated"
   },
-  "article_path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/topics/gsqz-compression-shipping-decision.md",
+  "article_path": "knowledge/topics/gsqz-compression-shipping-decision.md",
   "command": "compile",
   "daemon_synthesis_available": true,
   "handoff_id": "compile-gsqz-compression-shipping-decision-1781313990584",
-  "index_path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/_index.md",
+  "index_path": "_index.md",
   "outline": [
     "Overview",
     "Shipping thresholds"
@@ -21,11 +21,11 @@
   "page_writes": [
     {
       "kind": "created",
-      "path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/topics/gsqz-compression-shipping-decision.md"
+      "path": "knowledge/topics/gsqz-compression-shipping-decision.md"
     },
     {
       "kind": "created",
-      "path": "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/sources/how-gsqz-decides-whether-compressed-output-ships.md"
+      "path": "knowledge/sources/how-gsqz-decides-whether-compressed-output-ships.md"
     }
   ],
   "prompt": {
@@ -40,7 +40,7 @@
     "kind": "project"
   },
   "source_paths": [
-    "/Users/josh/Projects/gobby-cli/.gobby/wiki/knowledge/sources/how-gsqz-decides-whether-compressed-output-ships.md"
+    "knowledge/sources/how-gsqz-decides-whether-compressed-output-ships.md"
   ],
   "status": "compiled",
   "target_kind": "topic"

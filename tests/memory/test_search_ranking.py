@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.memory.services._search_keyword import KeywordSearch
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
 from gobby.storage.memories import Memory
 
@@ -115,7 +116,7 @@ def _service(
     vector_results: list[tuple[str, float]] | None = None,
     vector_store: Any = None,
     storage: Any = None,
-    keyword_search: Callable[..., list[tuple[str, float]]] | None = None,
+    keyword_search: KeywordSearch | None = None,
     search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     falkordb_graph_search: bool = False,
 ) -> SearchService:
@@ -127,7 +128,8 @@ def _service(
         vector_store=vector_store or _VectorStore(vector_results or []),  # type: ignore[arg-type]
         embed_fn=_embed,
         kg_service=object() if falkordb_graph_search else None,  # type: ignore[arg-type]
-        keyword_search=keyword_search or (lambda query, limit, project_id, include_global=True: []),
+        keyword_search=keyword_search
+        or (lambda query, limit, project_id, *, include_global=True: []),
         config=MemoryConfig(),
         falkordb_graph_search=falkordb_graph_search,
         falkordb_graph_min_score=0.0,
@@ -537,7 +539,7 @@ def _fallback_service(
         vector_store=None,
         embed_fn=None,
         kg_service=None,
-        keyword_search=lambda query, limit, project_id, include_global=True: keyword_results,
+        keyword_search=lambda query, limit, project_id, *, include_global=True: keyword_results,
         config=MemoryConfig(),
         falkordb_graph_search=False,
         falkordb_graph_min_score=0.0,

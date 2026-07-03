@@ -2,6 +2,7 @@
 pub(crate) enum ProgressPhase {
     IngestFile,
     IngestUrl,
+    SessionArchive,
     VaultIndex,
     VectorSync,
     GraphSync,

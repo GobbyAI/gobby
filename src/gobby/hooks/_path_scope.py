@@ -65,17 +65,16 @@ def current_tool_cwd(event_data: Mapping[str, Any]) -> Path | None:
 
 def current_project_root(event_data: Mapping[str, Any]) -> Path | None:
     """Resolve the current project root from hook metadata or cwd."""
-    for key in ("project_path", "project_root"):
-        root = _resolve_base_dir(event_data.get(key))
-        if root is not None:
-            return root
+    root = _resolve_base_dir(event_data.get("project_path"))
+    if root is not None:
+        return root
 
     cwd = current_tool_cwd(event_data)
     if cwd is None:
         return None
     try:
         return find_project_root(cwd)
-    except OSError:
+    except (OSError, RuntimeError):
         return None
 
 

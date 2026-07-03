@@ -15,6 +15,9 @@ from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from tests._timing import drain_asyncio_tasks
 
+WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+WAKE_RUN_ID = "ac314d27-4314-5fe3-a0ab-01645086e137"
+
 
 def test_live_wake_signal_is_neutral() -> None:
     assert "Task completed" not in CONTINUE_WAKE_MESSAGE
@@ -61,20 +64,16 @@ class TestWakeDispatch:
         self, session_manager: MagicMock, ism_manager: MagicMock
     ) -> None:
         """agent_depth=0 → InterSessionMessage."""
-        session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1", agent_depth=0
-        )
+        session_manager.get.return_value = FakeSession(id=WAKE_SESSION_ID, agent_depth=0)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Pipeline completed", {"status": "completed"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Pipeline completed", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
         call_kwargs = ism_manager.create_message.call_args.kwargs
-        assert call_kwargs["to_session"] == "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+        assert call_kwargs["to_session"] == WAKE_SESSION_ID
         assert call_kwargs["message_type"] == "completion_notification"
         assert "Pipeline completed" in call_kwargs["content"]
 
@@ -87,7 +86,7 @@ class TestWakeDispatch:
     ) -> None:
         """agent_depth>0 with terminal_context → durable ISM plus tmux wake."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=1,
             terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
         )
@@ -96,9 +95,7 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
             tmux_sender=tmux_sender,
         )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Agent completed", {"status": "success"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Agent completed", {"status": "success"})
 
         ism_manager.create_message.assert_called_once()
         tmux_sender.assert_called_once()
@@ -122,7 +119,7 @@ class TestWakeDispatch:
     ) -> None:
         """terminal_context may already be a parsed mapping."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=1,
             terminal_context={"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"},
         )
@@ -132,9 +129,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
         )
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Agent completed", {"status": "success"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Agent completed", {"status": "success"})
 
         tmux_sender.assert_awaited_once_with(
             "gobby-agent-abc",
@@ -153,7 +148,7 @@ class TestWakeDispatch:
     ) -> None:
         """Terminal child agents can be nudged from pane-only terminal context."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=1,
             terminal_context={
                 "tmux_pane": "%5",
@@ -169,7 +164,7 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        result = await dispatcher.dispatch_live_wake("9264a39c-68db-5eed-917c-6f7babb8e6b1")
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is True
         assert result["method"] == "tmux_pane"
@@ -191,7 +186,7 @@ class TestWakeDispatch:
     ) -> None:
         """Durable ISM remains when tmux wake fails."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=1,
             terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
         )
@@ -202,9 +197,7 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
             tmux_sender=failing_tmux,
         )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Pipeline completed", {"status": "completed"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Pipeline completed", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
@@ -226,7 +219,7 @@ class TestWakeDispatch:
     ) -> None:
         """Terminal agent without tmux_sender still gets durable ISM."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=1,
             terminal_context='{"tmux_session": "gobby-agent-abc"}',
         )
@@ -235,9 +228,7 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
             tmux_sender=None,
         )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
@@ -271,7 +262,7 @@ class TestWakeDispatch:
             {
                 "message_type": "completion_notification",
                 "from_session_id": "child-1",
-                "run_id": "ac314d27-4314-5fe3-a0ab-01645086e137",
+                "run_id": WAKE_RUN_ID,
                 "task_id": "#12754",
                 "signoff_message": "Review approved",
             },
@@ -283,10 +274,7 @@ class TestWakeDispatch:
         assert call_kwargs["to_session"] == "parent-1"
         assert call_kwargs["content"] == "Review approved"
         assert call_kwargs["message_type"] == "completion_notification"
-        assert (
-            '"completion_id": "ac314d27-4314-5fe3-a0ab-01645086e137"'
-            in call_kwargs["metadata_json"]
-        )
+        assert f'"completion_id": "{WAKE_RUN_ID}"' in call_kwargs["metadata_json"]
         assert '"task_id": "#12754"' in call_kwargs["metadata_json"]
         tmux_sender.assert_awaited_once_with(
             "gobby-agent-parent",
@@ -303,20 +291,18 @@ class TestWakeDispatch:
     ) -> None:
         """A replayed completion notification does not create duplicate ISM rows."""
         existing = MagicMock()
-        existing.metadata_json = '{"completion_id": "ac314d27-4314-5fe3-a0ab-01645086e137", "run_id": "ac314d27-4314-5fe3-a0ab-01645086e137"}'
+        existing.metadata_json = f'{{"completion_id": "{WAKE_RUN_ID}", "run_id": "{WAKE_RUN_ID}"}}'
         ism_manager.list_messages.return_value = [existing]
-        session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1", agent_depth=0
-        )
+        session_manager.get.return_value = FakeSession(id=WAKE_SESSION_ID, agent_depth=0)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
 
         await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            WAKE_SESSION_ID,
             "Agent interrupted",
-            {"status": "cancelled", "run_id": "ac314d27-4314-5fe3-a0ab-01645086e137"},
+            {"status": "cancelled", "run_id": WAKE_RUN_ID},
         )
 
         ism_manager.create_message.assert_not_called()
@@ -331,7 +317,7 @@ class TestWakeDispatch:
     ) -> None:
         """Depth 0 tmux-backed sessions get durable ISM plus pane wake."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
         )
@@ -342,9 +328,7 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
@@ -370,7 +354,7 @@ class TestWakeDispatch:
     ) -> None:
         """Depth 0 tmux-backed sessions use the recorded tmux socket."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context={
                 "tmux_pane": "%12",
@@ -384,9 +368,7 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
 
         tmux_pane_sender.assert_awaited_once_with(
             "%12",
@@ -407,7 +389,7 @@ class TestWakeDispatch:
     ) -> None:
         """Expected tmux pane failures return structured diagnostics without stack traces."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
         )
@@ -426,13 +408,13 @@ class TestWakeDispatch:
         )
 
         with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
-            result = await dispatcher.dispatch_live_wake("9264a39c-68db-5eed-917c-6f7babb8e6b1")
+            result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is False
         assert result["method"] == "tmux_pane"
         assert result["error_code"] == "tmux_pane_wake_failed"
         assert "can't find pane" in result["error_message"]
-        assert "9264a39c-68db-5eed-917c-6f7babb8e6b1" not in dispatcher._last_live_wake
+        assert WAKE_SESSION_ID not in dispatcher._last_live_wake
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
 
@@ -443,15 +425,13 @@ class TestWakeDispatch:
         ism_manager: MagicMock,
     ) -> None:
         """Expired sessions are durable-mailbox only and report why live wake skipped."""
-        session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1", status="expired"
-        )
+        session_manager.get.return_value = FakeSession(id=WAKE_SESSION_ID, status="expired")
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
 
-        result = await dispatcher.dispatch_live_wake("9264a39c-68db-5eed-917c-6f7babb8e6b1")
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is False
         assert result["error_code"] == "session_expired"
@@ -483,7 +463,7 @@ class TestWakeDispatch:
     ) -> None:
         """Terminal context without a pane gets a precise live wake diagnostic."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context={"parent_pid": 12345},
         )
@@ -494,7 +474,7 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        result = await dispatcher.dispatch_live_wake("9264a39c-68db-5eed-917c-6f7babb8e6b1")
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is False
         assert result["method"] == "tmux_pane"
@@ -509,7 +489,7 @@ class TestWakeDispatch:
     ) -> None:
         """A recorded pane still needs a configured live sender."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context={"tmux_pane": "%12"},
         )
@@ -518,7 +498,7 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
         )
 
-        result = await dispatcher.dispatch_live_wake("9264a39c-68db-5eed-917c-6f7babb8e6b1")
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is False
         assert result["method"] == "tmux_pane"
@@ -550,7 +530,7 @@ class TestWakeDispatch:
     ) -> None:
         """Depth 0 session always gets ISM regardless of terminal_context."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_session": "some-session"}',
         )
@@ -558,9 +538,7 @@ class TestWakeDispatch:
             session_manager=session_manager,
             ism_manager=ism_manager,
         )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
@@ -574,7 +552,7 @@ class TestWakeDispatch:
     ) -> None:
         """Bursty completions during one idle turn → one pane nudge, every ISM stored."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
@@ -586,15 +564,9 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r1"}
-        )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r2"}
-        )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r3"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r3"})
 
         tmux_pane_sender.assert_awaited_once_with(
             "%12",
@@ -613,7 +585,7 @@ class TestWakeDispatch:
     ) -> None:
         """Concurrent completions must not interleave duplicate wake prompts in the pane."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
@@ -644,17 +616,17 @@ class TestWakeDispatch:
         async def run_wakes() -> list[None]:
             return await asyncio.gather(
                 dispatcher.wake(
-                    "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                    WAKE_SESSION_ID,
                     "Done",
                     {"status": "completed", "run_id": "r1"},
                 ),
                 dispatcher.wake(
-                    "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                    WAKE_SESSION_ID,
                     "Done",
                     {"status": "completed", "run_id": "r2"},
                 ),
                 dispatcher.wake(
-                    "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                    WAKE_SESSION_ID,
                     "Done",
                     {"status": "completed", "run_id": "r3"},
                 ),
@@ -683,7 +655,7 @@ class TestWakeDispatch:
     ) -> None:
         """Terminal agents need one wake signal; durable ISMs carry distinct completions."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=1,
             terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
             turn_count=8,
@@ -713,17 +685,17 @@ class TestWakeDispatch:
         async def run_wakes() -> list[None]:
             return await asyncio.gather(
                 dispatcher.wake(
-                    "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                    WAKE_SESSION_ID,
                     "Done",
                     {"status": "completed", "run_id": "r1"},
                 ),
                 dispatcher.wake(
-                    "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                    WAKE_SESSION_ID,
                     "Done",
                     {"status": "completed", "run_id": "r2"},
                 ),
                 dispatcher.wake(
-                    "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                    WAKE_SESSION_ID,
                     "Done",
                     {"status": "completed", "run_id": "r3"},
                 ),
@@ -751,13 +723,13 @@ class TestWakeDispatch:
     ) -> None:
         """Once the user takes a new turn, the next completion fires a pane wake again."""
         first_session = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
         )
         second_session = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=6,
@@ -771,12 +743,8 @@ class TestWakeDispatch:
             tmux_pane_sender=tmux_pane_sender,
         )
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r1"}
-        )
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r2"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
 
         assert tmux_pane_sender.await_count == 2
 
@@ -789,7 +757,7 @@ class TestWakeDispatch:
     ) -> None:
         """Stuck idle longer than the 30s ceiling → next completion fires again."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
@@ -808,18 +776,12 @@ class TestWakeDispatch:
 
         monkeypatch.setattr("gobby.events.wake.time.monotonic", fake_monotonic)
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r1"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
         clock[0] += 5.0
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r2"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
         assert tmux_pane_sender.await_count == 1
         clock[0] += 31.0
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r3"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r3"})
 
         assert tmux_pane_sender.await_count == 2
 
@@ -870,7 +832,7 @@ class TestWakeDispatch:
     ) -> None:
         """Expected pane failures stay retryable and do not emit warning stack traces."""
         session_manager.get.return_value = FakeSession(
-            id="9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
@@ -894,18 +856,16 @@ class TestWakeDispatch:
 
         with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
             await dispatcher.wake(
-                "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+                WAKE_SESSION_ID,
                 "Done",
                 {"status": "completed", "run_id": "r1"},
             )
 
-        assert "9264a39c-68db-5eed-917c-6f7babb8e6b1" not in dispatcher._last_live_wake
+        assert WAKE_SESSION_ID not in dispatcher._last_live_wake
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
 
-        await dispatcher.wake(
-            "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed", "run_id": "r2"}
-        )
+        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
 
         assert tmux_pane_sender.await_count == 2
 

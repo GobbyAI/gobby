@@ -1,8 +1,7 @@
 """Task lookup and hydration helpers."""
 
-import uuid
-
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import Task, TaskNotFoundError
@@ -15,11 +14,7 @@ def _escape_like_prefix(prefix: str) -> str:
 
 
 def _is_task_uuid(value: str) -> bool:
-    try:
-        uuid.UUID(value)
-    except (TypeError, ValueError):
-        return False
-    return True
+    return parse_uuid_reference(value) is not None
 
 
 def get_task(db: HubDatabase, task_id: str, project_id: str | None = None) -> Task:

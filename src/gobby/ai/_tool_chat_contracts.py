@@ -82,10 +82,10 @@ class ToolChatRequest:
 
 
 def _resolve_max_turns(request: ToolChatRequest, *, default: int) -> int:
-    if request.limits.max_turns is not None:
-        return request.limits.max_turns
     if request.max_turns is not None:
         return request.max_turns
+    if request.limits.max_turns is not None:
+        return request.limits.max_turns
     return default
 
 

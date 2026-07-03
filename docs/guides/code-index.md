@@ -84,7 +84,10 @@ whose root no longer exists, and fills missing symbol summaries when a
 summarizer is configured. A global system cron runs `gcode prune --force`
 hourly. A separate nightly system cron runs
 `gcode index --full --sync-projections --project <root> --format json` for each
-indexed project.
+indexed project. That full index and graph/vector projection sync hold the same
+per-project index lock for the whole window; concurrent freshness checks or
+daemon-triggered syncs should report `SkippedBusy` and read the existing index
+instead of racing projection writes.
 
 A separate sync worker polls pending files, copies symbols to Qdrant vectors,
 and calls `gcode graph sync-file --file <file> --project <root>` for graph

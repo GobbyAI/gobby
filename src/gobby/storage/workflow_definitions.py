@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 
 logger = logging.getLogger(__name__)
@@ -176,9 +177,7 @@ class LocalWorkflowDefinitionManager:
 
     def get(self, definition_id: str, include_deleted: bool = False) -> WorkflowDefinitionRow:
         """Get a workflow definition by primary key."""
-        try:
-            UUID(str(definition_id))
-        except (TypeError, ValueError):
+        if parse_uuid_reference(definition_id) is None:
             raise ValueError(f"Workflow definition {definition_id} not found") from None
         sql = "SELECT * FROM workflow_definitions WHERE id = %s"
         if not include_deleted:

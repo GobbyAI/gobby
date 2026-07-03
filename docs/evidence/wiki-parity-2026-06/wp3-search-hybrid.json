@@ -38,7 +38,7 @@
       "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/files/crates/gcode/src/search/rrf.rs.md",
       "result_type": "code",
       "score": 0.03306010928961749,
-      "snippet": "## Purpose This file provides a small Reciprocal Rank Fusion wrapper for search results. It defines `MergedResult` as the merged output shape `(symbol_id, com",
+      "snippet": "## Purpose This file provides a small Reciprocal Rank Fusion wrapper for search results. It defines `MergedResult` as the merged output shape `(symbol_id, combined_score)` and delegates fusion to the shared search primitive.",
       "source_path": "code/files/crates/gcode/src/search/rrf.rs.md",
       "sources": [
         "bm25",

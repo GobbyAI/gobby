@@ -16,6 +16,9 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 
 pytestmark = pytest.mark.integration
 
+RAW_TOOL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+PLATFORM_SESSION_ID = "11111111-1111-4111-8111-111111111111"
+
 
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
@@ -36,7 +39,7 @@ def _event(
 ) -> HookEvent:
     return HookEvent(
         event_type=event_type,
-        session_id="22222222-2222-4222-8222-222222222222",
+        session_id=RAW_TOOL_SESSION_ID,
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data=data,
@@ -51,7 +54,7 @@ async def test_raw_get_skill_after_tool_populates_loaded_skill_for_call_tool_pat
     tmp_path: Path,
 ) -> None:
     # session_variables.session_id is a native uuid column
-    platform_session_id = "11111111-1111-4111-8111-111111111111"
+    platform_session_id = PLATFORM_SESSION_ID
     session_vars = SessionVariableManager(db)
     session_vars.merge_variables(
         platform_session_id,

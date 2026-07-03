@@ -45,7 +45,9 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
             options,
         } => index::execute_ingest_file(path, scope, options, run_options),
         Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope, run_options),
-        Command::SyncSessions { scope, options } => session_sync::execute(scope, options),
+        Command::SyncSessions { scope, options } => {
+            session_sync::execute(scope, options, run_options)
+        }
         Command::Refresh {
             scope,
             source_ids,

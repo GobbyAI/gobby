@@ -55,6 +55,7 @@ fn summarize_skips_archives_that_already_have_a_session_page() {
         None,
         RawArchiveMode::Skeleton,
         "2026-06-20T10:05:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
     assert_eq!(first.accepted.len(), 1);
@@ -68,6 +69,7 @@ fn summarize_skips_archives_that_already_have_a_session_page() {
         None,
         RawArchiveMode::Summarize,
         "2026-06-20T10:06:00Z",
+        &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
     assert!(second.accepted.is_empty());

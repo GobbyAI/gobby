@@ -33,6 +33,7 @@ pytestmark = pytest.mark.unit
 # Session id columns are native uuid in PostgreSQL; a synthetic id would fail
 # with `invalid input syntax for type uuid` where tests hit the real DB.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+AGENT_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 
 
 @pytest.fixture
@@ -93,7 +94,7 @@ def make_after_tool_event():
         return HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             source=SessionSource.CLAUDE,
-            session_id="22222222-2222-4222-8222-222222222222",
+            session_id=AGENT_SESSION_ID,
             timestamp=datetime.now(UTC),
             data=data,
             metadata={"_platform_session_id": SESSION_ID},
@@ -1220,7 +1221,7 @@ def _make_bash_event(
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         source=SessionSource.CLAUDE,
-        session_id="22222222-2222-4222-8222-222222222222",
+        session_id=AGENT_SESSION_ID,
         timestamp=datetime.now(UTC),
         data=data,
         cwd=cwd,
@@ -1362,7 +1363,7 @@ class TestDetectBashCommit:
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             source=SessionSource.CLAUDE,
-            session_id="22222222-2222-4222-8222-222222222222",
+            session_id=AGENT_SESSION_ID,
             timestamp=datetime.now(UTC),
             data=normalized,
             metadata={"_platform_session_id": SESSION_ID},
@@ -1384,7 +1385,7 @@ class TestDetectBashCommit:
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
             source=SessionSource.CLAUDE,
-            session_id="22222222-2222-4222-8222-222222222222",
+            session_id=AGENT_SESSION_ID,
             timestamp=datetime.now(UTC),
             data=normalized,
             metadata={"_platform_session_id": SESSION_ID},
@@ -1569,7 +1570,7 @@ def _make_bash_event_dict(
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         source=SessionSource.CLAUDE,
-        session_id="22222222-2222-4222-8222-222222222222",
+        session_id=AGENT_SESSION_ID,
         timestamp=datetime.now(UTC),
         data=data,
         metadata={"_platform_session_id": SESSION_ID},

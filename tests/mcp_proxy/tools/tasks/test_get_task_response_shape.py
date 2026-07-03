@@ -66,6 +66,22 @@ def test_task_summary_uses_to_dict_payload_fields() -> None:
     assert payload["state"]["is_closed"] is False
 
 
+def test_task_summary_defaults_missing_list_fields_without_to_dict() -> None:
+    task = SimpleNamespace(
+        id="03940009-0faa-4d80-9b96-289df7f44431",
+        seq_num=17427,
+        title="Default missing list fields",
+        task_type="bug",
+        category="code",
+        priority=1,
+    )
+
+    payload = task_summary_payload(task, dependencies={})
+
+    assert payload["labels"] == []
+    assert payload["additional_skills"] == []
+
+
 def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
     task = SimpleNamespace(
         id="03940009-0faa-4d80-9b96-289df7f44431",

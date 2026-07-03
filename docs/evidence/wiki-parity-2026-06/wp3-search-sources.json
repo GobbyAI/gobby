@@ -34,7 +34,7 @@
       "fusion_key": "project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01:code/modules/crates/gcode/src/search.md",
       "result_type": "wiki",
       "score": 0.03333333333333333,
-      "snippet": "## Overview The `search` module provides hybrid code search over a Postgres-backed index. It combines full-text search (`fts`) across sym",
+      "snippet": "## Overview The `search` module provides hybrid code search over a Postgres-backed index. It combines full-text search (`fts`) across symbols and content with semantic vector search and graph-backed expansion.",
       "source_path": "code/modules/crates/gcode/src/search.md",
       "sources": [
         "bm25",

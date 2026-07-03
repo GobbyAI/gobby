@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,7 +46,7 @@ def _mock_components(database: object, session_manager: object) -> SimpleNamespa
     )
 
 
-def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
+def test_hook_manager_forwards_injected_database_and_session_manager(tmp_path: Path) -> None:
     """HookManager should pass daemon-owned storage handles into the factory."""
     database = MagicMock()
     session_manager = MagicMock()
@@ -64,7 +65,7 @@ def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
             daemon_port=60887,
             database=database,
             session_manager=session_manager,
-            log_file="/tmp/test-hook-manager.log",
+            log_file=str(tmp_path / "test-hook-manager.log"),
         )
 
     assert create.call_args.kwargs["database"] is database
@@ -73,7 +74,7 @@ def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
     assert manager._session_manager is session_manager
 
 
-def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
+def test_hook_manager_shutdown_leaves_injected_database_open(tmp_path: Path) -> None:
     """HookManager shutdown should leave daemon-owned storage handles open."""
     database = MagicMock()
     session_manager = MagicMock()
@@ -93,7 +94,7 @@ def test_hook_manager_shutdown_leaves_injected_database_open() -> None:
             daemon_port=60887,
             database=database,
             session_manager=session_manager,
-            log_file="/tmp/test-hook-manager.log",
+            log_file=str(tmp_path / "test-hook-manager.log"),
         )
 
     manager.shutdown()
@@ -218,7 +219,7 @@ def test_factory_create_uses_injected_memory_manager(
         patch.object(HookManagerFactory, "_create_memory") as create_memory,
         patch.object(
             HookManagerFactory, "_create_workflow_engine", return_value=workflow_components
-        ),
+        ) as create_workflow_engine,
         patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
     ):
         components = HookManagerFactory.create(
@@ -227,6 +228,8 @@ def test_factory_create_uses_injected_memory_manager(
         )
 
     create_memory.assert_not_called()
+    create_workflow_engine.assert_called_once()
+    assert create_workflow_engine.call_args.args[4] is shared_memory_manager
     assert components.memory_manager is shared_memory_manager
 
 
@@ -247,7 +250,7 @@ def test_factory_create_memory_fallback_threads_llm_service(
         ) as create_memory,
         patch.object(
             HookManagerFactory, "_create_workflow_engine", return_value=workflow_components
-        ),
+        ) as create_workflow_engine,
         patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
     ):
         kwargs = _create_kwargs(session_manager, default_config)
@@ -255,10 +258,12 @@ def test_factory_create_memory_fallback_threads_llm_service(
         components = HookManagerFactory.create(**kwargs)  # type: ignore[arg-type]
 
     create_memory.assert_called_once_with(temp_db, default_config, llm_service)
+    create_workflow_engine.assert_called_once()
+    assert create_workflow_engine.call_args.args[4] is fallback_manager
     assert components.memory_manager is fallback_manager
 
 
-def test_hook_manager_forwards_injected_memory_manager() -> None:
+def test_hook_manager_forwards_injected_memory_manager(tmp_path: Path) -> None:
     """HookManager should pass the daemon's MemoryManager into the factory."""
     database = MagicMock()
     session_manager = MagicMock()
@@ -280,7 +285,7 @@ def test_hook_manager_forwards_injected_memory_manager() -> None:
             database=database,
             session_manager=session_manager,
             memory_manager=memory_manager,
-            log_file="/tmp/test-hook-manager.log",
+            log_file=str(tmp_path / "test-hook-manager.log"),
         )
 
     assert create.call_args.kwargs["memory_manager"] is memory_manager

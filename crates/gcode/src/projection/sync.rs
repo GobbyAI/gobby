@@ -649,4 +649,42 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn sync_state_empty_files_does_not_start_progress() {
+        let files: Vec<String> = Vec::new();
+        #[derive(Default)]
+        struct State;
+        let mut state = State;
+        #[derive(Default)]
+        struct RecordingProgress {
+            events: Vec<String>,
+        }
+        impl ProjectionProgressSink for RecordingProgress {
+            fn start(&mut self, target: ProjectionTarget, total: usize) {
+                self.events.push(format!("{target:?}:start:{total}"));
+            }
+
+            fn advance(&mut self, target: ProjectionTarget, file_path: &str) {
+                self.events.push(format!("{target:?}:advance:{file_path}"));
+            }
+
+            fn finish(&mut self, target: ProjectionTarget) {
+                self.events.push(format!("{target:?}:finish"));
+            }
+        }
+        let mut progress = RecordingProgress::default();
+
+        let report = sync_files_with_state(
+            &test_context(),
+            &files,
+            &mut state,
+            |_state, _file_path| Ok(ProjectionFileSyncOutcome::Synced { symbols: 1 }),
+            ProjectionTarget::Graph,
+            Some(&mut progress),
+        );
+
+        assert_eq!(report.status, ProjectionStatus::Ok);
+        assert!(progress.events.is_empty());
+    }
 }

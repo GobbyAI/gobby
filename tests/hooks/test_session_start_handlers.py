@@ -122,6 +122,44 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
     session_manager.mark_session_expired.assert_called_once_with("stale-same-pane")
 
 
+def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
+    session_manager = MagicMock()
+    session_manager.db.fetchall.return_value = [
+        {
+            "id": "stale-same-pane",
+            "terminal_context": {
+                "tmux_pane": "%73",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        },
+        {
+            "id": "stale-second",
+            "terminal_context": {
+                "tmux_pane": "%73",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        },
+    ]
+    session_manager.mark_session_expired.side_effect = [RuntimeError("db busy"), True]
+    handler = SimpleNamespace(_session_manager=session_manager, logger=MagicMock())
+
+    _expire_stale_terminal_sessions_for_context(
+        handler,
+        session_id="current-session",
+        project_id="project-1",
+        terminal_context={
+            "tmux_pane": "%73",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        },
+    )
+
+    assert session_manager.mark_session_expired.call_args_list == [
+        call("stale-same-pane"),
+        call("stale-second"),
+    ]
+    handler.logger.warning.assert_called_once()
+
+
 class TestSessionHandlers:
     """Test SESSION_START and SESSION_END handlers."""
 

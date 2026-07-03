@@ -1,4 +1,5 @@
 import json
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,8 +13,9 @@ pytestmark = pytest.mark.unit
 PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000001"
 RESOLUTION_PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000002"
 
-# import_from_github_issues derives deterministic uuid5 task ids from the
-# issue URL (tasks.id is a native uuid column); re-imports upsert in place.
+# import_from_github_issues derives deterministic uuid5 task ids from normalized
+# owner/repo/issues/<number> (tasks.id is a native uuid column); re-imports
+# upsert in place.
 
 
 @pytest.fixture
@@ -55,6 +57,7 @@ async def test_import_from_github_issues(sync_manager, hub_db):
 
         assert result["success"] is True
         assert len(result["imported"]) == 1
+        assert result["imported"][0] == str(uuid.uuid5(uuid.NAMESPACE_URL, "owner/repo/issues/1"))
 
 
 @pytest.mark.integration

@@ -3,9 +3,9 @@ Wiki lint report
 Scope: project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
 
 Broken links:
-- code/files/crates/gcode/src/index/import_resolution/parser/mod.rs.md:22 -> /Users/josh/Projects/gobby/crates/gcode/src/index/import_resolution/parser/mod.rs (markdown)
-- code/files/crates/gcode/src/index/import_resolution/parser/php_kotlin.rs.md:27 -> /Users/josh/Projects/gobby/crates/gcode/src/index/import_resolution/parser/php_kotlin.rs (markdown)
-- code/files/crates/gcode/src/index/import_resolution/parser/python_js.rs.md:20 -> /Users/josh/Projects/gobby/crates/gcode/src/index/import_resolution/parser/python_js.rs (markdown)
+- code/files/crates/gcode/src/index/import_resolution/parser/mod.rs.md:22 -> crates/gcode/src/index/import_resolution/parser/mod.rs (markdown)
+- code/files/crates/gcode/src/index/import_resolution/parser/php_kotlin.rs.md:27 -> crates/gcode/src/index/import_resolution/parser/php_kotlin.rs (markdown)
+- code/files/crates/gcode/src/index/import_resolution/parser/python_js.rs.md:20 -> crates/gcode/src/index/import_resolution/parser/python_js.rs (markdown)
 
 Orphan pages:
 - code/_architecture.md

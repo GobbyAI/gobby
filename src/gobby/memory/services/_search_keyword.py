@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 RunStorage = Callable[..., Awaitable[Any]]
-KeywordSearch = Callable[..., list[tuple[str, float]]]
+
+
+class KeywordSearch(Protocol):
+    def __call__(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None,
+        *,
+        include_global: bool = True,
+    ) -> list[tuple[str, float]]: ...
 
 
 async def keyword_ranked(

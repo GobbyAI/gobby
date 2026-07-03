@@ -102,14 +102,15 @@ class WikiConfig(BaseModel):
     def validate_codewiki_project_scopes_by_name(cls, value: object) -> object:
         if not isinstance(value, dict):
             raise ValueError("codewiki_project_scopes_by_name must be a mapping")
+        validated: dict[str, list[str]] = {}
         for project_name, scopes in value.items():
             if not isinstance(project_name, str) or not project_name.strip():
                 raise ValueError("codewiki project scope keys must be non-empty strings")
-            _validate_codewiki_scope_list(
+            validated[project_name] = _validate_codewiki_scope_list(
                 scopes,
                 field_name=f"codewiki_project_scopes_by_name.{project_name}",
             )
-        return value
+        return validated
 
 
 def resolve_codewiki_scopes(wiki_config: WikiConfig, project_name: str | None) -> list[str]:
@@ -119,10 +120,15 @@ def resolve_codewiki_scopes(wiki_config: WikiConfig, project_name: str | None) -
     return list(wiki_config.codewiki_scopes)
 
 
-def _validate_codewiki_scope_list(value: object, *, field_name: str) -> object:
+def _validate_codewiki_scope_list(value: object, *, field_name: str) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{field_name} must be a list of non-empty strings")
+    scopes: list[str] = []
     for scope in value:
-        if not isinstance(scope, str) or not scope.strip():
+        if not isinstance(scope, str):
             raise ValueError(f"{field_name} must contain only non-empty strings")
-    return value
+        stripped_scope = scope.strip()
+        if not stripped_scope:
+            raise ValueError(f"{field_name} must contain only non-empty strings")
+        scopes.append(stripped_scope)
+    return scopes

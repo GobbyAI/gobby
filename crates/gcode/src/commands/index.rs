@@ -40,11 +40,10 @@ pub fn run(
         sync_projections,
     };
 
-    // Both the PostgreSQL index phase and the graph/vector projection sync must
-    // run under the same per-project lock. Releasing the lock before the sync
-    // (the previous behavior) let a second `--full --sync-projections` run — CLI
-    // or daemon-triggered — project concurrently, contending on FalkorDB, Qdrant,
-    // and the embedding endpoint.
+    // Both the PostgreSQL index phase and the graph/vector projection sync run
+    // under the same per-project lock. A concurrent daemon-triggered projection
+    // should observe the busy lock and skip with SkippedBusy instead of racing
+    // FalkorDB, Qdrant, or the embedding endpoint.
     enum RunOutput {
         IndexOnly(IndexOutcome),
         Projections(IndexSyncProjectionsOutput),
@@ -93,27 +92,25 @@ pub fn run(
     }
 }
 
-struct StderrIndexProgress {
+struct StderrProgress {
     quiet: bool,
     bar: Option<ProgressBar>,
 }
 
-impl StderrIndexProgress {
+impl StderrProgress {
     fn new(quiet: bool) -> Self {
         Self { quiet, bar: None }
     }
-}
 
-impl IndexProgressSink for StderrIndexProgress {
-    fn start(&mut self, total: usize) {
+    fn start(&mut self, label: impl AsRef<str>, total: usize) {
         let mut bar = ProgressBar::new(total, self.quiet);
-        bar.draw("indexing");
+        bar.draw(label);
         self.bar = Some(bar);
     }
 
-    fn advance(&mut self, file_path: &str) {
+    fn advance(&mut self, item: impl AsRef<str>) {
         if let Some(bar) = self.bar.as_mut() {
-            bar.tick(file_path);
+            bar.tick(item);
         }
     }
 
@@ -125,35 +122,57 @@ impl IndexProgressSink for StderrIndexProgress {
     }
 }
 
+struct StderrIndexProgress {
+    progress: StderrProgress,
+}
+
+impl StderrIndexProgress {
+    fn new(quiet: bool) -> Self {
+        Self {
+            progress: StderrProgress::new(quiet),
+        }
+    }
+}
+
+impl IndexProgressSink for StderrIndexProgress {
+    fn start(&mut self, total: usize) {
+        self.progress.start("indexing", total);
+    }
+
+    fn advance(&mut self, file_path: &str) {
+        self.progress.advance(file_path);
+    }
+
+    fn finish(&mut self) {
+        self.progress.finish();
+    }
+}
+
 struct StderrProjectionProgress {
-    quiet: bool,
-    bar: Option<ProgressBar>,
+    progress: StderrProgress,
 }
 
 impl StderrProjectionProgress {
     fn new(quiet: bool) -> Self {
-        Self { quiet, bar: None }
+        Self {
+            progress: StderrProgress::new(quiet),
+        }
     }
 }
 
 impl ProjectionProgressSink for StderrProjectionProgress {
     fn start(&mut self, target: ProjectionTarget, total: usize) {
-        let mut bar = ProgressBar::new(total, self.quiet);
-        bar.draw(format!("{} sync", projection_label(target)));
-        self.bar = Some(bar);
+        self.progress
+            .start(format!("{} sync", projection_label(target)), total);
     }
 
     fn advance(&mut self, target: ProjectionTarget, file_path: &str) {
-        if let Some(bar) = self.bar.as_mut() {
-            bar.tick(format!("{} {file_path}", projection_label(target)));
-        }
+        self.progress
+            .advance(format!("{} {file_path}", projection_label(target)));
     }
 
     fn finish(&mut self, _target: ProjectionTarget) {
-        if let Some(bar) = self.bar.as_mut() {
-            bar.finish();
-        }
-        self.bar = None;
+        self.progress.finish();
     }
 }
 
@@ -415,6 +434,32 @@ mod tests {
         let text = sync_projections_text(&payload).expect("text payload");
 
         insta::assert_snapshot!("sync_projections_text", text);
+    }
+
+    #[test]
+    fn stderr_index_progress_lifecycle_clears_bar_on_finish() {
+        let mut progress = StderrIndexProgress::new(true);
+
+        progress.start(2);
+        progress.advance("src/lib.rs");
+        assert!(progress.progress.bar.is_some());
+
+        progress.finish();
+
+        assert!(progress.progress.bar.is_none());
+    }
+
+    #[test]
+    fn stderr_projection_progress_lifecycle_clears_bar_on_finish() {
+        let mut progress = StderrProjectionProgress::new(true);
+
+        progress.start(ProjectionTarget::Graph, 2);
+        progress.advance(ProjectionTarget::Graph, "src/lib.rs");
+        assert!(progress.progress.bar.is_some());
+
+        progress.finish(ProjectionTarget::Graph);
+
+        assert!(progress.progress.bar.is_none());
     }
 
     #[test]

@@ -252,9 +252,12 @@ It refreshes URL records and local files originally captured by `ingest-file`
 (audio, image, video, PDF, Office, HTML, Markdown, text, and generic file
 sources). Unchanged local file bytes are reported without rerunning AI/media
 extraction. Connector records without replay contracts — stdin, research notes,
-MediaWiki, Wayback, and git repositories — are skipped unless explicitly
-selected with `--id`. Local file/media records that lack replay metadata are
-reported in `failed`.
+MediaWiki, Wayback, and git repositories — are skipped during broad refreshes.
+Selecting one explicitly with `--id` does not make it replayable; it moves the
+record into `failed` so the unsupported replay source is visible. When any
+`--id` is supplied, refresh considers only those selected source IDs and leaves
+all other manifest records untouched. Local file/media records that lack replay
+metadata are also reported in `failed`.
 
 **Options:**
 - `--id <SOURCE_ID>` — Source ID to refresh. Repeat to refresh multiple explicit sources.

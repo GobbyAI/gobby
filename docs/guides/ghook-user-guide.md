@@ -33,7 +33,7 @@ host AI CLI fires hook
   └─ runs ghook --gobby-owned --cli=<c> --type=<t>
       ├─ Stop only: planned-shutdown marker + daemon health preflight
       │   └─ fresh marker + unreachable daemon → {"continue":true}; no stdin/enqueue
-      ├─ resolves project root (walk up from cwd to .gobby/project.json)
+      ├─ resolves project root (walk up from cwd to .gobby/project.json or .gobby/gcode.json)
       ├─ reads stdin (the host CLI's hook payload)
       ├─ stamps machine_id + os, or machine_id_error when unavailable
       ├─ enriches input_data with terminal_context (when TMUX_PANE is valid)
@@ -243,7 +243,7 @@ Look for:
 - **`terminal_context_enabled: true`** — this recognized CLI can receive terminal context. `terminal_context_preview` is populated only when the current process has `TMUX` and a valid `TMUX_PANE`.
 - **`daemon_url`** — where will the POST go? If this is wrong, check
   `GOBBY_DAEMON_URL`, `GOBBY_PORT`, then `~/.gobby/bootstrap.yaml`.
-- **`project_root` / `project_id`** — did ghook correctly walk up from cwd to the project? `null` means no `.gobby/project.json` was found — daemon will receive the envelope without an `X-Gobby-Project-Id` header.
+- **`project_root` / `project_id`** — did ghook correctly walk up from cwd to the project? `null` means no `.gobby/project.json` or `.gobby/gcode.json` marker was found — daemon will receive the envelope without an `X-Gobby-Project-Id` header.
 - **`install_method` / `install_source_url`** — how this `ghook` binary got installed (e.g. `github-release`, `crates-binstall`, `cargo-install`). Both are `null` when the binary was installed without a sidecar-writing installer (e.g. plain `cargo install gobby-hooks`). Useful in bug reports — it tells maintainers exactly which install path a user is on.
 
 The diagnose JSON is validated against `crates/ghook/schemas/diagnose-output.v2.schema.json` in tests, so the schema is stable.

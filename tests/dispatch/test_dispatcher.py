@@ -46,6 +46,10 @@ _LEGACY_STAGE_MAP = {
 }
 
 
+def stable_test_uuid(label: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:{label}"))
+
+
 def _task(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -158,7 +162,7 @@ async def test_sweep_expired_leases_pages_all_active_runs(
             parent_session_id=SYSTEM_SESSION_ID,
             provider="codex",
             prompt=f"active run {index}",
-            run_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-active-{index:04d}")),
+            run_id=stable_test_uuid(f"run-active-{index:04d}"),
         )
         run_storage.start(run.id)
         started_at = (base_time + timedelta(seconds=index)).isoformat()
@@ -1288,7 +1292,7 @@ async def test_planning_agents_inherit_task_worktree_isolation(
         isolation="worktree",
         assigned_agent=agent_slug,
     )
-    stale_worktree_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:wt-{agent_slug}"))
+    stale_worktree_id = stable_test_uuid(f"wt-{agent_slug}")
     stale_worktree_path = f"/tmp/missing-{agent_slug}-worktree"
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -1314,7 +1318,7 @@ async def test_planning_agents_inherit_task_worktree_isolation(
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=task.id,
-            run_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:run-{agent_slug}")),
+            run_id=stable_test_uuid(f"run-{agent_slug}"),
         )
         return {"success": True, "run_id": run.id, "isolation": kwargs["isolation"]}
 
