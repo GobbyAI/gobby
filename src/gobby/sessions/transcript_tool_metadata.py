@@ -1,44 +1,80 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from gobby.hooks.normalization import is_shell_tool
+from gobby.hooks.normalization import is_shell_tool, normalize_mcp_fields
 
 _PROTOCOL_TOOL_NAME = "protocol_context"
 
 TOOL_TYPE_MAP = {
     "Bash": "bash",
+    "bash": "bash",
+    "shell": "bash",
     "Read": "read",
+    "read": "read",
+    "read_file": "read",
     "Write": "write",
+    "write": "write",
     "Edit": "edit",
+    "edit": "edit",
     "MultiEdit": "edit",
+    "multiedit": "edit",
+    "apply_patch": "edit",
     "Grep": "grep",
+    "grep": "grep",
     "Glob": "glob",
+    "glob": "glob",
     "tool_search": "search",
+    "tool_search_tool": "search",
     "WebSearch": "web_search",
     "WebFetch": "web_fetch",
     "AskUserQuestion": "ask_user",
     "Agent": "agent",
     "NotebookEdit": "notebook",
+    "update_plan": "plan",
 }
 
 
-def classify_tool(tool_name: str | None) -> tuple[str, str | None]:
-    """Returns (tool_type, server_name). Extracts server from mcp__server__tool naming."""
+def _normalize_tool_data(
+    tool_name: str,
+    tool_input: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {"tool_name": tool_name}
+    if tool_input is not None:
+        data["tool_input"] = dict(tool_input)
+    return normalize_mcp_fields(data)
+
+
+def classify_tool(
+    tool_name: str | None,
+    tool_input: Mapping[str, Any] | None = None,
+) -> tuple[str, str | None]:
+    """Returns (tool_type, server_name). Extracts server from MCP tool metadata."""
     if not tool_name:
         return "unknown", None
 
     if tool_name.lower() == _PROTOCOL_TOOL_NAME:
         return "protocol", None
 
-    if is_shell_tool(tool_name):
+    tool_data = _normalize_tool_data(tool_name, tool_input)
+    normalized_tool_name = str(tool_data.get("tool_name") or tool_name)
+    mcp_server = tool_data.get("mcp_server")
+
+    if isinstance(mcp_server, str) and mcp_server:
+        return "mcp", mcp_server
+
+    if normalized_tool_name in ("call_tool", "mcp__gobby__call_tool", "mcp_gobby_call_tool"):
+        return "mcp", "unknown"
+
+    if is_shell_tool(normalized_tool_name):
         return "bash", None
 
-    if tool_name in TOOL_TYPE_MAP:
-        return TOOL_TYPE_MAP[tool_name], None
+    if normalized_tool_name in TOOL_TYPE_MAP:
+        return TOOL_TYPE_MAP[normalized_tool_name], None
 
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
+    if normalized_tool_name.startswith("mcp__"):
+        parts = normalized_tool_name.split("__")
         if len(parts) >= 3:
             return "mcp", parts[1]
         return "mcp", "unknown"

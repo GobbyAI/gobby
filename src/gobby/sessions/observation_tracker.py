@@ -101,7 +101,7 @@ class ObservationTracker:
             return
         self._seen.add(key)
 
-        logger.info(
+        logger.debug(
             "Unmodeled transcript block observed",
             extra={
                 "session_id": resolved_session_id,

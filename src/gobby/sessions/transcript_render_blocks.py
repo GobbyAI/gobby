@@ -298,7 +298,7 @@ def _process_message_block(
             block.raw = msg.raw_json
 
         if block_type == "tool_chain":
-            tool_type, server_name = classify_tool(msg.tool_name)
+            tool_type, server_name = classify_tool(msg.tool_name, msg.tool_input)
             if observation_tracker and (tool_type == "unknown" or server_name == "unknown"):
                 observation_tracker.observe_tool_name(
                     msg,

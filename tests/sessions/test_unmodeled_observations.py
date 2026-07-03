@@ -110,7 +110,12 @@ def test_non_uuid_session_id_stores_null_and_still_dedupes(temp_db: HubDatabase)
     assert rows[0].example_session_id is None
 
 
-def test_unknown_tool_name_records_classification(temp_db: HubDatabase) -> None:
+def test_unknown_tool_name_records_classification(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
     store = UnmodeledObservationStore(temp_db)
     msg = _message(
         index=102,
@@ -120,12 +125,13 @@ def test_unknown_tool_name_records_classification(temp_db: HubDatabase) -> None:
         tool_input={"arg": "value"},
     )
 
-    render_transcript(
-        [msg],
-        session_id=SESSION_RENDER_TOOL,
-        source="codex",
-        observation_tracker=ObservationTracker(store),
-    )
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.unmodeled_observations"):
+        render_transcript(
+            [msg],
+            session_id=SESSION_RENDER_TOOL,
+            source="codex",
+            observation_tracker=ObservationTracker(store),
+        )
 
     rows = [
         row
@@ -136,6 +142,70 @@ def test_unknown_tool_name_records_classification(temp_db: HubDatabase) -> None:
     assert rows[0].count == 1
     assert rows[0].server_name == "unknown"
     assert rows[0].tool_type == "unknown"
+    records = [r for r in caplog.records if getattr(r, "observed_name", None) == "MysteryTool"]
+    assert len(records) == 1
+    assert records[0].getMessage() == "Unmodeled transcript block observed"
+
+
+def test_known_transcript_tools_do_not_record_unmodeled_observations(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    store = UnmodeledObservationStore(temp_db)
+    messages = [
+        _message(
+            index=105,
+            content_type="tool_use",
+            raw_type="function_call",
+            tool_name="call_tool",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
+        ),
+        _message(
+            index=106,
+            content_type="tool_use",
+            raw_type="function_call",
+            tool_name="mcp__gobby__call_tool",
+            tool_input={"server_name": "gobby-memory", "tool_name": "create_memory"},
+        ),
+        _message(
+            index=107,
+            content_type="tool_use",
+            raw_type="function_call",
+            tool_name="mcp_gobby_call_tool",
+            tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
+        ),
+        _message(
+            index=108,
+            content_type="tool_use",
+            raw_type="function_call",
+            tool_name="update_plan",
+            tool_input={"plan": [{"step": "Verify", "status": "in_progress"}]},
+        ),
+    ]
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.unmodeled_observations"):
+        render_transcript(
+            messages,
+            session_id=SESSION_RENDER_TOOL,
+            source="codex",
+            observation_tracker=ObservationTracker(store),
+        )
+
+    names = {msg.tool_name for msg in messages}
+    rows = [
+        row
+        for row in store.list_observations(source="codex", kind="tool_name")
+        if row.name in names
+    ]
+    assert rows == []
+    assert [
+        r
+        for r in caplog.records
+        if getattr(r, "observed_name", None) in names
+        and r.getMessage() == "Unmodeled transcript block observed"
+    ] == []
 
 
 def test_synthetic_unknown_tool_name_is_excluded(temp_db: HubDatabase) -> None:
@@ -177,8 +247,8 @@ def test_observe_block_type_does_not_raise_keyerror_on_logging(
     tracker = ObservationTracker(store=None)
     msg = _message(index=200, content_type="new_block", raw_type="new_block")
 
-    # Force INFO so the logger.info discovery path in _observe fires (must not raise).
-    with caplog.at_level(logging.INFO, logger="gobby.sessions.unmodeled_observations"):
+    # Force DEBUG so the discovery path in _observe fires (must not raise).
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.unmodeled_observations"):
         tracker.observe_block_type(
             msg,
             session_id="session-log-test",

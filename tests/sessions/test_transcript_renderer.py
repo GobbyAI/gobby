@@ -458,9 +458,24 @@ def test_classify_tool():
     assert classify_tool("Bash") == ("bash", None)
     assert classify_tool("exec_command") == ("bash", None)
     assert classify_tool("Read") == ("read", None)
+    assert classify_tool("read") == ("read", None)
     assert classify_tool("Edit") == ("edit", None)
     assert classify_tool("MultiEdit") == ("edit", None)
+    assert classify_tool("apply_patch") == ("edit", None)
+    assert classify_tool("update_plan") == ("plan", None)
     assert classify_tool("mcp__server__tool") == ("mcp", "server")
+    assert classify_tool(
+        "call_tool",
+        {"server_name": "gobby-tasks", "tool_name": "create_task"},
+    ) == ("mcp", "gobby-tasks")
+    assert classify_tool(
+        "mcp__gobby__call_tool",
+        {"server_name": "gobby-memory", "tool_name": "create_memory"},
+    ) == ("mcp", "gobby-memory")
+    assert classify_tool(
+        "mcp_gobby_call_tool",
+        {"server_name": "gobby-skills", "tool_name": "get_skill"},
+    ) == ("mcp", "gobby-skills")
     assert classify_tool("mcp__other") == ("mcp", "unknown")
     assert classify_tool("Unknown") == ("unknown", None)
     assert classify_tool(None) == ("unknown", None)
