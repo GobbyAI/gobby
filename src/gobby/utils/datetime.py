@@ -26,7 +26,8 @@ def parse_stored_datetime(value: datetime | str | None) -> datetime | None:
     """Parse a stored ISO timestamp and normalize it to UTC.
 
     Legacy rows may contain naive ISO strings. Treat those as UTC so arithmetic
-    against aware ``datetime.now(UTC)`` stays valid.
+    against aware ``datetime.now(UTC)`` stays valid. Malformed string values
+    raise ``ValueError`` from ``datetime.fromisoformat``.
     """
     if value is None:
         return None

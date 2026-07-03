@@ -174,10 +174,14 @@ def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
         )
     )
 
-    assert cursor.fetchone() == {
+    row = cursor.fetchone()
+
+    assert row is not None
+    assert row == {
         "id": "cron",
         "last_run_at": datetime(2026, 5, 21, 5, 30, tzinfo=UTC),
     }
+    assert isinstance(row["last_run_at"], datetime)
 
 
 def test_postgres_cursor_preserves_date_values_as_dates() -> None:

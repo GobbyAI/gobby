@@ -11,6 +11,20 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POSTGRES_BASELINE_SCHEMA = REPO_ROOT / "src/gobby/storage/postgres_baseline_schema.sql"
+BAD_TIMESTAMP_DECLARATION_RE = re.compile(
+    r"^\s*(?:ADD\s+COLUMN\s+)?(?P<column>[a-z_][a-z0-9_]*)\s+"
+    r"TIMESTAMP(?:\s*\(\d+\))?(?:\s+WITHOUT\s+TIME\s+ZONE)?\b"
+    r"(?!\s+WITH\s+TIME\s+ZONE)",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+TEXT_COLUMN_DECLARATION_RE = re.compile(
+    r"^\s*(?:ADD\s+COLUMN\s+)?(?P<column>[a-z_][a-z0-9_]*)\s+TEXT\b",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+TIMESTAMP_LIKE_TEXT_COLUMN_RE = re.compile(
+    r"(?:^timestamp$|_at$|_time$|_timestamp$|^(?:first_seen|last_seen)$)",
+    flags=re.IGNORECASE,
+)
 
 
 def _schema_text() -> str:
@@ -23,6 +37,14 @@ def _schema_text() -> str:
 
 def _assert_matches(sql: str, pattern: str, message: str) -> None:
     assert re.search(pattern, sql, flags=re.IGNORECASE | re.DOTALL), message
+
+
+def _timestamp_like_text_columns(sql: str) -> list[str]:
+    return sorted(
+        match.group("column")
+        for match in TEXT_COLUMN_DECLARATION_RE.finditer(sql)
+        if TIMESTAMP_LIKE_TEXT_COLUMN_RE.search(match.group("column"))
+    )
 
 
 def test_postgres_baseline_schema_file_is_checked_in() -> None:
@@ -66,6 +88,18 @@ def test_postgres_baseline_uses_native_types() -> None:
         r"UNIQUE\s+NULLS\s+NOT\s+DISTINCT",
         "COALESCE('__global__') uniqueness must become UNIQUE NULLS NOT DISTINCT",
     )
+
+
+def test_postgres_baseline_rejects_timestamp_without_time_zone_columns() -> None:
+    bad_columns = [
+        match.group("column") for match in BAD_TIMESTAMP_DECLARATION_RE.finditer(_schema_text())
+    ]
+
+    assert bad_columns == []
+
+
+def test_postgres_baseline_rejects_text_datetime_columns() -> None:
+    assert _timestamp_like_text_columns(_schema_text()) == []
 
 
 def test_postgres_baseline_seed_rows_use_now_or_column_defaults() -> None:

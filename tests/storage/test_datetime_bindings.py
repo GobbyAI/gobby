@@ -164,7 +164,7 @@ def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
     timestamp = "2026-07-03T01:02:03+00:00"
 
     crossref = crossrefs.create_crossref("source", "target", 0.9)
-    assert isinstance(crossref.created_at, str)
+    _assert_aware_utc(crossref.created_at)
     _assert_aware_utc(_params(db.calls[-1])[3])
 
     access.update_access_stats("memory-1", timestamp)
@@ -268,7 +268,7 @@ def test_metrics_event_store_binds_datetimes_for_filters_and_archive() -> None:
     _assert_aware_utc(delete_params[0])
 
 
-def test_worktree_and_clone_create_bind_datetimes_but_return_iso_models() -> None:
+def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:
     worktree_db = _RecordingDB()
     worktree = LocalWorktreeManager(worktree_db)  # type: ignore[arg-type]
 
@@ -281,8 +281,8 @@ def test_worktree_and_clone_create_bind_datetimes_but_return_iso_models() -> Non
     worktree_params = _params(worktree_db.calls[-1])
     _assert_aware_utc(worktree_params[8])
     _assert_aware_utc(worktree_params[9])
-    assert isinstance(worktree_model.created_at, str)
-    assert isinstance(worktree_model.updated_at, str)
+    _assert_aware_utc(worktree_model.created_at)
+    _assert_aware_utc(worktree_model.updated_at)
 
     clone_db = _RecordingDB()
     clone = LocalCloneManager(clone_db)  # type: ignore[arg-type]
@@ -299,9 +299,9 @@ def test_worktree_and_clone_create_bind_datetimes_but_return_iso_models() -> Non
     _assert_aware_utc(clone_params[10])
     _assert_aware_utc(clone_params[11])
     _assert_aware_utc(clone_params[12])
-    assert clone_model.cleanup_after == cleanup_after
-    assert isinstance(clone_model.created_at, str)
-    assert isinstance(clone_model.updated_at, str)
+    assert _assert_aware_utc(clone_model.cleanup_after) == datetime(2026, 7, 4, 1, 2, 3, tzinfo=UTC)
+    _assert_aware_utc(clone_model.created_at)
+    _assert_aware_utc(clone_model.updated_at)
 
     clone.update("clone-1", cleanup_after=cleanup_after)
     update_params = _params(clone_db.calls[-2])

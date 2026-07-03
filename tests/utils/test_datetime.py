@@ -38,13 +38,31 @@ def test_to_aware_utc_converts_offset_values_to_utc() -> None:
     assert to_aware_utc(value) == datetime(2026, 1, 2, 3, 30, tzinfo=UTC)
 
 
-def test_parse_stored_datetime_accepts_iso_strings_and_datetime_objects() -> None:
+def test_parse_stored_datetime_accepts_none() -> None:
+    assert parse_stored_datetime(None) is None
+
+
+def test_parse_stored_datetime_treats_naive_values_as_utc() -> None:
     assert parse_stored_datetime("2026-01-02T03:04:05") == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
+
+def test_parse_stored_datetime_normalizes_aware_values_to_utc() -> None:
+    assert parse_stored_datetime(datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)) == datetime(
+        2026, 1, 2, 3, 4, 5, tzinfo=UTC
+    )
+
     offset = timezone(timedelta(hours=2))
+    assert parse_stored_datetime("2026-01-02T05:04:05+02:00") == datetime(
+        2026, 1, 2, 3, 4, 5, tzinfo=UTC
+    )
     assert parse_stored_datetime(datetime(2026, 1, 2, 5, 4, 5, tzinfo=offset)) == datetime(
         2026, 1, 2, 3, 4, 5, tzinfo=UTC
     )
+
+
+def test_parse_stored_datetime_rejects_malformed_strings() -> None:
+    with pytest.raises(ValueError, match="Invalid isoformat string"):
+        parse_stored_datetime("not-a-timestamp")
 
 
 def test_require_stored_datetime_rejects_missing_values() -> None:
