@@ -328,10 +328,16 @@ class MailboxService:
         return str(sender.project_id)
 
     def _resolve_project_ref(self, project_ref: str) -> str:
-        row = self._db.fetchone(
-            "SELECT id FROM projects WHERE id = %s AND deleted_at IS NULL",
-            (project_ref,),
-        )
+        row = None
+        try:
+            uuid.UUID(project_ref)
+        except ValueError:
+            pass
+        else:
+            row = self._db.fetchone(
+                "SELECT id FROM projects WHERE id = %s AND deleted_at IS NULL",
+                (project_ref,),
+            )
         if row is None:
             row = self._db.fetchone(
                 "SELECT id FROM projects WHERE name = %s AND deleted_at IS NULL",

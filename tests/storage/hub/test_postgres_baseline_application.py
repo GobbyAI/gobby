@@ -593,7 +593,7 @@ def test_apply_postgres_baseline_rejects_missing_pg_search_without_extension_ddl
     assert resources.read_count == 0
 
 
-def test_apply_postgres_baseline_rejects_missing_pgcrypto_without_extension_ddl(
+def test_apply_postgres_baseline_does_not_require_pgcrypto_extension(
     monkeypatch,
 ) -> None:
     module = _postgres_module()
@@ -605,17 +605,13 @@ def test_apply_postgres_baseline_rejects_missing_pgcrypto_without_extension_ddl(
     monkeypatch.setattr(module.importlib, "resources", resources)
     db = _new_db(module, _Pool(fast, locked))
 
-    with pytest.raises(MigrationUnsupportedError) as exc_info:
-        db._apply_postgres_baseline()
+    db._apply_postgres_baseline()
 
-    assert str(exc_info.value) == module._PGCRYPTO_MISSING_MESSAGE
     upper_statements = [statement.upper() for statement in locked.statements]
-    assert any(
-        "PG_EXTENSION" in statement and "PGCRYPTO" in statement for statement in upper_statements
-    )
+    assert not any("PGCRYPTO" in statement for statement in upper_statements)
     assert all("CREATE EXTENSION" not in statement for statement in upper_statements)
-    assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
-    assert resources.read_count == 0
+    assert "CREATE TABLE tasks(id INTEGER)" in locked.statements
+    assert resources.read_count == 1
 
 
 def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
@@ -660,7 +656,6 @@ def test_apply_postgres_baseline_probe_only_when_required_extensions_preinstalle
     probe_statements = [statement for statement in locked.statements if "pg_extension" in statement]
     assert probe_statements == [
         "SELECT 1 FROM pg_extension WHERE extname = %s ('pg_search',)",
-        "SELECT 1 FROM pg_extension WHERE extname = %s ('pgcrypto',)",
     ]
     assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
 

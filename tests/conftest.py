@@ -183,15 +183,15 @@ def non_local_hub_db(hub_db: "HubDatabase") -> NonLocalHubDatabase:
 
 @pytest.fixture(params=["postgres"])
 def hub_db(
-    request: pytest.FixtureRequest,
+    postgres_db: "HubDatabase",
 ) -> Iterator["HubDatabase"]:
     """Yield a migrated PostgreSQL hub-database adapter.
 
     Tests that work through the ``HubDatabase`` protocol depend on this fixture
-    instead of ``temp_db``. The fixture delegates to ``postgres_db`` (from
-    ``tests/fixtures/postgres.py``), which skips when ``DATABASE_URL`` is unset.
+    instead of ``temp_db``. Depend directly on ``postgres_db`` so pytest applies
+    the same setup order as ``temp_db(postgres_db)`` in cross-suite runs.
     """
-    yield request.getfixturevalue("postgres_db")
+    yield postgres_db
 
 
 @pytest.fixture

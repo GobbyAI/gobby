@@ -12,6 +12,8 @@ from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
+PROJECT_ID = "00000000-0000-4000-8000-000000000101"
+
 
 def test_typed_json_token_usage_warns_when_cache_read_exceeds_prompt(
     caplog: pytest.LogCaptureFixture,
@@ -37,7 +39,7 @@ def db(tmp_path: Path, hub_db: HubDatabase) -> HubDatabase:
     # Create dummy project required for sessions
     database.execute(
         "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-        ("proj-1", "Test Project", str(tmp_path)),
+        (PROJECT_ID, "Test Project", str(tmp_path)),
     )
     return database
 
@@ -100,7 +102,7 @@ async def test_token_usage_aggregation(
         external_id="ext-123",
         machine_id="mac-1",
         source="claude_code",
-        project_id="proj-1",
+        project_id=PROJECT_ID,
         title="Test Session",
         transcript_path=str(transcript_path),
     )

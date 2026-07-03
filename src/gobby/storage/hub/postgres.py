@@ -74,10 +74,6 @@ _PG_SEARCH_MISSING_MESSAGE = (
     "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
     "image with `gobby postgres install --mode docker`."
 )
-_PGCRYPTO_MISSING_MESSAGE = (
-    "pgcrypto extension is not present on this database. Rebuild the Docker PostgreSQL "
-    "image with `gobby postgres install --mode docker`."
-)
 _BaselineState = Literal[
     "fresh",
     "fresh_with_install_infra",
@@ -565,7 +561,6 @@ def _require_extension(conn: Any, extension: str, message: str) -> None:
 
 def _require_baseline_extensions(conn: Any) -> None:
     _require_extension(conn, "pg_search", _PG_SEARCH_MISSING_MESSAGE)
-    _require_extension(conn, "pgcrypto", _PGCRYPTO_MISSING_MESSAGE)
 
 
 def _row_value(row: Any, key: str, index: int = 0) -> Any:
