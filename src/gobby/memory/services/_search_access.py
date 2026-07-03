@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.storage.memories import LocalMemoryManager, Memory
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -28,8 +28,14 @@ def update_access_stats(
     debounce_seconds = getattr(config, "access_debounce_seconds", 60)
 
     for memory in memories:
-        if memory.last_accessed_at:
-            seconds_since = (now - memory.last_accessed_at).total_seconds()
+        try:
+            last_accessed_at = parse_stored_datetime(memory.last_accessed_at)
+        except ValueError:
+            logger.warning("Skipping access stats for %s: invalid timestamp", memory.id)
+            continue
+
+        if last_accessed_at is not None:
+            seconds_since = (now - last_accessed_at).total_seconds()
             if seconds_since < debounce_seconds:
                 continue
 

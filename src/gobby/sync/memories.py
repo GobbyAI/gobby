@@ -21,7 +21,7 @@ import os
 import re
 import string
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,8 @@ __all__ = [
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, utc_now
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -41,24 +43,75 @@ class MemoryImportError(RuntimeError):
     """Raised when explicit memory import cannot complete."""
 
 
-def _parse_updated_at(value: Any) -> tuple[int, str]:
+_MIN_UTC_DATETIME = datetime.min.replace(tzinfo=UTC)
+_MAX_UTC_DATETIME = datetime.max.replace(tzinfo=UTC)
+
+
+def _parse_memory_timestamp(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime | str):
+        try:
+            return parse_stored_datetime(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_updated_at(value: Any) -> tuple[int, datetime]:
     """Build a sortable timestamp key for memory export/import deduplication."""
-    if isinstance(value, str) and value:
-        try:
-            return (1, datetime.fromisoformat(value).isoformat())
-        except ValueError:
-            return (0, value)
-    return (0, "")
+    parsed = _parse_memory_timestamp(value)
+    if parsed is None:
+        return (0, _MIN_UTC_DATETIME)
+    return (1, parsed)
 
 
-def _parse_created_at(value: Any) -> tuple[int, str]:
+def _parse_created_at(value: Any) -> tuple[int, datetime]:
     """Build a sortable created_at key that treats missing values as newest."""
-    if isinstance(value, str) and value:
-        try:
-            return (0, datetime.fromisoformat(value).isoformat())
-        except ValueError:
-            return (0, value)
-    return (1, "")
+    parsed = _parse_memory_timestamp(value)
+    if parsed is None:
+        return (1, _MAX_UTC_DATETIME)
+    return (0, parsed)
+
+
+def _normalize_memory_record_timestamps(
+    record: dict[str, Any],
+    *,
+    line_num: int | None = None,
+) -> bool:
+    for field in ("created_at", "updated_at"):
+        value = record.get(field)
+        parsed = _parse_memory_timestamp(value)
+        if parsed is None:
+            if value in (None, ""):
+                continue
+            location = f" at line {line_num}" if line_num is not None else ""
+            logger.warning(f"Skipping memory{location}: malformed {field} timestamp")
+            return False
+        record[field] = parsed
+
+    created_at = _parse_memory_timestamp(record.get("created_at"))
+    updated_at = _parse_memory_timestamp(record.get("updated_at"))
+    if created_at is None and updated_at is None:
+        created_at = utc_now()
+        updated_at = created_at
+    elif created_at is None:
+        created_at = updated_at
+    elif updated_at is None:
+        updated_at = created_at
+
+    record["created_at"] = created_at
+    record["updated_at"] = updated_at
+    return True
+
+
+def _jsonl_memory_record(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+    for field in ("created_at", "updated_at"):
+        parsed = _parse_memory_timestamp(normalized.get(field))
+        if parsed is not None:
+            normalized[field] = datetime_to_iso(parsed)
+    return normalized
 
 
 _MEMORY_NORMALIZE_PUNCTUATION = str.maketrans("", "", string.punctuation)
@@ -381,6 +434,9 @@ class MemoryBackupManager:
                     if is_ephemeral_implementation_note(data):
                         skipped += 1
                         continue
+                    if not _normalize_memory_record_timestamps(data, line_num=line_num):
+                        skipped += 1
+                        continue
                     parsed_records.append(data)
                 except json.JSONDecodeError as exc:
                     logger.warning(f"Invalid JSON in memories file: {line[:50]}...")
@@ -406,8 +462,13 @@ class MemoryBackupManager:
                 self.memory_manager.storage.create_memory(
                     content=content,
                     memory_type=data.get("type", "fact"),
+                    project_id=data.get("project_id"),
                     tags=data.get("tags", []),
                     source_type=source_type,
+                    source_session_id=data.get("source_id"),
+                    memory_id=data.get("id") or None,
+                    created_at=data["created_at"],
+                    updated_at=data["updated_at"],
                 )
                 count += 1
             except Exception as e:
@@ -609,8 +670,8 @@ class MemoryBackupManager:
                     "content": sanitized,
                     "type": memory.memory_type,
                     "tags": memory.tags,
-                    "created_at": memory.created_at,
-                    "updated_at": memory.updated_at,
+                    "created_at": _parse_memory_timestamp(memory.created_at),
+                    "updated_at": _parse_memory_timestamp(memory.updated_at),
                     "source": memory.source_type,
                     "source_id": memory.source_session_id,
                     "project_id": memory.project_id,
@@ -637,7 +698,12 @@ class MemoryBackupManager:
 
             # 4. Build output and skip write if content is unchanged
             new_content = "".join(
-                json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n"
+                json_dumps(
+                    _jsonl_memory_record(data),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n"
                 for data in sorted_records
             )
             new_hash = hashlib.sha256(new_content.encode("utf-8")).digest()

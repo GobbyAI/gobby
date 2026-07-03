@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import serialize_task_state
+from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,12 @@ def _normalize_timestamp(ts: str | datetime | None) -> str | None:
     # Format with consistent microseconds and +00:00 suffix
     base = dt.strftime("%Y-%m-%dT%H:%M:%S")
     return f"{base}.{dt.microsecond:06d}+00:00"
+
+
+def _parse_optional_timestamp(ts: str | datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+    return _parse_timestamp(ts)
 
 
 def _normalize_date(value: str | date | datetime | None) -> str | None:
@@ -234,7 +241,7 @@ class TaskSyncManager:
 
             with open(target_path, "w", encoding="utf-8") as f:
                 for item in export_data:
-                    f.write(json.dumps(item) + "\n")
+                    f.write(json_dumps(item) + "\n")
 
             logger.info(f"Exported {len(tasks)} tasks to {target_path}")
 
@@ -356,6 +363,20 @@ class TaskSyncManager:
 
                     if should_update:
                         state = data.get("state") or {}
+                        try:
+                            created_at_file = _parse_timestamp(data["created_at"])
+                            closed_at_file = _parse_optional_timestamp(
+                                data.get("closed_at", state.get("closed_at"))
+                            )
+                            escalated_at_file = _parse_optional_timestamp(
+                                data.get("escalated_at", state.get("escalated_at"))
+                            )
+                        except (KeyError, TypeError, ValueError) as e:
+                            logger.warning(
+                                f"Task {task_id}: malformed timestamp field: {e}, skipping"
+                            )
+                            skipped_count += 1
+                            continue
 
                         # Handle commits array stored as JSON in the hub.
                         commits_json = json.dumps(data["commits"]) if data.get("commits") else None
@@ -409,12 +430,12 @@ class TaskSyncManager:
                             "parent_task_id": data.get("parent_id"),
                             "priority": data.get("priority", 2),
                             "task_type": data.get("task_type", "task"),
-                            "created_at": data["created_at"],
-                            "updated_at": data["updated_at"],
+                            "created_at": created_at_file,
+                            "updated_at": updated_at_file,
                             "created_in_session_id": created_in_session_id,
                             "claimed_by_session_id": claimed_by_session_id,
                             "commits": commits_json,
-                            "closed_at": data.get("closed_at", state.get("closed_at")),
+                            "closed_at": closed_at_file,
                             "closed_reason": data.get("closed_reason", state.get("closed_reason")),
                             "closed_in_session_id": closed_in_session_id,
                             "closed_commit_sha": data.get(
@@ -434,7 +455,7 @@ class TaskSyncManager:
                             "linear_team_id": data.get("linear_team_id"),
                             "start_date": data.get("start_date"),
                             "due_date": data.get("due_date"),
-                            "escalated_at": data.get("escalated_at", state.get("escalated_at")),
+                            "escalated_at": escalated_at_file,
                             "escalation_reason": data.get(
                                 "escalation_reason", state.get("escalation_reason")
                             ),
@@ -511,7 +532,7 @@ class TaskSyncManager:
                         ) VALUES (%s, %s, 'blocks', %s)
                         ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
                         """,
-                        (task_id, depends_on, datetime.now(UTC).isoformat()),
+                        (task_id, depends_on, datetime.now(UTC)),
                     )
 
             logger.info(
@@ -636,12 +657,10 @@ class TaskSyncManager:
                     labels = [lbl.get("name") for lbl in issue.get("labels", []) if lbl.get("name")]
                     labels_json = json.dumps(labels) if labels else None
 
-                    created_at = (
-                        issue.get("createdAt")
-                        or issue.get("created_at")
-                        or datetime.now(UTC).isoformat()
+                    created_at = _parse_timestamp(
+                        issue.get("createdAt") or issue.get("created_at") or datetime.now(UTC)
                     )
-                    updated_at = datetime.now(UTC).isoformat()
+                    updated_at = datetime.now(UTC)
 
                     exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (task_id,))
                     if exists:

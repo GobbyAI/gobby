@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
@@ -11,7 +12,7 @@ from gobby.storage.memories_models import (
     visibility_predicate,
 )
 from gobby.storage.sql_dialect import newer_than_now_expr
-from gobby.utils.datetime import utc_now
+from gobby.utils.datetime import parse_stored_datetime, to_aware_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ class MemoryCrudMixin(MemoryStoreBase):
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
+        memory_id: str | None = None,
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
     ) -> Memory:
         # Validate that content is not empty
         if not content or not content.strip():
@@ -32,17 +36,23 @@ class MemoryCrudMixin(MemoryStoreBase):
             raise ValueError("Memory content cannot be empty")
 
         now = utc_now()
+        created_at_value = to_aware_utc(created_at) if created_at is not None else now
+        updated_at_value = to_aware_utc(updated_at) if updated_at is not None else now
+        sync_metadata = memory_id is not None or created_at is not None or updated_at is not None
         # Normalize content for consistent ID generation (avoid duplicates from
         # whitespace differences)
         normalized_content = content.strip()
-        legacy_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
-        current_memory_id_seed = json.dumps(
-            {"content": normalized_content, "project_id": project_id},
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        current_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, current_memory_id_seed))
-        memory_id = current_memory_id
+        if memory_id:
+            final_memory_id = memory_id
+        else:
+            legacy_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
+            current_memory_id_seed = json.dumps(
+                {"content": normalized_content, "project_id": project_id},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            current_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, current_memory_id_seed))
+            final_memory_id = current_memory_id
 
         tags_json = json.dumps(tags) if tags else None
 
@@ -65,9 +75,9 @@ class MemoryCrudMixin(MemoryStoreBase):
                 if recent and normalized_content == str(recent["content"]).strip():
                     return Memory.from_row(recent)
 
-            if project_id is None:
-                memory_id = legacy_memory_id
-            else:
+            if memory_id is None and project_id is None:
+                final_memory_id = legacy_memory_id
+            elif memory_id is None:
                 legacy_row = conn.execute(
                     """
                     SELECT 1 FROM memories
@@ -77,69 +87,164 @@ class MemoryCrudMixin(MemoryStoreBase):
                     (legacy_memory_id, project_id),
                 ).fetchone()
                 if legacy_row is not None:
-                    memory_id = legacy_memory_id
+                    final_memory_id = legacy_memory_id
 
             existing_row = conn.execute(
-                "SELECT content, deleted_at FROM memories WHERE id = %s",
-                (memory_id,),
+                "SELECT content, deleted_at, updated_at FROM memories WHERE id = %s",
+                (final_memory_id,),
             ).fetchone()
             if (
-                existing_row is not None
+                memory_id is None
+                and existing_row is not None
                 and str(existing_row["content"]).strip() != normalized_content
             ):
                 collision_seed = json.dumps(
                     {
                         "content": normalized_content,
                         "project_id": project_id,
-                        "id_collision": memory_id,
+                        "id_collision": final_memory_id,
                     },
                     sort_keys=True,
                     separators=(",", ":"),
                 )
-                memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, collision_seed))
+                final_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, collision_seed))
                 existing_row = conn.execute(
-                    "SELECT content, deleted_at FROM memories WHERE id = %s",
-                    (memory_id,),
+                    "SELECT content, deleted_at, updated_at FROM memories WHERE id = %s",
+                    (final_memory_id,),
                 ).fetchone()
                 if (
                     existing_row is not None
                     and str(existing_row["content"]).strip() != normalized_content
                 ):
-                    raise RuntimeError(f"Memory ID collision for content: {memory_id}")
-            cursor = conn.execute(
-                """
-                INSERT INTO memories (
-                    id, project_id, memory_type, content, source_type,
-                    source_session_id, access_count, tags,
-                    created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    deleted_at = NULL,
-                    dream_action = NULL,
-                    last_dreamed_at = NULL,
-                    updated_at = CASE
-                        WHEN memories.deleted_at IS NOT NULL THEN excluded.updated_at
-                        ELSE memories.updated_at
-                    END
-                RETURNING *
-                """,
-                (
-                    memory_id,
-                    project_id,
-                    memory_type,
-                    normalized_content,
-                    source_type,
-                    source_session_id,
-                    tags_json,
-                    now,
-                    now,
-                ),
-            )
+                    raise RuntimeError(f"Memory ID collision for content: {final_memory_id}")
+            if sync_metadata:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO memories (
+                        id, project_id, memory_type, content, source_type,
+                        source_session_id, access_count, tags,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        project_id = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.project_id
+                            ELSE memories.project_id
+                        END,
+                        memory_type = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.memory_type
+                            ELSE memories.memory_type
+                        END,
+                        content = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.content
+                            ELSE memories.content
+                        END,
+                        source_type = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.source_type
+                            ELSE memories.source_type
+                        END,
+                        source_session_id = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.source_session_id
+                            ELSE memories.source_session_id
+                        END,
+                        tags = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.tags
+                            ELSE memories.tags
+                        END,
+                        created_at = CASE
+                            WHEN memories.created_at <= excluded.created_at
+                            THEN memories.created_at
+                            ELSE excluded.created_at
+                        END,
+                        updated_at = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              OR excluded.updated_at > memories.updated_at
+                            THEN excluded.updated_at
+                            ELSE memories.updated_at
+                        END,
+                        deleted_at = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              AND excluded.updated_at >= memories.updated_at
+                            THEN NULL
+                            ELSE memories.deleted_at
+                        END,
+                        dream_action = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              AND excluded.updated_at >= memories.updated_at
+                            THEN NULL
+                            ELSE memories.dream_action
+                        END,
+                        last_dreamed_at = CASE
+                            WHEN memories.deleted_at IS NOT NULL
+                              AND excluded.updated_at >= memories.updated_at
+                            THEN NULL
+                            ELSE memories.last_dreamed_at
+                        END
+                    RETURNING *
+                    """,
+                    (
+                        final_memory_id,
+                        project_id,
+                        memory_type,
+                        normalized_content,
+                        source_type,
+                        source_session_id,
+                        tags_json,
+                        created_at_value,
+                        updated_at_value,
+                    ),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO memories (
+                        id, project_id, memory_type, content, source_type,
+                        source_session_id, access_count, tags,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        deleted_at = NULL,
+                        dream_action = NULL,
+                        last_dreamed_at = NULL,
+                        updated_at = CASE
+                            WHEN memories.deleted_at IS NOT NULL THEN excluded.updated_at
+                            ELSE memories.updated_at
+                        END
+                    RETURNING *
+                    """,
+                    (
+                        final_memory_id,
+                        project_id,
+                        memory_type,
+                        normalized_content,
+                        source_type,
+                        source_session_id,
+                        tags_json,
+                        created_at_value,
+                        updated_at_value,
+                    ),
+                )
             row = cursor.fetchone()
             changed = existing_row is None or existing_row["deleted_at"] is not None
+            if sync_metadata and existing_row is not None:
+                existing_updated_at = parse_stored_datetime(
+                    existing_row["updated_at"]
+                ) or datetime.min.replace(tzinfo=UTC)
+                changed = changed or updated_at_value > existing_updated_at
 
         if row is None:
-            raise RuntimeError(f"Memory {memory_id} not found after creation")
+            raise RuntimeError(f"Memory {final_memory_id} not found after creation")
 
         if changed:
             self._notify_listeners()

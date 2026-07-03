@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -108,6 +109,38 @@ async def test_import_from_files(sync_manager, tmp_path):
     assert call_args["content"] == "imported memory"
     assert call_args["memory_type"] == "fact"
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_import_from_files_parses_timestamp_fields(sync_manager, tmp_path) -> None:
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    mem_file.write_text(
+        json.dumps(
+            {
+                "id": "memory-imported-1",
+                "content": "imported timestamp memory",
+                "type": "fact",
+                "tags": ["sync"],
+                "created_at": "2023-01-01T01:30:00-05:00",
+                "updated_at": "2023-01-02T02:30:00+02:00",
+                "source": "user",
+                "source_id": "session-1",
+                "project_id": "project-1",
+            }
+        )
+        + "\n"
+    )
+
+    count = await sync_manager.import_from_files()
+
+    call_args = sync_manager.memory_manager.storage.create_memory.call_args.kwargs
+    assert count == 1
+    assert call_args["memory_id"] == "memory-imported-1"
+    assert call_args["created_at"] == datetime(2023, 1, 1, 6, 30, tzinfo=UTC)
+    assert call_args["updated_at"] == datetime(2023, 1, 2, 0, 30, tzinfo=UTC)
+    assert call_args["source_session_id"] == "session-1"
+    assert call_args["project_id"] == "project-1"
 
 
 @pytest.mark.asyncio
@@ -305,6 +338,33 @@ def test_export_sync(sync_manager, tmp_path) -> None:
 
     assert count == 1
     assert mem_file.exists()
+
+
+def test_export_serializes_datetime_fields(sync_manager, tmp_path) -> None:
+    mem_file = tmp_path / "memories.jsonl"
+    sync_manager.export_path = mem_file
+    sync_manager.memory_manager.list_memories.return_value = [
+        Memory(
+            id="m-datetime",
+            content="datetime memory",
+            memory_type="fact",
+            created_at=datetime(2023, 1, 1, 6, 30, tzinfo=UTC),
+            updated_at=datetime(2023, 1, 2, 0, 30, tzinfo=UTC),
+            access_count=0,
+            last_accessed_at=None,
+            tags=["sync"],
+            project_id="p1",
+            source_type="agent",
+            source_session_id=None,
+        )
+    ]
+
+    count = sync_manager._export_memories_sync(mem_file)
+
+    data = json.loads(mem_file.read_text())
+    assert count == 1
+    assert data["created_at"] == "2023-01-01T06:30:00+00:00"
+    assert data["updated_at"] == "2023-01-02T00:30:00+00:00"
 
 
 def test_export_sync_disabled(mock_db, mock_memory_manager) -> None:

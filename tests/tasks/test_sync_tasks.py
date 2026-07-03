@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,18 @@ from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.state_semantics import is_task_closed
 
 pytestmark = pytest.mark.unit
+
+
+def _task_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gobby-sync-test:{name}"))
+
+
+def _session_id(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gobby-sync-test-session:{name}"))
+
+
+def _github_issue_task_id(issue_num: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"owner/repo/issues/{issue_num}"))
 
 
 @pytest.fixture
@@ -94,7 +107,7 @@ class TestTaskSyncManager:
 
         tasks_data = [
             {
-                "id": "task-imported-1",
+                "id": _task_id("task-imported-1"),
                 "title": "Imported Task",
                 "description": "Desc",
                 "status": "todo",
@@ -103,9 +116,11 @@ class TestTaskSyncManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [],
+                "start_date": "2023-01-05",
+                "due_date": "2023-01-10",
             },
             {
-                "id": "task-imported-2",
+                "id": _task_id("task-imported-2"),
                 "title": "Imported Task with Dep",
                 "description": "Desc",
                 "status": "todo",
@@ -113,7 +128,7 @@ class TestTaskSyncManager:
                 "updated_at": later,
                 "project_id": sample_project["id"],
                 "parent_id": None,
-                "deps_on": ["task-imported-1"],
+                "deps_on": [_task_id("task-imported-1")],
             },
         ]
 
@@ -127,11 +142,15 @@ class TestTaskSyncManager:
         sync_manager.import_from_jsonl()
 
         # Verify tasks in DB
-        t1 = task_manager.get_task("task-imported-1")
+        t1 = task_manager.get_task(_task_id("task-imported-1"))
         assert t1 is not None
         assert t1.title == "Imported Task"
+        assert t1.created_at == datetime(2023, 1, 2, tzinfo=UTC)
+        assert t1.updated_at == datetime(2023, 1, 2, tzinfo=UTC)
+        assert t1.start_date.isoformat() == "2023-01-05"
+        assert t1.due_date.isoformat() == "2023-01-10"
 
-        t2 = task_manager.get_task("task-imported-2")
+        t2 = task_manager.get_task(_task_id("task-imported-2"))
         assert t2 is not None
         assert t2.title == "Imported Task with Dep"
 
@@ -265,7 +284,7 @@ class TestImportEdgeCases:
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
-            "id": "task-empty-lines",
+            "id": _task_id("task-empty-lines"),
             "title": "Test Task",
             "description": "Desc",
             "status": "todo",
@@ -285,7 +304,7 @@ class TestImportEdgeCases:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-empty-lines")
+        task = task_manager.get_task(_task_id("task-empty-lines"))
         assert task is not None
         assert task.title == "Test Task"
 
@@ -295,7 +314,7 @@ class TestImportEdgeCases:
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
-            "id": "task-validation",
+            "id": _task_id("task-validation"),
             "title": "Task with Validation",
             "description": "Desc",
             "status": "todo",
@@ -319,7 +338,7 @@ class TestImportEdgeCases:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-validation")
+        task = task_manager.get_task(_task_id("task-validation"))
         assert task is not None
         assert task.validation_status == "valid"
         assert task.validation_feedback == "All tests passed"
@@ -331,7 +350,7 @@ class TestImportEdgeCases:
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
-            "id": "task-commits",
+            "id": _task_id("task-commits"),
             "title": "Task with Commits",
             "description": "Desc",
             "status": "completed",
@@ -349,7 +368,7 @@ class TestImportEdgeCases:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-commits")
+        task = task_manager.get_task(_task_id("task-commits"))
         assert task is not None
         assert task.commits == ["abc123", "def456"]
 
@@ -359,7 +378,7 @@ class TestImportEdgeCases:
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
-            "id": "task-escalated",
+            "id": _task_id("task-escalated"),
             "title": "Escalated Task",
             "description": "Desc",
             "status": "todo",
@@ -378,9 +397,9 @@ class TestImportEdgeCases:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-escalated")
+        task = task_manager.get_task(_task_id("task-escalated"))
         assert task is not None
-        assert task.escalated_at == now
+        assert task.escalated_at == datetime(2023, 1, 2, tzinfo=UTC)
         assert task.escalation_reason == "Blocked by external dependency"
 
     @pytest.mark.integration
@@ -391,7 +410,7 @@ class TestImportEdgeCases:
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
-            "id": "task-canonical-state",
+            "id": _task_id("task-canonical-state"),
             "title": "Canonical Task",
             "description": "Desc",
             "status": "needs_review",
@@ -401,7 +420,7 @@ class TestImportEdgeCases:
             "parent_id": None,
             "deps_on": [],
             "state": {
-                "owner_session_id": "session-123",
+                "owner_session_id": _session_id("session-123"),
                 "lifecycle_stage": "needs_review",
                 "is_claimed": True,
                 "is_closed": False,
@@ -421,12 +440,12 @@ class TestImportEdgeCases:
         with open(sync_manager.export_path, "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
-        _insert_session(sync_manager.db, "session-123", sample_project["id"])
+        _insert_session(sync_manager.db, _session_id("session-123"), sample_project["id"])
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-canonical-state")
+        task = task_manager.get_task(_task_id("task-canonical-state"))
         assert task is not None
-        assert task.claimed_by_session_id == "session-123"
+        assert task.claimed_by_session_id == _session_id("session-123")
 
     @pytest.mark.integration
     def test_import_with_null_validation(self, sync_manager, task_manager, sample_project) -> None:
@@ -434,7 +453,7 @@ class TestImportEdgeCases:
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
-            "id": "task-null-validation",
+            "id": _task_id("task-null-validation"),
             "title": "Task without Validation",
             "description": "Desc",
             "status": "todo",
@@ -452,7 +471,7 @@ class TestImportEdgeCases:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-null-validation")
+        task = task_manager.get_task(_task_id("task-null-validation"))
         assert task is not None
         assert task.validation_status is None
 
@@ -528,10 +547,7 @@ class TestClosedStateRoundTrip:
         reimported = task_manager.get_task(task.id)
         assert reimported is not None
         assert is_task_closed(reimported)
-        assert reimported.closed_at is not None
-        assert datetime.fromisoformat(reimported.closed_at) == datetime.fromisoformat(
-            "2026-01-15T10:00:00+00:00"
-        )
+        assert reimported.closed_at == datetime(2026, 1, 15, 10, tzinfo=UTC)
         assert reimported.closed_reason == "completed"
         assert reimported.closed_commit_sha == "abc123def456"
         assert reimported.labels == ["bug", "p0"]
@@ -541,8 +557,8 @@ class TestClosedStateRoundTrip:
         assert reimported.github_repo == "owner/repo"
         assert reimported.linear_issue_id == "LIN-123"
         assert reimported.linear_team_id == "TEAM-1"
-        assert reimported.start_date == "2026-01-10"
-        assert reimported.due_date == "2026-01-20"
+        assert reimported.start_date.isoformat() == "2026-01-10"
+        assert reimported.due_date.isoformat() == "2026-01-20"
 
     @pytest.mark.integration
     def test_update_path_preserves_session_local_fields(
@@ -552,18 +568,21 @@ class TestClosedStateRoundTrip:
         task = task_manager.create_task(sample_project["id"], "Session task")
 
         # Set session-local fields that should NOT be wiped by import
-        _insert_session(sync_manager.db, "session-uuid-123", sample_project["id"])
-        _insert_session(sync_manager.db, "session-aaa", sample_project["id"])
-        _insert_session(sync_manager.db, "session-bbb", sample_project["id"])
+        claimed_session_id = _session_id("session-uuid-123")
+        created_session_id = _session_id("session-aaa")
+        closed_session_id = _session_id("session-bbb")
+        _insert_session(sync_manager.db, claimed_session_id, sample_project["id"])
+        _insert_session(sync_manager.db, created_session_id, sample_project["id"])
+        _insert_session(sync_manager.db, closed_session_id, sample_project["id"])
         sync_manager.db.execute(
             """UPDATE tasks SET
-                claimed_by_session_id = 'session-uuid-123',
-                created_in_session_id = 'session-aaa',
-                closed_in_session_id = 'session-bbb',
+                claimed_by_session_id = %s,
+                created_in_session_id = %s,
+                closed_in_session_id = %s,
                 compacted_at = '2026-01-10T00:00:00+00:00',
                 updated_at = '2020-01-01T00:00:00+00:00'
             WHERE id = %s""",
-            (task.id,),
+            (claimed_session_id, created_session_id, closed_session_id, task.id),
         )
 
         # Create JSONL with newer timestamp to trigger UPDATE path
@@ -574,7 +593,7 @@ class TestClosedStateRoundTrip:
             "status": "closed",
             "closed_at": "2026-02-01T00:00:00+00:00",
             "closed_reason": "done",
-            "created_at": task.created_at,
+            "created_at": task.created_at.isoformat(),
             "updated_at": "2026-01-01T00:00:00+00:00",
             "project_id": sample_project["id"],
             "parent_id": None,
@@ -593,7 +612,7 @@ class TestClosedStateRoundTrip:
         updated = task_manager.get_task(task.id)
         assert updated.title == "Updated title from JSONL"
         assert is_task_closed(updated)
-        assert updated.closed_at == "2026-02-01T00:00:00+00:00"
+        assert updated.closed_at == datetime(2026, 2, 1, tzinfo=UTC)
         assert updated.closed_reason == "done"
 
         # Verify session-local fields were PRESERVED (not wiped to NULL)
@@ -602,10 +621,10 @@ class TestClosedStateRoundTrip:
             "compacted_at FROM tasks WHERE id = %s",
             (task.id,),
         )
-        assert row["claimed_by_session_id"] == "session-uuid-123"
-        assert row["created_in_session_id"] == "session-aaa"
-        assert row["closed_in_session_id"] == "session-bbb"
-        assert row["compacted_at"] == "2026-01-10T00:00:00+00:00"
+        assert row["claimed_by_session_id"] == claimed_session_id
+        assert row["created_in_session_id"] == created_session_id
+        assert row["closed_in_session_id"] == closed_session_id
+        assert row["compacted_at"] == datetime(2026, 1, 10, tzinfo=UTC)
 
     @pytest.mark.integration
     def test_export_includes_priority_and_task_type(
@@ -873,8 +892,8 @@ class TestImportFromGitHubIssues:
 
         assert result["success"] is True
         assert result["count"] == 2
-        assert "gh-1" in result["imported"]
-        assert "gh-2" in result["imported"]
+        assert _github_issue_task_id(1) in result["imported"]
+        assert _github_issue_task_id(2) in result["imported"]
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -932,7 +951,7 @@ class TestImportFromGitHubIssues:
 
         # Should update, not import
         assert result2["count"] == 0
-        assert "gh-1" in result2["imported"]
+        assert _github_issue_task_id(1) in result2["imported"]
         assert "updated 1 existing" in result2["message"]
 
     @pytest.mark.asyncio
@@ -1075,7 +1094,7 @@ class TestImportSeqNumPreservation:
         now = "2023-01-02T00:00:00+00:00"
 
         task_data = {
-            "id": "task-preserve-seq",
+            "id": _task_id("task-preserve-seq"),
             "title": "Preserved Seq Task",
             "description": "Desc",
             "status": "open",
@@ -1094,7 +1113,7 @@ class TestImportSeqNumPreservation:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-preserve-seq")
+        task = task_manager.get_task(_task_id("task-preserve-seq"))
         assert task is not None
         assert task.seq_num == 42
         assert task.path_cache == "42"
@@ -1113,7 +1132,7 @@ class TestImportSeqNumPreservation:
 
         now = "2023-01-02T00:00:00+00:00"
         task_data = {
-            "id": "task-collision",
+            "id": _task_id("task-collision"),
             "title": "Colliding Seq Task",
             "description": "Desc",
             "status": "open",
@@ -1132,7 +1151,7 @@ class TestImportSeqNumPreservation:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-collision")
+        task = task_manager.get_task(_task_id("task-collision"))
         assert task is not None
         # Should NOT be 5 since that's taken
         assert task.seq_num != 5
@@ -1145,7 +1164,7 @@ class TestImportSeqNumPreservation:
         now = "2023-01-02T00:00:00+00:00"
 
         task1 = {
-            "id": "task-batch-1",
+            "id": _task_id("task-batch-1"),
             "title": "Batch Task 1",
             "description": "Desc",
             "status": "open",
@@ -1158,7 +1177,7 @@ class TestImportSeqNumPreservation:
             "path_cache": "100",
         }
         task2 = {
-            "id": "task-batch-2",
+            "id": _task_id("task-batch-2"),
             "title": "Batch Task 2",
             "description": "Desc",
             "status": "open",
@@ -1178,8 +1197,8 @@ class TestImportSeqNumPreservation:
 
         sync_manager.import_from_jsonl()
 
-        t1 = task_manager.get_task("task-batch-1")
-        t2 = task_manager.get_task("task-batch-2")
+        t1 = task_manager.get_task(_task_id("task-batch-1"))
+        t2 = task_manager.get_task(_task_id("task-batch-2"))
         assert t1 is not None
         assert t2 is not None
         # First one should get 100, second should get something else
@@ -1193,7 +1212,7 @@ class TestImportSeqNumPreservation:
         now = "2023-01-02T00:00:00+00:00"
 
         task_data = {
-            "id": "task-no-seq",
+            "id": _task_id("task-no-seq"),
             "title": "No Seq Task",
             "description": "Desc",
             "status": "open",
@@ -1211,7 +1230,7 @@ class TestImportSeqNumPreservation:
 
         sync_manager.import_from_jsonl()
 
-        task = task_manager.get_task("task-no-seq")
+        task = task_manager.get_task(_task_id("task-no-seq"))
         assert task is not None
         assert task.seq_num is not None
         assert task.seq_num >= 1
@@ -1225,7 +1244,7 @@ class TestImportSeqNumPreservation:
         now = "2023-01-02T00:00:00+00:00"
 
         parent = {
-            "id": "task-parent-seq",
+            "id": _task_id("task-parent-seq"),
             "title": "Parent",
             "description": "Desc",
             "status": "open",
@@ -1238,14 +1257,14 @@ class TestImportSeqNumPreservation:
             "path_cache": "50",
         }
         child = {
-            "id": "task-child-seq",
+            "id": _task_id("task-child-seq"),
             "title": "Child",
             "description": "Desc",
             "status": "open",
             "created_at": now,
             "updated_at": now,
             "project_id": sample_project["id"],
-            "parent_id": "task-parent-seq",
+            "parent_id": _task_id("task-parent-seq"),
             "deps_on": [],
             "seq_num": 51,
             "path_cache": "50.51",
@@ -1259,8 +1278,8 @@ class TestImportSeqNumPreservation:
 
         sync_manager.import_from_jsonl()
 
-        p = task_manager.get_task("task-parent-seq")
-        c = task_manager.get_task("task-child-seq")
+        p = task_manager.get_task(_task_id("task-parent-seq"))
+        c = task_manager.get_task(_task_id("task-child-seq"))
         assert p is not None
         assert c is not None
         assert p.seq_num == 50
