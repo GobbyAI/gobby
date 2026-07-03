@@ -13,6 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "gobby"
 MIGRATIONS_SOURCE = SRC_ROOT / "storage" / "migrations.py"
 POSTGRES_BASELINE_SCHEMA = SRC_ROOT / "storage" / "postgres_baseline_schema.sql"
+RECONCILE_DRIFT_MIGRATION = (
+    SRC_ROOT / "storage" / "migrations" / "306_reconcile_live_hub_schema_drift.sql"
+)
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -40,6 +43,11 @@ MEMORY_DREAM_PROJECT_COMMENT = (
 )
 MEMORY_DREAM_SNAPSHOT_RUN_INDEX = "ON memory_dream_snapshots(run_id);"
 MEMORY_DREAM_LEGACY_SNAPSHOT_RUN_INDEX = "ON memory_dream_snapshots(run_id, id);"
+SESSION_CONTEXT_USAGE_RATIO_INDEX = (
+    "CREATE INDEX idx_sessions_context_usage_ratio\n"
+    "ON sessions(context_usage_ratio DESC)\n"
+    "WHERE context_usage_ratio IS NOT NULL;"
+)
 MEMORY_DREAM_RUNTIME_NORMALIZERS = (
     "UPDATE memory_dream_snapshots\n               SET action = CASE",
     "UPDATE memory_dream_runs\n               SET status = 'failed'",
@@ -133,6 +141,14 @@ def _table_definition(content: str, table_name: str) -> str:
     return content[start:end]
 
 
+def _tasks_table_definition(content: str) -> str:
+    start = content.find("CREATE TABLE tasks (")
+    assert start != -1, "tasks table missing from baseline"
+    end = content.find("\n\nCREATE INDEX idx_tasks_project", start)
+    assert end != -1, "tasks table definition is not terminated before task indexes"
+    return content[start:end]
+
+
 def _assert_column_type(table_sql: str, column_name: str, type_name: str) -> None:
     pattern = rf"(?m)^\s*{re.escape(column_name)}\s+{re.escape(type_name)}\b"
     assert re.search(pattern, table_sql), f"{column_name} is not declared as {type_name}"
@@ -140,6 +156,10 @@ def _assert_column_type(table_sql: str, column_name: str, type_name: str) -> Non
 
 def _baseline_text() -> str:
     return POSTGRES_BASELINE_SCHEMA.read_text(encoding="utf-8")
+
+
+def _reconcile_drift_migration_text() -> str:
+    return RECONCILE_DRIFT_MIGRATION.read_text(encoding="utf-8")
 
 
 def _assert_memory_dream_project_scope(label: str, content: str) -> None:
@@ -203,9 +223,9 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
     # The 0.5.0 pre-release flatten folded every migration (295-305) into the
-    # baseline schema; the migrations directory ships empty. A stray .sql file
-    # here would silently run against every existing DB.
-    assert _tracked_migration_names(migrations_dir) == []
+    # baseline schema. Migration 306 is the one recorded post-baseline migration
+    # allowed to reconcile live-hub schema drift.
+    assert _tracked_migration_names(migrations_dir) == ["306_reconcile_live_hub_schema_drift.sql"]
 
 
 def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
@@ -236,11 +256,10 @@ def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
 def test_postgres_baseline_version_is_flattened_to_305() -> None:
     import gobby.storage.migrations as module
 
-    # The 0.5.0 pre-release flatten folded 295-305 into the baseline. With no
-    # migration files on disk, latest_known_version() is the baseline itself.
-    # Hubs below 305 take the corrupt_partial backup/recreate path.
+    # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
+    # 305 take the corrupt_partial backup/recreate path; 306 remains replayable.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 305
+    assert module.latest_known_version() == 306
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -549,7 +568,17 @@ def test_context_usage_snapshot_migration_and_baseline_define_session_snapshot_f
         assert column in baseline
 
     assert "context_usage_ratio DOUBLE PRECISION" in baseline
-    assert "idx_sessions_context_usage_ratio" in baseline
+    assert SESSION_CONTEXT_USAGE_RATIO_INDEX in baseline
+
+
+def test_session_context_usage_ratio_index_baseline_and_migration_are_partial_desc() -> None:
+    baseline = _baseline_text()
+    migration = _reconcile_drift_migration_text()
+    plain_index = "CREATE INDEX idx_sessions_context_usage_ratio ON sessions(context_usage_ratio);"
+
+    assert SESSION_CONTEXT_USAGE_RATIO_INDEX in baseline
+    assert SESSION_CONTEXT_USAGE_RATIO_INDEX in migration
+    _assert_absent_all("session context ratio index", baseline, (plain_index,))
 
 
 def test_self_parent_sessions_migration_and_baseline_define_invariant() -> None:
@@ -562,10 +591,22 @@ def test_self_parent_sessions_migration_and_baseline_define_invariant() -> None:
 
 def test_context_usage_ratio_range_migration_and_baseline_define_invariant() -> None:
     baseline = _baseline_text()
+    migration = _reconcile_drift_migration_text()
     invariant = "context_usage_ratio >= 0 AND context_usage_ratio <= 1"
 
     assert "sessions_context_usage_ratio_range" in baseline
     assert invariant in baseline
+    _assert_contains_all(
+        "context usage ratio reconcile migration",
+        migration,
+        (
+            "DROP CONSTRAINT IF EXISTS sessions_context_usage_ratio_range",
+            "ALTER COLUMN context_usage_ratio TYPE DOUBLE PRECISION",
+            "ADD CONSTRAINT sessions_context_usage_ratio_range",
+            invariant,
+        ),
+    )
+    _assert_absent_all("context usage ratio invariant", baseline + migration, ("::numeric",))
 
 
 def test_context_usage_value_constraints_migration_and_baseline_define_invariants() -> None:
@@ -579,8 +620,37 @@ def test_context_usage_value_constraints_migration_and_baseline_define_invariant
     assert confidence_invariant in baseline
 
 
+def test_tasks_baseline_and_migration_define_merge_flags_without_dead_columns() -> None:
+    baseline = _baseline_text()
+    migration = _reconcile_drift_migration_text()
+    tasks_sql = _tasks_table_definition(baseline)
+
+    _assert_contains_all(
+        "tasks merge flag baseline",
+        tasks_sql,
+        (
+            "merge_in_progress BOOLEAN NOT NULL DEFAULT FALSE",
+            "blocked_by_merge BOOLEAN NOT NULL DEFAULT FALSE",
+        ),
+    )
+    _assert_absent_all("tasks dead isolation columns", tasks_sql, ("worktree_id", "clone_id"))
+    _assert_contains_all(
+        "tasks merge flag migration",
+        migration,
+        (
+            "SET merge_in_progress = FALSE",
+            "SET blocked_by_merge = FALSE",
+            "ALTER COLUMN merge_in_progress SET DEFAULT FALSE",
+            "ALTER COLUMN merge_in_progress SET NOT NULL",
+            "ALTER COLUMN blocked_by_merge SET DEFAULT FALSE",
+            "ALTER COLUMN blocked_by_merge SET NOT NULL",
+        ),
+    )
+
+
 def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
     baseline = _baseline_text()
+    migration = _reconcile_drift_migration_text()
     runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
 
     _assert_contains_all("memory dream baseline interrupted status", baseline, ("'interrupted'",))
@@ -591,6 +661,36 @@ def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
     )
     _assert_memory_dream_project_scope("memory dream baseline", baseline)
     _assert_memory_dream_snapshot_run_index("memory dream baseline", baseline)
+    _assert_memory_dream_snapshot_run_index("memory dream reconcile migration", migration)
+    _assert_contains_all(
+        "memory dream reconcile migration",
+        migration,
+        (
+            "memory_dream_runs_project_id_fkey",
+            "LEFT JOIN projects projects",
+            "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE",
+        ),
+    )
+    _assert_contains_all(
+        "memory dream runtime storage UUID/FK shape",
+        runtime_storage,
+        (
+            "id UUID PRIMARY KEY",
+            "project_id UUID REFERENCES projects(id) ON DELETE CASCADE",
+            "run_id UUID NOT NULL REFERENCES memory_dream_runs(id)",
+            "memory_id UUID NOT NULL",
+            "project_id TEXT PRIMARY KEY",
+        ),
+    )
+    _assert_absent_all(
+        "memory dream runtime storage legacy text IDs",
+        runtime_storage,
+        (
+            "                id TEXT PRIMARY KEY",
+            "run_id TEXT NOT NULL REFERENCES memory_dream_runs(id)",
+            "memory_id TEXT NOT NULL",
+        ),
+    )
     _assert_memory_dream_constraints("memory dream baseline", baseline, promote_supported=True)
     _assert_memory_dream_constraints(
         "memory dream runtime storage", runtime_storage, promote_supported=True

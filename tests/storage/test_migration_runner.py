@@ -93,16 +93,16 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
 
 
-def test_postgres_migration_discovery_finds_no_migrations_post_flatten() -> None:
+def test_postgres_migration_discovery_finds_reconcile_drift_migration() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
 
     discovered = runner._discover_migrations()
 
-    # The 0.5.0 pre-release flatten folded everything into
-    # postgres_baseline_schema.sql; the migrations directory ships empty.
-    assert discovered == []
+    assert [(migration.version, migration.name) for migration in discovered] == [
+        (306, "reconcile_live_hub_schema_drift")
+    ]
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

@@ -326,7 +326,9 @@ CREATE INDEX idx_sessions_workflow ON sessions(workflow_name);
 
 CREATE INDEX idx_sessions_agent_run ON sessions(agent_run_id);
 
-CREATE INDEX idx_sessions_context_usage_ratio ON sessions(context_usage_ratio);
+CREATE INDEX idx_sessions_context_usage_ratio
+ON sessions(context_usage_ratio DESC)
+WHERE context_usage_ratio IS NOT NULL;
 
 CREATE UNIQUE INDEX idx_sessions_seq_num ON sessions(project_id, seq_num);
 

@@ -73,8 +73,8 @@ class MemoryDreamStore:
         self.db.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_dream_runs (
-                id TEXT PRIMARY KEY,
-                project_id TEXT,
+                id UUID PRIMARY KEY,
+                project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
                 status TEXT NOT NULL DEFAULT 'started'
                     CONSTRAINT memory_dream_runs_status_check
                     CHECK (
@@ -100,9 +100,9 @@ class MemoryDreamStore:
             """
             CREATE TABLE IF NOT EXISTS memory_dream_snapshots (
                 id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                run_id TEXT NOT NULL REFERENCES memory_dream_runs(id)
+                run_id UUID NOT NULL REFERENCES memory_dream_runs(id)
                     ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-                memory_id TEXT NOT NULL,
+                memory_id UUID NOT NULL,
                 action TEXT NOT NULL
                     CONSTRAINT memory_dream_snapshots_action_check
                     CHECK (
