@@ -15,6 +15,7 @@ from datetime import date, datetime
 from typing import Any, Literal, cast
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
@@ -45,6 +46,7 @@ from gobby.storage.migrations import (
     MigrationUnsupportedError,
     _split_statements_respecting_dollar_quotes,
 )
+from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +93,7 @@ class PostgresHubDatabase:
 
     def __init__(self, dsn: str) -> None:
         self._pool = ConnectionPool(
-            conninfo=dsn,
+            conninfo=_conninfo_with_utc_session_timezone(dsn),
             open=False,
             min_size=int(os.getenv("PGPOOL_MIN", "2")),
             max_size=int(os.getenv("PGPOOL_MAX", "20")),
@@ -435,12 +437,22 @@ def _normalize_value(value: Any) -> Any:
     if isinstance(value, uuid.UUID):
         return str(value)
     if isinstance(value, datetime):
-        return value.isoformat()
+        return to_aware_utc(value)
     if isinstance(value, date):
-        return value.isoformat()
+        return value
     if isinstance(value, dict | list):
-        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+        return json.dumps(to_json_safe(value), sort_keys=True, separators=(",", ":"))
     return value
+
+
+def _conninfo_with_utc_session_timezone(conninfo: str) -> str:
+    parsed = conninfo_to_dict(conninfo)
+    raw_options = parsed.get("options")
+    options = raw_options if isinstance(raw_options, str) else ""
+    lower_options = options.lower()
+    if "-ctimezone=" not in lower_options and "-c timezone=" not in lower_options:
+        parsed["options"] = " ".join(part for part in (options, "-ctimezone=UTC") if part)
+    return make_conninfo("", **parsed)
 
 
 class _PostgresSavepoint:

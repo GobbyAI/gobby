@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
@@ -154,14 +154,21 @@ def test_postgres_cursor_normalizes_jsonb_values_to_json_text() -> None:
     }
 
 
-def test_postgres_cursor_normalizes_datetime_values_to_iso_text() -> None:
+def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
     module = _postgres_module()
     cursor = module._PostgresCursor(
         _FakeResult(
             [
                 {
                     "id": "cron",
-                    "last_run_at": datetime(2026, 5, 21, 5, 30, tzinfo=UTC),
+                    "last_run_at": datetime(
+                        2026,
+                        5,
+                        21,
+                        0,
+                        30,
+                        tzinfo=timezone(-timedelta(hours=5)),
+                    ),
                 }
             ]
         )
@@ -169,5 +176,28 @@ def test_postgres_cursor_normalizes_datetime_values_to_iso_text() -> None:
 
     assert cursor.fetchone() == {
         "id": "cron",
-        "last_run_at": "2026-05-21T05:30:00+00:00",
+        "last_run_at": datetime(2026, 5, 21, 5, 30, tzinfo=UTC),
     }
+
+
+def test_postgres_cursor_preserves_date_values_as_dates() -> None:
+    module = _postgres_module()
+    due_date = date(2026, 5, 21)
+    cursor = module._PostgresCursor(_FakeResult([{"id": "task", "due_date": due_date}]))
+
+    row = cursor.fetchone()
+
+    assert row is not None
+    assert row == {"id": "task", "due_date": due_date}
+    assert not isinstance(row["due_date"], datetime)
+
+
+def test_postgres_conninfo_preserves_options_and_forces_utc_timezone() -> None:
+    module = _postgres_module()
+    conninfo = module._conninfo_with_utc_session_timezone(
+        "postgresql://user:pass@localhost:5432/gobby?options=-cstatement_timeout%3D5000"
+    )
+
+    parsed = module.conninfo_to_dict(conninfo)
+
+    assert parsed["options"] == "-cstatement_timeout=5000 -ctimezone=UTC"
