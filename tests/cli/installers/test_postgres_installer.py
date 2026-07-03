@@ -101,6 +101,7 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
         "write_env",
         "pg_isready",
         "probe:CREATE EXTENSION IF NOT EXISTS pg_search",
+        "probe:CREATE EXTENSION IF NOT EXISTS pgaudit",
         "probe:CREATE EXTENSION IF NOT EXISTS pgcrypto",
     ]
     assert subprocess_calls

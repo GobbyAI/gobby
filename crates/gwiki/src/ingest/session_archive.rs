@@ -240,31 +240,16 @@ pub(crate) fn sync_session_transcript_archives(
                         fetched_at: fetched_at.to_string(),
                         bytes,
                     };
-                    match ingest_session_wiki_file_without_index(vault_root, snapshot) {
-                        Ok(result) => {
-                            let archive_path = path.clone();
-                            let new_id = result.record.id.clone();
-                            known_session_hashes.insert((
-                                result.record.canonical_location.clone(),
-                                result.record.content_hash.clone(),
-                            ));
-                            accepted.push(AcceptedSessionArchive {
-                                archive_path: path,
-                                result,
-                            });
-                            if let Err(error) =
-                                supersede_session_page(vault_root, &manifest, &external_id, &new_id)
-                            {
-                                failed.push(SessionArchiveFailure::from_wiki_error(
-                                    &archive_path,
-                                    error,
-                                ));
-                            }
-                        }
-                        Err(error) => {
-                            failed.push(SessionArchiveFailure::from_wiki_error(&path, error))
-                        }
-                    }
+                    record_session_ingest_result(
+                        vault_root,
+                        &manifest,
+                        path,
+                        &external_id,
+                        ingest_session_wiki_file_without_index(vault_root, snapshot),
+                        &mut known_session_hashes,
+                        &mut accepted,
+                        &mut failed,
+                    );
                 }
                 SessionSourceFile::RawArchive(path) => {
                     progress.advance(&path.display().to_string());
@@ -326,35 +311,16 @@ pub(crate) fn sync_session_transcript_archives(
                                 fetched_at: fetched_at.to_string(),
                                 bytes: md_bytes,
                             };
-                            match ingest_session_wiki_file_without_index(vault_root, snapshot) {
-                                Ok(result) => {
-                                    let archive_path = path.clone();
-                                    let new_id = result.record.id.clone();
-                                    known_session_hashes.insert((
-                                        result.record.canonical_location.clone(),
-                                        result.record.content_hash.clone(),
-                                    ));
-                                    accepted.push(AcceptedSessionArchive {
-                                        archive_path: path,
-                                        result,
-                                    });
-                                    if let Err(error) = supersede_session_page(
-                                        vault_root,
-                                        &manifest,
-                                        &external_id,
-                                        &new_id,
-                                    ) {
-                                        failed.push(SessionArchiveFailure::from_wiki_error(
-                                            &archive_path,
-                                            error,
-                                        ));
-                                    }
-                                }
-                                Err(error) => {
-                                    failed
-                                        .push(SessionArchiveFailure::from_wiki_error(&path, error));
-                                }
-                            }
+                            record_session_ingest_result(
+                                vault_root,
+                                &manifest,
+                                path,
+                                &external_id,
+                                ingest_session_wiki_file_without_index(vault_root, snapshot),
+                                &mut known_session_hashes,
+                                &mut accepted,
+                                &mut failed,
+                            );
                             continue;
                         }
                         // Summary unavailable (AI off/empty/error): fall through to the
@@ -380,31 +346,16 @@ pub(crate) fn sync_session_transcript_archives(
                         path: path.clone(),
                         bytes,
                     };
-                    match ingest_session_file_without_index(vault_root, snapshot) {
-                        Ok(result) => {
-                            let archive_path = path.clone();
-                            let new_id = result.record.id.clone();
-                            known_session_hashes.insert((
-                                result.record.canonical_location.clone(),
-                                result.record.content_hash.clone(),
-                            ));
-                            accepted.push(AcceptedSessionArchive {
-                                archive_path: path,
-                                result,
-                            });
-                            if let Err(error) =
-                                supersede_session_page(vault_root, &manifest, &external_id, &new_id)
-                            {
-                                failed.push(SessionArchiveFailure::from_wiki_error(
-                                    &archive_path,
-                                    error,
-                                ));
-                            }
-                        }
-                        Err(error) => {
-                            failed.push(SessionArchiveFailure::from_wiki_error(&path, error))
-                        }
-                    }
+                    record_session_ingest_result(
+                        vault_root,
+                        &manifest,
+                        path,
+                        &external_id,
+                        ingest_session_file_without_index(vault_root, snapshot),
+                        &mut known_session_hashes,
+                        &mut accepted,
+                        &mut failed,
+                    );
                 }
             }
         }
@@ -450,6 +401,38 @@ pub(crate) fn sync_session_transcript_archives(
     }
 
     Ok(batch)
+}
+
+fn record_session_ingest_result(
+    vault_root: &Path,
+    manifest: &SourceManifest,
+    archive_path: PathBuf,
+    external_id: &str,
+    ingest_result: Result<IngestResult, WikiError>,
+    known_session_hashes: &mut HashSet<(String, String)>,
+    accepted: &mut Vec<AcceptedSessionArchive>,
+    failed: &mut Vec<SessionArchiveFailure>,
+) {
+    match ingest_result {
+        Ok(result) => {
+            let failure_path = archive_path.clone();
+            let new_id = result.record.id.clone();
+            known_session_hashes.insert((
+                result.record.canonical_location.clone(),
+                result.record.content_hash.clone(),
+            ));
+            accepted.push(AcceptedSessionArchive {
+                archive_path,
+                result,
+            });
+            if let Err(error) = supersede_session_page(vault_root, manifest, external_id, &new_id) {
+                failed.push(SessionArchiveFailure::from_wiki_error(&failure_path, error));
+            }
+        }
+        Err(error) => {
+            failed.push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
+        }
+    }
 }
 
 /// Bare session external id from a session file name, stripping the *full*

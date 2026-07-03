@@ -44,10 +44,11 @@ _LEGACY_STAGE_MAP = {
     "in_development": "development",
     "merged": "merge",
 }
+STABLE_TEST_UUID_NAMESPACE = uuid.UUID("283ea5ca-a422-500e-b771-0533679ebc0a")
 
 
 def stable_test_uuid(label: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:{label}"))
+    return str(uuid.uuid5(STABLE_TEST_UUID_NAMESPACE, f"gobby:test:{label}"))
 
 
 def _task(

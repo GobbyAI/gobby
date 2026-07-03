@@ -211,7 +211,7 @@ Every individual feature must compile in isolation. Do not rely on `--all-featur
 
 - **Patch bumps (0.4.x)** — bug fixes, doc changes, internal refactors with no public API change.
 - **Additive minor bumps (for example, 0.7.0 → 0.8.0, marked additive)** — new public API such as functions, structs, fields, or feature-gated modules. Existing consumers stay compatible.
-- **Pre-1.0 breaking minor bumps (for example, 0.7.0 → 0.8.0, marked breaking)** — removals, renames, type changes, feature default changes, or semantic contract changes. Bump the minor and bump *every* consumer crate's `gobby-core` dependency in the same release. Don't strand consumers on an old `gobby-core`.
+- **Pre-1.0 breaking minor bumps (for example, 0.8.0 → 0.9.0, marked breaking)** — removals, renames, type changes, feature default changes, or semantic contract changes. Bump the minor and bump *every* consumer crate's `gobby-core` dependency in the same release. Don't strand consumers on an old `gobby-core`.
 
 Consumers that depend only on additive minor-line compatibility can pin to a minor version (`gobby-core = "0.7"`). In-tree crates released with `gobby-core` must move to the new minor when that minor is breaking, and should pin to the current patch floor when they rely on behavior from that patch, for example `gobby-core = "0.7.0"`.
 

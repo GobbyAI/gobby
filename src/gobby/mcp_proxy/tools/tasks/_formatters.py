@@ -26,6 +26,11 @@ def _task_value(task: Any, name: str, default: Any = None) -> Any:
     return getattr(task, name, default)
 
 
+def _task_list_value(task: Any, name: str) -> Any:
+    value = _task_value(task, name, [])
+    return [] if value is None else value
+
+
 def _task_dict(task: Any) -> dict[str, Any]:
     if isinstance(task, dict):
         return task
@@ -145,7 +150,7 @@ def task_summary_payload(
         "path_cache": _task_value(task, "path_cache"),
         "description": _task_value(task, "description"),
         "validation_criteria": _task_value(task, "validation_criteria"),
-        "labels": _task_value(task, "labels", []),
+        "labels": _task_list_value(task, "labels"),
         "parent_task_id": _task_value(task, "parent_task_id"),
         "created_at": _task_value(task, "created_at"),
         "updated_at": _task_value(task, "updated_at"),
@@ -156,5 +161,5 @@ def task_summary_payload(
         "isolation": _plain(_task_value(task, "isolation")),
         "assigned_agent": _task_value(task, "assigned_agent"),
         "implementation_domain": _task_value(task, "implementation_domain"),
-        "additional_skills": _task_value(task, "additional_skills", []),
+        "additional_skills": _task_list_value(task, "additional_skills"),
     }

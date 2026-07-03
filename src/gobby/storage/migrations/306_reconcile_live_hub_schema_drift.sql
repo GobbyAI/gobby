@@ -41,6 +41,63 @@ DO $$
 BEGIN
     IF EXISTS (
         SELECT 1
+          FROM memory_dream_runs
+         WHERE id IS NOT NULL
+           AND id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) THEN
+        RAISE EXCEPTION
+            'memory_dream_runs.id UUID preflight failed: uncastable id values exist';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM memory_dream_runs
+         WHERE project_id IS NOT NULL
+           AND project_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) THEN
+        RAISE EXCEPTION
+            'memory_dream_runs.project_id UUID preflight failed: uncastable project_id values exist';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM memory_dream_snapshots
+         WHERE run_id IS NOT NULL
+           AND run_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) THEN
+        RAISE EXCEPTION
+            'memory_dream_snapshots.run_id UUID preflight failed: uncastable run_id values exist';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM memory_dream_snapshots
+         WHERE memory_id IS NOT NULL
+           AND memory_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ) THEN
+        RAISE EXCEPTION
+            'memory_dream_snapshots.memory_id UUID preflight failed: uncastable memory_id values exist';
+    END IF;
+END $$;
+
+ALTER TABLE memory_dream_snapshots
+    DROP CONSTRAINT IF EXISTS memory_dream_snapshots_run_id_fkey;
+
+ALTER TABLE memory_dream_runs
+    DROP CONSTRAINT IF EXISTS memory_dream_runs_project_id_fkey;
+
+ALTER TABLE memory_dream_runs
+    ALTER COLUMN id TYPE UUID USING id::UUID,
+    ALTER COLUMN project_id TYPE UUID USING project_id::UUID;
+
+ALTER TABLE memory_dream_snapshots
+    ALTER COLUMN run_id TYPE UUID USING run_id::UUID,
+    ALTER COLUMN memory_id TYPE UUID USING memory_id::UUID;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
           FROM memory_dream_runs runs
           LEFT JOIN projects projects
             ON projects.id = runs.project_id
@@ -60,5 +117,28 @@ BEGIN
         ALTER TABLE memory_dream_runs
             ADD CONSTRAINT memory_dream_runs_project_id_fkey
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'memory_dream_snapshots_run_id_fkey'
+           AND conrelid = 'memory_dream_snapshots'::regclass
+    ) THEN
+        IF EXISTS (
+            SELECT 1
+              FROM memory_dream_snapshots snapshots
+              LEFT JOIN memory_dream_runs runs
+                ON runs.id = snapshots.run_id
+             WHERE runs.id IS NULL
+        ) THEN
+            RAISE EXCEPTION
+                'memory_dream_snapshots_run_id_fkey preflight failed: dangling run_id values exist';
+        END IF;
+
+        ALTER TABLE memory_dream_snapshots
+            ADD CONSTRAINT memory_dream_snapshots_run_id_fkey
+            FOREIGN KEY (run_id) REFERENCES memory_dream_runs(id)
+            ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
     END IF;
 END $$;

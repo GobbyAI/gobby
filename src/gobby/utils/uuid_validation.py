@@ -11,6 +11,6 @@ def is_full_uuid(value: str | None) -> bool:
         return False
     try:
         uuid.UUID(value)
-    except (TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         return False
     return True

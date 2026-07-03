@@ -101,7 +101,7 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
         return {"success": False, "error": "PostgreSQL did not become ready before timeout"}
 
     database_url = _docker_database_url(port)
-    for extension in ("pg_search", "pgcrypto"):
+    for extension in _BASELINE_EXTENSIONS:
         _probe_create_extension(
             dsn=database_url,
             sql=f"CREATE EXTENSION IF NOT EXISTS {extension}",

@@ -82,6 +82,24 @@ def test_task_summary_defaults_missing_list_fields_without_to_dict() -> None:
     assert payload["additional_skills"] == []
 
 
+def test_task_summary_coalesces_explicit_none_list_fields() -> None:
+    task = SimpleNamespace(
+        id="03940009-0faa-4d80-9b96-289df7f44431",
+        seq_num=17428,
+        title="Coalesce none list fields",
+        task_type="bug",
+        category="code",
+        priority=1,
+        labels=None,
+        additional_skills=None,
+    )
+
+    payload = task_summary_payload(task, dependencies={})
+
+    assert payload["labels"] == []
+    assert payload["additional_skills"] == []
+
+
 def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
     task = SimpleNamespace(
         id="03940009-0faa-4d80-9b96-289df7f44431",

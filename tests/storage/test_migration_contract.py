@@ -132,6 +132,10 @@ def _assert_absent_all(label: str, content: str, snippets: tuple[str, ...]) -> N
     assert present == [], f"{label} contained forbidden snippets: {present}"
 
 
+def _normalize_sql_whitespace(content: str) -> str:
+    return " ".join(content.split())
+
+
 def _table_definition(content: str, table_name: str) -> str:
     marker = f"CREATE TABLE {table_name} ("
     start = content.find(marker)
@@ -575,10 +579,12 @@ def test_session_context_usage_ratio_index_baseline_and_migration_are_partial_de
     baseline = _baseline_text()
     migration = _reconcile_drift_migration_text()
     plain_index = "CREATE INDEX idx_sessions_context_usage_ratio ON sessions(context_usage_ratio);"
+    normalized_plain_index = _normalize_sql_whitespace(plain_index)
 
     assert SESSION_CONTEXT_USAGE_RATIO_INDEX in baseline
     assert SESSION_CONTEXT_USAGE_RATIO_INDEX in migration
-    _assert_absent_all("session context ratio index", baseline, (plain_index,))
+    assert normalized_plain_index not in _normalize_sql_whitespace(baseline)
+    assert normalized_plain_index not in _normalize_sql_whitespace(migration)
 
 
 def test_self_parent_sessions_migration_and_baseline_define_invariant() -> None:
@@ -666,6 +672,14 @@ def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
         "memory dream reconcile migration",
         migration,
         (
+            "memory_dream_runs.id UUID preflight failed",
+            "memory_dream_runs.project_id UUID preflight failed",
+            "memory_dream_snapshots.run_id UUID preflight failed",
+            "memory_dream_snapshots.memory_id UUID preflight failed",
+            "ALTER COLUMN id TYPE UUID USING id::UUID",
+            "ALTER COLUMN project_id TYPE UUID USING project_id::UUID",
+            "ALTER COLUMN run_id TYPE UUID USING run_id::UUID",
+            "ALTER COLUMN memory_id TYPE UUID USING memory_id::UUID",
             "memory_dream_runs_project_id_fkey",
             "LEFT JOIN projects projects",
             "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE",

@@ -16,6 +16,7 @@ class KeywordSearch(Protocol):
         query: str,
         limit: int,
         project_id: str | None,
+        /,
         *,
         include_global: bool = True,
     ) -> list[tuple[str, float]]: ...
