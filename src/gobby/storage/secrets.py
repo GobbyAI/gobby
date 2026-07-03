@@ -14,7 +14,6 @@ import re
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -368,7 +368,7 @@ class SecretStore:
             posture=posture,
             passphrase=passphrase,
         )
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         target = executor if executor is not None else self.db
         target.execute(
             """INSERT INTO secret_key_material (
@@ -468,7 +468,7 @@ class SecretStore:
             for name, encrypted_value in migrated_values:
                 txn.execute(
                     "UPDATE secrets SET encrypted_value = %s, updated_at = %s WHERE name = %s",
-                    (encrypted_value, datetime.now(UTC).isoformat(), name),
+                    (encrypted_value, utc_now(), name),
                 )
 
         for entry in entries:
@@ -583,7 +583,7 @@ class SecretStore:
         name = self._normalize_name(name)
         fernet = self._get_fernet()
         encrypted = fernet.encrypt(plaintext_value.encode("utf-8")).decode("utf-8")
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         existing = self.db.fetchone("SELECT id FROM secrets WHERE name = %s", (name,))
 

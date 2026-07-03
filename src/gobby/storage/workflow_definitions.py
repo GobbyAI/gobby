@@ -5,7 +5,6 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Literal
 from uuid import uuid4
@@ -13,6 +12,7 @@ from uuid import uuid4
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ class LocalWorkflowDefinitionManager:
     ) -> WorkflowDefinitionRow:
         """Create a new workflow definition in the database."""
         definition_id = str(uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         with self.db.transaction() as conn:
             conn.execute(
@@ -223,7 +223,7 @@ class LocalWorkflowDefinitionManager:
         if not values:
             return self.get(definition_id)
 
-        values["updated_at"] = datetime.now(UTC).isoformat()
+        values["updated_at"] = utc_now()
         cursor = self.db.safe_update("workflow_definitions", values, "id = %s", (definition_id,))
         if cursor.rowcount > 0:
             bump_workflow_definitions_revision()
@@ -231,7 +231,7 @@ class LocalWorkflowDefinitionManager:
 
     def delete(self, definition_id: str) -> bool:
         """Soft-delete a workflow definition by setting deleted_at."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE workflow_definitions SET deleted_at = %s, updated_at = %s WHERE id = %s AND deleted_at IS NULL",
@@ -255,7 +255,7 @@ class LocalWorkflowDefinitionManager:
 
     def restore(self, definition_id: str) -> WorkflowDefinitionRow:
         """Restore a soft-deleted workflow definition."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE workflow_definitions SET deleted_at = NULL, updated_at = %s WHERE id = %s AND deleted_at IS NOT NULL",

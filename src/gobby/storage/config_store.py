@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.embedding_keys import (
@@ -19,6 +18,7 @@ from gobby.config.embedding_keys import (
     validate_embedding_storage_config_key,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.secrets import SecretStore
@@ -126,7 +126,7 @@ class ConfigStore:
         """Upsert a single config value (JSON-encoded)."""
         _validate_storage_config_key(key)
         _reject_plaintext_secret_value(key, value)
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         json_value = json.dumps(value)
         self.db.execute(
             """INSERT INTO config_store (key, value, source, updated_at)
@@ -143,7 +143,7 @@ class ConfigStore:
         for key, value in entries.items():
             _validate_storage_config_key(key)
             _reject_plaintext_secret_value(key, value)
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         count = 0
         for key, value in entries.items():
             json_value = json.dumps(value)
@@ -200,7 +200,7 @@ class ConfigStore:
         _validate_storage_config_key(key)
         secret_name = config_key_to_secret_name(key)
         ref = f"$secret:{secret_name}"
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             secret_store.set(
                 name=secret_name,

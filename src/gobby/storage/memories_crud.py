@@ -1,7 +1,6 @@
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
@@ -12,6 +11,7 @@ from gobby.storage.memories_models import (
     visibility_predicate,
 )
 from gobby.storage.sql_dialect import newer_than_now_expr
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             logger.warning("Skipping memory creation: empty content provided")
             raise ValueError("Memory content cannot be empty")
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         # Normalize content for consistent ID generation (avoid duplicates from
         # whitespace differences)
         normalized_content = content.strip()
@@ -320,7 +320,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             return self.get_memory(memory_id)
 
         updates.append("updated_at = %s")
-        params.append(datetime.now(UTC).isoformat())
+        params.append(utc_now())
         params.append(memory_id)
 
         sql = f"UPDATE memories SET {', '.join(updates)} WHERE id = %s"  # nosec B608
@@ -338,7 +338,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE memories SET project_id = %s, updated_at = %s WHERE id = %s",
-                (project_id, datetime.now(UTC).isoformat(), memory_id),
+                (project_id, utc_now(), memory_id),
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Memory {memory_id} not found")

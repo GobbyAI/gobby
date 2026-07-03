@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 from gobby.utils.machine_id import is_legacy_missing_machine_id
 
 _PLACEHOLDER_MACHINE_IDS = {
@@ -92,14 +93,14 @@ class LocalMachineManager:
         label: str | None = None,
         tailscale_name: str | None = None,
         owner_user_id: str | None = None,
-        seen_at: str | None = None,
+        seen_at: datetime | str | None = None,
     ) -> Machine | None:
         """Insert or refresh a real machine id, skipping missing placeholders."""
         normalized_machine_id = normalize_machine_id(machine_id)
         if normalized_machine_id is None:
             return None
 
-        now = seen_at or datetime.now(UTC).isoformat()
+        now = parse_stored_datetime(seen_at) or utc_now()
         row = self.db.fetchone(
             """
             INSERT INTO machines (

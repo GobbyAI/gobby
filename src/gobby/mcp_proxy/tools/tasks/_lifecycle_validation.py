@@ -7,7 +7,6 @@ can be closed (commit checks, child completion, LLM validation).
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks.state_semantics import is_task_closed
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.config.tasks import TaskValidationConfig
@@ -550,7 +550,7 @@ async def validate_leaf_task_with_llm(
     # Skip the LLM call entirely while an infrastructure-failure backoff is active,
     # so a generation outage does not re-run validation every heartbeat.
     backoff_store = TaskValidationBackoffStore(ctx.task_manager.db)
-    now = datetime.now(UTC)
+    now = utc_now()
     backoff_state = backoff_store.get(task.id)
     if backoff_state is not None and backoff_state.is_in_backoff_window(now):
         retry_at = (
@@ -600,7 +600,7 @@ async def validate_leaf_task_with_llm(
         if state.should_escalate():
             ctx.task_manager.update_task(
                 resolved_id,
-                escalated_at=now.isoformat(),
+                escalated_at=now,
                 escalation_reason=(
                     "validation generation unavailable after "
                     f"{state.consecutive_failures} consecutive infrastructure failures"

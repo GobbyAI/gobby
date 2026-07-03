@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -14,6 +13,7 @@ from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
 )
+from gobby.utils.datetime import utc_now
 
 ReviewPolicy = Literal["none", "required", "optional"]
 StageCategory = Literal["discovery", "design", "verification", "implementation", "delivery"]
@@ -245,7 +245,7 @@ class StageRegistryManager:
         blocker = self._delete_blocker(name)
         if blocker is not None:
             raise ValueError(blocker)
-        deleted_at = datetime.now(UTC).isoformat()
+        deleted_at = utc_now()
         self.db.execute(
             """
             UPDATE task_stages_registry

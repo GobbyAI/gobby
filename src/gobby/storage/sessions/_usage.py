@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from gobby.utils.datetime import parse_stored_datetime
+
 from ._constants import get_logger
 
 if TYPE_CHECKING:
@@ -158,6 +160,9 @@ class _UsageMixin:
             updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
         """
+        timestamp = parse_stored_datetime(snapshot.timestamp)
+        if timestamp is None:
+            raise ValueError("context usage snapshot timestamp is required")
         try:
             with self.db.transaction():
                 cursor = self.db.execute(
@@ -168,7 +173,7 @@ class _UsageMixin:
                         snapshot.context_usage_ratio,
                         snapshot.source,
                         snapshot.confidence,
-                        snapshot.timestamp,
+                        timestamp,
                         snapshot.raw_prompt_footprint,
                         snapshot.uncached_prompt_tokens,
                         snapshot.cache_read_tokens,

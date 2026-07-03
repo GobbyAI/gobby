@@ -5,10 +5,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import ChatAttachmentMutation, HubDatabase, Transaction
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 CHAT_ATTACHMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_attachments (
@@ -172,7 +173,7 @@ def create_attachment(
     local_path: str,
     attachment_id: str | None = None,
 ) -> ChatAttachmentRecord:
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     record_id = attachment_id or str(uuid.uuid4())
     with db.transaction() as conn:
         conn.execute(
@@ -259,7 +260,7 @@ def bind_attachments(
         return []
 
     unique_ids = list(dict.fromkeys(attachment_ids))
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         placeholders = ",".join("%s" for _ in unique_ids)
         rows = conn.execute(
@@ -344,7 +345,9 @@ def delete_stale_unbound_attachments(
     limit: int = 500,
 ) -> list[ChatAttachmentRecord]:
     """Delete never-bound queued uploads older than ``cutoff`` and return their records."""
-    cutoff_value = cutoff.isoformat() if isinstance(cutoff, datetime) else cutoff
+    cutoff_value = parse_stored_datetime(cutoff)
+    if cutoff_value is None:
+        raise ValueError("cutoff is required")
     bounded_limit = max(1, int(limit))
     with db.transaction_immediate(ChatAttachmentMutation()) as conn:
         rows = conn.execute(

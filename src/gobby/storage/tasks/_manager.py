@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -321,7 +322,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         dispatch_failure_count: MaybeUnset[int | None] = UNSET,
         merge_in_progress: MaybeUnset[bool] = UNSET,
         blocked_by_merge: MaybeUnset[bool] = UNSET,
-        escalated_at: MaybeUnset[str | None] = UNSET,
+        escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
         github_issue_number: MaybeUnset[int | None] = UNSET,
         github_pr_number: MaybeUnset[int | None] = UNSET,

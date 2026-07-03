@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
@@ -61,7 +62,7 @@ class TaskTransitionsMixin:
         closed_at: MaybeUnset[str | None] = UNSET,
         closed_in_session_id: MaybeUnset[str | None] = UNSET,
         closed_commit_sha: MaybeUnset[str | None] = UNSET,
-        escalated_at: MaybeUnset[str | None] = UNSET,
+        escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
     ) -> Task:
         """Apply externally-sourced task metadata.
@@ -98,7 +99,7 @@ class TaskTransitionsMixin:
         description: MaybeUnset[str | None] = UNSET,
         validation_fail_count: MaybeUnset[int | None] = UNSET,
         dispatch_failure_count: MaybeUnset[int | None] = UNSET,
-        escalated_at: MaybeUnset[str | None] = UNSET,
+        escalated_at: MaybeUnset[datetime | str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
     ) -> Task:
         """Clear ownership while optionally changing recovery metadata."""

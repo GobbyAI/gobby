@@ -6,20 +6,21 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 import psycopg
 from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 DeliveryStatus = Literal["pending", "processing", "processed", "ignored", "duplicate", "error"]
 TriageVerdict = Literal["implement", "skip", "escalate", "dedup"]
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _json_dumps(value: Any) -> str:

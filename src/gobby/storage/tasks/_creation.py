@@ -2,7 +2,6 @@
 
 import json
 import logging
-from datetime import UTC, datetime
 
 import psycopg
 from psycopg.errors import UniqueViolation
@@ -15,6 +14,7 @@ from gobby.storage.tasks._models import (
     validate_implementation_domain,
     validate_task_type,
 )
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def _create_task_in_transaction(
 ) -> str:
     """Insert a task using a caller-owned TaskSeqAllocation transaction."""
     max_retries = 3
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
 
     labels_json = json.dumps(labels) if labels else None
     additional_skills_json = (

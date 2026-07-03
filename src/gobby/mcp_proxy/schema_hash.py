@@ -8,10 +8,10 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class SchemaHashManager:
         Returns:
             The stored SchemaHashRecord
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         self.db.execute(
             """
@@ -263,7 +263,7 @@ class SchemaHashManager:
         Returns:
             True if updated, False if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE tool_schema_hashes

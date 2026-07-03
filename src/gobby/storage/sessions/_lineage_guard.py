@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Protocol
 
 from ._constants import get_logger
@@ -47,7 +48,7 @@ def repair_self_parent_session(
     conn: _ParentLookupConnection,
     *,
     session_id: str,
-    now: str,
+    now: datetime | str,
 ) -> None:
     """Clear a corrupt self-parent row inside the caller's transaction."""
     cursor = conn.execute(

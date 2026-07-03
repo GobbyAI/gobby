@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from gobby.storage.cron_children import (
@@ -19,6 +19,7 @@ from gobby.storage.cron_children import (
 from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronRun
 from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 
 logger = logging.getLogger(__name__)
 CRON_RUN_ERROR_MAX_CHARS = 5000
@@ -45,13 +46,14 @@ class CronRunStorageMixin:
     def create_run(self, cron_job_id: str) -> CronRun | None:
         """Create a cron run unless this job already has pending/running work."""
         run_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
 
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
-            triggered_at=now,
-            created_at=now,
+            triggered_at=now_model,
+            created_at=now_model,
         )
 
         row = self.db.fetchone(
@@ -69,7 +71,7 @@ class CronRunStorageMixin:
             (
                 candidate.id,
                 candidate.cron_job_id,
-                candidate.triggered_at,
+                now,
                 candidate.started_at,
                 candidate.completed_at,
                 candidate.status,
@@ -77,7 +79,7 @@ class CronRunStorageMixin:
                 candidate.error,
                 candidate.agent_run_id,
                 candidate.pipeline_execution_id,
-                candidate.created_at,
+                now,
             ),
         )
         if row is None:
@@ -95,13 +97,14 @@ class CronRunStorageMixin:
             raise ValueError("max_concurrent_jobs must be positive")
 
         run_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
 
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
-            triggered_at=now,
-            created_at=now,
+            triggered_at=now_model,
+            created_at=now_model,
         )
 
         with self.db.transaction_immediate(lock=CronRunAdmission()) as conn:
@@ -128,7 +131,7 @@ class CronRunStorageMixin:
                 """,
                 (
                     candidate.id,
-                    candidate.triggered_at,
+                    now,
                     candidate.started_at,
                     candidate.completed_at,
                     candidate.status,
@@ -136,7 +139,7 @@ class CronRunStorageMixin:
                     candidate.error,
                     candidate.agent_run_id,
                     candidate.pipeline_execution_id,
-                    candidate.created_at,
+                    now,
                     candidate.cron_job_id,
                 ),
             ).fetchone()
@@ -232,8 +235,8 @@ class CronRunStorageMixin:
     def fail_stale_running_runs(self, timeout_seconds: int) -> int:
         """Mark stale running cron runs failed so they stop consuming scheduler slots."""
         timeout_seconds = max(timeout_seconds, MIN_CRON_INTERVAL_SECONDS)
-        now = datetime.now(UTC)
-        cutoff = (now - timedelta(seconds=timeout_seconds)).isoformat()
+        now = utc_now()
+        cutoff = now - timedelta(seconds=timeout_seconds)
         cursor = self.db.execute(
             """
             UPDATE cron_runs
@@ -244,7 +247,7 @@ class CronRunStorageMixin:
                AND COALESCE(started_at, triggered_at, created_at) < %s
             """,
             (
-                now.isoformat(),
+                now,
                 f"Cron run exceeded running timeout ({timeout_seconds}s)",
                 cutoff,
             ),
@@ -258,7 +261,7 @@ class CronRunStorageMixin:
         survive daemon restart, so any persisted running row at scheduler startup is
         orphaned and must not keep consuming concurrency slots.
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE cron_runs
@@ -277,7 +280,7 @@ class CronRunStorageMixin:
         Pending rows from a previous daemon cannot be safely replayed because they
         only prove stale user intent, not a currently owned execution.
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE cron_runs
@@ -295,7 +298,7 @@ class CronRunStorageMixin:
         if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
             raise ValueError("days must be a positive integer")
 
-        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        cutoff = utc_now() - timedelta(days=days)
         cursor = self.db.execute(
             """
             DELETE FROM cron_runs

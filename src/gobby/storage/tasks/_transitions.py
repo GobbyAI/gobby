@@ -26,6 +26,7 @@ from gobby.storage.tasks._stage_types import NoCurrentStageError
 from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.storage.tasks._updates import update_task
 from gobby.tasks.state_semantics import is_task_closed
+from gobby.utils.datetime import utc_now
 
 _WORK_ATTEMPT_ESCALATION_SUFFIXES = ("_work_failed:max", "_max_work_attempts")
 
@@ -95,7 +96,7 @@ def reset_current_non_ready_stage(
     if row is None or row["state"] == "ready":
         return False
 
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     stage_name = row["stage_name"]
     from_state = row["state"]
     with db.transaction() as conn:
@@ -163,7 +164,7 @@ def release_task_claim(
     description: MaybeUnset[str | None] = UNSET,
     validation_fail_count: MaybeUnset[int | None] = UNSET,
     dispatch_failure_count: MaybeUnset[int | None] = UNSET,
-    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
@@ -260,7 +261,7 @@ def escalate_task(
     return release_task_claim(
         db,
         task_id,
-        escalated_at=datetime.now(UTC).isoformat(),
+        escalated_at=utc_now(),
         escalation_reason=reason,
         validation_override_reason=(
             validation_override_reason if validation_override_reason is not None else UNSET
@@ -364,7 +365,7 @@ def _restore_stage_from_history_for_de_escalation(
             f"{restored_state!r} to 'ready' lifecycle event was found"
         )
 
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     with db.transaction() as conn:
         conn.execute(
             """
@@ -445,7 +446,7 @@ def _reset_stage_work_attempts(
         return False
 
     stage_state = row["state"]
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     with db.transaction() as conn:
         conn.execute(
             """
@@ -760,7 +761,7 @@ def reconcile_task_state(
     closed_at: MaybeUnset[str | None] = UNSET,
     closed_in_session_id: MaybeUnset[str | None] = UNSET,
     closed_commit_sha: MaybeUnset[str | None] = UNSET,
-    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
 ) -> Task:
     """Apply externally-sourced metadata without reopening generic update paths.

@@ -1,9 +1,10 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory
 from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
 class MemoryDreamMixin(MemoryStoreBase):
@@ -12,7 +13,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         memory_id: str,
         *,
         hidden_as: Literal["review", "delete"] | None = None,
-        when: str | None = None,
+        when: datetime | str | None = None,
     ) -> bool:
         """Stamp ``last_dreamed_at`` and optionally soft-hide a dreamed memory.
 
@@ -25,7 +26,7 @@ class MemoryDreamMixin(MemoryStoreBase):
 
         Raises ``ValueError`` if the memory does not exist.
         """
-        stamp = when or datetime.now(UTC).isoformat()
+        stamp = parse_stored_datetime(when) or utc_now()
         if hidden_as is None:
             sql = "UPDATE memories SET last_dreamed_at = %s WHERE id = %s"
             params: tuple[Any, ...] = (stamp, memory_id)
@@ -79,7 +80,7 @@ class MemoryDreamMixin(MemoryStoreBase):
             self._notify_listeners()
         return affected
 
-    def restore_memory(self, memory_id: str, when: str | None = None) -> bool:
+    def restore_memory(self, memory_id: str, when: datetime | str | None = None) -> bool:
         """Reactivate a soft-hidden memory.
 
         Clears ``deleted_at`` and ``dream_action`` and stamps ``last_dreamed_at``
@@ -88,7 +89,7 @@ class MemoryDreamMixin(MemoryStoreBase):
 
         Raises ``ValueError`` if the memory does not exist.
         """
-        stamp = when or datetime.now(UTC).isoformat()
+        stamp = parse_stored_datetime(when) or utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE memories SET deleted_at = NULL, dream_action = NULL, "
@@ -122,7 +123,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         self,
         *,
         limit: int,
-        redream_cutoff: str,
+        redream_cutoff: datetime | str,
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
@@ -144,7 +145,10 @@ class MemoryDreamMixin(MemoryStoreBase):
             "deleted_at IS NULL",
             "(last_dreamed_at IS NULL OR last_dreamed_at < %s)",
         ]
-        params: list[Any] = [redream_cutoff]
+        cutoff = parse_stored_datetime(redream_cutoff)
+        if cutoff is None:
+            raise ValueError("redream_cutoff is required")
+        params: list[Any] = [cutoff]
         if global_only:
             clauses.append("project_id IS NULL")
         elif project_id is not None:
@@ -165,13 +169,16 @@ class MemoryDreamMixin(MemoryStoreBase):
         )
         return [Memory.from_row(row) for row in rows]
 
-    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
+    def list_dream_project_ids(self, *, redream_cutoff: datetime | str) -> list[str | None]:
         """Return distinct project scopes that have due memory dream work."""
+        cutoff = parse_stored_datetime(redream_cutoff)
+        if cutoff is None:
+            raise ValueError("redream_cutoff is required")
         rows = self.db.fetchall(
             "SELECT DISTINCT project_id FROM memories "
             "WHERE deleted_at IS NULL "
             "AND (last_dreamed_at IS NULL OR last_dreamed_at < %s) "
             "ORDER BY project_id ASC NULLS LAST",
-            (redream_cutoff,),
+            (cutoff,),
         )
         return [row["project_id"] for row in rows]

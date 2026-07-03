@@ -10,11 +10,12 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import datetime_to_required_iso, parse_stored_datetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class LocalCloneManager:
         task_id: str | None = None,
         agent_session_id: str | None = None,
         remote_url: str | None = None,
-        cleanup_after: str | None = None,
+        cleanup_after: datetime | str | None = None,
         workspace_role: str = "task",
     ) -> Clone:
         """
@@ -148,7 +149,9 @@ class LocalCloneManager:
             Created Clone instance
         """
         clone_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
+        cleanup_after_value = parse_stored_datetime(cleanup_after)
 
         self.db.execute(
             """
@@ -171,7 +174,7 @@ class LocalCloneManager:
                 CloneStatus.ACTIVE.value,
                 remote_url,
                 None,  # last_sync_at
-                cleanup_after,
+                cleanup_after_value,
                 now,
                 now,
                 workspace_role,
@@ -189,9 +192,11 @@ class LocalCloneManager:
             status=CloneStatus.ACTIVE.value,
             remote_url=remote_url,
             last_sync_at=None,
-            cleanup_after=cleanup_after,
-            created_at=now,
-            updated_at=now,
+            cleanup_after=datetime_to_required_iso(cleanup_after_value)
+            if cleanup_after_value is not None
+            else None,
+            created_at=now_model,
+            updated_at=now_model,
             workspace_role=workspace_role,
         )
 
@@ -303,8 +308,12 @@ class LocalCloneManager:
         if invalid_fields:
             raise ValueError(f"Invalid field names: {invalid_fields}")
 
+        for timestamp_field in ("last_sync_at", "cleanup_after", "updated_at"):
+            if timestamp_field in fields:
+                fields[timestamp_field] = parse_stored_datetime(fields[timestamp_field])
+
         # Add updated_at timestamp
-        fields["updated_at"] = datetime.now(UTC).isoformat()
+        fields["updated_at"] = utc_now()
 
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [clone_id]
@@ -367,7 +376,11 @@ class LocalCloneManager:
         """
         return self.update(clone_id, status=CloneStatus.CLEANUP.value)
 
-    def mark_merged(self, clone_id: str, cleanup_after: str | None = None) -> Clone | None:
+    def mark_merged(
+        self,
+        clone_id: str,
+        cleanup_after: datetime | str | None = None,
+    ) -> Clone | None:
         """Mark clone as merged and optionally schedule cleanup."""
         return self.update(
             clone_id,
@@ -385,7 +398,7 @@ class LocalCloneManager:
         Returns:
             Updated Clone or None if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         return self.update(
             clone_id,
             status=CloneStatus.ACTIVE.value,
@@ -458,9 +471,7 @@ class LocalCloneManager:
         Returns:
             List of stale Clone instances
         """
-        from datetime import timedelta
-
-        cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+        cutoff = utc_now() - timedelta(hours=hours)
 
         rows = self.db.fetchall(
             """
@@ -494,7 +505,7 @@ class LocalCloneManager:
         Returns:
             List of expired Clone instances
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         if project_id:
             rows = self.db.fetchall(
                 """

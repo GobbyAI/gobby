@@ -13,6 +13,14 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+PROJECT_ID = "88888888-8888-4888-8888-888888888891"
+PG_ARCHIVE_PROJECT_ID = "88888888-8888-4888-8888-888888888892"
+SESSION_ID_1 = "99999999-9999-4999-9999-999999999991"
+SESSION_ID_2 = "99999999-9999-4999-9999-999999999992"
+SESSION_ID_3 = "99999999-9999-4999-9999-999999999993"
+SESSION_ID_4 = "99999999-9999-4999-9999-999999999994"
+NO_MATCH_SESSION_ID = "99999999-9999-4999-9999-999999999995"
+
 
 @pytest.fixture
 def event_store(temp_db: "HubDatabase") -> MetricsEventStore:
@@ -24,8 +32,8 @@ class TestRecordEvent:
         event_store.record_event(
             event_type="tool_call",
             name="list_tools",
-            project_id="proj-1",
-            session_id="sess-1",
+            project_id=PROJECT_ID,
+            session_id=SESSION_ID_1,
             server_name="gobby-tasks",
             success=True,
             latency_ms=42.5,
@@ -33,7 +41,7 @@ class TestRecordEvent:
         events = event_store.query_events(event_type="tool_call")
         assert len(events) == 1
         assert events[0]["name"] == "list_tools"
-        assert events[0]["session_id"] == "sess-1"
+        assert events[0]["session_id"] == SESSION_ID_1
         assert events[0]["server_name"] == "gobby-tasks"
         assert events[0]["success"] == 1
         assert events[0]["latency_ms"] == 42.5
@@ -42,7 +50,7 @@ class TestRecordEvent:
         event_store.record_event(
             event_type="rule_eval",
             name="task-before-edit",
-            session_id="sess-1",
+            session_id=SESSION_ID_1,
             success=False,
             result="block",
             latency_ms=1.2,
@@ -56,7 +64,7 @@ class TestRecordEvent:
         event_store.record_event(
             event_type="skill_search",
             name="source-control",
-            session_id="sess-1",
+            session_id=SESSION_ID_1,
             success=True,
             metadata={"query": "how to commit", "match_count": 3},
         )
@@ -83,7 +91,7 @@ class TestSessionToolBreakdown:
             event_store.record_event(
                 event_type="tool_call",
                 name="Read",
-                session_id="sess-1",
+                session_id=SESSION_ID_1,
                 server_name="gobby-tasks",
                 latency_ms=10.0,
             )
@@ -91,7 +99,7 @@ class TestSessionToolBreakdown:
             event_store.record_event(
                 event_type="tool_call",
                 name="Edit",
-                session_id="sess-1",
+                session_id=SESSION_ID_1,
                 server_name="gobby-tasks",
                 latency_ms=20.0,
             )
@@ -99,12 +107,12 @@ class TestSessionToolBreakdown:
         event_store.record_event(
             event_type="tool_call",
             name="Read",
-            session_id="sess-2",
+            session_id=SESSION_ID_2,
             server_name="gobby-tasks",
             latency_ms=10.0,
         )
 
-        breakdown = event_store.get_session_tool_breakdown("sess-1")
+        breakdown = event_store.get_session_tool_breakdown(SESSION_ID_1)
         assert len(breakdown) == 2
         # Sorted by call_count DESC
         assert breakdown[0]["tool_name"] == "Read"
@@ -113,7 +121,7 @@ class TestSessionToolBreakdown:
         assert breakdown[1]["call_count"] == 3
 
     def test_empty_session(self, event_store: MetricsEventStore) -> None:
-        breakdown = event_store.get_session_tool_breakdown("nonexistent")
+        breakdown = event_store.get_session_tool_breakdown(NO_MATCH_SESSION_ID)
         assert breakdown == []
 
 
@@ -139,13 +147,19 @@ class TestRuleStats:
 
     def test_filter_by_session(self, event_store: MetricsEventStore) -> None:
         event_store.record_event(
-            event_type="rule_eval", name="rule-a", session_id="s1", result="allow"
+            event_type="rule_eval",
+            name="rule-a",
+            session_id=SESSION_ID_3,
+            result="allow",
         )
         event_store.record_event(
-            event_type="rule_eval", name="rule-a", session_id="s2", result="block"
+            event_type="rule_eval",
+            name="rule-a",
+            session_id=SESSION_ID_2,
+            result="block",
         )
 
-        stats = event_store.get_rule_stats(session_id="s1")
+        stats = event_store.get_rule_stats(session_id=SESSION_ID_3)
         assert len(stats) == 1
         assert stats[0]["allow_count"] == 1
 
@@ -298,7 +312,7 @@ class TestPostgresArchive:
     ) -> None:
         event_store = MetricsEventStore(postgres_db)
         old_date = datetime(2020, 1, 2, 12, tzinfo=UTC).isoformat()
-        project_id = "proj-pg-archive"
+        project_id = PG_ARCHIVE_PROJECT_ID
 
         postgres_db.execute(
             """
@@ -361,17 +375,17 @@ class TestMetricsManagerIntegration:
         manager.record_call(
             server_name="gobby-tasks",
             tool_name="create_task",
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             latency_ms=50.0,
             success=True,
-            session_id="sess-123",
+            session_id=SESSION_ID_4,
         )
 
         # Check event was recorded
         events = manager.event_store.query_events(event_type="tool_call")
         assert len(events) == 1
         assert events[0]["name"] == "create_task"
-        assert events[0]["session_id"] == "sess-123"
+        assert events[0]["session_id"] == SESSION_ID_4
         assert events[0]["server_name"] == "gobby-tasks"
 
     def test_record_call_without_session_id(self, temp_db: "HubDatabase") -> None:
@@ -381,7 +395,7 @@ class TestMetricsManagerIntegration:
         manager.record_call(
             server_name="gobby-tasks",
             tool_name="list_tools",
-            project_id="proj-1",
+            project_id=PROJECT_ID,
             latency_ms=10.0,
         )
 
@@ -410,19 +424,19 @@ class TestMCPTools:
         event_store.record_event(
             event_type="tool_call",
             name="Read",
-            session_id="s1",
+            session_id=SESSION_ID_3,
             server_name="proxy",
             latency_ms=10.0,
         )
         event_store.record_event(
             event_type="tool_call",
             name="Read",
-            session_id="s1",
+            session_id=SESSION_ID_3,
             server_name="proxy",
             latency_ms=20.0,
         )
 
-        result = await registry.call("get_session_tools", {"session_id": "s1"})
+        result = await registry.call("get_session_tools", {"session_id": SESSION_ID_3})
         assert result["success"] is True
         assert result["total_calls"] == 2
         assert len(result["tools"]) == 1

@@ -4,13 +4,13 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from gobby.config.bootstrap_io import default_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_resolution import parse_uuid_reference
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
         logger.debug("Failed to chmod personal project path %s: %s", path, exc)
 
     project_manager = LocalProjectManager(db)
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     with db.transaction() as txn:
         txn.execute(
             """
@@ -133,7 +133,8 @@ class LocalProjectManager:
             Created Project instance
         """
         project_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
 
         self.db.execute(
             """
@@ -148,8 +149,8 @@ class LocalProjectManager:
             name=name,
             repo_path=repo_path,
             github_url=github_url,
-            created_at=now,
-            updated_at=now,
+            created_at=now_model,
+            updated_at=now_model,
         )
 
     def get(self, project_id: str) -> Project | None:
@@ -202,7 +203,7 @@ class LocalProjectManager:
         Returns:
             The existing or newly created Project
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             INSERT INTO projects (id, name, repo_path, created_at, updated_at)
@@ -256,7 +257,7 @@ class LocalProjectManager:
         if not fields:
             return self.get(project_id)
 
-        fields["updated_at"] = datetime.now(UTC).isoformat()
+        fields["updated_at"] = utc_now()
 
         set_clause = ", ".join(f"{k} = %s" for k in fields)
         values = list(fields.values()) + [project_id]
@@ -295,7 +296,7 @@ class LocalProjectManager:
         Returns:
             True if updated, False if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         cursor = self.db.execute(
             "UPDATE projects SET deleted_at = %s, updated_at = %s WHERE id = %s AND deleted_at IS NULL",
             (now, now, project_id),

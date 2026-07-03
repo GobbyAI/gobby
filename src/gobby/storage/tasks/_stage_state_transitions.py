@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Literal
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -298,7 +299,7 @@ class StageStateTransitions:
         cited_subtasks: Sequence[str],
         *,
         reason: str | None,
-        now: str,
+        now: datetime | str,
         holder: str,
         reset_cited_work_attempts: bool = False,
     ) -> None:
@@ -353,7 +354,7 @@ class StageStateTransitions:
         task_id: str,
         stage_name: str,
         *,
-        now: str,
+        now: datetime | str,
     ) -> None:
         conn.execute(
             """
@@ -373,7 +374,7 @@ class StageStateTransitions:
         conn: Transaction,
         cited_subtasks: Sequence[str],
         *,
-        now: str,
+        now: datetime | str,
     ) -> None:
         if not cited_subtasks:
             return
@@ -398,7 +399,7 @@ class StageStateTransitions:
         cited_subtasks: Sequence[str],
         *,
         reason: str | None,
-        now: str,
+        now: datetime | str,
         holder: str,
     ) -> None:
         body = reason or "Holistic QA requested follow-up work."
@@ -455,7 +456,7 @@ class StageStateTransitions:
         task_id: str,
         *,
         body: str,
-        now: str,
+        now: datetime | str,
         holder: str,
     ) -> None:
         conn.execute(
@@ -474,7 +475,7 @@ class StageStateTransitions:
         task_id: str,
         stage_name: str,
         *,
-        now: str,
+        now: datetime | str,
         holder: str,
         reset_work_attempts: bool = False,
     ) -> None:

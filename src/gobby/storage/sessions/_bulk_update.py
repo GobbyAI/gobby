@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.utils.datetime import utc_now
 
 from ._upsert import is_session_unique_conflict
 
@@ -115,7 +115,7 @@ class _BulkUpdateMixin:
         if not values:
             return self.get(session_id)
 
-        values["updated_at"] = datetime.now(UTC).isoformat()
+        values["updated_at"] = utc_now()
 
         try:
             with self.db.transaction():
@@ -171,7 +171,7 @@ class _BulkUpdateMixin:
         if not values:
             return self.get(session_id)
 
-        values["updated_at"] = datetime.now(UTC).isoformat()
+        values["updated_at"] = utc_now()
         with self.db.transaction():
             self.db.safe_update("sessions", values, "id = %s", (session_id,))
         return self.get(session_id)
@@ -197,7 +197,7 @@ class _BulkUpdateMixin:
           updated_at = %s
         WHERE id = %s
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(sql, (now, session_id))
         return self.get(session_id)

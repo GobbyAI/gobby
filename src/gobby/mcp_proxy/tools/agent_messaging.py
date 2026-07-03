@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Coroutine, Mapping
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.inter_session_messages import normalize_message_direction
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -200,7 +200,7 @@ def add_messaging_tools(
                         (from_id,),
                     )
                     if row:
-                        now = datetime.now(UTC).isoformat()
+                        now = utc_now()
                         db.execute(
                             "UPDATE agent_runs SET result = %s, updated_at = %s WHERE id = %s",
                             (content, now, row["id"]),

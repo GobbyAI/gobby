@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
+from gobby.utils.datetime import utc_now
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _session_exists(
@@ -31,7 +32,7 @@ def _close_task_in_txn(
     db: HubDatabase | None = None,
     reason: str | None = None,
     commit_sha: str | None = None,
-    closed_at: str | None = None,
+    closed_at: datetime | str | None = None,
     closed_in_session_id: str | None = None,
     force: bool = False,
     cascade_descendants: bool = False,
@@ -102,7 +103,7 @@ def _complete_terminal_delivery_stage_for_close(
     conn: Transaction,
     task_id: str,
     *,
-    now: str,
+    now: datetime | str,
     completed_by_session_id: str | None,
     commit_sha: str | None,
 ) -> None:
@@ -185,7 +186,7 @@ def _completion_commit_sha_for_stage(
 def _cascade_close_descendants(
     conn: Transaction,
     task_id: str,
-    closed_at: str,
+    closed_at: datetime | str,
     closed_in_session_id: str | None,
     commit_sha: str | None,
 ) -> None:

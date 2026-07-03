@@ -3,10 +3,11 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ class ToolMetricsStore:
             latency_ms: Execution time in milliseconds
             success: Whether the call succeeded
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         metrics_id = str(uuid.uuid4())
         success_inc = 1 if success else 0
         failure_inc = 0 if success else 1
@@ -305,8 +306,7 @@ class ToolMetricsStore:
         """
         Aggregate old metrics into daily summaries.
         """
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        cutoff_str = cutoff.isoformat()
+        cutoff = utc_now() - timedelta(days=retention_days)
 
         rows = self.db.fetchall(
             """
@@ -323,14 +323,14 @@ class ToolMetricsStore:
             WHERE last_called_at < %s
             GROUP BY project_id, server_name, tool_name, date(last_called_at)
             """,
-            (cutoff_str,),
+            (cutoff,),
         )
 
         if not rows:
             return 0
 
         aggregated = 0
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         for row in rows:
             total_calls = row["total_calls"]
@@ -374,15 +374,14 @@ class ToolMetricsStore:
         """
         Delete metrics older than retention period.
         """
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        cutoff_str = cutoff.isoformat()
+        cutoff = utc_now() - timedelta(days=retention_days)
 
         cursor = self.db.execute(
             """
             DELETE FROM tool_metrics
             WHERE last_called_at < %s
             """,
-            (cutoff_str,),
+            (cutoff,),
         )
 
         return cursor.rowcount

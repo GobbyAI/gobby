@@ -6,9 +6,10 @@ from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import elapsed_seconds_greater_than_expr, older_than_now_expr
+from gobby.utils.datetime import utc_now
 
 from ._constants import get_logger
-from ._helpers import _positive_rowcount, utc_now_iso
+from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
 
@@ -121,7 +122,7 @@ class _AgentRunCleanupMixin:
         long_timeout_minutes: int = 1440,
     ) -> int:
         """Mark stale pending agent runs as failed."""
-        now = utc_now_iso()
+        now = utc_now()
         pending_timeout_sql = older_than_now_expr(self.db, "created_at", "%s", "minute")
         with self.db.transaction() as conn:
             cursor = conn.execute(

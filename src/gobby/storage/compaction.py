@@ -1,9 +1,10 @@
 """Task compaction logic."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.datetime import utc_now
 
 
 class TaskCompactor:
@@ -17,8 +18,7 @@ class TaskCompactor:
         Find tasks that have been closed for longer than the specified days
         and haven't been compacted yet.
         """
-        cutoff = datetime.now(UTC) - timedelta(days=days_closed)
-        cutoff_str = cutoff.isoformat()
+        cutoff = utc_now() - timedelta(days=days_closed)
 
         # Query directly since we need custom filtering not exposed by list_tasks
         sql = """
@@ -28,7 +28,7 @@ class TaskCompactor:
               AND compacted_at IS NULL
             ORDER BY updated_at ASC
         """
-        rows = self.task_manager.db.fetchall(sql, (cutoff_str,))
+        rows = self.task_manager.db.fetchall(sql, (cutoff,))
         return [dict(row) for row in rows]
 
     def compact_task(self, task_id: str, summary: str) -> None:
@@ -36,7 +36,7 @@ class TaskCompactor:
         Compact a task by replacing its description with a summary.
         """
         # Update database directly to set compacted_at
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         # We preserve the title but replace description with summary
         # and mark it as compacted.

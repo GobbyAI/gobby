@@ -3,11 +3,11 @@
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp_models import MCPServer, Tool
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class MCPToolStorageMixin:
             return 0
         entries = _normalized_tool_entries(tools)
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             conn.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server.id,))
             for tool_name, tool in entries:
@@ -144,7 +144,7 @@ class MCPToolStorageMixin:
         normalized_tools = [tool for _tool_name, tool in entries]
 
         stats = {"added": 0, "updated": 0, "removed": 0, "unchanged": 0}
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         current_tool_names = {tool_name for tool_name, _tool in entries}
 

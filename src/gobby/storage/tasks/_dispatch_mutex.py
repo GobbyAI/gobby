@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
+from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
 @dataclass(frozen=True)
@@ -31,14 +32,13 @@ class DispatchMutex:
         )
 
 
-def _coerce_timestamp(value: datetime | str | None) -> str:
+def _coerce_timestamp(value: datetime | str | None) -> datetime:
     if value is None:
-        return datetime.now(UTC).isoformat()
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        return value.isoformat()
-    return value
+        return utc_now()
+    parsed = parse_stored_datetime(value)
+    if parsed is None:
+        raise ValueError("timestamp is required")
+    return parsed
 
 
 class TaskDispatchMutexManager:
@@ -98,10 +98,8 @@ class TaskDispatchMutexManager:
         run_id: str | None = None,
         now: datetime | str | None = None,
     ) -> bool:
-        now_iso = _coerce_timestamp(now)
-        lease_until = _coerce_timestamp(
-            datetime.fromisoformat(now_iso) + timedelta(seconds=ttl_seconds)
-        )
+        now_value = _coerce_timestamp(now)
+        lease_until = now_value + timedelta(seconds=ttl_seconds)
 
         with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
             row = conn.execute(
@@ -113,7 +111,8 @@ class TaskDispatchMutexManager:
                 existing_until = row["lease_until"]
                 existing_holder = row["lease_holder"]
                 existing_run_id = row["run_id"]
-                if existing_until is not None and existing_until >= now_iso:
+                existing_until_value = parse_stored_datetime(existing_until)
+                if existing_until_value is not None and existing_until_value >= now_value:
                     if existing_holder != holder:
                         return False
                     if existing_run_id is not None and existing_run_id != run_id:
@@ -133,7 +132,7 @@ class TaskDispatchMutexManager:
                     action_kind = excluded.action_kind,
                     updated_at = excluded.updated_at
                 """,
-                (task_id, lease_until, holder, next_run_id, kind, now_iso),
+                (task_id, lease_until, holder, next_run_id, kind, now_value),
             )
             return True
 
@@ -183,10 +182,8 @@ class TaskDispatchMutexManager:
         ttl_seconds: int,
         now: datetime | str | None = None,
     ) -> bool:
-        now_iso = _coerce_timestamp(now)
-        lease_until = _coerce_timestamp(
-            datetime.fromisoformat(now_iso) + timedelta(seconds=ttl_seconds)
-        )
+        now_value = _coerce_timestamp(now)
+        lease_until = now_value + timedelta(seconds=ttl_seconds)
 
         with self.db.transaction_immediate(DispatchMutexRow(task_id=task_id)) as conn:
             cursor = conn.execute(
@@ -198,12 +195,12 @@ class TaskDispatchMutexManager:
                    AND lease_holder = %s
                    AND run_id = %s
                 """,
-                (lease_until, now_iso, task_id, lease_holder, run_id),
+                (lease_until, now_value, task_id, lease_holder, run_id),
             )
             return cursor.rowcount > 0
 
     def sweep_expired(self, *, now: datetime | str | None = None) -> int:
-        now_iso = _coerce_timestamp(now)
+        now_value = _coerce_timestamp(now)
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """
@@ -211,7 +208,7 @@ class TaskDispatchMutexManager:
                 WHERE lease_until IS NOT NULL
                   AND lease_until < %s
                 """,
-                (now_iso,),
+                (now_value,),
             )
             return cursor.rowcount
 

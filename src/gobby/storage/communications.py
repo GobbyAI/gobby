@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import (
@@ -16,6 +16,12 @@ from gobby.communications.models import (
     CommsRoutingRule,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import (
+    datetime_to_required_iso,
+    parse_stored_datetime,
+    to_aware_utc,
+    utc_now,
+)
 
 if TYPE_CHECKING:
     pass
@@ -132,11 +138,13 @@ class LocalCommunicationsStore:
         if not identity.id:
             identity.id = str(uuid.uuid4())
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         if not identity.created_at:
-            identity.created_at = now
+            identity.created_at = datetime_to_required_iso(now)
         if not identity.updated_at:
-            identity.updated_at = now
+            identity.updated_at = datetime_to_required_iso(now)
+        created_at_value = parse_stored_datetime(identity.created_at)
+        updated_at_value = parse_stored_datetime(identity.updated_at)
 
         if identity.project_id is None and self.project_id:
             identity.project_id = self.project_id
@@ -157,8 +165,8 @@ class LocalCommunicationsStore:
                     identity.session_id,
                     identity.project_id,
                     json.dumps(identity.metadata_json),
-                    identity.created_at,
-                    identity.updated_at,
+                    created_at_value,
+                    updated_at_value,
                 ),
             )
         return identity
@@ -332,9 +340,11 @@ class LocalCommunicationsStore:
 
     def delete_messages_before(self, cutoff: datetime) -> int:
         """Delete messages created before the given cutoff date."""
-        cutoff_iso = cutoff.isoformat()
+        cutoff_value = to_aware_utc(cutoff)
         with self.db.transaction() as conn:
-            cursor = conn.execute("DELETE FROM comms_messages WHERE created_at < %s", (cutoff_iso,))
+            cursor = conn.execute(
+                "DELETE FROM comms_messages WHERE created_at < %s", (cutoff_value,)
+            )
             return cursor.rowcount
 
     def update_message_status(self, message_id: str, status: str, error: str | None = None) -> None:

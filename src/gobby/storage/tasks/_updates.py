@@ -1,7 +1,7 @@
 """Raw task update storage primitives."""
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, cast
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -14,6 +14,7 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._read import get_task
+from gobby.utils.datetime import utc_now
 
 
 def _locked_parent_task_id(conn: Any, task_id: str) -> str | None:
@@ -68,7 +69,7 @@ def update_task(
     dispatch_failure_count: MaybeUnset[int | None] = UNSET,
     merge_in_progress: MaybeUnset[bool] = UNSET,
     blocked_by_merge: MaybeUnset[bool] = UNSET,
-    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     github_issue_number: MaybeUnset[int | None] = UNSET,
     github_pr_number: MaybeUnset[int | None] = UNSET,
@@ -96,7 +97,7 @@ def update_task(
     current_task = get_task(db, task_id)
     updates: list[str] = []
     params: list[Any] = []
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     task_columns = table_column_names(db, "tasks")
 
     if title is not UNSET:
@@ -193,7 +194,9 @@ def update_task(
         params.append(json.dumps(additional_skills) if additional_skills is not None else None)
     next_closed_at = current_task.closed_at if closed_at is UNSET else cast(str | None, closed_at)
     next_escalated_at = (
-        current_task.escalated_at if escalated_at is UNSET else cast(str | None, escalated_at)
+        current_task.escalated_at
+        if escalated_at is UNSET
+        else cast(datetime | str | None, escalated_at)
     )
 
     if closed_at is not UNSET:
@@ -283,7 +286,7 @@ def update_task_metadata(
     dispatch_failure_count: MaybeUnset[int | None] = UNSET,
     merge_in_progress: MaybeUnset[bool] = UNSET,
     blocked_by_merge: MaybeUnset[bool] = UNSET,
-    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     github_issue_number: MaybeUnset[int | None] = UNSET,
     github_pr_number: MaybeUnset[int | None] = UNSET,

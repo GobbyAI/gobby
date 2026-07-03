@@ -9,7 +9,7 @@ import json
 import logging
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19,6 +19,7 @@ from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronJob
 from gobby.storage.cron_runs import CronRunStorageMixin
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,29 @@ class _Unset:
 UNSET = _Unset()
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+def _model_timestamp(value: datetime) -> str:
+    timestamp = datetime_to_iso(value)
+    if timestamp is None:
+        raise AssertionError("datetime_to_iso unexpectedly returned None for a datetime")
+    return timestamp
+
+
+def _optional_model_timestamp(value: datetime | None) -> str | None:
+    return datetime_to_iso(value)
+
+
+def _db_timestamp(value: object) -> object:
+    if value is None or value is UNSET:
+        return value
+    if isinstance(value, datetime | str):
+        return parse_stored_datetime(value)
+    return value
+
+
+def _normalize_timestamp_fields(fields: dict[str, Any]) -> None:
+    for field in ("run_at", "next_run_at", "last_run_at", "created_at", "updated_at"):
+        if field in fields:
+            fields[field] = _db_timestamp(fields[field])
 
 
 def _normalize_interval_seconds(schedule_type: str, interval_seconds: int | None) -> int | None:
@@ -159,7 +181,8 @@ class CronJobStorage(CronRunStorageMixin):
     ) -> CronJob:
         """Create a new cron job."""
         job_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = _model_timestamp(now)
 
         interval_seconds = _normalize_interval_seconds(schedule_type, interval_seconds)
 
@@ -170,8 +193,8 @@ class CronJobStorage(CronRunStorageMixin):
             schedule_type=schedule_type,
             action_type=action_type,
             action_config=action_config,
-            created_at=now,
-            updated_at=now,
+            created_at=now_model,
+            updated_at=now_model,
             description=description,
             cron_expr=cron_expr,
             interval_seconds=interval_seconds,
@@ -184,7 +207,7 @@ class CronJobStorage(CronRunStorageMixin):
         # Compute initial next_run_at
         next_run = compute_next_run(job)
         if next_run:
-            job.next_run_at = next_run.isoformat()
+            job.next_run_at = _model_timestamp(next_run)
 
         self.db.execute(
             """
@@ -205,18 +228,18 @@ class CronJobStorage(CronRunStorageMixin):
                 job.schedule_type,
                 job.cron_expr,
                 job.interval_seconds,
-                job.run_at,
+                _db_timestamp(job.run_at),
                 job.timezone,
                 job.action_type,
                 json.dumps(job.action_config),
                 bool(job.enabled),
                 bool(job.is_system),
-                job.next_run_at,
+                next_run,
                 job.last_run_at,
                 job.last_status,
                 job.consecutive_failures,
-                job.created_at,
-                job.updated_at,
+                now,
+                now,
             ),
         )
 
@@ -323,6 +346,7 @@ class CronJobStorage(CronRunStorageMixin):
 
         if "action_config" in fields and isinstance(fields["action_config"], dict):
             fields["action_config"] = json.dumps(fields["action_config"])
+        _normalize_timestamp_fields(fields)
 
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [job_id]
@@ -381,7 +405,7 @@ class CronJobStorage(CronRunStorageMixin):
         resulting_next_run_at = fields.get("next_run_at", job.next_run_at)
         if resulting_enabled and resulting_next_run_at is None:
             raise ValueError("enabled=True requires next_run_at")
-        fields["updated_at"] = _utc_now_iso()
+        fields["updated_at"] = utc_now()
 
         return self._update_job_fields(job_id, **fields)
 
@@ -445,7 +469,7 @@ class CronJobStorage(CronRunStorageMixin):
                 "is reserved for gobby-managed system cron rows."
             )
 
-        fields = {
+        fields: dict[str, Any] = {
             "name": name,
             "enabled": enabled,
             "next_run_at": next_run_at,
@@ -460,7 +484,7 @@ class CronJobStorage(CronRunStorageMixin):
                 "enabled=True requires next_run_at when repairing system cron identity"
             )
 
-        update_fields["updated_at"] = _utc_now_iso()
+        update_fields["updated_at"] = utc_now()
         return self._update_job_fields(job_id, **update_fields)
 
     def park_system_job(self, job_id: str) -> CronJob | None:
@@ -490,7 +514,7 @@ class CronJobStorage(CronRunStorageMixin):
         next_run = compute_next_run(job)
         return self.update_system_job_bookkeeping(
             job_id,
-            next_run_at=next_run.isoformat() if next_run else None,
+            next_run_at=next_run,
         )
 
     def reconcile_system_job_definition(
@@ -540,8 +564,8 @@ class CronJobStorage(CronRunStorageMixin):
 
         candidate = replace(job, **fields)
         next_run = compute_next_run(candidate) if candidate.enabled else None
-        fields["next_run_at"] = next_run.isoformat() if next_run else None
-        fields["updated_at"] = _utc_now_iso()
+        fields["next_run_at"] = next_run
+        fields["updated_at"] = utc_now()
         return self._update_job_fields(job_id, **fields)
 
     def delete_job(self, job_id: str) -> bool:
@@ -605,7 +629,7 @@ class CronJobStorage(CronRunStorageMixin):
 
             enabled_job = replace(job, enabled=True)
             next_run = compute_next_run(enabled_job)
-            updates["next_run_at"] = next_run.isoformat() if next_run else None
+            updates["next_run_at"] = next_run
         else:
             updates["next_run_at"] = None
 
@@ -613,7 +637,7 @@ class CronJobStorage(CronRunStorageMixin):
             updated = self._update_job_fields(
                 job_id,
                 enabled=updates["enabled"],
-                updated_at=_utc_now_iso(),
+                updated_at=utc_now(),
             )
             if updated is None:
                 return None
@@ -626,7 +650,7 @@ class CronJobStorage(CronRunStorageMixin):
 
     def get_due_jobs(self) -> list[CronJob]:
         """Get enabled jobs whose next_run_at has passed."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         rows = self.db.fetchall(
             """
             SELECT * FROM cron_jobs

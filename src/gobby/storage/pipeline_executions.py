@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
@@ -56,7 +57,8 @@ class PipelineExecutionStorageMixin:
         """
         project_id = self._require_project_id()
         execution_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
 
         with self.db.transaction():
             self.db.execute(
@@ -93,8 +95,8 @@ class PipelineExecutionStorageMixin:
             parent_execution_id=parent_execution_id,
             continuation_prompt=continuation_prompt,
             definition_json=definition_json,
-            created_at=now,
-            updated_at=now,
+            created_at=now_model,
+            updated_at=now_model,
         )
 
     def get_execution(self, execution_id: str) -> PipelineExecution | None:
@@ -131,7 +133,7 @@ class PipelineExecutionStorageMixin:
         Returns:
             Updated PipelineExecution or None if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         completed_at = (
             now
             if status
@@ -373,7 +375,7 @@ class PipelineExecutionStorageMixin:
             execution_id: Execution ID to update
             review_json: JSON string containing the review data
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         project_clause, project_params = self._project_predicate()
         self.db.execute(
             (
@@ -572,7 +574,7 @@ class PipelineExecutionStorageMixin:
         Returns:
             Number of executions marked as interrupted.
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         def build_not_in_clause(
             ids: set[str] | None, column_name: str
@@ -658,9 +660,7 @@ class PipelineExecutionStorageMixin:
         Returns:
             List of stalled PipelineExecution instances
         """
-        from datetime import timedelta
-
-        cutoff = (datetime.now(UTC) - timedelta(seconds=stall_threshold_seconds)).isoformat()
+        cutoff = utc_now() - timedelta(seconds=stall_threshold_seconds)
 
         project_clause, project_params = self._project_predicate()
         rows = self.db.fetchall(

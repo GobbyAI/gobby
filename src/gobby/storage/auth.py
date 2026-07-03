@@ -10,6 +10,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 # Session durations
 SESSION_DURATION = timedelta(hours=12)  # Default (no remember-me)
@@ -38,7 +39,7 @@ class AuthStore:
 
         self.db.execute(
             "INSERT INTO auth_sessions (token_hash, expires_at, remember_me) VALUES (%s, %s, %s)",
-            (_hash_token(token), expires_at.isoformat(), bool(remember_me)),
+            (_hash_token(token), expires_at, bool(remember_me)),
         )
 
         # Opportunistically clean up expired sessions
@@ -75,5 +76,5 @@ class AuthStore:
 
     def _cleanup_expired(self) -> None:
         """Remove expired sessions."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute("DELETE FROM auth_sessions WHERE expires_at < %s", (now,))

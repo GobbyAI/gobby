@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Protocol
 
 from gobby.storage.session_models import Session
@@ -43,7 +44,7 @@ def update_existing_session(
     is_local: bool | None,
     sandbox_enabled: bool | None,
     sandbox_policy_hash: str | None,
-    now: str,
+    now: datetime | str,
 ) -> Session:
     conn.execute(
         """

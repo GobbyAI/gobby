@@ -8,13 +8,13 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 import psycopg
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ class MergeResolutionManager:
         Returns:
             The created MergeResolution
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         resolution_id = str(uuid.uuid5(_NS_MERGE_RESOLUTIONS, worktree_id + source_branch))
 
         with self.db.transaction() as conn:
@@ -301,7 +301,7 @@ class MergeResolutionManager:
         Returns:
             The updated MergeResolution if found, None otherwise
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         with self.db.transaction() as conn:
             if force_status:
@@ -435,7 +435,7 @@ class MergeResolutionManager:
         Returns:
             The created MergeConflict
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         conflict_id = str(uuid.uuid5(_NS_MERGE_CONFLICTS, resolution_id + file_path))
 
         with self.db.transaction() as conn:
@@ -502,7 +502,7 @@ class MergeResolutionManager:
         Returns:
             The updated MergeConflict if found, None otherwise
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         with self.db.transaction() as conn:
             if force_status:

@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 from gobby.utils.datetime import (
     datetime_to_iso,
+    datetime_to_required_iso,
     parse_stored_datetime,
     to_aware_utc,
     to_json_safe,
@@ -46,6 +47,13 @@ def test_datetime_to_iso_serializes_boundary_values_as_utc() -> None:
 
     assert datetime_to_iso(value) == "2026-01-02T03:30:00+00:00"
     assert datetime_to_iso(None) is None
+
+
+def test_datetime_to_required_iso_serializes_non_optional_values() -> None:
+    offset = timezone(-timedelta(hours=5))
+    value = datetime(2026, 1, 1, 22, 30, tzinfo=offset)
+
+    assert datetime_to_required_iso(value) == "2026-01-02T03:30:00+00:00"
 
 
 def test_to_json_safe_recursively_serializes_datetime_and_date_values() -> None:

@@ -1,6 +1,5 @@
 """Task automation candidate and stale-claim helpers."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -9,6 +8,7 @@ from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
+from gobby.utils.datetime import utc_now
 
 
 def _is_unattended(task: Any) -> bool:
@@ -31,7 +31,7 @@ def list_automation_candidates(
     project_id: str | None = None,
 ) -> list[Task]:
     """List unclaimed, unleased, dependency-ready tasks eligible for dispatch."""
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     params: list[Any] = [now]
     project_filter = ""
     if project_id is not None:
@@ -96,7 +96,7 @@ def sweep_stale_claims(
     project_id: str | None = None,
 ) -> int:
     """Release task claims held by sessions that are no longer active."""
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     params: list[Any] = [now]
     project_filter = ""
     if project_id is not None:

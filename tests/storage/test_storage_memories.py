@@ -490,7 +490,7 @@ def test_update_access_stats(memory_manager) -> None:
     # Retrieve and verify
     updated = memory_manager.get_memory(memory.id)
     assert updated.access_count == 1
-    assert updated.last_accessed_at == access_time
+    assert updated.last_accessed_at == datetime.fromisoformat(access_time)
 
     # Update again
     access_time2 = datetime.now(UTC).isoformat()
@@ -498,7 +498,7 @@ def test_update_access_stats(memory_manager) -> None:
 
     updated2 = memory_manager.get_memory(memory.id)
     assert updated2.access_count == 2
-    assert updated2.last_accessed_at == access_time2
+    assert updated2.last_accessed_at == datetime.fromisoformat(access_time2)
 
 
 def test_search_memories_with_project(memory_manager, db) -> None:

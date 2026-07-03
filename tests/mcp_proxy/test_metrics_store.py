@@ -16,6 +16,8 @@ PROJECT_1 = "88888888-8888-4888-8888-888888888881"
 PROJECT_2 = "88888888-8888-4888-8888-888888888882"
 PG_RECORD_CALL_PROJECT = "88888888-8888-4888-8888-888888888883"
 PG_DAILY_AGGREGATE_PROJECT = "88888888-8888-4888-8888-888888888884"
+OLD_METRICS_ID = "77777777-7777-4777-8777-777777777771"
+PG_DAILY_METRICS_ID = "77777777-7777-4777-8777-777777777772"
 
 
 @pytest.fixture
@@ -141,7 +143,7 @@ class TestToolMetricsStore:
                 last_called_at, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, 10, 8, 2, 1000.0, 100.0, %s, %s, %s)
             """,
-            ("tm-old", PROJECT_1, "s1", "t1", old_time, old_time, old_time),
+            (OLD_METRICS_ID, PROJECT_1, "s1", "t1", old_time, old_time, old_time),
         )
 
         aggregated = metrics_store.aggregate_to_daily(retention_days=7)
@@ -202,7 +204,15 @@ class TestPostgresToolMetricsStore:
                 last_called_at, created_at, updated_at
             ) VALUES (%s, %s, %s, %s, 2, 1, 1, 300.0, 150.0, %s, %s, %s)
             """,
-            ("tm-pg-daily", project_id, "context7", "get-docs", old_time, old_time, old_time),
+            (
+                PG_DAILY_METRICS_ID,
+                project_id,
+                "context7",
+                "get-docs",
+                old_time,
+                old_time,
+                old_time,
+            ),
         )
         postgres_db.execute(
             """

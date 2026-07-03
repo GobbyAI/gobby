@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, cast
 
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
@@ -13,6 +13,7 @@ from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
 from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import ManifestAlreadyInitializedError, StageManifestSpec
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def cascade_build_state_to_subtree(
         unattended = bool(yolo)
     normalized_isolation = Isolation(isolation).value
     _ = tuple(skip_stages)
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
 
     root_row = db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (epic_id,))
     if root_row is None:
@@ -70,7 +71,7 @@ def cascade_build_state_to_subtree(
         if not rows:
             raise ValueError(f"Task {epic_id} not found")
 
-        update_params: list[tuple[bool, bool, str, str, str]] = []
+        update_params: list[tuple[bool, bool, str, datetime, str]] = []
         for row in rows:
             task_id = cast(str, row["id"])
             if task_id != epic_id and row["closed_at"] is not None:
@@ -172,7 +173,7 @@ def _remove_pristine_omitted_stages_for_build_cascade(
 
     previous_shape = ",".join(existing_names)
     desired_by_name = {spec.stage_name: spec for spec in desired}
-    now = datetime.now(UTC).isoformat()
+    now = utc_now()
     with db.transaction() as conn:
         conn.executemany(
             "DELETE FROM task_stage_states WHERE task_id = %s AND stage_name = %s",

@@ -12,6 +12,7 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class WorkflowAuditManager:
             The inserted row ID, or None on failure.
         """
         try:
-            timestamp = datetime.now(UTC).isoformat()
+            timestamp = utc_now()
             context_json = json.dumps(context) if context else None
 
             row = self.db.execute(

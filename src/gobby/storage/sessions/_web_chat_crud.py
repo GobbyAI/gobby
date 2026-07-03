@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import ClassVar, Protocol
 
 from gobby.storage.hub.protocol import HubDatabase, WebChatSessionBootstrap
 from gobby.storage.session_models import Session
+from gobby.utils.datetime import utc_now
 
 
 class _SessionWebChatCRUDHost(Protocol):
@@ -75,7 +75,7 @@ class _SessionWebChatCRUDMixin:
             if model is None and chat_mode is None:
                 return session
 
-            now = datetime.now(UTC).isoformat()
+            now = utc_now()
             self.db.execute(
                 """
                 UPDATE sessions

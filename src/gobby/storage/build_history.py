@@ -7,11 +7,12 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -448,8 +449,8 @@ def _optional_str(value: Any) -> str | None:
     return str(value) if value is not None else None
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _limit(value: int) -> int:

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.utils.datetime import utc_now
 
 from ._bootstrap import TitleChangeCallback
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
@@ -37,7 +37,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         Service-style callers that only need a success flag should use
         SessionManager.update_session_status().
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET status = %s, updated_at = %s WHERE id = %s",
@@ -62,7 +62,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         if current.status != "expired" or current.session_type != "terminal":
             return current
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 """
@@ -83,7 +83,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
 
     def mark_had_edits(self: _ManagerState, session_id: str) -> Session | None:
         """Mark session as having edits."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET had_edits = TRUE, updated_at = %s WHERE id = %s",
@@ -93,7 +93,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
 
     def clear_had_edits(self: _ManagerState, session_id: str) -> None:
         """Reset had_edits after a task is closed with a linked commit."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET had_edits = FALSE, updated_at = %s WHERE id = %s",
@@ -106,7 +106,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
             raise ValueError(
                 f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
             )
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET chat_mode = %s, updated_at = %s WHERE id = %s",
@@ -118,7 +118,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         import json as _json
 
         tools_json = _json.dumps(sorted(tools)) if tools else None
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET approved_tools_json = %s, updated_at = %s WHERE id = %s",
@@ -146,7 +146,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         if not title_changed and not source_changed:
             return current
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         values: dict[str, Any] = {"updated_at": now}
         if title_changed:
             values["title"] = title
@@ -212,7 +212,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         changed_title = title if title is not None and current.title != title else None
         source_changed = title_source is not None and current.title_source != title_source
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         values: dict[str, Any] = {
             "last_turn_markdown": last_turn_markdown,
             "digest_markdown": digest_markdown,
@@ -242,7 +242,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
 
     def update_model(self: _ManagerState, session_id: str, model: str) -> Session | None:
         """Update session model (LLM model used)."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET model = %s, updated_at = %s WHERE id = %s",
@@ -257,7 +257,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         self: _ManagerState, session_id: str, digest_markdown: str
     ) -> Session | None:
         """Update session rolling digest markdown."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 """
@@ -277,7 +277,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         self: _ManagerState, session_id: str, last_turn_markdown: str
     ) -> Session | None:
         """Update session last turn markdown record."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 """
@@ -297,7 +297,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         self: _ManagerState, session_id: str, hash_value: str
     ) -> None:
         """Update the last digest input hash for idempotency."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 """
@@ -315,7 +315,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         """Update parent session ID."""
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             sanitized_parent_session_id = sanitize_parent_session_id(
                 conn,

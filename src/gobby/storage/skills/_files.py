@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.skills._models import SkillFile
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -40,7 +40,7 @@ class SkillFilesMixin:
         Returns:
             Number of files created or updated
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         changed = 0
 
         with self.db.transaction() as conn:
@@ -218,7 +218,7 @@ class SkillFilesMixin:
         Returns:
             Number of files soft-deleted
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE skill_files SET deleted_at = %s, updated_at = %s "
@@ -236,7 +236,7 @@ class SkillFilesMixin:
         Returns:
             Number of files restored
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE skill_files SET deleted_at = NULL, updated_at = %s "

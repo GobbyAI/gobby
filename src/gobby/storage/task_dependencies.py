@@ -1,10 +1,10 @@
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,8 @@ class TaskDependencyManager:
                 f"Adding dependency {task_id} blocks {depends_on} would create a cycle"
             )
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
 
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -79,7 +80,7 @@ class TaskDependencyManager:
                 raise ValueError("Failed to retrieve dependency ID")
 
             dep_id = int(row["id"])
-            return TaskDependency(dep_id, task_id, depends_on, dep_type, now)
+            return TaskDependency(dep_id, task_id, depends_on, dep_type, now_model)
 
     def remove_dependency(self, task_id: str, depends_on: str) -> bool:
         """Remove a dependency."""

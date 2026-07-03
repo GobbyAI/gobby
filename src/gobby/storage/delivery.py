@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,8 @@ CAMPAIGN_DEFAULT_COLUMNS = frozenset({"state", "delivery_mode", "merge_strategy"
 UNIT_JSON_COLUMNS = frozenset({"protection_json", "gate_snapshot_json"})
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _encode_json(value: Any) -> str | None:

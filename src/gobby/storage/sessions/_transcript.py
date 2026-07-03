@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -53,7 +53,7 @@ class _TranscriptMixin:
         Returns:
             Updated session or None if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET transcript_processed = TRUE, updated_at = %s WHERE id = %s",
@@ -71,7 +71,7 @@ class _TranscriptMixin:
         Returns:
             Updated session or None if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET transcript_processed = FALSE, updated_at = %s WHERE id = %s",

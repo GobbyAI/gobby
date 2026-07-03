@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import timestamp_plus_seconds_before_now_expr
+from gobby.utils.datetime import utc_now
 from gobby.workflows.pipeline_state import StepExecution, StepStatus
 
 
@@ -74,7 +74,7 @@ class PipelineStepStorageMixin:
         Returns:
             Updated StepExecution or None if not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         # Build update parts dynamically (step_executions has no updated_at column)
         updates: list[str] = []

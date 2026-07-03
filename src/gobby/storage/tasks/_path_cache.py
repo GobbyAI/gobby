@@ -5,9 +5,9 @@ which represent the hierarchical position of a task as a dotted seq_num path.
 """
 
 import logging
-from datetime import UTC, datetime
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def update_path_cache(db: HubDatabase, task_id: str) -> str | None:
     """
     path = compute_path_cache(db, task_id)
     if path is not None:
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         db.execute(
             "UPDATE tasks SET path_cache = %s, updated_at = %s WHERE id = %s",
             (path, now, task_id),

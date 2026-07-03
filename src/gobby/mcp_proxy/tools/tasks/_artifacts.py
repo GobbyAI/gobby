@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -21,6 +20,7 @@ from gobby.storage.tasks import (
     TaskArtifacts,
     TaskNotFoundError,
 )
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -252,7 +252,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 SET description = %s, updated_at = %s
                 WHERE id = %s
                 """,
-                (next_description, datetime.now(UTC).isoformat(), resolved_id),
+                (next_description, utc_now(), resolved_id),
             )
             ctx.task_manager._notify_listeners()
         return {"ok": True, "task_id": resolved_id, "appended": True}

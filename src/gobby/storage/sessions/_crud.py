@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
 
 import psycopg
@@ -19,6 +18,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import is_session_uuid
+from gobby.utils.datetime import utc_now
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
@@ -119,7 +119,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         Returns:
             Session instance
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
         try:
@@ -392,7 +392,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         so the 30-minute pause timeout doesn't fire while the tmux pane
         is still alive.
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction():
             self.db.execute(
                 "UPDATE sessions SET updated_at = %s WHERE id = %s",

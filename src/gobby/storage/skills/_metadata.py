@@ -6,11 +6,11 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.storage.sql_dialect import json_text_expr
+from gobby.utils.datetime import utc_now
 
 # Deterministic id namespace: same (name, project, source) -> same id. Skill id
 # stability matters because skill_files ids are seeded with the skill id.
@@ -127,7 +127,7 @@ class SkillMetadataMixin:
         if project_id is not None:
             source = "project"
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
 
         # Check if skill already exists in this project scope with same source
@@ -401,7 +401,7 @@ class SkillMetadataMixin:
             return self.get_skill(skill_id)
 
         updates.append("updated_at = %s")
-        params.append(datetime.now(UTC).isoformat())
+        params.append(utc_now())
         params.append(skill_id)
 
         sql = f"UPDATE skills SET {', '.join(updates)} WHERE id = %s"  # nosec B608
@@ -430,7 +430,7 @@ class SkillMetadataMixin:
         except ValueError:
             return False
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE skills SET deleted_at = %s, updated_at = %s "
@@ -480,7 +480,7 @@ class SkillMetadataMixin:
         Raises:
             ValueError: If skill not found
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE skills SET deleted_at = NULL, updated_at = %s WHERE id = %s",

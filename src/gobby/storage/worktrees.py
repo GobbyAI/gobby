@@ -6,11 +6,12 @@ import logging
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,8 @@ class LocalWorktreeManager:
             Created Worktree instance
         """
         worktree_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
+        now_model = datetime_to_required_iso(now)
 
         self.db.execute(
             """
@@ -160,8 +162,8 @@ class LocalWorktreeManager:
             base_branch=base_branch,
             agent_session_id=agent_session_id,
             status=WorktreeStatus.ACTIVE.value,
-            created_at=now,
-            updated_at=now,
+            created_at=now_model,
+            updated_at=now_model,
             merged_at=None,
             workspace_role=workspace_role,
         )
@@ -299,7 +301,7 @@ class LocalWorktreeManager:
             raise ValueError(f"Invalid field names: {invalid_fields}")
 
         # Add updated_at timestamp
-        fields["updated_at"] = datetime.now(UTC).isoformat()
+        fields["updated_at"] = utc_now()
 
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [worktree_id]
@@ -362,7 +364,7 @@ class LocalWorktreeManager:
         """Claim a worktree only if it is unowned or owned by an allowed prior session."""
         allowed = [value for value in allowed_existing_session_ids if value]
         conditions = ["id = %s", "(agent_session_id IS NULL"]
-        params: list[Any] = [session_id, datetime.now(UTC).isoformat(), worktree_id]
+        params: list[Any] = [session_id, utc_now(), worktree_id]
         if allowed:
             placeholders = ", ".join("%s" for _ in allowed)
             conditions[-1] += f" OR agent_session_id IN ({placeholders})"
@@ -417,12 +419,12 @@ class LocalWorktreeManager:
         Returns:
             Updated Worktree or None if not found
         """
-        now = datetime.now(UTC)
-        cleanup_after = (now + timedelta(days=cleanup_days)).isoformat()
+        now = utc_now()
+        cleanup_after = now + timedelta(days=cleanup_days)
         return self.update(
             worktree_id,
             status=WorktreeStatus.MERGED.value,
-            merged_at=now.isoformat(),
+            merged_at=now,
             cleanup_after=cleanup_after,
         )
 
@@ -456,7 +458,7 @@ class LocalWorktreeManager:
             List of stale Worktree instances
         """
         # Calculate cutoff time
-        cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+        cutoff = utc_now() - timedelta(hours=hours)
 
         rows = self.db.fetchall(
             """
@@ -489,7 +491,7 @@ class LocalWorktreeManager:
         Returns:
             List of expired Worktree instances
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         sql = "SELECT * FROM worktrees WHERE status = %s AND cleanup_after IS NOT NULL AND cleanup_after < %s"
         params: list[Any] = [WorktreeStatus.MERGED.value, now]
         if project_id:

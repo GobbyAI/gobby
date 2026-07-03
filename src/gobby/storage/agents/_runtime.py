@@ -7,8 +7,9 @@ from typing import Any, Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
-from ._helpers import _positive_rowcount, utc_now_iso
+from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
 
@@ -35,7 +36,7 @@ class _AgentRunRuntimeMixin:
         resume_metadata_json: Mapping[str, Any] | None,
     ) -> AgentRun | None:
         """Replace the daemon-stop resume launch snapshot for a run."""
-        now = utc_now_iso()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """
@@ -63,7 +64,7 @@ class _AgentRunRuntimeMixin:
         Returns:
             Updated AgentRun.
         """
-        now = utc_now_iso()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """
@@ -129,7 +130,7 @@ class _AgentRunRuntimeMixin:
         if not updates:
             return
 
-        now = utc_now_iso()
+        now = utc_now()
         updates.append("updated_at = %s")
         params.append(now)
         params.append(run_id)
@@ -145,7 +146,7 @@ class _AgentRunRuntimeMixin:
         tmux_session_name: str,
     ) -> bool:
         """Clear a persisted tmux session name if it still matches."""
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
@@ -170,7 +171,7 @@ class _AgentRunRuntimeMixin:
         child_session_id: str,
     ) -> AgentRun | None:
         """Update the child session ID for an agent run."""
-        now = utc_now_iso()
+        now = utc_now()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """

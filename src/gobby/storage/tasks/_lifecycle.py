@@ -10,7 +10,6 @@ This module provides operations for managing task lifecycle:
 
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -20,6 +19,7 @@ from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
 from gobby.storage.tasks._updates import update_task
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ def link_commit(
     if normalized_sha not in commits:
         commits.append(normalized_sha)
         # Update the commits column in the database
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with db.transaction() as conn:
             conn.execute(
                 "UPDATE tasks SET commits = %s, updated_at = %s WHERE id = %s",
@@ -204,7 +204,7 @@ def unlink_commit(
     if sha_to_remove:
         commits.remove(sha_to_remove)
         # Update the commits column in the database
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         commits_json = json.dumps(commits) if commits else None
         with db.transaction() as conn:
             conn.execute(

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import to_aware_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ class MetricsEventStore:
 
         if since:
             conditions.append("created_at >= %s")
-            params.append(since.isoformat())
+            params.append(to_aware_utc(since))
         if session_id:
             conditions.append("session_id = %s")
             params.append(session_id)
@@ -171,7 +172,7 @@ class MetricsEventStore:
 
         if since:
             conditions.append("created_at >= %s")
-            params.append(since.isoformat())
+            params.append(to_aware_utc(since))
         if session_id:
             conditions.append("session_id = %s")
             params.append(session_id)
@@ -211,10 +212,10 @@ class MetricsEventStore:
             params.append(event_type)
         if since:
             conditions.append("created_at >= %s")
-            params.append(since.isoformat())
+            params.append(to_aware_utc(since))
         if until:
             conditions.append("created_at < %s")
-            params.append(until.isoformat())
+            params.append(to_aware_utc(until))
         if session_id:
             conditions.append("session_id = %s")
             params.append(session_id)
@@ -267,9 +268,9 @@ class MetricsEventStore:
         params: list[Any] = [event_type]
 
         if delta:
-            since = datetime.now(UTC) - delta
+            since = utc_now() - delta
             conditions.append("created_at >= %s")
-            params.append(since.isoformat())
+            params.append(since)
         if name:
             conditions.append("name = %s")
             params.append(name)
@@ -385,7 +386,7 @@ class MetricsEventStore:
 
         Returns the number of events archived.
         """
-        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+        cutoff = utc_now() - timedelta(days=retention_days)
 
         # UPSERT aggregated counts into archive. project_id is a nullable uuid;
         # the rollup constraint is UNIQUE NULLS NOT DISTINCT, so NULL is a

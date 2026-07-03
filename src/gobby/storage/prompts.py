@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from gobby.prompts.models import PromptTemplate, VariableSpec
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 # Deterministic id namespace: same (name, scope, project) -> same id, backing
 # the UNIQUE(name, scope, project_id) constraint with id-level stability.
@@ -286,7 +287,7 @@ class LocalPromptManager:
         Raises:
             ValueError: If prompt already exists in that scope
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         prompt_id = str(uuid.uuid5(_NS_PROMPTS, f"{name}:{scope}:{project_id or 'none'}"))
 
         variables_json = json.dumps(variables) if variables else None
@@ -476,7 +477,7 @@ class LocalPromptManager:
             return existing
 
         updates.append("updated_at = %s")
-        params.append(datetime.now(UTC).isoformat())
+        params.append(utc_now())
         params.append(prompt_id)
 
         sql = f"UPDATE prompts SET {', '.join(updates)} WHERE id = %s"  # nosec B608

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 from gobby.storage.hub.protocol import HubDatabase, SystemSessionBootstrap
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger("gobby.storage.sessions")
 
@@ -44,7 +44,7 @@ def ensure_system_session(db: HubDatabase) -> None:
                 f"({SYSTEM_SESSION_PROJECT_ID})"
             )
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         db.execute(
             """
             INSERT INTO sessions (

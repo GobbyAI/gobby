@@ -7,10 +7,10 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class LocalExpansionRunManager:
         """Create a new expansion run."""
         if run_id is None:
             run_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             INSERT INTO expansion_runs (
@@ -233,7 +233,7 @@ class LocalExpansionRunManager:
 
     def start(self, run_id: str) -> ExpansionRun | None:
         """Mark a run as running."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs
@@ -252,7 +252,7 @@ class LocalExpansionRunManager:
         checkpoints: dict[str, Any] | None = None,
     ) -> ExpansionRun | None:
         """Persist a compiled expansion spec and mark the run compiled."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs
@@ -273,7 +273,7 @@ class LocalExpansionRunManager:
 
     def mark_applying(self, run_id: str) -> ExpansionRun | None:
         """Mark a run as applying."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             "UPDATE expansion_runs SET status = 'applying', updated_at = %s WHERE id = %s",
             (now, run_id),
@@ -290,7 +290,7 @@ class LocalExpansionRunManager:
         completed: bool = True,
     ) -> ExpansionRun | None:
         """Persist apply results and optionally mark the run completed."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         status: ExpansionRunStatus = "completed" if completed else "applying"
         self.db.execute(
             """
@@ -318,7 +318,7 @@ class LocalExpansionRunManager:
 
     def save_qa_result(self, run_id: str, qa_result: dict[str, Any]) -> ExpansionRun | None:
         """Persist QA output for a run."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs
@@ -338,7 +338,7 @@ class LocalExpansionRunManager:
         extra: dict[str, Any] | None = None,
     ) -> ExpansionRun | None:
         """Append a structured log entry to a run."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         entry = {
             "timestamp": now,
             "level": level,
@@ -364,7 +364,7 @@ class LocalExpansionRunManager:
         checkpoints: dict[str, Any],
     ) -> ExpansionRun | None:
         """Replace checkpoint metadata for a run."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs
@@ -377,7 +377,7 @@ class LocalExpansionRunManager:
 
     def fail(self, run_id: str, error: str) -> ExpansionRun | None:
         """Mark a run failed."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs
@@ -391,7 +391,7 @@ class LocalExpansionRunManager:
 
     def cancel(self, run_id: str, error: str | None = None) -> ExpansionRun | None:
         """Mark a run cancelled."""
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs

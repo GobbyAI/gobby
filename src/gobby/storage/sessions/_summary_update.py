@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._summary_protocols import SummaryUpdateHost as _SummaryUpdateHost
+from gobby.utils.datetime import utc_now
 
 
 def _encode_metadata_json(metadata_json: Mapping[str, Any] | None) -> str:
@@ -59,7 +59,7 @@ class _SummaryUpdateMixin:
         if source_digest_turn_count is not None and source_digest_turn_count < 0:
             raise ValueError("source_digest_turn_count must be non-negative")
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         revision_id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
@@ -143,7 +143,7 @@ class _SummaryUpdateMixin:
                 summary_path=summary_path,
             )
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         with self.db.transaction() as conn:
             conn.execute(
                 """

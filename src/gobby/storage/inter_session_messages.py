@@ -9,8 +9,9 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from gobby.utils.datetime import datetime_to_required_iso, utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -160,7 +161,8 @@ class InterSessionMessageManager:
             The created InterSessionMessage
         """
         message_id = str(uuid.uuid4())
-        sent_at = datetime.now(UTC).isoformat()
+        sent_at = utc_now()
+        sent_at_model = datetime_to_required_iso(sent_at)
 
         self.db.execute(
             """
@@ -187,7 +189,7 @@ class InterSessionMessageManager:
             to_session=to_session,
             content=content,
             priority=priority,
-            sent_at=sent_at,
+            sent_at=sent_at_model,
             read_at=None,
             message_type=message_type,
             metadata_json=metadata_json,
@@ -273,7 +275,7 @@ class InterSessionMessageManager:
         Raises:
             ValueError: If message not found
         """
-        read_at = datetime.now(UTC).isoformat()
+        read_at = utc_now()
 
         self.db.execute(
             "UPDATE inter_session_messages SET read_at = %s WHERE id = %s",
@@ -373,7 +375,7 @@ class InterSessionMessageManager:
         Raises:
             ValueError: If message not found
         """
-        delivered_at = datetime.now(UTC).isoformat()
+        delivered_at = utc_now()
 
         self.db.execute(
             "UPDATE inter_session_messages SET delivered_at = %s WHERE id = %s",

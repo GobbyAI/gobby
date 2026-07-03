@@ -1,9 +1,9 @@
 import logging
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import Task
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class SessionTaskManager:
         if action not in self.VALID_ACTIONS:
             raise ValueError(f"Invalid action '{action}'. Must be one of {self.VALID_ACTIONS}")
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
 
         with self.db.transaction() as conn:
             conn.execute(

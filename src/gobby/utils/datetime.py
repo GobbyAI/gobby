@@ -38,6 +38,11 @@ def datetime_to_iso(value: datetime | None) -> str | None:
     return to_aware_utc(value).isoformat()
 
 
+def datetime_to_required_iso(value: datetime) -> str:
+    """Serialize a required datetime for an external JSON/text boundary."""
+    return to_aware_utc(value).isoformat()
+
+
 def to_json_safe(value: Any) -> Any:
     """Recursively serialize datetime/date values for JSON boundaries."""
     if isinstance(value, datetime):

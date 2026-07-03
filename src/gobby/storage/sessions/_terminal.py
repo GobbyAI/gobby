@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.utils.datetime import to_aware_utc, utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -33,7 +34,7 @@ class _TerminalMixin:
         Returns:
             List of sessions created since the given timestamp
         """
-        since_str = since.isoformat()
+        since_value = to_aware_utc(since)
 
         if project_id:
             rows = self.db.fetchall(
@@ -43,7 +44,7 @@ class _TerminalMixin:
                 AND project_id = %s
                 ORDER BY created_at DESC
                 """,
-                (since_str, project_id),
+                (since_value, project_id),
             )
         else:
             rows = self.db.fetchall(
@@ -52,7 +53,7 @@ class _TerminalMixin:
                 WHERE created_at >= %s
                 ORDER BY created_at DESC
                 """,
-                (since_str,),
+                (since_value,),
             )
 
         return [Session.from_row(row) for row in rows]
@@ -95,7 +96,7 @@ class _TerminalMixin:
         if not values:
             return self.get(session_id)
 
-        values["updated_at"] = datetime.now(UTC).isoformat()
+        values["updated_at"] = utc_now()
 
         self.db.safe_update("sessions", values, "id = %s", (session_id,))
         return self.get(session_id)
@@ -110,7 +111,7 @@ class _TerminalMixin:
         Returns:
             Number of new skills recorded
         """
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         count = 0
         with self.db.transaction():
             for name in skill_names:

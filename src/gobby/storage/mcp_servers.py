@@ -3,7 +3,6 @@
 import json
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.mcp_proxy.bundled import (
@@ -15,6 +14,7 @@ from gobby.mcp_proxy.bundled import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp_models import MCPServer, Tool
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.utils.datetime import utc_now
 
 
 def _parse_mcp_bool(value: Any, *, field_name: str, allow_none: bool = False) -> bool | None:
@@ -59,7 +59,7 @@ class MCPServerStorageMixin:
     ) -> MCPServer:
         """Persist a server row without applying bundled-server cleanup."""
         server_id = str(uuid.uuid4())
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         requires_oauth_value = _parse_mcp_bool(
             requires_oauth,
             field_name="requires_oauth",
@@ -152,7 +152,7 @@ class MCPServerStorageMixin:
         if not tools:
             return
 
-        now = datetime.now(UTC).isoformat()
+        now = utc_now()
         for tool in tools:
             self.db.execute(
                 """
@@ -500,7 +500,7 @@ class MCPServerStorageMixin:
         if "connect_timeout" in fields and fields["connect_timeout"] is not None:
             fields["connect_timeout"] = float(fields["connect_timeout"])
 
-        fields["updated_at"] = datetime.now(UTC).isoformat()
+        fields["updated_at"] = utc_now()
 
         set_clause = ", ".join(f"{k} = %s" for k in fields)
         # Update by server ID to be precise

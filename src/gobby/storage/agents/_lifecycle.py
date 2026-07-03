@@ -8,9 +8,10 @@ from typing import Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.datetime import utc_now
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, get_logger
-from ._helpers import _positive_rowcount, utc_now_iso
+from ._helpers import _positive_rowcount
 from ._models import AgentRun
 
 
@@ -64,7 +65,7 @@ class _AgentRunLifecycleMixin:
         """
         if run_id is None:
             run_id = str(uuid.uuid4())
-        now = utc_now_iso()
+        now = utc_now()
 
         self.db.execute(
             """
@@ -115,7 +116,7 @@ class _AgentRunLifecycleMixin:
 
     def start(self: _AgentRunLifecycleHost, run_id: str) -> AgentRun | None:
         """Mark agent run as started."""
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
@@ -139,7 +140,7 @@ class _AgentRunLifecycleMixin:
             return 0
 
         placeholders = ", ".join("%s" for _ in filtered_run_ids)
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             f"""
             UPDATE sessions
@@ -163,7 +164,7 @@ class _AgentRunLifecycleMixin:
     def expire_sessions_for_terminal_runs(self: _AgentRunLifecycleHost) -> int:
         """Expire active/paused child sessions whose agent run is already terminal."""
         status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             f"""
             UPDATE sessions
@@ -208,7 +209,7 @@ class _AgentRunLifecycleMixin:
         Returns:
             Updated AgentRun.
         """
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
@@ -248,7 +249,7 @@ class _AgentRunLifecycleMixin:
         Returns:
             Updated AgentRun.
         """
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
@@ -277,7 +278,7 @@ class _AgentRunLifecycleMixin:
         tool_calls_count: int = 0,
     ) -> AgentRun | None:
         """Mark agent run as timed out."""
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
@@ -305,7 +306,7 @@ class _AgentRunLifecycleMixin:
         terminal_reason: AgentRunTerminalReason | None = None,
     ) -> AgentRun | None:
         """Mark agent run as cancelled."""
-        now = utc_now_iso()
+        now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs

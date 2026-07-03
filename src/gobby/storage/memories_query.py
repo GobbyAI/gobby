@@ -1,8 +1,10 @@
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory, Visibility, visibility_predicate
 from gobby.storage.sql_dialect import json_array_contains_condition, json_empty_array_coalesce_expr
+from gobby.utils.datetime import parse_stored_datetime
 
 
 class MemoryQueryMixin(MemoryStoreBase):
@@ -99,14 +101,17 @@ class MemoryQueryMixin(MemoryStoreBase):
         )
         return [Memory.from_row(row) for row in rows]
 
-    def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
+    def update_access_stats(self, memory_id: str, accessed_at: datetime | str) -> None:
         """
         Update access count and last accessed timestamp for a memory.
 
         Args:
             memory_id: Memory ID to update
-            accessed_at: ISO format timestamp of access
+            accessed_at: Timestamp of access
         """
+        accessed_at_dt = parse_stored_datetime(accessed_at)
+        if accessed_at_dt is None:
+            raise ValueError("accessed_at is required")
         with self.db.transaction() as conn:
             conn.execute(
                 """
@@ -115,7 +120,7 @@ class MemoryQueryMixin(MemoryStoreBase):
                     last_accessed_at = %s
                 WHERE id = %s
                 """,
-                (accessed_at, memory_id),
+                (accessed_at_dt, memory_id),
             )
 
     def search_memories(

@@ -914,7 +914,8 @@ class TestLocalWorktreeManagerStatusTransitions:
         call_args = mock_db.execute.call_args
         params = call_args[0][1]
         assert WorktreeStatus.MERGED.value in params
-        cleanup_after = datetime.fromisoformat(params[2])
+        cleanup_after = params[2]
+        assert isinstance(cleanup_after, datetime)
         assert before <= cleanup_after <= datetime.now(UTC) + timedelta(seconds=1)
 
     def test_mark_abandoned_sets_status(
