@@ -545,6 +545,7 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
 
     # keep is not a mutation; delete/review/refresh each count once.
     assert summary["mutations"] == 3
+    assert summary["errors"] == 0
     # delete and review soft-hide rather than physically removing the row.
     assert db.memories["hide-me"]["deleted_at"] is not None
     assert db.memories["hide-me"]["dream_action"] == "delete"
@@ -735,6 +736,7 @@ async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
 @pytest.mark.asyncio
 async def test_apply_dream_plan_dry_run_includes_planned_action_preview() -> None:
     db = _FakeDreamDB()
+    db.memories = {"memory-1": _row("memory-1", "old")}
     manager = _FakeMemoryManager(db)
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=True, options={})
@@ -751,6 +753,7 @@ async def test_apply_dream_plan_dry_run_includes_planned_action_preview() -> Non
 
     assert summary["mutations"] == 0
     assert summary["snapshots"] == 0
+    assert db.memories["memory-1"]["content"] == "old"
     assert summary["planned_actions"] == [
         {
             "action": {

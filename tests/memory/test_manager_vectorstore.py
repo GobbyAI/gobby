@@ -219,19 +219,23 @@ async def test_delete_memory_works_without_kg_service(
 
 
 @pytest.mark.asyncio
-async def test_update_memory_content_rejected_without_reembed(
+async def test_update_memory_content_reembeds_same_id(
     manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
 ) -> None:
-    """update_memory rejects content changes and does not re-embed."""
     memory = await manager.create_memory(content="original")
     mock_embed_fn.reset_mock()
     mock_vector_store.upsert.reset_mock()
 
-    with pytest.raises(ValueError, match="cannot be updated"):
-        await manager.update_memory(memory.id, content="updated content")
+    updated = await manager.update_memory(memory.id, content="updated content")
 
-    mock_embed_fn.assert_not_awaited()
-    mock_vector_store.upsert.assert_not_awaited()
+    assert updated.id == memory.id
+    assert updated.content == "updated content"
+    mock_embed_fn.assert_awaited_once_with("updated content")
+    mock_vector_store.upsert.assert_awaited_once_with(
+        memory.id,
+        [0.1, 0.2, 0.3, 0.4] * 384,
+        {"project_id": None},
+    )
 
 
 @pytest.mark.asyncio

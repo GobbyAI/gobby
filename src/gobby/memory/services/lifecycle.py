@@ -294,20 +294,62 @@ class MemoryLifecycleService:
             )
         return result
 
+    async def _refresh_content_indices(
+        self,
+        *,
+        old_memory: Memory | None,
+        memory: Memory,
+    ) -> None:
+        """Best-effort secondary sync after a memory content revision."""
+        await self._embed_and_upsert(
+            memory.id,
+            memory.content,
+            payload={"project_id": memory.project_id},
+        )
+
+        kg_service = self._kg_service_provider()
+        if kg_service:
+            try:
+                await kg_service.remove_memory_from_graph(
+                    memory.id,
+                    project_id=old_memory.project_id if old_memory else memory.project_id,
+                )
+            except Exception as exc:
+                logger.warning("Graph content refresh failed for %s: %s", memory.id, exc)
+
+        try:
+            self.storage.mark_pending_graph(memory.id)
+        except Exception as exc:
+            logger.warning("Graph requeue failed for %s: %s", memory.id, exc)
+
+        try:
+            self.storage.delete_crossrefs(memory.id)
+        except Exception as exc:
+            logger.warning("Crossref cleanup failed for %s: %s", memory.id, exc)
+
+        if getattr(self._config, "auto_crossref", False):
+            try:
+                await self._crossref_service.rebuild_for_memory(memory)
+            except Exception as exc:
+                logger.warning("Crossref rebuild failed for %s: %s", memory.id, exc)
+
     async def update_memory(
         self,
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
-        """Update mutable memory metadata."""
-        if content is not None:
-            raise ValueError("Memory content cannot be updated; create a new memory instead")
+        """Update a memory and refresh secondary indices after content revisions."""
+        old_memory = (
+            self.storage.get_memory(memory_id, visibility="all") if content is not None else None
+        )
         result = self.storage.update_memory(
             memory_id=memory_id,
             content=content,
             tags=tags,
         )
+        if old_memory is not None and old_memory.content != result.content:
+            await self._refresh_content_indices(old_memory=old_memory, memory=result)
         return result
 
     async def aupdate_memory(
@@ -317,12 +359,18 @@ class MemoryLifecycleService:
         tags: list[str] | None = None,
     ) -> Memory:
         """Update an existing memory through the async backend."""
-        if content is not None:
-            raise ValueError("Memory content cannot be updated; create a new memory instead")
+        old_record = (
+            await self.backend.get(memory_id, visibility="all") if content is not None else None
+        )
         record = await self.backend.update(
             memory_id=memory_id,
             content=content,
             tags=tags,
         )
         memory = self._record_to_memory(record)
+        if old_record is not None and old_record.content != memory.content:
+            await self._refresh_content_indices(
+                old_memory=self._record_to_memory(old_record),
+                memory=memory,
+            )
         return memory

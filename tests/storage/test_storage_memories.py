@@ -59,12 +59,13 @@ def test_get_memory(memory_manager) -> None:
 
 def test_update_memory(memory_manager) -> None:
     created = memory_manager.create_memory(content="Original")
-    with pytest.raises(ValueError, match="cannot be updated"):
-        memory_manager.update_memory(
-            created.id,
-            content="Updated",
-        )
-    assert memory_manager.get_memory(created.id).content == "Original"
+    updated = memory_manager.update_memory(
+        created.id,
+        content="  Updated  ",
+    )
+    assert updated.id == created.id
+    assert updated.content == "Updated"
+    assert memory_manager.get_memory(created.id).content == "Updated"
 
 
 def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
@@ -200,15 +201,69 @@ def test_create_memory_persists_normalized_content(memory_manager) -> None:
     assert memory.content == "Normalized content"
 
 
-def test_update_memory_rejects_content_mutation(memory_manager) -> None:
-    """update_memory rejects content changes to preserve content-derived IDs."""
+def test_update_memory_content_preserves_id(memory_manager) -> None:
+    """update_memory revises content without changing the memory entity ID."""
     memory = memory_manager.create_memory(content="Before")
 
-    with pytest.raises(ValueError, match="cannot be updated"):
-        memory_manager.update_memory(memory.id, content="  After  ")
+    updated = memory_manager.update_memory(memory.id, content="  After  ")
+
+    assert updated.id == memory.id
+    assert updated.content == "After"
+    assert memory_manager.get_memory_by_content("After").id == memory.id
+
+
+def test_create_memory_old_content_after_revision_gets_new_id(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Reusable content")
+    memory_manager.update_memory(memory.id, content="Revised content")
+
+    recreated = memory_manager.create_memory(content="Reusable content")
+
+    assert recreated.id != memory.id
+    assert recreated.content == "Reusable content"
+    assert memory_manager.get_memory(memory.id).content == "Revised content"
+
+
+def test_update_memory_empty_content_fails(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Before")
+
+    with pytest.raises(ValueError, match="Memory content cannot be empty"):
+        memory_manager.update_memory(memory.id, content="   ")
 
     assert memory_manager.get_memory(memory.id).content == "Before"
-    assert memory_manager.get_memory_by_content("Before").id == memory.id
+
+
+def test_update_memory_duplicate_content_same_scope_fails(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Before")
+    memory_manager.create_memory(content="Existing")
+
+    with pytest.raises(ValueError, match="already exists"):
+        memory_manager.update_memory(memory.id, content="Existing")
+
+    assert memory_manager.get_memory(memory.id).content == "Before"
+
+
+def test_update_memory_duplicate_hidden_content_same_scope_fails(memory_manager, db) -> None:
+    memory = memory_manager.create_memory(content="Before")
+    hidden = memory_manager.create_memory(content="Hidden duplicate")
+    _hide(db, hidden.id)
+
+    with pytest.raises(ValueError, match="already exists"):
+        memory_manager.update_memory(memory.id, content="Hidden duplicate")
+
+    assert memory_manager.get_memory(memory.id).content == "Before"
+
+
+def test_update_memory_allows_duplicate_content_in_different_project(memory_manager, db) -> None:
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
+    memory = memory_manager.create_memory(content="Before", project_id=PROJECT_1)
+    other = memory_manager.create_memory(content="Shared content", project_id=PROJECT_2)
+
+    updated = memory_manager.update_memory(memory.id, content="Shared content")
+
+    assert updated.id == memory.id
+    assert updated.project_id == PROJECT_1
+    assert other.project_id == PROJECT_2
 
 
 def test_create_memory_dedup_scopes_to_project(memory_manager, db) -> None:
@@ -363,9 +418,8 @@ def test_update_memory_individual_fields(memory_manager) -> None:
         tags=["original"],
     )
 
-    with pytest.raises(ValueError, match="cannot be updated"):
-        memory_manager.update_memory(memory.id, content="New content")
-    assert memory_manager.get_memory(memory.id).content == "Original content"
+    updated_content = memory_manager.update_memory(memory.id, content="New content")
+    assert updated_content.content == "New content"
 
     # Update only tags
     updated = memory_manager.update_memory(memory.id, tags=["new", "tags"])

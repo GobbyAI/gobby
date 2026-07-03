@@ -80,9 +80,32 @@ class MemoryCrudMixin(MemoryStoreBase):
                     memory_id = legacy_memory_id
 
             existing_row = conn.execute(
-                "SELECT deleted_at FROM memories WHERE id = %s",
+                "SELECT content, deleted_at FROM memories WHERE id = %s",
                 (memory_id,),
             ).fetchone()
+            if (
+                existing_row is not None
+                and str(existing_row["content"]).strip() != normalized_content
+            ):
+                collision_seed = json.dumps(
+                    {
+                        "content": normalized_content,
+                        "project_id": project_id,
+                        "id_collision": memory_id,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, collision_seed))
+                existing_row = conn.execute(
+                    "SELECT content, deleted_at FROM memories WHERE id = %s",
+                    (memory_id,),
+                ).fetchone()
+                if (
+                    existing_row is not None
+                    and str(existing_row["content"]).strip() != normalized_content
+                ):
+                    raise RuntimeError(f"Memory ID collision for content: {memory_id}")
             cursor = conn.execute(
                 """
                 INSERT INTO memories (
@@ -268,7 +291,27 @@ class MemoryCrudMixin(MemoryStoreBase):
             content = content.strip()
             if not content:
                 raise ValueError("Memory content cannot be empty")
-            raise ValueError("Memory content cannot be updated; create a new memory instead")
+            with self.db.transaction() as conn:
+                current = conn.execute(
+                    "SELECT project_id FROM memories WHERE id = %s",
+                    (memory_id,),
+                ).fetchone()
+                if current is None:
+                    raise ValueError(f"Memory {memory_id} not found")
+                duplicate = conn.execute(
+                    """
+                    SELECT id FROM memories
+                     WHERE content = %s
+                       AND project_id IS NOT DISTINCT FROM %s
+                       AND id != %s
+                     LIMIT 1
+                    """,
+                    (content, current["project_id"], memory_id),
+                ).fetchone()
+                if duplicate is not None:
+                    raise ValueError("Memory content already exists in this project/global scope")
+            updates.append("content = %s")
+            params.append(content)
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))

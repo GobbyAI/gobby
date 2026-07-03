@@ -569,11 +569,14 @@ class TestUpdateMemory:
 
     @pytest.mark.asyncio
     async def test_update_memory_content(self, memory_manager):
-        """Test updating memory content is rejected."""
+        """Test updating memory content preserves the memory ID."""
         memory = await memory_manager.create_memory(content="Original")
 
-        with pytest.raises(ValueError, match="cannot be updated"):
-            await memory_manager.update_memory(memory.id, content="Updated")
+        updated = await memory_manager.update_memory(memory.id, content="Updated")
+
+        assert updated.id == memory.id
+        assert updated.content == "Updated"
+        assert memory_manager.get_memory(memory.id).content == "Updated"
 
     @pytest.mark.asyncio
     async def test_update_memory_tags(self, memory_manager):
@@ -832,6 +835,55 @@ class TestLifecycleService:
         assert mock_vs.upsert.await_count == 1
         mock_vs.delete.assert_awaited_once_with(memory.id)
 
+    @pytest.mark.asyncio
+    async def test_content_update_refreshes_secondary_indices(self, db) -> None:
+        config = MemoryConfig(enabled=True, backend="local", auto_crossref=True)
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_vs.search = AsyncMock(return_value=[])
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db,
+            config=config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        manager._dedup_service = None
+        kg_service = MagicMock()
+        kg_service.remove_memory_from_graph = AsyncMock()
+        manager._kg_service = kg_service
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
+
+        memory = await manager.create_memory(content="Lifecycle old", project_id=PROJECT_ID)
+        other = await manager.create_memory(content="Lifecycle related", project_id=PROJECT_ID)
+        manager.storage.mark_graph_processed(memory.id)
+        manager.storage.create_crossref(memory.id, other.id, 0.4)
+        manager.storage.create_crossref(other.id, memory.id, 0.5)
+        mock_vs.upsert.reset_mock()
+        mock_vs.search.return_value = [(memory.id, 1.0), (other.id, 0.95)]
+        mock_embed.reset_mock()
+
+        updated = await manager.update_memory(memory.id, content="Lifecycle new")
+
+        assert updated.id == memory.id
+        assert updated.content == "Lifecycle new"
+        mock_embed.assert_any_await("Lifecycle new")
+        mock_vs.upsert.assert_awaited_once_with(
+            memory.id,
+            [0.1, 0.2],
+            {"project_id": PROJECT_ID},
+        )
+        kg_service.remove_memory_from_graph.assert_awaited_once_with(
+            memory.id,
+            project_id=PROJECT_ID,
+        )
+        graph_row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
+        assert graph_row["graph_processed"] is False
+        crossrefs = manager.storage.get_crossrefs(memory.id)
+        assert len(crossrefs) == 1
+        assert crossrefs[0].source_id == memory.id
+        assert crossrefs[0].target_id == other.id
+
 
 # =============================================================================
 # Test: delete_memory with VectorStore and KG
@@ -1001,10 +1053,19 @@ class TestAUpdateMemory:
 
     @pytest.mark.asyncio
     async def test_aupdate_content(self, memory_manager) -> None:
-        """aupdate_memory rejects content updates."""
+        """aupdate_memory revises content and preserves the memory ID."""
         memory = await memory_manager.create_memory(content="Original async")
-        with pytest.raises(ValueError, match="cannot be updated"):
-            await memory_manager.aupdate_memory(memory.id, content="Updated async")
+        memory_manager.mark_graph_processed(memory.id)
+
+        updated = await memory_manager.aupdate_memory(memory.id, content="Updated async")
+
+        assert updated.id == memory.id
+        assert updated.content == "Updated async"
+        graph_row = memory_manager.db.fetchone(
+            "SELECT graph_processed FROM memories WHERE id = %s",
+            (memory.id,),
+        )
+        assert graph_row["graph_processed"] is False
 
     @pytest.mark.asyncio
     async def test_aupdate_tags(self, memory_manager) -> None:
