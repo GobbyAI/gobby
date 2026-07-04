@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
+
 logger = logging.getLogger(__name__)
 
 # Label width for alignment in status sections
@@ -76,7 +78,7 @@ def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
 
     missing = [
         name
-        for name in ("pg_search", "pgaudit", "pgcrypto")
+        for name in BASELINE_POSTGRES_EXTENSIONS
         if name in extensions and not extensions.get(name)
     ]
     if missing:

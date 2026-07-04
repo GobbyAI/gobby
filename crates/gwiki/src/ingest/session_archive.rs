@@ -120,6 +120,12 @@ pub(crate) enum RawArchiveMode {
     Summarize,
 }
 
+struct IngestBookkeeping<'a> {
+    known_session_hashes: &'a mut HashSet<(String, String)>,
+    accepted: &'a mut Vec<AcceptedSessionArchive>,
+    failed: &'a mut Vec<SessionArchiveFailure>,
+}
+
 pub(crate) fn sync_session_transcript_archives(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
@@ -246,9 +252,11 @@ pub(crate) fn sync_session_transcript_archives(
                         path,
                         &external_id,
                         ingest_session_wiki_file_without_index(vault_root, snapshot),
-                        &mut known_session_hashes,
-                        &mut accepted,
-                        &mut failed,
+                        IngestBookkeeping {
+                            known_session_hashes: &mut known_session_hashes,
+                            accepted: &mut accepted,
+                            failed: &mut failed,
+                        },
                     );
                 }
                 SessionSourceFile::RawArchive(path) => {
@@ -317,9 +325,11 @@ pub(crate) fn sync_session_transcript_archives(
                                 path,
                                 &external_id,
                                 ingest_session_wiki_file_without_index(vault_root, snapshot),
-                                &mut known_session_hashes,
-                                &mut accepted,
-                                &mut failed,
+                                IngestBookkeeping {
+                                    known_session_hashes: &mut known_session_hashes,
+                                    accepted: &mut accepted,
+                                    failed: &mut failed,
+                                },
                             );
                             continue;
                         }
@@ -352,9 +362,11 @@ pub(crate) fn sync_session_transcript_archives(
                         path,
                         &external_id,
                         ingest_session_file_without_index(vault_root, snapshot),
-                        &mut known_session_hashes,
-                        &mut accepted,
-                        &mut failed,
+                        IngestBookkeeping {
+                            known_session_hashes: &mut known_session_hashes,
+                            accepted: &mut accepted,
+                            failed: &mut failed,
+                        },
                     );
                 }
             }
@@ -409,28 +421,30 @@ fn record_session_ingest_result(
     archive_path: PathBuf,
     external_id: &str,
     ingest_result: Result<IngestResult, WikiError>,
-    known_session_hashes: &mut HashSet<(String, String)>,
-    accepted: &mut Vec<AcceptedSessionArchive>,
-    failed: &mut Vec<SessionArchiveFailure>,
+    bookkeeping: IngestBookkeeping<'_>,
 ) {
     match ingest_result {
         Ok(result) => {
             let failure_path = archive_path.clone();
             let new_id = result.record.id.clone();
-            known_session_hashes.insert((
+            bookkeeping.known_session_hashes.insert((
                 result.record.canonical_location.clone(),
                 result.record.content_hash.clone(),
             ));
-            accepted.push(AcceptedSessionArchive {
+            bookkeeping.accepted.push(AcceptedSessionArchive {
                 archive_path,
                 result,
             });
             if let Err(error) = supersede_session_page(vault_root, manifest, external_id, &new_id) {
-                failed.push(SessionArchiveFailure::from_wiki_error(&failure_path, error));
+                bookkeeping
+                    .failed
+                    .push(SessionArchiveFailure::from_wiki_error(&failure_path, error));
             }
         }
         Err(error) => {
-            failed.push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
+            bookkeeping
+                .failed
+                .push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
         }
     }
 }

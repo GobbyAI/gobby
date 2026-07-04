@@ -17,6 +17,7 @@ from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.sessions import SYSTEM_SESSION_ID
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import TaskNotFoundError
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -329,11 +330,7 @@ class MailboxService:
 
     def _resolve_project_ref(self, project_ref: str) -> str:
         row = None
-        try:
-            uuid.UUID(project_ref)
-        except ValueError:
-            pass
-        else:
+        if parse_uuid_reference(project_ref) is not None:
             row = self._db.fetchone(
                 "SELECT id FROM projects WHERE id = %s AND deleted_at IS NULL",
                 (project_ref,),

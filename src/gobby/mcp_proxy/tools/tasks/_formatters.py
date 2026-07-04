@@ -26,7 +26,7 @@ def _task_value(task: Any, name: str, default: Any = None) -> Any:
     return getattr(task, name, default)
 
 
-def _task_list_value(task: Any, name: str) -> Any:
+def _task_list_value(task: Any, name: str) -> list[Any]:
     value = _task_value(task, name, [])
     return [] if value is None else value
 

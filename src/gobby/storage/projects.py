@@ -10,8 +10,8 @@ from typing import Any
 
 from gobby.config.bootstrap_io import default_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
 

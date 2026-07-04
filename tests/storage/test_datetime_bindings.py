@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.metrics_store import ToolMetricsStore
 from gobby.mcp_proxy.schema_hash import SchemaHashManager
@@ -17,6 +19,8 @@ from gobby.storage.memories_query import MemoryQueryMixin
 from gobby.storage.sessions._usage import _UsageMixin
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.worktrees import LocalWorktreeManager
+
+pytestmark = pytest.mark.unit
 
 
 @dataclass
@@ -183,6 +187,16 @@ def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
 
     dreams.list_dream_project_ids(redream_cutoff=timestamp)
     _assert_aware_utc(_params(db.calls[-1])[0])
+
+
+def test_memory_access_stats_rejects_invalid_accessed_at_before_transaction() -> None:
+    db = _RecordingDB()
+    access = MemoryQueryMixin(db)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="Invalid isoformat"):
+        access.update_access_stats("memory-1", "not-a-timestamp")
+
+    assert db.calls == []
 
 
 def test_cron_run_create_binds_triggered_and_created_at_as_datetimes() -> None:

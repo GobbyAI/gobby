@@ -1149,6 +1149,38 @@ class TestCallMCPTool:
         assert "result" not in data
         assert "response_time_ms" in data
 
+    def test_call_tool_tool_proxy_success_is_flattened(
+        self, session_storage: SessionManager
+    ) -> None:
+        """ToolProxy success envelopes should stay flat at the HTTP boundary."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._tools_handler = MagicMock()
+        server._tools_handler.tool_proxy = MagicMock()
+        server._tools_handler.tool_proxy.call_tool = AsyncMock(
+            return_value={"success": True, "items": [1, 2, 3]}
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                json={
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                    "arguments": {},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["items"] == [1, 2, 3]
+        assert "result" not in data
+        assert "response_time_ms" in data
+
     def test_call_tool_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server."""
         server = create_http_server(
@@ -1324,6 +1356,36 @@ class TestCallMCPTool:
         data = response.json()
         assert data["success"] is True
         assert data["result"] == {"data": [1, 2, 3]}
+
+    def test_call_tool_external_success_envelope_is_flattened(
+        self, session_storage: SessionManager
+    ) -> None:
+        """External MCP success envelopes should not be nested under result."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
+        mcp_manager.call_tool = AsyncMock(return_value={"success": True, "data": [1, 2, 3]})
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                json={
+                    "server_name": "external-server",
+                    "tool_name": "list_items",
+                    "arguments": {"limit": 10},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"] == [1, 2, 3]
+        assert "result" not in data
 
     def test_call_tool_external_server_failure(self, session_storage: SessionManager) -> None:
         """Test calling tool on external server with error."""
@@ -2459,6 +2521,32 @@ class TestMCPProxy:
         data = response.json()
         assert data["success"] is True
         assert data["result"] == {"items": [1, 2, 3]}
+
+    def test_proxy_external_success_envelope_is_flattened(
+        self, session_storage: SessionManager
+    ) -> None:
+        """Proxy success envelopes should not be nested under result."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
+        mcp_manager.call_tool = AsyncMock(return_value={"success": True, "items": [1, 2, 3]})
+        server.mcp_manager = mcp_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/external-server/tools/list_items",
+                json={"limit": 10},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["items"] == [1, 2, 3]
+        assert "result" not in data
 
     def test_proxy_external_server_tool_not_found(self, session_storage: SessionManager) -> None:
         """Test proxy when tool not found on external server."""

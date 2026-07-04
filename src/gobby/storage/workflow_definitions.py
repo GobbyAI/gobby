@@ -11,9 +11,9 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 logger = logging.getLogger(__name__)
 

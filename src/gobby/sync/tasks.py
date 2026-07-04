@@ -95,7 +95,7 @@ def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str 
     return None
 
 
-def _github_issue_uuid_seed(owner: str, repo: str, issue_num: object) -> str:
+def _github_issue_uuid_seed(owner: str, repo: str, issue_num: int) -> str:
     normalized_repo = repo.removesuffix(".git").lower()
     return f"{owner.lower()}/{normalized_repo}/issues/{issue_num}"
 
@@ -338,7 +338,6 @@ class TaskSyncManager:
                     existing_path_cache = None
                     if not existing_row:
                         should_update = True
-                        imported_count += 1
                     else:
                         # Handle NULL timestamps in DB (treat as infinitely old)
                         db_updated_at = existing_row["updated_at"]
@@ -357,7 +356,6 @@ class TaskSyncManager:
                         existing_path_cache = existing_row["path_cache"]
                         if updated_at_file > updated_at_db:
                             should_update = True
-                            updated_count += 1
                         else:
                             skipped_count += 1
 
@@ -510,6 +508,7 @@ class TaskSyncManager:
                                 f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
                                 (task_id, *synced_values.values()),
                             )
+                            imported_count += 1
                         else:
                             # Existing task: update synced fields while preserving local state.
                             set_clause = ", ".join(f"{col} = %s" for col in synced_values)
@@ -517,6 +516,7 @@ class TaskSyncManager:
                                 f"UPDATE tasks SET {set_clause} WHERE id = %s",
                                 (*synced_values.values(), task_id),
                             )
+                            updated_count += 1
 
                     # Collect dependencies for Phase 2
                     if "deps_on" in data:
@@ -590,6 +590,7 @@ class TaskSyncManager:
 
             owner, repo = match.groups()
             repo = repo.removesuffix(".git")
+            github_repo = f"{owner.lower()}/{repo.lower()}"
 
             # Resolve project ID if not provided
             if not project_id:
@@ -638,7 +639,7 @@ class TaskSyncManager:
             with self.db.transaction() as conn:
                 for issue in issues:
                     issue_num = issue.get("number")
-                    if not issue_num:
+                    if type(issue_num) is not int:
                         continue
 
                     # Deterministic id keyed on normalized owner/repo/issue:
@@ -649,6 +650,9 @@ class TaskSyncManager:
                             uuid.NAMESPACE_URL,
                             _github_issue_uuid_seed(owner, repo, issue_num),
                         )
+                    )
+                    legacy_task_id = str(
+                        uuid.uuid5(uuid.NAMESPACE_URL, f"{repo_url}/issues/{issue_num}")
                     )
                     title = issue.get("title", "Untitled Issue")
                     body = issue.get("body") or ""
@@ -662,21 +666,71 @@ class TaskSyncManager:
                     )
                     updated_at = datetime.now(UTC)
 
-                    exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = %s", (task_id,))
-                    if exists:
+                    existing = conn.execute(
+                        """
+                        SELECT id
+                          FROM tasks
+                         WHERE project_id = %s
+                           AND github_repo = %s
+                           AND github_issue_number = %s
+                         LIMIT 1
+                        """,
+                        (project_id, github_repo, issue_num),
+                    ).fetchone()
+                    if existing is None:
+                        existing = conn.execute(
+                            "SELECT id FROM tasks WHERE id = %s",
+                            (task_id,),
+                        ).fetchone()
+                    if existing is None:
+                        existing = conn.execute(
+                            "SELECT id FROM tasks WHERE id = %s",
+                            (legacy_task_id,),
+                        ).fetchone()
+
+                    if existing:
+                        task_id = str(existing["id"])
                         conn.execute(
-                            "UPDATE tasks SET title=%s, description=%s, labels=%s, updated_at=%s WHERE id=%s",
-                            (title, desc, labels_json, updated_at, task_id),
+                            """
+                            UPDATE tasks
+                               SET title=%s,
+                                   description=%s,
+                                   labels=%s,
+                                   updated_at=%s,
+                                   github_repo=%s,
+                                   github_issue_number=%s
+                             WHERE id=%s
+                            """,
+                            (
+                                title,
+                                desc,
+                                labels_json,
+                                updated_at,
+                                github_repo,
+                                issue_num,
+                                task_id,
+                            ),
                         )
                     else:
                         conn.execute(
                             """
                             INSERT INTO tasks (
                                 id, project_id, title, description, task_type,
-                                labels, created_at, updated_at
-                            ) VALUES (%s, %s, %s, %s, 'issue', %s, %s, %s)
+                                labels, created_at, updated_at,
+                                github_repo, github_issue_number
+                            ) VALUES (%s, %s, %s, %s, 'task', %s, %s, %s, %s, %s)
                             """,
-                            (task_id, project_id, title, desc, labels_json, created_at, updated_at),
+                            (
+                                task_id,
+                                project_id,
+                                title,
+                                desc,
+                                labels_json,
+                                created_at,
+                                updated_at,
+                                github_repo,
+                                issue_num,
+                            ),
                         )
                         imported_count += 1
 

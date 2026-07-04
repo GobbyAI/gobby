@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -229,7 +230,11 @@ def test_factory_create_uses_injected_memory_manager(
 
     create_memory.assert_not_called()
     create_workflow_engine.assert_called_once()
-    assert create_workflow_engine.call_args.args[4] is shared_memory_manager
+    bound_args = inspect.signature(HookManagerFactory._create_workflow_engine).bind(
+        *create_workflow_engine.call_args.args,
+        **create_workflow_engine.call_args.kwargs,
+    )
+    assert bound_args.arguments["memory_manager"] is shared_memory_manager
     assert components.memory_manager is shared_memory_manager
 
 

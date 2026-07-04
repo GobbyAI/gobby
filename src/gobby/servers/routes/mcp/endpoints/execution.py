@@ -40,6 +40,18 @@ def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], to_json_safe(payload))
 
 
+def _success_response_payload(result: Any, response_time_ms: float) -> dict[str, Any]:
+    if isinstance(result, dict) and result.get("success") is True:
+        return _json_safe_payload({**result, "response_time_ms": response_time_ms})
+    return _json_safe_payload(
+        {
+            "success": True,
+            "result": result,
+            "response_time_ms": response_time_ms,
+        }
+    )
+
+
 def _stale_stdio_wrapper_wait_result(
     request: Request,
     tool_name: str,
@@ -272,13 +284,7 @@ def _process_tool_proxy_result(
         )
 
     # Return 200 with wrapped result for success cases
-    return _json_safe_payload(
-        {
-            "success": True,
-            "result": result,
-            "response_time_ms": response_time_ms,
-        }
-    )
+    return _success_response_payload(result, response_time_ms)
 
 
 async def _call_internal_tool(
@@ -320,13 +326,7 @@ async def _call_internal_tool(
         result = normalize_internal_success_result(await registry.call(tool_name, arguments or {}))
         response_time_ms = (time.perf_counter() - start_time) * 1000
         inc_counter("mcp_tool_calls_succeeded_total")
-        return _json_safe_payload(
-            {
-                "success": True,
-                "result": result,
-                "response_time_ms": response_time_ms,
-            }
-        )
+        return _success_response_payload(result, response_time_ms)
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
         error_msg = str(e) or f"{type(e).__name__}: (no message)"
@@ -693,13 +693,7 @@ async def call_mcp_tool(
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("mcp_tool_calls_succeeded_total")
 
-                return _json_safe_payload(
-                    {
-                        "success": True,
-                        "result": result,
-                        "response_time_ms": response_time_ms,
-                    }
-                )
+                return _success_response_payload(result, response_time_ms)
 
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
@@ -810,13 +804,7 @@ async def mcp_proxy(
 
                 inc_counter("mcp_tool_calls_succeeded_total")
 
-                return _json_safe_payload(
-                    {
-                        "success": True,
-                        "result": result,
-                        "response_time_ms": response_time_ms,
-                    }
-                )
+                return _success_response_payload(result, response_time_ms)
 
             except ValueError as e:
                 inc_counter("mcp_tool_calls_failed_total")

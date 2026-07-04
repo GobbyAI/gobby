@@ -55,11 +55,11 @@ class TaskDispatchMutexManager:
                 """
                 CREATE TABLE IF NOT EXISTS task_dispatch_mutex (
                     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-                    lease_until TEXT,
+                    lease_until TIMESTAMPTZ,
                     lease_holder TEXT,
                     run_id TEXT,
                     action_kind TEXT,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )

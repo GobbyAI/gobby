@@ -9,7 +9,6 @@ import random
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -24,6 +23,7 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsMessage,
 )
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -545,7 +545,7 @@ class DiscordAdapter(BaseChannelAdapter):
                     channel_id="",
                     direction="inbound",
                     content=json.dumps({"type": 1}),
-                    created_at=datetime.now(UTC),
+                    created_at=utc_now(),
                     content_type="interaction_ping",
                 )
             )
@@ -575,7 +575,7 @@ class DiscordAdapter(BaseChannelAdapter):
                         channel_id="",
                         direction="inbound",
                         content=reaction,
-                        created_at=datetime.now(UTC),
+                        created_at=utc_now(),
                         identity_id=user_id,
                         platform_message_id=msg_id,
                         content_type="reaction",
@@ -617,7 +617,7 @@ class DiscordAdapter(BaseChannelAdapter):
                     channel_id="",
                     direction="inbound",
                     content=content,
-                    created_at=datetime.now(UTC),
+                    created_at=utc_now(),
                     identity_id=user_id,
                     platform_message_id=msg_id,
                     platform_thread_id=thread_id,

@@ -44,7 +44,7 @@ def update_existing_session(
     is_local: bool | None,
     sandbox_enabled: bool | None,
     sandbox_policy_hash: str | None,
-    now: datetime | str,
+    now: datetime,
 ) -> Session:
     conn.execute(
         """

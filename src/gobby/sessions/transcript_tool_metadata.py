@@ -8,30 +8,23 @@ from gobby.hooks.normalization import is_shell_tool, normalize_mcp_fields
 _PROTOCOL_TOOL_NAME = "protocol_context"
 
 TOOL_TYPE_MAP = {
-    "Bash": "bash",
     "bash": "bash",
     "shell": "bash",
-    "Read": "read",
     "read": "read",
     "read_file": "read",
-    "Write": "write",
     "write": "write",
-    "Edit": "edit",
     "edit": "edit",
-    "MultiEdit": "edit",
     "multiedit": "edit",
     "apply_patch": "edit",
-    "Grep": "grep",
     "grep": "grep",
-    "Glob": "glob",
     "glob": "glob",
     "tool_search": "search",
     "tool_search_tool": "search",
-    "WebSearch": "web_search",
-    "WebFetch": "web_fetch",
-    "AskUserQuestion": "ask_user",
-    "Agent": "agent",
-    "NotebookEdit": "notebook",
+    "websearch": "web_search",
+    "webfetch": "web_fetch",
+    "askuserquestion": "ask_user",
+    "agent": "agent",
+    "notebookedit": "notebook",
     "update_plan": "plan",
 }
 
@@ -59,6 +52,7 @@ def classify_tool(
 
     tool_data = _normalize_tool_data(tool_name, tool_input)
     normalized_tool_name = str(tool_data.get("tool_name") or tool_name)
+    lookup_tool_name = normalized_tool_name.casefold()
     mcp_server = tool_data.get("mcp_server")
 
     if isinstance(mcp_server, str) and mcp_server:
@@ -70,8 +64,8 @@ def classify_tool(
     if is_shell_tool(normalized_tool_name):
         return "bash", None
 
-    if normalized_tool_name in TOOL_TYPE_MAP:
-        return TOOL_TYPE_MAP[normalized_tool_name], None
+    if lookup_tool_name in TOOL_TYPE_MAP:
+        return TOOL_TYPE_MAP[lookup_tool_name], None
 
     if normalized_tool_name.startswith("mcp__"):
         parts = normalized_tool_name.split("__")

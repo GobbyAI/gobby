@@ -43,7 +43,7 @@ gcode codewiki --repair-citations
 Remove generated CodeWiki Markdown and metadata before a clean rebuild:
 
 ```bash
-gcode codewiki --purge --out /path/to/vault --force
+gcode codewiki --purge --out /path/to/project/.gobby/wiki --force
 ```
 
 ## Output Tree

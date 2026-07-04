@@ -676,6 +676,7 @@ def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
             "memory_dream_runs.project_id UUID preflight failed",
             "memory_dream_snapshots.run_id UUID preflight failed",
             "memory_dream_snapshots.memory_id UUID preflight failed",
+            "pg_temp.gobby_is_uuid_castable",
             "ALTER COLUMN id TYPE UUID USING id::UUID",
             "ALTER COLUMN project_id TYPE UUID USING project_id::UUID",
             "ALTER COLUMN run_id TYPE UUID USING run_id::UUID",

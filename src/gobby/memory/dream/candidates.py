@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Protocol
 
 from gobby.memory.dream.models import DreamCandidate
+from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def list_sweep_candidates(
     SQL by ``list_dream_candidates``; this helper only adapts the rows into
     ``DreamCandidate`` prompt context.
     """
-    now = now or datetime.now(UTC)
+    now = now or utc_now()
     rows = await asyncio.to_thread(
         memory_manager.list_dream_candidates,
         limit=limit,
@@ -82,8 +83,8 @@ def memory_to_candidate(memory: Any, now: datetime) -> DreamCandidate:
         tags=list(getattr(memory, "tags", None) or []),
         age_days=age_days if age_days is not None else 0.0,
         access_count=_int_attr(memory, "access_count"),
-        created_at=_parse_datetime(getattr(memory, "created_at", None)) or now,
-        updated_at=_parse_datetime(getattr(memory, "updated_at", None)) or now,
+        created_at=require_stored_datetime(getattr(memory, "created_at", None), "created_at"),
+        updated_at=require_stored_datetime(getattr(memory, "updated_at", None), "updated_at"),
         last_accessed_at=getattr(memory, "last_accessed_at", None),
         reasons=reasons,
     )
@@ -100,15 +101,7 @@ def _age_days(memory: Any, now: datetime) -> float | None:
 
 
 def _parse_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parse_stored_datetime(value)
 
 
 def _int_attr(obj: Any, attr: str) -> int:

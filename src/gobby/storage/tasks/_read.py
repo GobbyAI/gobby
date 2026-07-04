@@ -1,11 +1,11 @@
 """Task lookup and hydration helpers."""
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_resolution import parse_uuid_reference
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import Task, TaskNotFoundError
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 
 def _escape_like_prefix(prefix: str) -> str:

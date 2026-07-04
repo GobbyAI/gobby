@@ -7,19 +7,8 @@ as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
-import uuid
-
 from gobby.storage.hub.protocol import HubDatabase
-
-
-def parse_uuid_reference(value: object) -> uuid.UUID | None:
-    """Parse a UUID-like storage reference without raising on invalid input."""
-    if not value:
-        return None
-    try:
-        return uuid.UUID(str(value))
-    except (TypeError, ValueError):
-        return None
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 
 def is_session_uuid(value: str | None) -> bool:

@@ -37,13 +37,28 @@ CREATE INDEX idx_sessions_context_usage_ratio
 ON sessions(context_usage_ratio DESC)
 WHERE context_usage_ratio IS NOT NULL;
 
+CREATE OR REPLACE FUNCTION pg_temp.gobby_is_uuid_castable(value TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF value IS NULL THEN
+        RETURN TRUE;
+    END IF;
+    PERFORM value::UUID;
+    RETURN TRUE;
+EXCEPTION WHEN invalid_text_representation THEN
+    RETURN FALSE;
+END
+$$;
+
 DO $$
 BEGIN
     IF EXISTS (
         SELECT 1
           FROM memory_dream_runs
          WHERE id IS NOT NULL
-           AND id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           AND NOT pg_temp.gobby_is_uuid_castable(id::TEXT)
     ) THEN
         RAISE EXCEPTION
             'memory_dream_runs.id UUID preflight failed: uncastable id values exist';
@@ -53,7 +68,7 @@ BEGIN
         SELECT 1
           FROM memory_dream_runs
          WHERE project_id IS NOT NULL
-           AND project_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           AND NOT pg_temp.gobby_is_uuid_castable(project_id::TEXT)
     ) THEN
         RAISE EXCEPTION
             'memory_dream_runs.project_id UUID preflight failed: uncastable project_id values exist';
@@ -63,7 +78,7 @@ BEGIN
         SELECT 1
           FROM memory_dream_snapshots
          WHERE run_id IS NOT NULL
-           AND run_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           AND NOT pg_temp.gobby_is_uuid_castable(run_id::TEXT)
     ) THEN
         RAISE EXCEPTION
             'memory_dream_snapshots.run_id UUID preflight failed: uncastable run_id values exist';
@@ -73,7 +88,7 @@ BEGIN
         SELECT 1
           FROM memory_dream_snapshots
          WHERE memory_id IS NOT NULL
-           AND memory_id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           AND NOT pg_temp.gobby_is_uuid_castable(memory_id::TEXT)
     ) THEN
         RAISE EXCEPTION
             'memory_dream_snapshots.memory_id UUID preflight failed: uncastable memory_id values exist';

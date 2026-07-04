@@ -24,8 +24,8 @@ from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_t
 from gobby.build.profiles import BuildProfileError
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.sessions import SessionManager
+from gobby.utils.uuid_validation import is_full_uuid
 
 from . import _build_daemon as _build_daemon_helpers
 from . import _build_options as _build_options_helpers
@@ -399,7 +399,7 @@ def _coordinator_session_ref(
     ref = coordinator.strip()
     is_current = coordinator == CURRENT_COORDINATOR or ref == "current"
     if not is_current and ref:
-        if project_explicit and not is_session_uuid(ref):
+        if project_explicit and not is_full_uuid(ref):
             raise click.ClickException(
                 "--coordinator with --project must be `current` or a full session UUID"
             )

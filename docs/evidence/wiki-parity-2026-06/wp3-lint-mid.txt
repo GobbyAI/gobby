@@ -939,4 +939,3 @@ Missing backlinks:
 - code/modules/crates/gcode/src/setup.md:1 -> Code Ownership (missing_backlink)
 - code/modules/crates/gcode/src/vector/code_symbols.md:1 -> Architecture Overview (missing_backlink)
 - code/modules/crates/gcode/src/vector/code_symbols.md:1 -> Code Ownership (missing_backlink)
-- code/module

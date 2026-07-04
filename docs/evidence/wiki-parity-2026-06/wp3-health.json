@@ -36,9 +36,9 @@
       "source_id": "src-d0009cf2de348320-gobby-cli-readme-md"
     },
     {
-      "location": "/private/tmp/wp3-deposit-note.md",
-      "path": "raw/src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md.md",
-      "source_id": "src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md"
+      "location": "inbox/wp3-deposit-note.md",
+      "path": "raw/src-a23d7939da1b175c-inbox-wp3-deposit-note-md.md",
+      "source_id": "src-a23d7939da1b175c-inbox-wp3-deposit-note-md"
     }
   ],
   "uncompiled_sources": [
@@ -53,9 +53,9 @@
       "source_id": "src-d0009cf2de348320-gobby-cli-readme-md"
     },
     {
-      "location": "/private/tmp/wp3-logo.png",
-      "path": "raw/src-cfe14a7625e12a59-private-tmp-wp3-logo-png.md",
-      "source_id": "src-cfe14a7625e12a59-private-tmp-wp3-logo-png"
+      "location": "<gobby-cli-repo>/logo.png",
+      "path": "raw/src-cfe14a7625e12a59-gobby-cli-logo-png.md",
+      "source_id": "src-cfe14a7625e12a59-gobby-cli-logo-png"
     },
     {
       "location": "inbox/wp3-rrf-note.md",
@@ -63,9 +63,9 @@
       "source_id": "src-ab36a0b101bf7f6f-inbox-wp3-rrf-note-md"
     },
     {
-      "location": "/private/tmp/wp3-deposit-note.md",
-      "path": "raw/src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md.md",
-      "source_id": "src-a23d7939da1b175c-private-tmp-wp3-deposit-note-md"
+      "location": "inbox/wp3-deposit-note.md",
+      "path": "raw/src-a23d7939da1b175c-inbox-wp3-deposit-note-md.md",
+      "source_id": "src-a23d7939da1b175c-inbox-wp3-deposit-note-md"
     }
   ]
 }

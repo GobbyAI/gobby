@@ -38,7 +38,7 @@ impl<'a> PostgresWikiStore<'a> {
     }
 
     fn scope_params(&self) -> Result<(String, String, Option<Uuid>, Option<String>), StoreError> {
-        scope_params(&self.scope)
+        wiki_scope_params(&self.scope)
     }
 
     fn document_meta(&mut self, path: &Path) -> Result<DocumentMeta, StoreError> {
@@ -87,7 +87,7 @@ fn project_uuid(project_id: Option<String>) -> Result<Option<Uuid>, StoreError> 
     }
 }
 
-fn scope_params(
+fn wiki_scope_params(
     scope: &WikiStoreScope,
 ) -> Result<(String, String, Option<Uuid>, Option<String>), StoreError> {
     Ok((
@@ -180,7 +180,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let document = self.document_meta(path)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
-        let (scope_kind, scope_id, project_id, topic_name) = scope_params(&scope)?;
+        let (scope_kind, scope_id, project_id, topic_name) = wiki_scope_params(&scope)?;
         let chunks = chunks
             .into_iter()
             .map(|chunk| {
@@ -272,7 +272,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         validate_link_paths(path, &links)?;
         let path_string = display_path(path);
         let scope = self.scope.clone();
-        let (scope_kind, scope_id, project_id, topic_name) = scope_params(&scope)?;
+        let (scope_kind, scope_id, project_id, topic_name) = wiki_scope_params(&scope)?;
         let mut tx = self.conn.transaction()?;
         if let Err(error) = tx.execute(
             "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
@@ -479,6 +479,21 @@ mod tests {
     #[test]
     fn project_uuid_empty_maps_to_null() {
         assert_eq!(project_uuid(Some(String::new())).unwrap(), None);
+    }
+
+    #[test]
+    fn scope_params_returns_expected_tuple() {
+        let project_id = "018f3b18-6a80-7c18-9d43-8f21b4e89f24";
+
+        assert_eq!(
+            wiki_scope_params(&WikiStoreScope::project(project_id)).unwrap(),
+            (
+                "project".to_string(),
+                project_id.to_string(),
+                Some(Uuid::parse_str(project_id).unwrap()),
+                None,
+            )
+        );
     }
 
     #[test]
