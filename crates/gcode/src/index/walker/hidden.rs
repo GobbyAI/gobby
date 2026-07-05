@@ -58,7 +58,11 @@ impl HiddenPathAllowlist {
                 continue;
             };
             for entry in entries.flatten() {
-                if entry.is_file() && is_hidden_path(root, &entry) {
+                // No hidden-path gate: allowlisted files skipped by the main
+                // walk for ANY reason (hidden dirs like .gobby, or gitignored
+                // ones like the wiki vault) are rescued here; files the walk
+                // already yielded dedup via the caller's `seen` set.
+                if entry.is_file() {
                     paths.insert(entry);
                 }
             }
@@ -180,18 +184,12 @@ pub(super) fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
 
     if components.get(1).copied() == Some("_meta")
         || components.get(1).copied() == Some(".obsidian")
+        || components.get(1).copied() == Some(gobby_core::vault::STATE_ROOT)
     {
         return true;
     }
 
     if components.len() == 2 && components[1] == "wikis.json" {
-        return true;
-    }
-
-    if components.len() == 3
-        && components[1] == gobby_core::vault::STATE_ROOT
-        && path_has_extension(path, &["json"])
-    {
         return true;
     }
 

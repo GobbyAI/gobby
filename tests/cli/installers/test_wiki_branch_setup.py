@@ -124,7 +124,8 @@ class TestWikiBranchSetup:
         assert second["gitignore_updated"] is False
         assert second["gitignore_status"] == "unchanged"
         assert content.count(GITIGNORE_START) == 1
-        assert f"{DEFAULT_VAULT_DIR}/" in content
+        # Root-anchored so nested dirs like src/gobby/wiki/ are not ignored.
+        assert f"\n/{DEFAULT_VAULT_DIR}/\n" in content
 
     def test_gitignore_tracks_fallback_vault_directory(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
@@ -137,7 +138,7 @@ class TestWikiBranchSetup:
         content = (repo / ".gitignore").read_text(encoding="utf-8")
         assert result["success"] is True
         assert result["vault_dir"] == FALLBACK_VAULT_DIR
-        assert f"{FALLBACK_VAULT_DIR}/" in content
+        assert f"\n/{FALLBACK_VAULT_DIR}/\n" in content
 
     def test_tracked_wiki_files_warn_and_remain_tracked(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"

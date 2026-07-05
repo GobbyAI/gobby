@@ -93,7 +93,13 @@ pub fn content_language(path: &Path) -> String {
 }
 
 fn explicit_path_visible(root: &Path, path: &Path, options: DiscoveryOptions) -> bool {
-    if is_hidden_path(root, path) && !HiddenPathAllowlist::load(root).matches(root, path) {
+    // Allowlisted metadata (vault markdown, .gobby/plans, CI workflows) is
+    // rescued from both hidden filtering and gitignore, matching discovery —
+    // the vault is gitignored in real repos, so the walk below cannot see it.
+    if HiddenPathAllowlist::load(root).matches(root, path) {
+        return true;
+    }
+    if is_hidden_path(root, path) {
         return false;
     }
 

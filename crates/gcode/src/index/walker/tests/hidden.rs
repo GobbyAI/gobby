@@ -51,6 +51,7 @@ fn discovers_wiki_markdown_and_skips_generated_wiki_metadata() {
     write_file(root, "wiki/_meta/codewiki.json", b"{}\n");
     write_file(root, "wiki/_meta/readme.md", b"# Generated\n");
     write_file(root, "wiki/_gwiki/scope.json", b"{}\n");
+    write_file(root, "wiki/_gwiki/compile/checkpoint-note.md", b"# State\n");
     write_file(root, "wiki/wikis.json", b"{}\n");
     write_file(root, "wiki/.obsidian/app.json", b"{}\n");
     write_file(root, "wiki/.obsidian/workspace.json", b"{}\n");
@@ -73,8 +74,53 @@ fn discovers_wiki_markdown_and_skips_generated_wiki_metadata() {
         None
     );
     assert_eq!(
+        classify_file(
+            root,
+            &root.join("wiki/_gwiki/compile/checkpoint-note.md"),
+            &[] as &[&str]
+        ),
+        None,
+        "vault state-root markdown (compile checkpoints) is excluded"
+    );
+    assert_eq!(
         classify_file(root, &root.join("wiki/.obsidian/app.json"), &[] as &[&str]),
         None
+    );
+}
+
+#[test]
+fn discovers_gitignored_vault_markdown_via_allowlist() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    // Real repos gitignore the vault (it publishes to the `wiki` branch), so
+    // the allowlist must rescue vault markdown from gitignore, not only from
+    // hidden-path filtering. The `.git` marker makes the ignore walker apply
+    // .gitignore rules (require_git).
+    std::fs::create_dir(root.join(".git")).expect("git marker");
+    write_file(root, ".gitignore", b"/wiki/\n");
+    write_file(root, "src/lib.rs", b"fn main() {}\n");
+    write_file(root, "wiki/_gwiki/scope.json", b"{}\n");
+    write_file(root, "wiki/page.md", b"# Wiki\n");
+    write_file(root, "wiki/nested/page.md", b"# Nested\n");
+    write_file(root, "wiki/_meta/readme.md", b"# Generated\n");
+
+    let (ast, content_only) = discover_files(root, &[] as &[&str]);
+
+    assert_eq!(rels(root, ast), vec!["src/lib.rs"]);
+    assert_eq!(
+        rels(root, content_only),
+        vec!["wiki/nested/page.md", "wiki/page.md"],
+        "gitignored vault markdown is rescued; vault metadata stays excluded"
+    );
+    assert_eq!(
+        classify_explicit_file_with_options(
+            root,
+            &root.join("wiki/page.md"),
+            &[] as &[&str],
+            DiscoveryOptions::default(),
+        ),
+        Some(FileClassification::ContentOnly),
+        "explicit classification rescues gitignored vault markdown too"
     );
 }
 

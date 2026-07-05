@@ -16,9 +16,11 @@ GITIGNORE_END = "# <<< GOBBY WIKI END <<<"
 
 
 def _gitignore_block(vault_dir: str) -> str:
+    # Root-anchored: an unanchored `wiki/` would also ignore nested source
+    # directories such as src/gobby/wiki/.
     return f"""{GITIGNORE_START}
 # Gobby local wiki vault; pre-push publishes it to branch `wiki`.
-{vault_dir}/
+/{vault_dir}/
 {GITIGNORE_END}
 """
 

@@ -1,20 +1,33 @@
 #!/bin/sh
 # Publish the project wiki vault to the `wiki` branch whenever `main` is pushed.
 #
-# The vault lives at gobby-wiki/ (gitignored on active branches) and is checked
-# out as a sibling worktree on the `wiki` branch. This hook mirrors the working
-# copy into that worktree, commits, and pushes origin/wiki. It is best-effort:
-# failures are reported but never block the push to main (exit 0).
+# The vault is resolved like gobby_core::vault / gobby.utils.wiki_vault: the
+# first of `wiki/`, `gobby-wiki/`, `gobby-wiki-NNN/` carrying the
+# `_gwiki/scope.json` marker. It is gitignored on active branches and checked
+# out as a sibling worktree on the `wiki` branch. This hook mirrors the vault
+# CONTENTS into that worktree root (same flat layout as the daemon's
+# _mirror_wiki_vault publisher), commits, and pushes origin/wiki. It is
+# best-effort: failures are reported but never block the push to main (exit 0).
 #
 # One-time setup per clone:
-#   git worktree add --orphan -b wiki ../gobby-wiki
+#   git worktree add --orphan -b wiki ../<repo>-wiki
 #
 # If this clone already uses a generated .git/hooks/pre-push, keep it and chain
 # this script from there instead of replacing core.hooksPath.
 set -u
 
 repo_root=$(git rev-parse --show-toplevel) || exit 0
-wt="$repo_root/../gobby-wiki"
+wt="$repo_root/../$(basename "$repo_root")-wiki"
+
+resolve_vault() {
+	for candidate in "$repo_root/wiki" "$repo_root/gobby-wiki" "$repo_root"/gobby-wiki-[0-9][0-9][0-9]; do
+		if [ -f "$candidate/_gwiki/scope.json" ]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
 
 publish() {
 	if [ ! -e "$wt/.git" ]; then
@@ -22,12 +35,12 @@ publish() {
 		echo "pre-push: create it with 'git worktree add --orphan -b wiki $wt'" >&2
 		return 0
 	fi
-	if [ ! -d "$repo_root/gobby-wiki" ]; then
-		echo "pre-push: no gobby-wiki/ to publish; skipping" >&2
+	vault=$(resolve_vault) || {
+		echo "pre-push: no initialized wiki vault to publish; skipping" >&2
 		return 0
-	fi
-	rsync -a --delete --exclude '.git' "$repo_root/gobby-wiki/" "$wt/gobby-wiki/" || return 0
-	git -C "$wt" add -A -f gobby-wiki
+	}
+	rsync -a --delete --exclude '.git' "$vault/" "$wt/" || return 0
+	git -C "$wt" add -A -f .
 	if git -C "$wt" diff --cached --quiet; then
 		echo "pre-push: vault unchanged; nothing to publish" >&2
 		return 0
