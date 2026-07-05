@@ -101,7 +101,6 @@ steps:
           Cited topic page compiled with an explicit topic and the full
           source list; run report written; budgets respected.
         labels: ["wiki-research"]
-        session_id: "${{ session_id }}"
 
   # --- RESEARCHER AGENT ---
   - id: spawn_researcher

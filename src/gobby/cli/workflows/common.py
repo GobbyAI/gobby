@@ -15,8 +15,12 @@ _session_var_manager_instance: SessionVariableManager | None = None
 
 
 def get_workflow_loader() -> WorkflowLoader:
-    """Get workflow loader instance."""
-    return WorkflowLoader()
+    """Get a DB-backed workflow loader.
+
+    Workflow and pipeline definitions live in the DB registry; a loader
+    without a database cannot see bundled definitions.
+    """
+    return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
 
 
 def get_session_var_manager(db: HubDatabase | None = None) -> SessionVariableManager:

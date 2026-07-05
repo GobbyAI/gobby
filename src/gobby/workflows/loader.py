@@ -242,8 +242,15 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
                 return entry.definition
             return None
 
-        # DB lookup
+        # DB lookup. workflow_definitions.project_id is a uuid column; a
+        # filesystem path here means "no project scope".
         project_id = str(project_path) if project_path else None
+        if project_id is not None:
+            try:
+                UUID(project_id)
+            except ValueError:
+                logger.debug(f"Ignoring non-uuid project scope for pipeline lookup: {project_id}")
+                project_id = None
         visited = set(_inheritance_chain) if _inheritance_chain else set()
         db_definition = self._load_from_db(name, project_id=project_id, _visited=visited)
         if db_definition is not None:

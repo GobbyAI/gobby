@@ -1363,6 +1363,31 @@ class TestTaskLifecycleSkillGates:
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_creation_gate_exempts_pipeline_sessions(self, db, manager) -> None:
+        """Deterministic pipeline executors cannot load skills; the gate must not fire."""
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "create_task",
+                "tool_name": "mcp__gobby-tasks__create_task",
+                "tool_input": {"title": "Wiki research: pass"},
+            },
+        )
+
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": "pipeline"},
+        )
+
+        assert allowed.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_transition_gate_blocks_raw_call_until_loaded(self, db, manager) -> None:
         _sync_bundled(db)
         event = HookEvent(

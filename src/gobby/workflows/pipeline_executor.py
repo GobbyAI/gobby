@@ -11,6 +11,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from gobby.config.pipelines import PipelineConfig
 from gobby.telemetry.tracing import create_span
+from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
 from gobby.workflows.pipeline.handlers import (
     execute_exec_step,
@@ -207,12 +208,12 @@ class PipelineExecutor(
                     try:
                         definition_snapshot = pipeline.model_dump_json()
                     except Exception:
-                        definition_snapshot = json.dumps(
+                        definition_snapshot = json_dumps(
                             {"name": pipeline.name, "error": "serialization failed"}
                         )
                     execution = self.execution_manager.create_execution(
                         pipeline_name=pipeline.name,
-                        inputs_json=json.dumps(inputs),
+                        inputs_json=json_dumps(inputs),
                         session_id=session_id,
                         definition_json=definition_snapshot,
                     )
@@ -256,6 +257,20 @@ class PipelineExecutor(
                         )
                         pipeline_session_id = child_session.id
                         parent_session_id = caller_session_id
+                        # Mark the session as a deterministic executor so
+                        # LLM-behavior rules (skill gates, audience filters)
+                        # can tell it apart from agent sessions.
+                        try:
+                            from gobby.workflows.state_manager import SessionVariableManager
+
+                            SessionVariableManager(self.db).set_variable(
+                                child_session.id, "_agent_type", "pipeline"
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to mark pipeline child session agent type",
+                                exc_info=True,
+                            )
                         logger.info(
                             f"Created child session {child_session.id} for pipeline "
                             f"{pipeline.name} (parent={caller_session_id})"
@@ -361,7 +376,7 @@ class PipelineExecutor(
                         step_execution = self.execution_manager.create_step_execution(
                             execution_id=execution.id,
                             step_id=step.id,
-                            input_json=json.dumps(
+                            input_json=json_dumps(
                                 {k: v for k, v in context.items() if not k.startswith("_")}
                             )
                             if context
@@ -426,7 +441,7 @@ class PipelineExecutor(
                         self.execution_manager.update_step_execution(
                             step_execution_id=step_execution.id,
                             status=StepStatus.FAILED,
-                            output_json=json.dumps(step_output),
+                            output_json=json_dumps(step_output),
                             error=f"Exit code {step_output['exit_code']}: {error_msg}",
                         )
                         raise RuntimeError(
@@ -449,7 +464,7 @@ class PipelineExecutor(
                     self.execution_manager.update_step_execution(
                         step_execution_id=step_execution.id,
                         status=StepStatus.COMPLETED,
-                        output_json=json.dumps(step_output) if step_output is not None else None,
+                        output_json=json_dumps(step_output) if step_output is not None else None,
                     )
                     current_step_execution = None
 
@@ -470,7 +485,7 @@ class PipelineExecutor(
                     self.execution_manager.update_execution_status(
                         execution_id=execution.id,
                         status=ExecutionStatus.FAILED,
-                        outputs_json=json.dumps(outputs),
+                        outputs_json=json_dumps(outputs),
                     )
                     raise RuntimeError(f"Pipeline has failed steps: {', '.join(failed_ids)}")
 
@@ -479,7 +494,7 @@ class PipelineExecutor(
                 completed = self.execution_manager.update_execution_status(
                     execution_id=execution.id,
                     status=ExecutionStatus.COMPLETED,
-                    outputs_json=json.dumps(outputs),
+                    outputs_json=json_dumps(outputs),
                 )
                 if completed:
                     execution = completed
@@ -541,7 +556,7 @@ class PipelineExecutor(
                         failed = self.execution_manager.update_execution_status(
                             execution_id=execution.id,
                             status=ExecutionStatus.FAILED,
-                            outputs_json=json.dumps({"error": str(e)}),
+                            outputs_json=json_dumps({"error": str(e)}),
                         )
                         if failed:
                             execution = failed

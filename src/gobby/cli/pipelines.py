@@ -36,8 +36,14 @@ logger = logging.getLogger(__name__)
 
 
 def get_workflow_loader() -> WorkflowLoader:
-    """Get workflow loader instance."""
-    return WorkflowLoader()
+    """Get a DB-backed workflow loader.
+
+    Pipeline definitions live in the DB registry; a loader without a database
+    cannot see bundled pipelines such as wiki-research.
+    """
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
 
 
 def get_project_path() -> Path | None:
@@ -135,6 +141,15 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
     except (click.ClickException, DaemonUrlError, ValueError) as e:
         logger.debug("Daemon run unavailable for %s: %s", name, e, exc_info=True)
         return None
+    except httpx.TimeoutException:
+        # The daemon accepted the run and is still executing it (long-running
+        # pipelines wait on spawned agents). Falling back to the local
+        # executor here would start a DUPLICATE execution.
+        click.echo(
+            f"Pipeline '{name}' is still running in the daemon "
+            "(HTTP wait timed out). Check progress with: gobby pipelines runs list"
+        )
+        raise SystemExit(0) from None
     except (httpx.RequestError, ConnectionError, OSError) as e:
         logger.debug(f"Daemon run failed for {name}: {e}", exc_info=True)
         return None

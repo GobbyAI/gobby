@@ -9,6 +9,7 @@ import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from .definitions import PipelineDefinition, WorkflowDefinition
 from .loader_cache import DiscoveredWorkflow, _CachedDiscovery
@@ -17,6 +18,23 @@ if TYPE_CHECKING:
     from .loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _db_project_scope(project_path: Path | str | None) -> str | None:
+    """Map a caller-supplied scope to a DB project id.
+
+    ``workflow_definitions.project_id`` is a uuid column; callers commonly pass
+    a project *directory* here, which means "no project scope" for DB lookups.
+    """
+    if not project_path:
+        return None
+    candidate = str(project_path)
+    try:
+        UUID(candidate)
+    except ValueError:
+        logger.debug(f"Ignoring non-uuid project scope for discovery: {candidate}")
+        return None
+    return candidate
 
 
 def _merge_db_workflows(
@@ -112,8 +130,7 @@ async def discover_workflows(
     discovered: dict[str, DiscoveredWorkflow] = {}
 
     # DB-only: load all workflow definitions
-    db_project_id = str(project_path) if project_path else None
-    _merge_db_workflows(loader, discovered, project_id=db_project_id)
+    _merge_db_workflows(loader, discovered, project_id=_db_project_scope(project_path))
 
     # Sort: project first, then by priority (asc), then by name (alpha)
     sorted_workflows = sorted(
@@ -152,8 +169,7 @@ async def discover_pipeline_workflows(
     discovered: dict[str, DiscoveredWorkflow] = {}
 
     # DB-only: load all pipeline definitions
-    db_project_id = str(project_path) if project_path else None
-    _merge_db_pipelines(loader, discovered, project_id=db_project_id)
+    _merge_db_pipelines(loader, discovered, project_id=_db_project_scope(project_path))
 
     # Sort: project first, then by priority (asc), then by name (alpha)
     sorted_pipelines = sorted(

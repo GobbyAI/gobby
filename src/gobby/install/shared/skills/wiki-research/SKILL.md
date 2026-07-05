@@ -24,6 +24,13 @@ All wiki tools live on the `gobby-wiki` MCP server (`wiki_ask`, `wiki_search`,
 `wiki_list_sources`, `wiki_ingest`, `wiki_compile`). Discover them through
 progressive discovery before first use.
 
+**Scope warning — never pass `topic` or `project` arguments to wiki tools.**
+Those parameters select the wiki SCOPE: `topic=<name>` routes every ingest and
+compile into a separate topic wiki under `~/wiki/topics/<name>/`, silently
+bypassing the project vault. Research runs in the ambient project scope; the
+research topic only appears as the compile article title (`compile_topic`) and
+the target page path.
+
 ## 1. Context bootstrap
 
 Scope relevance before searching the web:
@@ -69,9 +76,10 @@ path in step 6 and note the dedup hit in the run report.
 
 ## 5. Ingest
 
-`wiki_ingest` with the deduplicated URL batch. Per-URL failures do not stop
-the run: record each as a `gap:` line in the affected item's note (step 6) and
-continue with what ingested.
+`wiki_ingest` with the deduplicated URL batch (`urls` only — no `topic` or
+`project` scope arguments). Per-URL failures do not stop the run: record each
+as a `gap:` line in the affected item's note (step 6) and continue with what
+ingested.
 
 ## 6. Accepted notes (one per kept item)
 
@@ -104,12 +112,14 @@ contract.
 
 ## 7. Compile the topic page
 
-`wiki_compile` with — always — an explicit `topic` and the full source list
-(every kept source plus every note). Never rely on an existing research
-checkpoint to supply sources: an explicit topic + source list replaces the
-checkpoint's accepted notes, so an implicit call can hijack or be hijacked by
-unrelated checkpoint state. Use `kind=topic`, target
-`knowledge/topics/<slug>.md` where `<slug>` is the kebab-cased question topic.
+`wiki_compile` with — always — an explicit `compile_topic` (the article
+topic) and the full source list (every kept source plus every note). Never
+rely on an existing research checkpoint to supply sources: an explicit
+compile topic + source list replaces the checkpoint's accepted notes, so an
+implicit call can hijack or be hijacked by unrelated checkpoint state. Use
+`kind=topic`, target `knowledge/topics/<slug>.md` where `<slug>` is the
+kebab-cased question topic. Remember: `compile_topic` names the article;
+the `topic` parameter would switch wiki scope — never pass it.
 
 ## 8. Investigation tasks (only when `create_tasks`)
 
@@ -126,6 +136,10 @@ recording the run and linking the report and topic page.
 
 ## 10. Finish
 
-Close your claimed task (`close_task` with the commit when repo files changed,
-or the appropriate no-commit reason when only vault data changed), then call
-`end_agent_run`. Never leave the run open after the report is written.
+Close your claimed task with the DEFAULT completed reason and a
+`changes_summary` naming the compiled topic page path, the run report path,
+and the source count (attach `commit_sha` only when repo files actually
+changed — vault-only runs close without a commit). Never close with
+`out_of_repo`, `wont_fix`, or any validation-skipping reason: validation must
+check your summary against the task's criteria. Then call `end_agent_run`.
+Never leave the run open after the report is written.

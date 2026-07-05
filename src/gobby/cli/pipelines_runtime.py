@@ -17,8 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 def get_workflow_loader() -> WorkflowLoader:
-    """Get workflow loader instance."""
-    return WorkflowLoader()
+    """Get a DB-backed workflow loader.
+
+    Pipeline definitions live in the DB registry; a loader without a database
+    cannot see bundled pipelines such as wiki-research.
+    """
+    from gobby.storage.hub.runtime import open_runtime_hub_database
+
+    return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
 
 
 def get_project_path() -> Path | None:
