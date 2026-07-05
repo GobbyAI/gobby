@@ -188,18 +188,23 @@ pub fn run(
 ) -> Result<UpkeepReport, WikiError> {
     let vault_root = research_scope.root().to_path_buf();
     let manifest = SourceManifest::read(&vault_root)?;
-    let pending: Vec<SourceRecord> = manifest
-        .entries
+    let records: Vec<SourceRecord> = manifest.entries.clone();
+    let pending_indices: BTreeSet<usize> = records
         .iter()
-        .filter(|entry| entry.compile_status == CompileStatus::Pending)
-        .cloned()
+        .enumerate()
+        .filter(|(_, entry)| entry.compile_status == CompileStatus::Pending)
+        .map(|(index, _)| index)
         .collect();
-    let pending_before = pending.len();
+    let pending_before = pending_indices.len();
 
-    // Digest page (knowledge/sources/<id>.md) -> pending record index. Only
-    // unresolved targets mentioned by pending digests seed clusters.
+    // Digest page (knowledge/sources/<id>.md) -> manifest record index.
+    // Unresolved targets mentioned by ANY digest seed clusters — the contract
+    // counts digest mentions, not pending ones. Compile status only drives the
+    // drain bookkeeping below; without this, targets whose mentioning digests
+    // were already reconciled (or consumed by another cluster) could never get
+    // an entity page and the vault's broken links would never converge.
     let mut digest_records: BTreeMap<PathBuf, usize> = BTreeMap::new();
-    for (index, record) in pending.iter().enumerate() {
+    for (index, record) in records.iter().enumerate() {
         digest_records.insert(paths::derived_markdown_path(record)?, index);
     }
 
@@ -307,7 +312,7 @@ pub fn run(
         let mut selected: Vec<&SourceRecord> = cluster
             .source_indices
             .iter()
-            .map(|&index| &pending[index])
+            .map(|&index| &records[index])
             .collect();
         selected.sort_by(|left, right| left.id.cmp(&right.id));
         let sources_truncated = selected.len().saturating_sub(options.max_sources_per_page);
@@ -376,11 +381,12 @@ pub fn run(
         clusters.push(outcome);
     }
 
-    let mut reconciled_no_synthesis: Vec<String> = pending
+    // Only pending sources reconcile: a compiled digest feeding a cluster is
+    // evidence reuse, not a drain-state change.
+    let mut reconciled_no_synthesis: Vec<String> = pending_indices
         .iter()
-        .enumerate()
-        .filter(|(index, _)| !clustered_indices.contains(index))
-        .map(|(_, record)| record.id.clone())
+        .filter(|index| !clustered_indices.contains(index))
+        .map(|&index| records[index].id.clone())
         .collect();
     reconciled_no_synthesis.sort_unstable();
     if !options.dry_run && !reconciled_no_synthesis.is_empty() {
@@ -887,6 +893,51 @@ mod tests {
                 .try_exists()
                 .is_ok_and(|exists| !exists),
             "upkeep must not persist a research checkpoint"
+        );
+    }
+
+    #[test]
+    fn upkeep_clusters_targets_mentioned_only_by_compiled_digests() {
+        // Regression: convergence must not depend on drain state. A target
+        // whose mentioning digests were already reconciled (by a run whose
+        // generation failed, or by consumption in another cluster) still gets
+        // its entity page; only the drain bookkeeping is pending-scoped.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a", "Runs on [[PostgreSQL]].\n");
+        seed_source(root, "src-b", "Migrated to [[PostgreSQL]] storage.\n");
+        SourceManifest::update(root, |manifest| {
+            for entry in &mut manifest.entries {
+                entry.compile_status = CompileStatus::Compiled;
+            }
+            Ok(true)
+        })
+        .expect("mark sources compiled");
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        assert_eq!(report.pending_before, 0);
+        assert_eq!(report.pending_after, 0);
+        assert!(
+            report.reconciled_no_synthesis.is_empty(),
+            "compiled digests feeding a cluster are evidence reuse, not a drain change"
+        );
+        assert_eq!(report.pages_created, 1);
+        assert_eq!(report.clusters.len(), 1);
+        let cluster = &report.clusters[0];
+        assert_eq!(cluster.target, "PostgreSQL");
+        assert_eq!(cluster.source_ids, vec!["src-a", "src-b"]);
+        assert_eq!(
+            cluster.page_path.as_deref(),
+            Some(Path::new("knowledge/concepts/postgresql.md"))
         );
     }
 
