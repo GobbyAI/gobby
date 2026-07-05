@@ -82,11 +82,13 @@ pub(crate) fn execute(
             session_archive::sync_session_transcript_archives(
                 scope.root(),
                 &mut store,
-                &archive_dir,
-                &wiki_dir,
-                options.limit,
-                raw_mode,
-                &fetched_at,
+                session_archive::SessionArchiveSyncRequest {
+                    archive_dir: &archive_dir,
+                    wiki_dir: &wiki_dir,
+                    limit: options.limit,
+                    raw_mode,
+                    fetched_at: &fetched_at,
+                },
                 &mut progress,
             )?
         };
@@ -110,11 +112,13 @@ pub(crate) fn execute(
     let result = session_archive::sync_session_transcript_archives(
         scope.root(),
         &mut store,
-        &archive_dir,
-        &wiki_dir,
-        options.limit,
-        raw_mode,
-        &fetched_at,
+        session_archive::SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &wiki_dir,
+            limit: options.limit,
+            raw_mode,
+            fetched_at: &fetched_at,
+        },
         &mut progress,
     )?;
     let counts = index_counts(&store);

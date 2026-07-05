@@ -126,16 +126,29 @@ struct IngestBookkeeping<'a> {
     failed: &'a mut Vec<SessionArchiveFailure>,
 }
 
+/// Inputs for one session-transcript sync batch, distinct from the vault,
+/// index store, and progress environment the batch runs against.
+pub(crate) struct SessionArchiveSyncRequest<'a> {
+    pub archive_dir: &'a Path,
+    pub wiki_dir: &'a Path,
+    pub limit: Option<usize>,
+    pub raw_mode: RawArchiveMode,
+    pub fetched_at: &'a str,
+}
+
 pub(crate) fn sync_session_transcript_archives(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
-    archive_dir: &Path,
-    wiki_dir: &Path,
-    limit: Option<usize>,
-    raw_mode: RawArchiveMode,
-    fetched_at: &str,
+    request: SessionArchiveSyncRequest<'_>,
     progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<SessionArchiveBatchIngest, WikiError> {
+    let SessionArchiveSyncRequest {
+        archive_dir,
+        wiki_dir,
+        limit,
+        raw_mode,
+        fetched_at,
+    } = request;
     if matches!(limit, Some(0)) {
         return Err(WikiError::InvalidInput {
             field: "sync-sessions.limit",

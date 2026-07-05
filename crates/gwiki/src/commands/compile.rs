@@ -242,6 +242,26 @@ fn apply_source_selection(
 mod tests {
     use super::*;
 
+    use crate::paths;
+    use crate::sources::{CompileStatus, IngestionMethod, SourceKind, SourceRecord};
+
+    fn manifest_source(id: &str, title: &str) -> SourceRecord {
+        SourceRecord {
+            id: id.to_string(),
+            location: format!("{id}.md"),
+            canonical_location: format!("file:///vault/{id}.md"),
+            kind: SourceKind::Markdown,
+            fetched_at: "2026-07-05T00:00:00Z".to_string(),
+            content_hash: format!("{id}-hash"),
+            title: Some(title.to_string()),
+            citation: None,
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+            replay: None,
+        }
+    }
+
     #[test]
     fn missing_checkpoint_with_topic_seed_creates_fresh_compile_session() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -272,5 +292,78 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn explicit_topic_and_sources_compile_cited_page_without_checkpoint() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = session::ResearchScope::project_for_id("project-1", temp.path());
+        let checkpoint = session::ResearchSession::checkpoint_path(temp.path());
+        assert!(
+            !checkpoint.exists(),
+            "precondition: no research checkpoint at {}",
+            checkpoint.display()
+        );
+
+        let records = vec![
+            manifest_source("src-alpha", "Alpha Guide"),
+            manifest_source("src-beta", "Beta Notes"),
+            manifest_source("src-gamma", "Gamma Extra"),
+        ];
+        for record in &records {
+            let raw = temp
+                .path()
+                .join(paths::raw_source_path(&record.id).expect("raw path"));
+            std::fs::create_dir_all(raw.parent().expect("raw parent")).expect("raw dir");
+            std::fs::write(
+                &raw,
+                format!(
+                    "Citation: {} Reference\nEvidence chunk from {}.\n",
+                    record.title.as_deref().expect("title"),
+                    record.id
+                ),
+            )
+            .expect("raw source written");
+        }
+        SourceManifest { entries: records }
+            .write(temp.path())
+            .expect("manifest written");
+
+        let mut session =
+            load_compile_session(scope, Some("Explicit Topic")).expect("fresh compile session");
+        apply_source_selection(
+            &mut session,
+            &["src-alpha".to_string(), "src-beta".to_string()],
+        )
+        .expect("source selection applied");
+        let topic = resolve_compile_topic(Some("Explicit Topic".to_string()), &session);
+
+        let outcome = wiki_compile::compile_to_wiki_with_options(
+            &mut session,
+            wiki_compile::CompileRequest {
+                topic,
+                outline: Vec::new(),
+                target_page: None,
+                write_intent: false,
+            },
+            wiki_compile::WikiCompileOptions::default(),
+            None,
+        )
+        .expect("compile succeeds without a pre-existing checkpoint");
+
+        let article = std::fs::read_to_string(&outcome.article_path).expect("article written");
+        assert!(
+            article.contains("Alpha Guide") && article.contains("Beta Notes"),
+            "article must cite both selected sources: {article}"
+        );
+        assert!(
+            !article.contains("Gamma"),
+            "unselected manifest source must not be cited: {article}"
+        );
+        assert_eq!(
+            outcome.source_paths.len(),
+            2,
+            "one digest page per selected source"
+        );
     }
 }
