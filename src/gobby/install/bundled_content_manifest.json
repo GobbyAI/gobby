@@ -310,6 +310,7 @@
     "workflows/rules/context-handoff/inject-previous-session-summary.yaml": "71ae576e53a70ac782671f3156461fb4061e4926222b583a63fb999ca5f09aa2",
     "workflows/rules/context-handoff/inject-task-context-on-start.yaml": "4b389a39c6dfd228ec85cb0d9e59b27cbc0066d2a5681c475e15e6b870db01d9",
     "workflows/rules/context-handoff/inject-user-profile.yaml": "50f0c6bb2450267e6e30aa583fef12305436f85a053f89ded871d036d883d614",
+    "workflows/rules/context-handoff/inject-wiki-overview.yaml": "03549a06441797430e764600ec01fa1170a53f2fbf9da3e8943b6cee5e9b42c5",
     "workflows/rules/context-handoff/nudge-compact-on-context-pressure.yaml": "c0f0eb2c49a02a86448d958f039104857ca76ad77d990c284805bcad6accb444",
     "workflows/rules/context-handoff/prepare-clear-handoff.yaml": "cadb2de5078f765593745ecd15e06a74c68c657ae1a93728398999d0a75c3768",
     "workflows/rules/context-handoff/preserve-context-on-compact.yaml": "d84428d6d7e0427cc61ad8376c264a1fd1c4fd8555ba4b7ccd6a18c5e7d2dad0",

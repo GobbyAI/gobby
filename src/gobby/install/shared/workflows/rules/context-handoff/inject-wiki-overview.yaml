@@ -1,0 +1,20 @@
+tags: [context-handoff, wiki, overview, lifecycle, gobby, default]
+
+rules:
+  inject-wiki-overview:
+    description: "Inject the project wiki overview at session start"
+    event: session_start
+    enabled: true
+    priority: 13
+    when: "variables.get('wiki_overview')"
+    effects:
+      - type: inject_context
+        template: |
+          <!-- gobby:injected-context:begin -->
+          ## Project Wiki
+          *Injected by Gobby wiki overview*
+
+          {{ wiki_overview }}
+
+          Query the wiki through the gobby-wiki MCP server (`wiki_search`, `wiki_ask`, `wiki_read`).
+          <!-- gobby:injected-context:end -->
