@@ -271,6 +271,19 @@ class PipelineExecutor(
                                 "Failed to mark pipeline child session agent type",
                                 exc_info=True,
                             )
+                        # The heartbeat resolves spawned agents through
+                        # execution.session_id (list_by_parent); without the
+                        # child session persisted, long wait steps get marked
+                        # FAILED as "stalled, no agents" while the agent runs.
+                        try:
+                            self.execution_manager.update_execution_session(
+                                execution.id, child_session.id
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to persist pipeline child session on execution",
+                                exc_info=True,
+                            )
                         logger.info(
                             f"Created child session {child_session.id} for pipeline "
                             f"{pipeline.name} (parent={caller_session_id})"

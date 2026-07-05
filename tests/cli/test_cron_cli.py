@@ -83,6 +83,8 @@ def mock_storage() -> Iterator[MagicMock]:
     """Create a mock cron storage with a mock db."""
     mock_db = MagicMock()
     mock_st = MagicMock()
+    # Non-uuid job refs (the "cj-abc123" fixtures) resolve by name first.
+    mock_st.get_job_by_name.return_value = _make_job()
     with patch("gobby.cli.cron.get_cron_storage", return_value=(mock_db, mock_st)):
         yield mock_st
 

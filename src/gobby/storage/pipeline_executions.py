@@ -168,6 +168,25 @@ class PipelineExecutionStorageMixin:
 
         return self.get_execution(execution_id)
 
+    def update_execution_session(self, execution_id: str, session_id: str) -> None:
+        """Persist the session that owns a running execution.
+
+        Top-level pipelines run under a dedicated child session; agents
+        spawned by pipeline steps carry that child session as their parent.
+        The heartbeat's agent-liveness check resolves agents through this
+        column, so it must point at the executing session (the trigger
+        session, when any, remains reachable as the child's parent).
+        """
+        project_clause, project_params = self._project_predicate()
+        self.db.execute(
+            f"""
+            UPDATE pipeline_executions
+            SET session_id = %s, updated_at = %s
+            WHERE id = %s AND {project_clause}
+            """,  # nosec B608
+            (session_id, utc_now(), execution_id, *project_params),
+        )
+
     def _build_executions_filter(
         self,
         *,

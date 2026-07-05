@@ -5,6 +5,7 @@ CLI commands for managing cron jobs.
 import json
 from datetime import datetime
 from typing import Any, Literal, NamedTuple, cast
+from uuid import UUID
 
 import click
 import httpx
@@ -25,6 +26,25 @@ def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
     """Get initialized cron storage."""
     db = open_runtime_hub_database(apply_migrations=False)
     return db, CronJobStorage(db)
+
+
+def _resolve_job_id(storage: CronJobStorage, job_ref: str) -> str:
+    """Resolve a job reference (uuid or name) to the job's uuid.
+
+    The cron_jobs id column is a uuid; passing a name straight through
+    crashes Postgres with an invalid-uuid cast, so non-uuid refs resolve
+    by name first.
+    """
+    try:
+        UUID(job_ref)
+        return job_ref
+    except ValueError:
+        pass
+    job = storage.get_job_by_name(job_ref)
+    if not job:
+        click.echo(f"Job not found: {job_ref}", err=True)
+        raise SystemExit(1)
+    return str(job.id)
 
 
 def _get_daemon_client(ctx: click.Context) -> DaemonClient:
@@ -188,6 +208,8 @@ def add_job(
 @click.pass_context
 def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
     """Trigger immediate execution of a cron job."""
+    _, storage = get_cron_storage()
+    job_id = _resolve_job_id(storage, job_id)
     client = _get_daemon_client(ctx)
     try:
         response = client.call_http_api(
@@ -218,7 +240,7 @@ def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
 def toggle_job(job_id: str, json_format: bool) -> None:
     """Toggle a cron job enabled/disabled."""
     _, storage = get_cron_storage()
-    job = storage.toggle_job(job_id)
+    job = storage.toggle_job(_resolve_job_id(storage, job_id))
     if not job:
         click.echo(f"Job not found: {job_id}", err=True)
         raise SystemExit(1)
@@ -238,6 +260,7 @@ def toggle_job(job_id: str, json_format: bool) -> None:
 def list_runs(job_id: str, limit: int, json_format: bool) -> None:
     """Show run history for a cron job."""
     _, storage = get_cron_storage()
+    job_id = _resolve_job_id(storage, job_id)
     job = storage.get_job(job_id)
     if not job:
         click.echo(f"Job not found: {job_id}", err=True)
@@ -272,7 +295,7 @@ def list_runs(job_id: str, limit: int, json_format: bool) -> None:
 def remove_job(job_id: str) -> None:
     """Remove a cron job."""
     _, storage = get_cron_storage()
-    success = storage.delete_job(job_id)
+    success = storage.delete_job(_resolve_job_id(storage, job_id))
     if success:
         click.echo(f"Removed cron job: {job_id}")
     else:
@@ -299,6 +322,7 @@ def edit_job(
 ) -> None:
     """Edit a cron job's configuration."""
     _, storage = get_cron_storage()
+    job_id = _resolve_job_id(storage, job_id)
     job = storage.get_job(job_id)
     if not job:
         click.echo(f"Job not found: {job_id}", err=True)

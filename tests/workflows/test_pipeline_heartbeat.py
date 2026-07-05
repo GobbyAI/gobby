@@ -182,6 +182,42 @@ async def test_stalled_with_alive_agents_touches_updated_at(
 
 
 @pytest.mark.asyncio
+async def test_stalled_with_agents_under_persisted_child_session_survives(
+    heartbeat: PipelineHeartbeat,
+    exec_manager: LocalPipelineExecutionManager,
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+) -> None:
+    """CLI/HTTP-triggered executions start with session_id=None; once the
+    executor persists the pipeline child session, agents spawned under that
+    child keep the execution alive instead of being killed as stalled."""
+    child_session = "33333333-3333-4333-8333-333333333333"
+    _seed_session(temp_db, child_session, status="active")
+
+    exe = exec_manager.create_execution(pipeline_name="test-pipeline", session_id=None)
+    exec_manager.update_execution_status(exe.id, ExecutionStatus.RUNNING)
+    exec_manager.update_execution_session(exe.id, child_session)
+    stale_time = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    temp_db.execute(
+        "UPDATE pipeline_executions SET updated_at = %s WHERE id = %s",
+        (stale_time, exe.id),
+    )
+    _add_alive_agent(
+        agent_run_manager,
+        parent_session_id=child_session,
+        run_id="2fbb3f18-f217-5d39-a355-5774741d6229",
+    )
+
+    count = await heartbeat.check_stalled_executions()
+    assert count == 1
+
+    refreshed = exec_manager.get_execution(exe.id)
+    assert refreshed is not None
+    assert refreshed.status == ExecutionStatus.RUNNING
+    assert refreshed.session_id == child_session
+
+
+@pytest.mark.asyncio
 async def test_non_stalled_execution_untouched(
     heartbeat: PipelineHeartbeat,
     exec_manager: LocalPipelineExecutionManager,
