@@ -100,6 +100,21 @@ def _make_stage_state(
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_project_manager() -> Iterator[None]:
+    """Resolve no project during repo-path resolution.
+
+    RegistryContext.__post_init__ builds a real LocalProjectManager over the
+    MagicMock db used here, so close_task's resolve_task_repo_path would parse
+    MagicMock rows as datetimes (fromisoformat TypeError). Stubbing the class
+    makes project lookup return None and repo-path resolution fall back to cwd.
+    """
+    with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm:
+        mock_pm.return_value.get.return_value = None
+        mock_pm.return_value.list.return_value = []
+        yield
+
+
 @pytest.fixture
 def mock_task_manager() -> MagicMock:
     mgr = MagicMock(spec=LocalTaskManager)
