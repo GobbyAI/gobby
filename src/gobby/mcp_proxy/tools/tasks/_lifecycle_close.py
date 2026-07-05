@@ -37,6 +37,25 @@ logger = logging.getLogger(__name__)
 CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT: int = 30
 
 
+def _has_committable_edits(paths: set[str], cwd: str) -> bool:
+    """Return True if any of the given repo-relative paths could ever be committed.
+
+    Paths matched by .gitignore (e.g. a gitignored `wiki/` vault) can never produce
+    a commit, so they must not trigger the commit-before-close requirement. A
+    `git check-ignore` miss or error is treated as committable so real tracked-file
+    edits never silently skip the requirement.
+    """
+    if not paths:
+        return False
+
+    from gobby.utils.git import run_git_command
+
+    for path in sorted(paths):
+        if run_git_command(["git", "check-ignore", "-q", path], cwd=cwd) is None:
+            return True
+    return False
+
+
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the close_task tool on the given registry."""
 
@@ -188,9 +207,15 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                         "owning session, so it cannot safely enforce commit requirements."
                     ),
                 }
-        from gobby.workflows.task_claim_state import target_task_has_edits
+        from gobby.workflows.task_claim_state import (
+            target_task_has_edits,
+            task_edited_file_set,
+        )
 
         target_task_had_edits = target_task_has_edits(session_vars, resolved_id)
+        if target_task_had_edits:
+            edited_paths = task_edited_file_set(session_vars, resolved_id)
+            target_task_had_edits = _has_committable_edits(edited_paths, cwd)
 
         autolink_error = _auto_link_claim_window_commits(
             ctx=ctx,

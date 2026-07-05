@@ -73,8 +73,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test close_task with skip reason bypasses commit check."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -101,6 +99,8 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
             result = await registry.call(
                 "close_task",
                 {
@@ -118,8 +118,6 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_parent_with_open_children(self, mock_task_manager, mock_sync_manager):
         """Test close_task fails for parent with open children."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440020"
         mock_task.commits = ["abc123"]
@@ -145,6 +143,8 @@ class TestCloseTaskTool:
             mock_proj_instance.get.return_value = None
             MockProjManager.return_value = mock_proj_instance
 
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
             result = await registry.call(
                 "close_task", {"task_id": "550e8400-e29b-41d4-a716-446655440020"}
             )
@@ -156,8 +156,6 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_success_with_commits(self, mock_task_manager, mock_sync_manager):
         """Test close_task succeeds when commits are linked."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
@@ -185,6 +183,8 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
             result = await registry.call(
                 "close_task",
                 {
@@ -201,8 +201,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """A repaired task should close against its linked repair commit, not ambient HEAD."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["old-commit", "repair-commit"]
@@ -229,6 +227,8 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "ambient-head"
 
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
             result = await registry.call(
                 "close_task",
                 {
@@ -247,8 +247,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test close_task returns structured bootstrap ledger mismatch errors."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -270,6 +268,8 @@ class TestCloseTaskTool:
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
             MockProjManager.return_value = mock_proj_instance
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
                 "close_task",
@@ -408,8 +408,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test close_task surfaces explicit commit SHA resolution failures."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -426,6 +424,8 @@ class TestCloseTaskTool:
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
             MockProjManager.return_value = mock_proj_instance
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
                 "close_task",
@@ -450,9 +450,17 @@ class TestCloseTaskTool:
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
+        def fake_run_git_command(command, cwd=None, timeout=5):
+            if command[:2] == ["git", "check-ignore"]:
+                return None  # exit 1 => path is NOT gitignored (a real tracked file)
+            return "abc123"
+
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
-            patch("gobby.utils.git.run_git_command") as mock_git,
+            patch(
+                "gobby.utils.git.run_git_command",
+                side_effect=fake_run_git_command,
+            ),
             patch(
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
@@ -463,7 +471,6 @@ class TestCloseTaskTool:
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
             MockProjManager.return_value = mock_proj_instance
-            mock_git.return_value = "abc123"
 
             mock_session_instance = MagicMock()
             mock_session_instance.resolve_session_reference.return_value = "test-session"
@@ -486,6 +493,68 @@ class TestCloseTaskTool:
             mock_task_manager.close_task.assert_not_called()
             assert mock_task_manager.close_task.call_count == 0
             assert not mock_task_manager.close_task.called
+
+    @pytest.mark.asyncio
+    async def test_close_task_succeeds_when_only_gitignored_paths_edited(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Gitignored-only edits (e.g. a vault under wiki/) never need a commit."""
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = None
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
+        mock_task.validation_criteria = None
+        mock_task.requires_user_review = False
+        mock_task.to_brief.return_value = {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "closed",
+        }
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.close_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
+
+        def fake_run_git_command(command, cwd=None, timeout=5):
+            if command[:2] == ["git", "check-ignore"]:
+                return ""  # exit 0 => path IS gitignored
+            return "abc123"
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch(
+                "gobby.utils.git.run_git_command",
+                side_effect=fake_run_git_command,
+            ),
+            patch(
+                "gobby.utils.git.normalize_commit_sha",
+                side_effect=lambda sha, cwd=None: sha,
+            ),
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+        ):
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+
+            mock_session_instance = MagicMock()
+            mock_session_instance.resolve_session_reference.return_value = "test-session"
+            MockSessionManager.return_value = mock_session_instance
+            MockSVManager.return_value.get_variables.return_value = {
+                "task_edited_files": {
+                    "550e8400-e29b-41d4-a716-446655440000": ["wiki/knowledge/topics/x.md"],
+                },
+            }
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "changes_summary": "vault-only research notes",
+                },
+            )
+
+            assert result == {"success": True}
+            mock_task_manager.close_task.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_succeeds_with_unrelated_task_edits(
