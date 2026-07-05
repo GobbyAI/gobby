@@ -1,9 +1,10 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::claims::{
     claim_lines, has_codewiki_frontmatter_source_spans, has_inline_source_support,
-    unsupported_claims,
+    is_manifest_backed_source_digest, unsupported_claims,
 };
 use super::*;
 use crate::lint::WikiPage;
@@ -279,6 +280,7 @@ Signature: `fn example() -> bool {`
         &page,
         &ProvenanceGraph::default(),
         &Arc::new(Vec::new()),
+        &BTreeSet::new(),
         &AuditOptions::default(),
     );
 
@@ -317,6 +319,7 @@ This generated page makes an unsupported prose claim.
         &page,
         &ProvenanceGraph::default(),
         &Arc::new(Vec::new()),
+        &BTreeSet::new(),
         &AuditOptions::default(),
     );
 
@@ -367,6 +370,7 @@ Signature: `fn example() -> bool {`
             &legacy_page,
             &ProvenanceGraph::default(),
             &Arc::new(Vec::new()),
+            &BTreeSet::new(),
             &AuditOptions::default(),
         )
         .len(),
@@ -377,9 +381,120 @@ Signature: `fn example() -> bool {`
             &canonical_page,
             &ProvenanceGraph::default(),
             &Arc::new(Vec::new()),
+            &BTreeSet::new(),
             &AuditOptions::default(),
         )
         .is_empty()
+    );
+}
+
+#[test]
+fn manifest_backed_source_digest_is_page_level_supported() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let record = SourceManifest::register(
+        root,
+        SourceDraft::url(
+            "https://example.com/digest",
+            "2026-05-29T12:00:00Z",
+            "digest body",
+        )
+        .with_citation("Digest Source"),
+    )
+    .expect("source registered");
+
+    let page = root.join(format!("knowledge/sources/{}.md", record.id));
+    std::fs::create_dir_all(page.parent().expect("page parent")).expect("create sources dir");
+    std::fs::write(
+        &page,
+        format!(
+            "---\ntitle: Digest\nsource_kind: url\nsource_hash: {}\n---\n# Digest\nUncited prose claim from the digest.\nSignature: `fn example() -> bool {{`\n",
+            record.content_hash
+        ),
+    )
+    .expect("write digest page");
+
+    let report = run(root, ScopeIdentity::project("project-123")).expect("audit runs");
+
+    let digest_path = PathBuf::from(format!("knowledge/sources/{}.md", record.id));
+    assert!(
+        report
+            .unsupported_claims
+            .iter()
+            .all(|claim| claim.path != digest_path),
+        "manifest-backed digest claims should be page-level supported"
+    );
+}
+
+#[test]
+fn source_digest_without_manifest_match_is_still_audited() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let orphan = root.join("knowledge/sources/orphan.md");
+    std::fs::create_dir_all(orphan.parent().expect("page parent")).expect("create sources dir");
+    std::fs::write(
+        &orphan,
+        "---\ntitle: Orphan\nsource_kind: url\nsource_hash: not-a-registered-hash\n---\n# Orphan\nUncited prose claim with an orphan hash.\n",
+    )
+    .expect("write orphan digest");
+    let hashless = root.join("knowledge/sources/hashless.md");
+    std::fs::write(
+        &hashless,
+        "---\ntitle: Hashless\nsource_kind: url\n---\n# Hashless\nUncited prose claim without a source hash.\n",
+    )
+    .expect("write hashless digest");
+
+    let report = run(root, ScopeIdentity::project("project-123")).expect("audit runs");
+
+    assert!(
+        report
+            .unsupported_claims
+            .iter()
+            .any(|claim| claim.path == Path::new("knowledge/sources/orphan.md")),
+        "orphan-hash digest should still be audited"
+    );
+    assert!(
+        report
+            .unsupported_claims
+            .iter()
+            .any(|claim| claim.path == Path::new("knowledge/sources/hashless.md")),
+        "digest without a source hash should still be audited"
+    );
+}
+
+#[test]
+fn manifest_backed_digest_exemption_requires_sources_path_and_covers_all_kinds() {
+    let markdown = "---\ntitle: Digest\nsource_kind: session\nsource_hash: hash-1\n---\n# Digest\nUncited prose claim from the digest.\nSignature: `fn example() -> bool {`\n";
+    let digest = test_codewiki_page("knowledge/sources/src-1.md", markdown);
+    let topic = test_codewiki_page("knowledge/topics/src-1.md", markdown);
+    let hashes = BTreeSet::from(["hash-1".to_string()]);
+
+    assert!(is_manifest_backed_source_digest(&digest, &hashes));
+    assert!(!is_manifest_backed_source_digest(&topic, &hashes));
+    assert!(!is_manifest_backed_source_digest(&digest, &BTreeSet::new()));
+
+    let exempted = unsupported_claims(
+        &digest,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &hashes,
+        &AuditOptions::default(),
+    );
+    assert!(
+        exempted.is_empty(),
+        "prose and structural claims are exempt"
+    );
+
+    let unmatched = unsupported_claims(
+        &digest,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+    assert!(
+        !unmatched.is_empty(),
+        "no manifest match means no exemption"
     );
 }
 
