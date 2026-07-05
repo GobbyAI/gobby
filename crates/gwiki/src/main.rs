@@ -41,6 +41,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "health",
     "librarian",
     "upkeep",
+    "recap",
     "status",
     "trust",
 ];
@@ -150,6 +151,8 @@ enum CliCommand {
     Librarian(LibrarianArgs),
     /// Drain pending sources into entity concept pages.
     Upkeep(UpkeepArgs),
+    /// Write the day's session recap page.
+    Recap(RecapArgs),
     /// Show shell readiness.
     Status,
     /// Show search, graph, freshness, and audit trust status.
@@ -407,6 +410,17 @@ struct UpkeepArgs {
     dry_run: bool,
 
     /// AI routing for concept-page synthesis.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
+}
+
+#[derive(Debug, Args)]
+struct RecapArgs {
+    /// Target day (YYYY-MM-DD, UTC session-day attribution); defaults to today.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    date: Option<String>,
+
+    /// AI routing for the single-shot recap synthesis.
     #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
     ai: AiRouting,
 }
@@ -794,6 +808,11 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 max_sources_per_page: args.max_sources_per_page,
                 dry_run: args.dry_run,
             },
+            ai: args.ai,
+        }),
+        CliCommand::Recap(args) => Ok(Command::Recap {
+            scope,
+            options: gobby_wiki::RecapOptions { date: args.date },
             ai: args.ai,
         }),
         CliCommand::Status => Ok(Command::Status { scope }),

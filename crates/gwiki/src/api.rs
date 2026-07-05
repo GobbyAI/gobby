@@ -130,6 +130,11 @@ pub enum Command {
         options: UpkeepOptions,
         ai: AiRouting,
     },
+    Recap {
+        scope: ScopeSelection,
+        options: RecapOptions,
+        ai: AiRouting,
+    },
     Status {
         scope: ScopeSelection,
     },
@@ -164,6 +169,13 @@ impl Default for UpkeepOptions {
             dry_run: false,
         }
     }
+}
+
+/// Options for the `recap` daily session page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecapOptions {
+    /// Target day as `YYYY-MM-DD` (UTC attribution); `None` means today.
+    pub date: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

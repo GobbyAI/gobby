@@ -17,6 +17,7 @@ pub(crate) mod lint;
 pub(crate) mod normalize;
 pub(crate) mod purge;
 pub(crate) mod read;
+pub(crate) mod recap;
 pub(crate) mod refresh;
 pub(crate) mod review_report;
 pub(crate) mod search;
@@ -111,6 +112,7 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
         Command::Health { scope } => health::execute(scope),
         Command::Librarian { scope, ai } => librarian::execute(scope, ai),
         Command::Upkeep { scope, options, ai } => upkeep::execute(scope, options, ai),
+        Command::Recap { scope, options, ai } => recap::execute(scope, options, ai),
         Command::Status { scope } => status::execute(scope),
         Command::Trust { scope } => trust::execute(scope),
         Command::CitationQuality { scope } => citation_quality::execute(scope),

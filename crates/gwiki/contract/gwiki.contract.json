@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 9,
+  "contract_version": 10,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -865,6 +865,67 @@
         "metadata_keys": [
           "notes[]",
           "clusters[].error",
+          "ai"
+        ]
+      }
+    },
+    {
+      "name": "recap",
+      "summary": "Write the day's session recap page.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--date",
+          "takes_value": true,
+          "value_name": "YYYY-MM-DD",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "timestamp",
+        "date",
+        "sessions_selected",
+        "session_ids",
+        "sources_truncated",
+        "synthesis",
+        "page_path",
+        "page_action",
+        "citations_kept",
+        "citations_stripped",
+        "fallback_sections",
+        "notes",
+        "ai"
+      ],
+      "hard_dependencies": [
+        "vault"
+      ],
+      "optional_dependencies": [
+        "model synthesis"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "AI off or failed still writes the deterministic session listing with a fallback overview; a day with no sessions writes no page and is not an error",
+        "metadata_keys": [
+          "synthesis",
+          "notes[]",
           "ai"
         ]
       }

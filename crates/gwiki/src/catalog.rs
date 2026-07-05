@@ -20,6 +20,8 @@ pub(crate) const OVERVIEW_MAX_CHARS: usize = 2_000;
 /// Ceiling for a listing one-liner (title plus first sentence).
 pub(crate) const ONE_LINER_MAX_CHARS: usize = 160;
 const TOP_CONCEPTS_LIMIT: usize = 5;
+/// Recap pages folded into the Overview's rolling Recent work line.
+const RECENT_RECAPS_LIMIT: usize = 3;
 
 /// Sections of `code/INDEX.md`, in render order, mapped to the codewiki
 /// output directories they list.
@@ -77,6 +79,7 @@ pub(crate) fn regenerate(
     let sources = source_records_by_id(vault_root)?;
     let code_sections = scan_code_sections(vault_root)?;
     let top_concepts = top_concepts(vault_root, &concepts)?;
+    let recaps = scan_pages(vault_root, crate::recap::RECAPS_DIRECTORY)?;
 
     let report = CatalogReport {
         index_path: vault_root.join("_index.md"),
@@ -89,11 +92,14 @@ pub(crate) fn regenerate(
         &render_wiki_index(
             vault_root,
             scope,
-            &concepts,
-            &topics,
-            sources.len(),
-            code_page_total,
-            &top_concepts,
+            &WikiIndexSections {
+                concepts: &concepts,
+                topics: &topics,
+                source_total: sources.len(),
+                code_page_total,
+                top_concepts: &top_concepts,
+                recaps: &recaps,
+            },
         ),
     )?;
     write_if_changed(
@@ -107,62 +113,63 @@ pub(crate) fn regenerate(
     Ok(report)
 }
 
+/// Scanned vault sections feeding `_index.md`.
+struct WikiIndexSections<'a> {
+    concepts: &'a [PageSummary],
+    topics: &'a [PageSummary],
+    source_total: usize,
+    code_page_total: usize,
+    top_concepts: &'a [PageSummary],
+    recaps: &'a [PageSummary],
+}
+
 fn render_wiki_index(
     vault_root: &Path,
     scope: &ScopeIdentity,
-    concepts: &[PageSummary],
-    topics: &[PageSummary],
-    source_total: usize,
-    code_page_total: usize,
-    top_concepts: &[PageSummary],
+    sections: &WikiIndexSections<'_>,
 ) -> String {
-    let mut top_links: Vec<String> = top_concepts
+    let mut top_links: Vec<String> = sections
+        .top_concepts
         .iter()
         .map(|page| page_link(vault_root, page))
         .collect();
-    let mut overview = render_overview(
-        scope,
-        concepts.len(),
-        topics.len(),
-        source_total,
-        code_page_total,
-        &top_links,
-    );
+    let recent_work = render_recent_work(sections.recaps);
+    let mut overview = render_overview(scope, sections, &top_links, recent_work.as_deref());
     // The Overview block doubles as the session-start hot cache; shed trailing
-    // top-concept links until it fits the injection budget.
+    // top-concept links until it fits the injection budget. The Recent work
+    // line never needs shedding: three date-labelled links plus one bounded
+    // one-liner stay far under the budget.
     while overview.chars().count() > OVERVIEW_MAX_CHARS && !top_links.is_empty() {
         top_links.pop();
-        overview = render_overview(
-            scope,
-            concepts.len(),
-            topics.len(),
-            source_total,
-            code_page_total,
-            &top_links,
-        );
+        overview = render_overview(scope, sections, &top_links, recent_work.as_deref());
     }
 
     let mut markdown = String::from("# Wiki Index\n\n");
     markdown.push_str(&overview);
-    render_listing_section(&mut markdown, vault_root, "Concepts", concepts);
-    render_listing_section(&mut markdown, vault_root, "Topics", topics);
+    render_listing_section(&mut markdown, vault_root, "Concepts", sections.concepts);
+    render_listing_section(&mut markdown, vault_root, "Topics", sections.topics);
     markdown
 }
 
 fn render_overview(
     scope: &ScopeIdentity,
-    concept_total: usize,
-    topic_total: usize,
-    source_total: usize,
-    code_page_total: usize,
+    sections: &WikiIndexSections<'_>,
     top_links: &[String],
+    recent_work: Option<&str>,
 ) -> String {
     let mut overview = String::from("## Overview\n\n");
     overview.push_str(&format!("Scope: {scope}\n"));
     overview.push_str(&format!(
-        "Totals: {concept_total} concepts · {topic_total} topics · {source_total} sources · \
-         {code_page_total} code pages\n"
+        "Totals: {} concepts · {} topics · {} sources · {} code pages\n",
+        sections.concepts.len(),
+        sections.topics.len(),
+        sections.source_total,
+        sections.code_page_total,
     ));
+    if let Some(recent_work) = recent_work {
+        overview.push_str(recent_work);
+        overview.push('\n');
+    }
     if !top_links.is_empty() {
         overview.push_str(&format!("Top concepts: {}\n", top_links.join(", ")));
     }
@@ -171,6 +178,30 @@ fn render_overview(
          [[knowledge/INDEX|knowledge/INDEX]] and [[code/INDEX|code/INDEX]].\n",
     );
     overview
+}
+
+/// Rolling Recent work line: the newest recap with its bounded one-liner,
+/// then bare date links for the next most recent recaps.
+fn render_recent_work(recaps: &[PageSummary]) -> Option<String> {
+    let mut newest_first = recaps.iter().rev().take(RECENT_RECAPS_LIMIT);
+    let latest = newest_first.next()?;
+    let mut line = format!("Recent work: {}", recap_link(latest));
+    if let Some(one_liner) = &latest.one_liner {
+        line.push_str(" — ");
+        line.push_str(one_liner);
+    }
+    for earlier in newest_first {
+        line.push_str(", ");
+        line.push_str(&recap_link(earlier));
+    }
+    Some(line)
+}
+
+/// Link a recap page by its date stem — the page title ("Recap: <date>")
+/// would only repeat the label.
+fn recap_link(page: &PageSummary) -> String {
+    let stem = page_stem(&page.relative);
+    format!("[[{}|{stem}]]", page.relative.trim_end_matches(".md"),)
 }
 
 fn render_listing_section(
@@ -518,6 +549,56 @@ mod tests {
         let second = catalog_files(root);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn overview_recent_work_lists_recaps_newest_first() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        for (date, body) in [
+            ("2026-07-01", "Old work."),
+            ("2026-07-02", "Older work."),
+            ("2026-07-03", "Recent work."),
+            ("2026-07-04", "Shipped the recap feature. More detail."),
+        ] {
+            write_page(
+                root,
+                &format!("recaps/{date}.md"),
+                &format!("---\ntitle: \"Recap: {date}\"\n---\n# Recap: {date}\n\n{body}\n"),
+            );
+        }
+
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate");
+
+        let index = fs::read_to_string(root.join("_index.md")).expect("_index.md");
+        let recent = index
+            .lines()
+            .find(|line| line.starts_with("Recent work: "))
+            .expect("recent work line rendered");
+        assert!(
+            recent.contains("[[recaps/2026-07-04|2026-07-04]] — Shipped the recap feature."),
+            "latest recap leads with its one-liner: {recent}"
+        );
+        let position = |needle: &str| recent.find(needle).map(|at| (needle.to_string(), at));
+        let latest = position("recaps/2026-07-04").expect("latest listed");
+        let middle = position("recaps/2026-07-03").expect("middle listed");
+        let earliest = position("recaps/2026-07-02").expect("earliest kept listed");
+        assert!(latest.1 < middle.1 && middle.1 < earliest.1, "{recent}");
+        assert!(
+            !recent.contains("recaps/2026-07-01"),
+            "limit keeps only the newest {RECENT_RECAPS_LIMIT}: {recent}"
+        );
+    }
+
+    #[test]
+    fn overview_omits_recent_work_without_recaps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate");
+
+        let index = fs::read_to_string(root.join("_index.md")).expect("_index.md");
+        assert!(!index.contains("Recent work:"), "{index}");
     }
 
     #[test]

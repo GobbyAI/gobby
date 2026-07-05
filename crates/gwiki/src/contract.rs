@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 9,
+        contract_version: 10,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -410,6 +410,34 @@ pub fn contract() -> CliContract {
                     metadata_keys: vec!["notes[]", "clusters[].error", "ai"],
                 }),
                 ..CommandContract::new("upkeep", "Drain pending sources into entity concept pages.")
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--date", "YYYY-MM-DD"), ai_flag("--ai")],
+                json_output_keys: scoped_keys(vec![
+                    "timestamp",
+                    "date",
+                    "sessions_selected",
+                    "session_ids",
+                    "sources_truncated",
+                    "synthesis",
+                    "page_path",
+                    "page_action",
+                    "citations_kept",
+                    "citations_stripped",
+                    "fallback_sections",
+                    "notes",
+                    "ai",
+                ]),
+                hard_dependencies: vec!["vault"],
+                optional_dependencies: vec!["model synthesis"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "AI off or failed still writes the deterministic session listing with a fallback overview; a day with no sessions writes no page and is not an error",
+                    metadata_keys: vec!["synthesis", "notes[]", "ai"],
+                }),
+                ..CommandContract::new("recap", "Write the day's session recap page.")
             },
             CommandContract {
                 daemon_consumed: true,

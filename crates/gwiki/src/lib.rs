@@ -40,6 +40,7 @@ pub mod output;
 pub(crate) mod paths;
 pub(crate) mod progress;
 pub(crate) mod provenance;
+pub(crate) mod recap;
 pub(crate) mod registry;
 pub(crate) mod schema;
 pub(crate) mod scope;
@@ -58,8 +59,8 @@ pub(crate) mod vision;
 
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget,
-    ReviewReportOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
-    SyncSessionsOptions, UpkeepOptions,
+    RecapOptions, ReviewReportOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection,
+    SetupOptions, SyncSessionsOptions, UpkeepOptions,
 };
 pub use error::WikiError;
 pub use runner::run;
