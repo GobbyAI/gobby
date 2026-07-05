@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
-from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
+from gobby.gwiki_gateway import (
+    COMPILE_KINDS,
+    GwikiCommandError,
+    GwikiGateway,
+    GwikiGatewayError,
+)
 from gobby.wiki import WikiUpdateCoordinator
 from gobby.wiki.scope_resolution import (
     ResolvedWikiScope,
@@ -179,8 +184,29 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        output = _optional_string((body or {}).get("output"))
-        return await _write_call(server, project, topic, lambda gateway: gateway.compile(output))
+        request = body or {}
+        compile_topic = _optional_string(request.get("compile_topic"))
+        kind = _normalize_kind(_optional_string(request.get("kind")))
+        sources = _string_sequence(request.get("sources")) or None
+        outline = _string_sequence(request.get("outline")) or None
+        target = _optional_string(request.get("target"))
+        write_intent = bool(request.get("write_intent", False))
+        ai_value = _optional_string(request.get("ai"))
+        ai = _normalize_ai(ai_value) if ai_value is not None else None
+        return await _write_call(
+            server,
+            project,
+            topic,
+            lambda gateway: gateway.compile(
+                compile_topic,
+                kind=kind,
+                sources=sources,
+                outline=outline,
+                target=target,
+                write_intent=write_intent,
+                ai=ai,
+            ),
+        )
 
     @router.post("/audit")
     async def audit(
@@ -316,6 +342,16 @@ def _normalize_ai(value: str) -> str:
         allowed = ", ".join(sorted(_AI_VALUES))
         raise HTTPException(status_code=400, detail=f"ai must be one of {allowed}")
     return ai
+
+
+def _normalize_kind(value: str | None) -> str | None:
+    if value is None:
+        return None
+    kind = value.strip().lower()
+    if kind not in COMPILE_KINDS:
+        allowed = ", ".join(sorted(COMPILE_KINDS))
+        raise HTTPException(status_code=400, detail=f"kind must be one of {allowed}")
+    return kind
 
 
 def _required_string(value: Any, detail: str) -> str:

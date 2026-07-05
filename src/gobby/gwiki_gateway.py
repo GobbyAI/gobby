@@ -8,6 +8,8 @@ from typing import Any
 
 from gobby.utils.native_bin import resolve_native_bin
 
+COMPILE_KINDS = frozenset({"source", "concept", "topic"})
+
 
 class GwikiGatewayError(RuntimeError):
     """Base error for Gwiki gateway failures."""
@@ -145,10 +147,35 @@ class GwikiGateway:
             args.append(query)
         return await self._run_json("collect", args)
 
-    async def compile(self, output: str | Path | None = None) -> dict[str, Any]:
+    async def compile(
+        self,
+        topic: str | None = None,
+        *,
+        kind: str | None = None,
+        sources: Sequence[str] | None = None,
+        outline: Sequence[str] | None = None,
+        target: str | Path | None = None,
+        write_intent: bool = False,
+        ai: str | None = None,
+    ) -> dict[str, Any]:
+        if kind is not None and kind not in COMPILE_KINDS:
+            allowed = ", ".join(sorted(COMPILE_KINDS))
+            raise ValueError(f"kind must be one of {allowed}")
         args = ["compile"]
-        if output is not None:
-            args.extend(["--target", str(output)])
+        if topic is not None:
+            args.append(topic)
+        if kind is not None:
+            args.extend(["--kind", kind])
+        for source in sources or ():
+            args.extend(["--source", source])
+        for heading in outline or ():
+            args.extend(["--outline", heading])
+        if target is not None:
+            args.extend(["--target", str(target)])
+        if write_intent:
+            args.append("--write-intent")
+        if ai is not None:
+            args.extend(["--ai", ai])
         return await self._run_json("compile", args)
 
     async def audit(self) -> dict[str, Any]:

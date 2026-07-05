@@ -67,8 +67,8 @@ const ACTIONS: WikiActionDefinition[] = [
     kind: "compile",
     label: "Compile wiki",
     title: "Wiki compile",
-    inputLabel: "Output path",
-    placeholder: "Optional output path",
+    inputLabel: "Target page path",
+    placeholder: "Optional target page path",
     requiresInput: false,
     requiresIntent: true,
   },
@@ -112,8 +112,8 @@ function buildIngestRequest(value: string): WikiIngestRequest {
 }
 
 function buildCompileRequest(value: string): WikiCompileRequest {
-  const output = value.trim();
-  return output ? { output } : {};
+  const target = value.trim();
+  return target ? { target } : {};
 }
 
 function readSelector(value: string): Selector {

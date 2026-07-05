@@ -4,7 +4,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
+from gobby.gwiki_gateway import (
+    COMPILE_KINDS,
+    GwikiCommandError,
+    GwikiGateway,
+    GwikiGatewayError,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.wiki.scope_resolution import ResolvedWikiScope, resolve_wiki_scope
@@ -199,14 +204,43 @@ def create_wiki_registry(
 
     @registry.tool(
         name="wiki_compile",
-        description="Compile wiki content. Accepts optional output path.",
+        description=(
+            "Compile accepted research notes into wiki articles. compile_topic sets "
+            "the explicit article topic (distinct from the wiki-scope topic param) "
+            "and always wins over checkpoint state; sources selects accepted source "
+            "ids or paths wholesale; kind is one of source, concept, topic; outline "
+            "seeds section headings; target overrides the output page path."
+        ),
     )
     async def wiki_compile(
-        output: str | None = None,
+        compile_topic: str | None = None,
+        kind: str | None = None,
+        sources: list[str] | None = None,
+        outline: list[str] | None = None,
+        target: str | None = None,
+        write_intent: bool = False,
+        ai: str | None = None,
         project: str | None = None,
         topic: str | None = None,
     ) -> dict[str, Any]:
-        return await _guard(lambda: write_call(project, topic, lambda gwiki: gwiki.compile(output)))
+        async def run() -> dict[str, Any]:
+            kind_value = _normalize_kind(kind)
+            ai_value = _normalize_ai(ai) if ai is not None else None
+            return await write_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.compile(
+                    compile_topic,
+                    kind=kind_value,
+                    sources=sources,
+                    outline=outline,
+                    target=target,
+                    write_intent=write_intent,
+                    ai=ai_value,
+                ),
+            )
+
+        return await _guard(run)
 
     @registry.tool(
         name="wiki_audit",
@@ -368,6 +402,16 @@ def _normalize_ai(value: str | None) -> str:
     if ai not in _AI_VALUES:
         raise ValueError("ai must be one of auto, daemon, direct, off")
     return ai
+
+
+def _normalize_kind(value: str | None) -> str | None:
+    if value is None:
+        return None
+    kind = value.strip().lower()
+    if kind not in COMPILE_KINDS:
+        allowed = ", ".join(sorted(COMPILE_KINDS))
+        raise ValueError(f"kind must be one of {allowed}")
+    return kind
 
 
 def _ingest_paths(path: str | None, paths: list[str] | None) -> list[str]:
