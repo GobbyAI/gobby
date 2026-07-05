@@ -286,6 +286,13 @@ impl SourceCitationIndex {
     }
 }
 
+/// Patterns per compiled [`regex::RegexSet`]. Every pattern repeats the
+/// unicode boundary classes, so one set holding a whole vault's needles blew
+/// the regex crate's compiled-size limit at ~200 sources and silently
+/// degraded the index to provenance-only. Bounded chunks keep each set far
+/// under the limit at any vault size.
+const CITATION_PATTERN_CHUNK: usize = 64;
+
 fn build_citation_index(
     sources: &[SourceRecord],
     pages: &[crate::lint::WikiPage],
@@ -309,18 +316,25 @@ fn build_citation_index(
     if patterns.is_empty() {
         return SourceCitationIndex { cited_source_ids };
     }
-    let regex_set = match regex::RegexSet::new(&patterns) {
-        Ok(regex_set) => regex_set,
-        Err(error) => {
-            log::warn!("failed to build health citation regex set: {error}");
-            return SourceCitationIndex { cited_source_ids };
+    let mut regex_sets = Vec::new();
+    for (chunk_patterns, chunk_ids) in patterns
+        .chunks(CITATION_PATTERN_CHUNK)
+        .zip(pattern_source_ids.chunks(CITATION_PATTERN_CHUNK))
+    {
+        match regex::RegexSet::new(chunk_patterns) {
+            Ok(regex_set) => regex_sets.push((regex_set, chunk_ids)),
+            Err(error) => {
+                log::warn!("failed to build health citation regex set chunk: {error}");
+            }
         }
-    };
+    }
 
     for page in pages {
         let markdown = markdown_without_fenced_code(&page.markdown);
-        for matched in regex_set.matches(&markdown) {
-            cited_source_ids.insert(pattern_source_ids[matched].to_string());
+        for (regex_set, chunk_ids) in &regex_sets {
+            for matched in regex_set.matches(&markdown) {
+                cited_source_ids.insert(chunk_ids[matched].to_string());
+            }
         }
     }
     SourceCitationIndex { cited_source_ids }
@@ -692,6 +706,95 @@ mod tests {
 
         assert!(!uncited_ids.contains(&cited.id.as_str()));
         assert!(uncited_ids.contains(&uncited.id.as_str()));
+    }
+
+    #[test]
+    fn citation_index_survives_real_vault_scale() {
+        // Regression: the citation regex set once exceeded the regex crate's
+        // compiled-size limit at ~200 sources (each pattern repeating the
+        // unicode boundary classes), silently degrading the index to
+        // provenance-only and reporting every text-cited source as uncited.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let mut cited_id = String::new();
+        for index in 0..196 {
+            let source = SourceManifest::register(
+                root,
+                SourceDraft::url(
+                    &format!(
+                        "session:0000{index:04}-4238-48bf-9edd-07ce27e3c481-{index:04}-long-id"
+                    ),
+                    "2026-05-29T12:00:00Z",
+                    format!("session source {index}"),
+                )
+                .with_citation(format!("session:citation-{index:04}")),
+            )
+            .expect("source registered");
+            if index == 150 {
+                cited_id = source.id.clone();
+            }
+        }
+        write_page(
+            root,
+            "recaps/2026-07-05.md",
+            &format!(
+                "---\ntitle: \"Recap: 2026-07-05\"\nrecap_date: 2026-07-05\n---\n# Recap\n\n\
+                 ## Sessions\n\n- [[knowledge/sources/{cited_id}|Session]]\n"
+            ),
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("health runs");
+
+        let uncited_ids = report
+            .uncited_sources
+            .iter()
+            .map(|issue| issue.source_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            !uncited_ids.contains(&cited_id.as_str()),
+            "text citation must count at 196-source scale"
+        );
+        assert_eq!(uncited_ids.len(), 195, "only the uncited 195 remain");
+    }
+
+    #[test]
+    fn recap_page_links_count_as_citations() {
+        // recaps/ pages participate in the citation index (#17575): a source
+        // whose only reference is its digest link on a daily recap page is
+        // cited, not orphaned.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let source = SourceManifest::register(
+            root,
+            SourceDraft::url(
+                "https://example.com/session",
+                "2026-05-29T12:00:00Z",
+                "session source",
+            )
+            .with_citation("session:recap-only"),
+        )
+        .expect("source registered");
+        write_page(
+            root,
+            "recaps/2026-07-05.md",
+            &format!(
+                "---\ntitle: \"Recap: 2026-07-05\"\nrecap_date: 2026-07-05\n---\n# Recap\n\n\
+                 ## Sessions\n\n- [[knowledge/sources/{}|Session]]\n",
+                source.id
+            ),
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("health runs");
+
+        let uncited_ids = report
+            .uncited_sources
+            .iter()
+            .map(|issue| issue.source_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            !uncited_ids.contains(&source.id.as_str()),
+            "recap-linked source must count as cited: {uncited_ids:?}"
+        );
     }
 
     #[test]

@@ -43,6 +43,39 @@ fn catalog_surfaces_are_exempt_from_claim_scanning() {
 }
 
 #[test]
+fn recap_pages_are_exempt_from_claim_scanning() {
+    // Daily recaps are page-level supported (#17575): the deterministic
+    // session listing is structural and the overview grounds on the day's
+    // digests. The same prose on a non-recap page still flags.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let body = "# Recap\n\n## Overview\n\nSynthesis was unavailable for this run.\n";
+    let recap = root.join("recaps/2026-07-05.md");
+    std::fs::create_dir_all(recap.parent().expect("recap parent")).expect("create recaps dir");
+    std::fs::write(
+        &recap,
+        format!("---\ntitle: \"Recap: 2026-07-05\"\nrecap_date: 2026-07-05\n---\n{body}"),
+    )
+    .expect("write recap page");
+    let control = root.join("knowledge/topics/not-a-recap.md");
+    std::fs::create_dir_all(control.parent().expect("control parent")).expect("create topics dir");
+    std::fs::write(&control, body).expect("write control page");
+
+    let report = run(root, ScopeIdentity::topic("ops")).expect("audit runs");
+
+    assert_eq!(
+        report.unsupported_claims.len(),
+        1,
+        "only the non-recap page flags: {:?}",
+        report.unsupported_claims
+    );
+    assert_eq!(
+        report.unsupported_claims[0].path,
+        PathBuf::from("knowledge/topics/not-a-recap.md")
+    );
+}
+
+#[test]
 fn reports_unsupported_claims() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();

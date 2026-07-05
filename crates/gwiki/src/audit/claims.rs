@@ -19,7 +19,10 @@ pub(super) fn unsupported_claims(
     manifest_hashes: &BTreeSet<String>,
     options: &AuditOptions,
 ) -> Vec<UnsupportedClaim> {
-    if is_manifest_backed_source_digest(page, manifest_hashes) || is_catalog_page(page) {
+    if is_manifest_backed_source_digest(page, manifest_hashes)
+        || is_catalog_page(page)
+        || is_recap_page(page)
+    {
         return Vec::new();
     }
     let claims = claim_lines(page, options);
@@ -68,6 +71,14 @@ const CATALOG_PAGES: &[&str] = &["_index.md", "knowledge/INDEX.md", "code/INDEX.
 fn is_catalog_page(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
     CATALOG_PAGES.contains(&page_path.as_str())
+}
+
+/// Daily recap pages under `recaps/` (marked by `recap_date` frontmatter) are
+/// page-level supported: the deterministic session listing is structural and
+/// the synthesized overview grounds on the day's listed digests.
+fn is_recap_page(page: &WikiPage) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    page_path.starts_with("recaps/") && page.parsed.frontmatter.unknown.contains_key("recap_date")
 }
 
 fn is_generated_codewiki_page(page: &WikiPage) -> bool {

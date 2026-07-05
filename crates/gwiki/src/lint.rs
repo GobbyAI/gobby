@@ -145,7 +145,10 @@ pub(crate) struct WikiPage {
 
 pub(crate) fn collect_pages(vault_root: &Path) -> Result<Vec<WikiPage>, WikiError> {
     let mut raw_pages = Vec::new();
-    for root_name in ["knowledge", "code"] {
+    // `recaps/` pages are first-class vault pages: their digest links must
+    // count as citations in the health index and lint their hygiene like any
+    // other page (#17506 wired the writer; this wires the readers).
+    for root_name in ["knowledge", "code", "recaps"] {
         let page_root = vault_root.join(root_name);
         if page_root.exists() {
             collect_markdown_files(vault_root, &page_root, &mut raw_pages)?;
