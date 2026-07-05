@@ -159,25 +159,9 @@ class TestActivateDefaultAgentEdgeCases:
     """Edge cases for _activate_default_agent."""
 
     def test_no_session_manager_returns_early(self) -> None:
-        """If session_manager is None, method returns without error."""
+        """Without a session manager (or its alias), activation returns None."""
         handlers = EventHandlers(
             session_manager=None,
-            session_storage=MagicMock(),
-            logger=logging.getLogger("test"),
-        )
-
-        result = handlers._activate_default_agent(
-            session_id="sess-1",
-            cli_source="claude",
-            project_id=None,
-            agent_name_override="my-agent",
-        )
-        assert result is None
-
-    def test_no_session_storage_returns_early(self) -> None:
-        """If session_storage is None, method returns without error."""
-        handlers = EventHandlers(
-            session_manager=MagicMock(),
             session_storage=None,
             logger=logging.getLogger("test"),
         )
@@ -189,6 +173,17 @@ class TestActivateDefaultAgentEdgeCases:
             agent_name_override="my-agent",
         )
         assert result is None
+
+    def test_session_storage_aliases_session_manager(self) -> None:
+        """session_storage is a compatibility alias feeding _session_manager."""
+        storage = MagicMock()
+        handlers = EventHandlers(
+            session_manager=None,
+            session_storage=storage,
+            logger=logging.getLogger("test"),
+        )
+
+        assert handlers._session_manager is storage
 
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_override_none_agent_name_skips(self, mock_resolve: MagicMock) -> None:
