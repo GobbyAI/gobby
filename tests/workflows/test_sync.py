@@ -378,6 +378,7 @@ class TestSyncBundledPipelines:
         assert "expand-task" in names
         assert "spawn-developer" in names
         assert "spawn-qa" in names
+        assert "wiki-research" in names
         assert "dev" in names
         assert "qa" in names
         assert "review" in names

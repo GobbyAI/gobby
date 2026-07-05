@@ -295,6 +295,7 @@
     "workflows/pipelines/nightly-fixes.yaml": "42eb68169bea000e77b1a65773849e2aeb76488e5e000018b680081f541c60fe",
     "workflows/pipelines/spawn-developer.yaml": "582e1c5734d9183fcfdffb75956d85095eb460f0f7d2d688a606709484a514a3",
     "workflows/pipelines/spawn-qa.yaml": "59a71e3b8cec9e6ef41df372c1e46bc5ffd3d1f2e3b75f84e8f6fc33d76d8435",
+    "workflows/pipelines/wiki-research.yaml": "3ebb6517c24d89395a04ab8d6e092641dd4f7958039ac4bfe261d7e519259886",
     "workflows/qa.yaml": "55acbc85b42555b411418680948e6557a5132dc89380391826e348ab55deca7b",
     "workflows/review.yaml": "ca0a547d2636909ecb292f50c594d5dccbf7282d76a3bb4e96d5fb115c1a92ad",
     "workflows/rules/CLAUDE.md": "4d83883a76a5e5924d1da55a133c5f0e6e4323907414628e4e5345ffb452629b",
