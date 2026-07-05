@@ -150,6 +150,11 @@ impl TrustReport {
         };
         let link_summary = LinkSummary {
             broken_link_count: health.broken_links.len(),
+            curated_broken_link_count: health
+                .broken_links
+                .iter()
+                .filter(|issue| !issue.path.starts_with("knowledge/sources"))
+                .count(),
             duplicate_concept_count: health.duplicate_concepts.len(),
         };
         let health_summary = HealthSummary {
@@ -241,6 +246,12 @@ struct AuditSummary {
 #[derive(Debug, Serialize)]
 struct LinkSummary {
     broken_link_count: usize,
+    /// Broken links on curated surfaces — any page outside
+    /// `knowledge/sources/`. One-off `[[Entity]]` red links inside session
+    /// digests are normal wiki texture below the upkeep clustering threshold
+    /// (librarian enumerates them); curated pages must never carry broken
+    /// links, so only these gate `attention_required`.
+    curated_broken_link_count: usize,
     duplicate_concept_count: usize,
 }
 
@@ -310,7 +321,7 @@ fn trust_status(
     if index_counts.documents == 0 {
         "unindexed"
     } else if audit.unsupported_claim_count > 0
-        || links.broken_link_count > 0
+        || links.curated_broken_link_count > 0
         || health.uncited_source_count > 0
         || health.uncompiled_source_count > 0
         || !freshness.fresh
@@ -391,6 +402,7 @@ mod tests {
         };
         let links = LinkSummary {
             broken_link_count: 0,
+            curated_broken_link_count: 0,
             duplicate_concept_count: 0,
         };
         let health = HealthSummary {
@@ -404,6 +416,65 @@ mod tests {
 
         assert_eq!(
             trust_status(&indexed_counts(), &freshness, &audit, &links, &health, &[]),
+            "attention_required"
+        );
+    }
+
+    #[test]
+    fn digest_only_red_links_degrade_while_curated_broken_links_gate_attention() {
+        let freshness = FreshnessSummary {
+            stale_pages: 0,
+            stale_citations: 0,
+            fresh: true,
+        };
+        let audit = AuditSummary {
+            state: "clean",
+            unsupported_claim_count: 0,
+            source_context_count: 2,
+        };
+        let health = HealthSummary {
+            stale_page_count: 0,
+            stale_citation_count: 0,
+            uncited_source_count: 0,
+            uncompiled_source_count: 0,
+            broken_link_count: 148,
+            duplicate_concept_count: 0,
+        };
+
+        // Red links only inside knowledge/sources/ digests: enumerable wiki
+        // texture, not an attention state.
+        let digest_only = LinkSummary {
+            broken_link_count: 148,
+            curated_broken_link_count: 0,
+            duplicate_concept_count: 0,
+        };
+        assert_eq!(
+            trust_status(
+                &indexed_counts(),
+                &freshness,
+                &audit,
+                &digest_only,
+                &health,
+                &["broken_links".to_string()],
+            ),
+            "degraded"
+        );
+
+        // One broken link on a curated page still demands attention.
+        let curated = LinkSummary {
+            broken_link_count: 148,
+            curated_broken_link_count: 1,
+            duplicate_concept_count: 0,
+        };
+        assert_eq!(
+            trust_status(
+                &indexed_counts(),
+                &freshness,
+                &audit,
+                &curated,
+                &health,
+                &["broken_links".to_string()],
+            ),
             "attention_required"
         );
     }
@@ -423,6 +494,7 @@ mod tests {
         };
         let link_summary = LinkSummary {
             broken_link_count: 0,
+            curated_broken_link_count: 0,
             duplicate_concept_count: 0,
         };
         let health_summary = HealthSummary {

@@ -205,4 +205,12 @@ classification rows with top-level `hard_dependencies`, `optional_dependencies`,
 `multimodal`, and `degradation` fields so daemon consumers can detect dependency
 and degradation drift directly from the contract JSON.
 
+`trust` distinguishes curated from digest red links:
+`link_summary.curated_broken_link_count` counts broken links on pages outside
+`knowledge/sources/`, and only those gate `attention_required`. One-off
+`[[Entity]]` red links inside session digests sit below the upkeep clustering
+threshold by design — they keep the `broken_links` degradation label and the
+total `broken_link_count`, classify the vault as `degraded`, and are
+enumerated by `librarian`.
+
 _Last verified: 2026-07-05_
