@@ -233,7 +233,39 @@ fi
 
 if [ "$PUBLISH_WIKI" = true ]; then
     REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-    if [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/gobby-wiki" ]; then
+
+    # Resolve the wiki vault the way gobby_core::vault does: prefer `wiki`,
+    # then `gobby-wiki`, then `gobby-wiki-001`..`gobby-wiki-999`; a candidate
+    # counts only when initialized (`_gwiki/scope.json`), and the first free
+    # slot ends the search because the resolver would claim it.
+    WIKI_VAULT=""
+    if [ -n "$REPO_ROOT" ]; then
+        for CANDIDATE in "$REPO_ROOT/wiki" "$REPO_ROOT/gobby-wiki"; do
+            if [ ! -e "$CANDIDATE" ]; then
+                break
+            fi
+            if [ -f "$CANDIDATE/_gwiki/scope.json" ]; then
+                WIKI_VAULT="$CANDIDATE"
+                break
+            fi
+        done
+        if [ -z "$WIKI_VAULT" ] && [ -e "$REPO_ROOT/wiki" ] && [ -e "$REPO_ROOT/gobby-wiki" ]; then
+            N=1
+            while [ "$N" -le 999 ]; do
+                CANDIDATE="$REPO_ROOT/$(printf 'gobby-wiki-%03d' "$N")"
+                if [ ! -e "$CANDIDATE" ]; then
+                    break
+                fi
+                if [ -f "$CANDIDATE/_gwiki/scope.json" ]; then
+                    WIKI_VAULT="$CANDIDATE"
+                    break
+                fi
+                N=$((N + 1))
+            done
+        fi
+    fi
+
+    if [ -n "$WIKI_VAULT" ]; then
         REPO_NAME=$(basename "$REPO_ROOT")
         REPO_PARENT=$(cd "$REPO_ROOT/.." && pwd)
         WIKI_WORKTREE="$REPO_PARENT/${REPO_NAME}-wiki"
@@ -248,9 +280,9 @@ if [ "$PUBLISH_WIKI" = true ]; then
         else
             find "$WIKI_WORKTREE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
             if command -v rsync >/dev/null 2>&1; then
-                rsync -a --delete --exclude .git "$REPO_ROOT/gobby-wiki"/ "$WIKI_WORKTREE"/
+                rsync -a --delete --exclude .git "$WIKI_VAULT"/ "$WIKI_WORKTREE"/
             else
-                (cd "$REPO_ROOT/gobby-wiki" && tar --exclude .git -cf - .) \
+                (cd "$WIKI_VAULT" && tar --exclude .git -cf - .) \
                     | (cd "$WIKI_WORKTREE" && tar -xf -)
             fi
 

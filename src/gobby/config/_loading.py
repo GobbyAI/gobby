@@ -294,7 +294,7 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     Handles:
     - logging.* -> telemetry.* (field name remapping)
     - Removal of _meta, title_synthesis, rules, ui_settings
-    - wiki.roots entries ending in .gobby/wiki -> sibling gobby-wiki
+    - wiki.roots entries ending in gobby-wiki -> sibling wiki vault
     """
     # Drop removed top-level keys
     for key in _LEGACY_KEYS_TO_DROP:

@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from gobby.utils.wiki_vault import existing_vault_dir
+
 from .types import AgentActivationResult
 
 SLOW_AGENT_ACTIVATION_THRESHOLD_MS = 1000
@@ -93,49 +95,42 @@ def _seed_memory_recall_vars(handler: Any, session_id: str) -> None:
         sv_mgr.merge_variables(session_id, {"parent_turn_seq": 0})
 
 
-# Vault layout facts mirrored from gobby_core::vault; #17513 replaces these
-# with the shared Python resolver.
-_VAULT_DIR_CANDIDATES = ("wiki", "gobby-wiki")
-_VAULT_STATE_ROOT = "_gwiki"
-_VAULT_SCOPE_FILE = "scope.json"
 _WIKI_OVERVIEW_WORD_CAP = 500
 
 
 def load_wiki_overview(project_root: Path) -> str | None:
     """Extract the vault ``_index.md`` ``## Overview`` block, word-capped.
 
-    Probes ``wiki/`` then ``gobby-wiki/`` under the project root, accepting a
-    candidate only when its ``_gwiki/scope.json`` marks an initialized vault.
-    Returns ``None`` when no vault, no index, or no Overview content exists.
+    Uses the shared ``gobby.utils.wiki_vault`` resolver and reads only an
+    initialized vault. Returns ``None`` when no vault, no index, or no
+    Overview content exists.
     """
-    for candidate in _VAULT_DIR_CANDIDATES:
-        vault = project_root / candidate
-        if not (vault / _VAULT_STATE_ROOT / _VAULT_SCOPE_FILE).is_file():
+    vault = existing_vault_dir(project_root)
+    if vault is None:
+        return None
+    index_path = vault / "_index.md"
+    try:
+        index_text = index_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    overview_lines: list[str] = []
+    in_overview = False
+    for line in index_text.splitlines():
+        stripped = line.strip()
+        if stripped == "## Overview":
+            in_overview = True
             continue
-        index_path = vault / "_index.md"
-        try:
-            index_text = index_path.read_text(encoding="utf-8")
-        except OSError:
-            return None
-        overview_lines: list[str] = []
-        in_overview = False
-        for line in index_text.splitlines():
-            stripped = line.strip()
-            if stripped == "## Overview":
-                in_overview = True
-                continue
-            if in_overview and stripped.startswith("## "):
-                break
-            if in_overview:
-                overview_lines.append(line)
-        overview = "\n".join(overview_lines).strip()
-        if not overview:
-            return None
-        words = overview.split()
-        if len(words) > _WIKI_OVERVIEW_WORD_CAP:
-            overview = " ".join(words[:_WIKI_OVERVIEW_WORD_CAP])
-        return overview
-    return None
+        if in_overview and stripped.startswith("## "):
+            break
+        if in_overview:
+            overview_lines.append(line)
+    overview = "\n".join(overview_lines).strip()
+    if not overview:
+        return None
+    words = overview.split()
+    if len(words) > _WIKI_OVERVIEW_WORD_CAP:
+        overview = " ".join(words[:_WIKI_OVERVIEW_WORD_CAP])
+    return overview
 
 
 def _seed_wiki_overview_var(handler: Any, session_id: str, project_id: str | None) -> None:

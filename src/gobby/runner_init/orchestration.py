@@ -365,10 +365,11 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
                 # Codewiki freshness must cover every project the memory dream
                 # judges per-project, not just the runner: each project's sweep
-                # reads its own gobby-wiki/_meta/truth_digest.json, so a project
-                # whose codewiki is never refreshed is judged against a stale or
-                # absent digest. Register a nightly refresh for the runner
-                # project plus every memory-bearing project with a repo path.
+                # reads its resolved vault's _meta/truth_digest.json, so a
+                # project whose codewiki is never refreshed is judged against a
+                # stale or absent digest. Register a nightly refresh for the
+                # runner project plus every memory-bearing project with a repo
+                # path.
                 codewiki_targets: dict[str, tuple[str, str]] = {}
                 current_project = pm.get(runner.project_id) if runner.project_id else None
                 if current_project is not None and current_project.repo_path:

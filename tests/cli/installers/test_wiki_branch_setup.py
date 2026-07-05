@@ -1,4 +1,4 @@
-"""Tests for Git-backed gobby-wiki branch setup and publishing."""
+"""Tests for Git-backed wiki vault branch setup and publishing."""
 
 import os
 import stat
@@ -10,14 +10,21 @@ import pytest
 from gobby.cli.installers.git_hooks import HOOK_TEMPLATES, install_git_hooks
 from gobby.cli.installers.wiki_branch_setup import (
     GITIGNORE_START,
-    GOBBY_WIKI_DIR,
     WIKI_BRANCH,
     setup_wiki_branch,
 )
+from gobby.utils.wiki_vault import DEFAULT_VAULT_DIR, FALLBACK_VAULT_DIR, SCOPE_FILE, STATE_ROOT
 
 pytestmark = pytest.mark.unit
 
 ZERO_SHA = "0000000000000000000000000000000000000000"
+
+
+def _make_vault(repo: Path, name: str) -> Path:
+    vault = repo / name
+    (vault / STATE_ROOT).mkdir(parents=True)
+    (vault / STATE_ROOT / SCOPE_FILE).write_text("{}\n", encoding="utf-8")
+    return vault
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -112,28 +119,43 @@ class TestWikiBranchSetup:
         assert first["success"] is True
         assert first["gitignore_updated"] is True
         assert first["gitignore_status"] == "updated"
+        assert first["vault_dir"] == DEFAULT_VAULT_DIR
         assert second["success"] is True
         assert second["gitignore_updated"] is False
         assert second["gitignore_status"] == "unchanged"
         assert content.count(GITIGNORE_START) == 1
-        assert f"{GOBBY_WIKI_DIR}/" in content
+        assert f"{DEFAULT_VAULT_DIR}/" in content
+
+    def test_gitignore_tracks_fallback_vault_directory(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        (repo / DEFAULT_VAULT_DIR).mkdir()  # non-vault collision
+        _make_vault(repo, FALLBACK_VAULT_DIR)
+
+        result = setup_wiki_branch(repo)
+
+        content = (repo / ".gitignore").read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert result["vault_dir"] == FALLBACK_VAULT_DIR
+        assert f"{FALLBACK_VAULT_DIR}/" in content
 
     def test_tracked_wiki_files_warn_and_remain_tracked(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
         _init_repo(repo)
-        wiki_dir = repo / GOBBY_WIKI_DIR
-        wiki_dir.mkdir()
+        wiki_dir = _make_vault(repo, DEFAULT_VAULT_DIR)
         (wiki_dir / "page.md").write_text("# Page\n", encoding="utf-8")
-        _git(repo, "add", f"{GOBBY_WIKI_DIR}/page.md")
+        _git(repo, "add", f"{DEFAULT_VAULT_DIR}/page.md")
         _git(repo, "commit", "-m", "track wiki", "--no-verify")
 
         result = setup_wiki_branch(repo)
 
-        tracked_after = _git(repo, "ls-files", "--", GOBBY_WIKI_DIR).stdout.splitlines()
+        tracked_after = _git(repo, "ls-files", "--", DEFAULT_VAULT_DIR).stdout.splitlines()
         assert result["success"] is True
-        assert result["tracked_files"] == [f"{GOBBY_WIKI_DIR}/page.md"]
-        assert f"{GOBBY_WIKI_DIR}/page.md" in tracked_after
-        assert any("git rm --cached -r gobby-wiki" in warning for warning in result["warnings"])
+        assert result["tracked_files"] == [f"{DEFAULT_VAULT_DIR}/page.md"]
+        assert f"{DEFAULT_VAULT_DIR}/page.md" in tracked_after
+        assert any(
+            f"git rm --cached -r {DEFAULT_VAULT_DIR}" in warning for warning in result["warnings"]
+        )
 
     def test_orphan_wiki_worktree_is_created_for_new_repo(self, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
@@ -188,8 +210,7 @@ class TestPrePushWikiPublishing:
 
     def test_publishes_wiki_for_default_branch(self, tmp_path: Path) -> None:
         repo, bare = _init_repo_with_remote(tmp_path)
-        wiki_dir = repo / GOBBY_WIKI_DIR
-        wiki_dir.mkdir()
+        wiki_dir = _make_vault(repo, DEFAULT_VAULT_DIR)
         (wiki_dir / "Home.md").write_text("# Home\n", encoding="utf-8")
         result = install_git_hooks(repo)
         assert result["success"] is True
@@ -204,6 +225,45 @@ class TestPrePushWikiPublishing:
 
         assert proc.returncode == 0, proc.stderr
         assert _remote_has_branch(bare, WIKI_BRANCH)
+
+    def test_publishes_fallback_vault_when_wiki_is_occupied(self, tmp_path: Path) -> None:
+        repo, bare = _init_repo_with_remote(tmp_path)
+        (repo / DEFAULT_VAULT_DIR).mkdir()  # non-vault collision
+        (repo / DEFAULT_VAULT_DIR / "notes.txt").write_text("not a vault\n", encoding="utf-8")
+        wiki_dir = _make_vault(repo, FALLBACK_VAULT_DIR)
+        (wiki_dir / "Home.md").write_text("# Home\n", encoding="utf-8")
+        result = install_git_hooks(repo)
+        assert result["success"] is True
+
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        proc = _run_prepush_hook(
+            repo,
+            bare,
+            f"refs/heads/main {sha} refs/heads/main {sha}",
+            _make_fake_gobby(tmp_path),
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert _remote_has_branch(bare, WIKI_BRANCH)
+
+    def test_skips_publish_for_uninitialized_vault_directory(self, tmp_path: Path) -> None:
+        repo, bare = _init_repo_with_remote(tmp_path)
+        wiki_dir = repo / DEFAULT_VAULT_DIR
+        wiki_dir.mkdir()  # no _gwiki/scope.json marker
+        (wiki_dir / "Home.md").write_text("# Home\n", encoding="utf-8")
+        result = install_git_hooks(repo)
+        assert result["success"] is True
+
+        sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        proc = _run_prepush_hook(
+            repo,
+            bare,
+            f"refs/heads/main {sha} refs/heads/main {sha}",
+            _make_fake_gobby(tmp_path),
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert not _remote_has_branch(bare, WIKI_BRANCH)
 
     @pytest.mark.parametrize(
         ("local_ref", "local_sha", "remote_ref"),
@@ -221,8 +281,7 @@ class TestPrePushWikiPublishing:
         remote_ref: str,
     ) -> None:
         repo, bare = _init_repo_with_remote(tmp_path)
-        wiki_dir = repo / GOBBY_WIKI_DIR
-        wiki_dir.mkdir()
+        wiki_dir = _make_vault(repo, DEFAULT_VAULT_DIR)
         (wiki_dir / "Home.md").write_text("# Home\n", encoding="utf-8")
         result = install_git_hooks(repo)
         assert result["success"] is True

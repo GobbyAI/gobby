@@ -10,8 +10,8 @@ from typing import Any, Protocol
 
 from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.gwiki_gateway import GwikiGateway
+from gobby.utils.wiki_vault import resolve_vault_dir
 
-DEFAULT_CODEWIKI_OUT_DIR = "gobby-wiki"
 CODEWIKI_AI_VALUES = {"auto", "daemon", "direct", "off"}
 
 
@@ -71,7 +71,7 @@ class CodewikiRefreshService:
         *,
         gcode_gateway_factory: Callable[[], CodewikiGenerator] = GcodeGateway,
         gwiki_gateway_factory: Callable[[Path], WikiIndexer] | None = None,
-        default_out_dir: str = DEFAULT_CODEWIKI_OUT_DIR,
+        default_out_dir: str | None = None,
     ) -> None:
         self._gcode_gateway_factory = gcode_gateway_factory
         self._gwiki_gateway_factory = gwiki_gateway_factory or (
@@ -119,13 +119,23 @@ class CodewikiRefreshService:
 
     def resolve_out_dir(self, root: Path, out_dir: str | None) -> Path:
         value = out_dir or self._default_out_dir
+        if value is None:
+            return self.default_out_dir(root)
         path = Path(value)
         if not path.is_absolute():
             path = root / path
         return path.resolve(strict=False)
 
     def default_out_dir(self, root: Path) -> Path:
-        return (root / self._default_out_dir).resolve(strict=False)
+        if self._default_out_dir is not None:
+            return (root / self._default_out_dir).resolve(strict=False)
+        vault = resolve_vault_dir(root)
+        if vault is None:
+            raise ValueError(
+                f"no usable wiki vault directory under {root}: every candidate "
+                "is occupied by a non-vault path"
+            )
+        return vault.resolve(strict=False)
 
 
 def normalize_codewiki_ai(value: str | None) -> str:

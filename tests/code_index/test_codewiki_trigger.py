@@ -141,7 +141,7 @@ async def test_refresh_runs_codewiki_and_indexes_changed_vault_docs(tmp_path: Pa
     )
     await trigger._flush(trigger._root_key(str(tmp_path)))
 
-    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", None)]
+    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", None)]
     assert gwiki.ingested == []
     assert gwiki.index_count == 1
 
@@ -166,7 +166,7 @@ async def test_request_refresh_passes_scopes_to_refresh_request(tmp_path: Path) 
     await trigger._flush(trigger._root_key(str(tmp_path)))
 
     assert accepted is True
-    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", ["crates", "web", "src"])]
+    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", ["crates", "web", "src"])]
 
 
 @pytest.mark.asyncio

@@ -53,11 +53,13 @@ indexing:
 ```
 
 Project wiki markdown for the default project scope lives under
-`<project>/gobby-wiki/`. Git tracks authored and generated Markdown there, while
-vault runtime state stays local: `gobby-wiki/_meta/**`,
-`gobby-wiki/meta/health/**`, lock files, and local Obsidian workspace JSON are
-ignored. Legacy `<project>/.gobby/wiki` roots in `wiki.roots` load as the sibling
-`<project>/gobby-wiki` vault.
+`<project>/wiki/`. When `wiki/` is occupied by a non-vault path, resolution
+falls back to `gobby-wiki/`, then `gobby-wiki-001/`..`gobby-wiki-999/` — the
+same order every surface (daemon, `gwiki`, `gcode`) uses via the shared vault
+resolver. Git tracks authored and generated Markdown there, while vault runtime
+state stays local: `wiki/_meta/**`, `wiki/meta/health/**`, lock files, and
+local Obsidian workspace JSON are ignored. Legacy `<project>/gobby-wiki` roots
+in `wiki.roots` load as the sibling `<project>/wiki` vault.
 
 ### Bootstrap
 

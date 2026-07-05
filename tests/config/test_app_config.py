@@ -1257,8 +1257,9 @@ class TestLoadConfig:
         assert not hasattr(config.gobby_tasks, "enrichment")
 
     def test_load_config_migrates_legacy_project_wiki_root(self, temp_dir: Path) -> None:
-        """Legacy .gobby/wiki project roots load from the top-level gobby-wiki vault."""
-        legacy_root = temp_dir / "repo" / ".gobby" / "wiki"
+        """Legacy gobby-wiki project roots load from the sibling wiki vault."""
+        legacy_root = temp_dir / "repo" / "gobby-wiki"
+        dot_gobby_root = temp_dir / "other" / ".gobby" / "wiki"
         topic_root = temp_dir / "topics" / "research"
 
         class DummyConfigStore:
@@ -1266,6 +1267,7 @@ class TestLoadConfig:
                 return {
                     "wiki.roots": [
                         {"scope": "project", "path": str(legacy_root)},
+                        {"scope": "project", "path": str(dot_gobby_root)},
                         {"scope": "topic:research", "path": str(topic_root)},
                     ]
                 }
@@ -1276,7 +1278,8 @@ class TestLoadConfig:
         )
 
         assert [(root.scope, root.path) for root in config.wiki.roots] == [
-            ("project", temp_dir / "repo" / "gobby-wiki"),
+            ("project", temp_dir / "repo" / "wiki"),
+            ("project", dot_gobby_root),
             ("topic:research", topic_root),
         ]
 

@@ -39,7 +39,7 @@ def test_non_vault_wiki_dir_is_ignored(tmp_path: Path) -> None:
 
 
 def test_populated_vault_returns_overview_block_only(tmp_path: Path) -> None:
-    _make_vault(tmp_path, "gobby-wiki")
+    _make_vault(tmp_path, "wiki")
 
     overview = load_wiki_overview(tmp_path)
 
@@ -59,11 +59,28 @@ def test_wiki_dir_wins_over_gobby_wiki(tmp_path: Path) -> None:
     assert "project:primary" in overview
 
 
-def test_vault_without_index_or_overview_yields_none(tmp_path: Path) -> None:
-    _make_vault(tmp_path, "gobby-wiki", index_body=None)
+def test_fallback_vault_is_read_behind_a_wiki_collision(tmp_path: Path) -> None:
+    (tmp_path / "wiki").mkdir()  # non-vault collision
+    _make_vault(tmp_path, "gobby-wiki")
+
+    overview = load_wiki_overview(tmp_path)
+
+    assert overview is not None
+    assert "Scope: project:test" in overview
+
+
+def test_gobby_wiki_vault_is_ignored_when_wiki_slot_is_free(tmp_path: Path) -> None:
+    """Resolver semantics: a free `wiki/` slot wins over an existing fallback vault."""
+    _make_vault(tmp_path, "gobby-wiki")
+
     assert load_wiki_overview(tmp_path) is None
 
-    (tmp_path / "gobby-wiki" / "_index.md").write_text(
+
+def test_vault_without_index_or_overview_yields_none(tmp_path: Path) -> None:
+    _make_vault(tmp_path, "wiki", index_body=None)
+    assert load_wiki_overview(tmp_path) is None
+
+    (tmp_path / "wiki" / "_index.md").write_text(
         "# Wiki Index\n\n## Concepts\n\n- entry\n", encoding="utf-8"
     )
     assert load_wiki_overview(tmp_path) is None
@@ -71,7 +88,7 @@ def test_vault_without_index_or_overview_yields_none(tmp_path: Path) -> None:
 
 def test_overview_is_word_capped(tmp_path: Path) -> None:
     long_overview = " ".join(f"word{i}" for i in range(700))
-    _make_vault(tmp_path, "gobby-wiki", f"# Wiki Index\n\n## Overview\n\n{long_overview}\n")
+    _make_vault(tmp_path, "wiki", f"# Wiki Index\n\n## Overview\n\n{long_overview}\n")
 
     overview = load_wiki_overview(tmp_path)
 

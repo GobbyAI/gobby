@@ -5,12 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-_LEGACY_WIKI_SUFFIX = (".gobby", "wiki")
-_PROJECT_WIKI_DIR = "gobby-wiki"
+from gobby.utils.wiki_vault import DEFAULT_VAULT_DIR, FALLBACK_VAULT_DIR
 
 
 def migrate_legacy_wiki_roots(config_dict: dict[str, Any]) -> None:
-    """Rewrite legacy project wiki roots to the top-level project vault."""
+    """Rewrite ``gobby-wiki`` project wiki roots to the sibling ``wiki`` vault."""
     wiki = config_dict.get("wiki")
     if not isinstance(wiki, dict):
         return
@@ -35,6 +34,6 @@ def _migrate_legacy_wiki_path(value: Any) -> Any:
 
 
 def _legacy_project_wiki_path(path: Path) -> Path | None:
-    if len(path.parts) >= 2 and path.parts[-2:] == _LEGACY_WIKI_SUFFIX:
-        return path.parent.parent / _PROJECT_WIKI_DIR
+    if path.name == FALLBACK_VAULT_DIR:
+        return path.parent / DEFAULT_VAULT_DIR
     return None

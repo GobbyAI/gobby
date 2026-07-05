@@ -20,11 +20,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from gobby.utils.wiki_vault import existing_vault_dir
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_DIGEST_MAX_CHARS = 2000
-_PROJECT_WIKI_DIR = "gobby-wiki"
-_TRUTH_DIGEST_FILE = Path(_PROJECT_WIKI_DIR) / "_meta" / "truth_digest.json"
+_TRUTH_DIGEST_RELATIVE = Path("_meta") / "truth_digest.json"
 _PROJECT_STACK_LIMIT = 12
 _PROJECT_KEY_PATH_LIMIT = 12
 _PROJECT_PULL_IN_BY_LIMIT = 3
@@ -164,7 +165,11 @@ def _load_project_truth_payload(repo_path: str | None) -> dict[str, Any]:
     if not repo_path:
         return {}
 
-    digest_file = Path(repo_path) / _TRUTH_DIGEST_FILE
+    vault = existing_vault_dir(Path(repo_path))
+    if vault is None:
+        return {}
+
+    digest_file = vault / _TRUTH_DIGEST_RELATIVE
     if not digest_file.exists():
         return {}
 
