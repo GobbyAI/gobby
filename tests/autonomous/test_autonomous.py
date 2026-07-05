@@ -164,6 +164,7 @@ class TestProgressTypeConstants:
         assert ProgressType.COMMIT_CREATED in HIGH_VALUE_PROGRESS
         assert ProgressType.TEST_PASSED in HIGH_VALUE_PROGRESS
         assert ProgressType.BUILD_SUCCEEDED in HIGH_VALUE_PROGRESS
+        assert ProgressType.MCP_MUTATION in HIGH_VALUE_PROGRESS
         # Low-value types should not be in set
         assert ProgressType.FILE_READ not in HIGH_VALUE_PROGRESS
         assert ProgressType.TOOL_CALL not in HIGH_VALUE_PROGRESS
@@ -395,6 +396,51 @@ class TestProgressTrackerToolCall:
 
         assert event is not None
         assert event.progress_type == ProgressType.TEST_FAILED
+        assert event.is_high_value is False
+
+    def test_record_tool_call_mcp_mutation_is_high_value(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """A successful state-mutating proxied MCP call resets stagnation."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="mcp__gobby__call_tool",
+            tool_args={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            tool_result='{"success":true,"result":{"ref":"#1"}}',
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.MCP_MUTATION
+        assert event.is_high_value is True
+
+    def test_record_tool_call_mcp_readonly_is_low_value(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Read-only proxied MCP calls stay low-value."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="mcp__gobby__call_tool",
+            tool_args={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            tool_result='{"success":true,"result":{"tasks":[]}}',
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
+    def test_record_tool_call_mcp_failed_mutation_is_low_value(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """An explicit success=false payload demotes a mutating MCP call."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="mcp__gobby__call_tool",
+            tool_args={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            tool_result='{"success": false, "error": "missing field"}',
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
         assert event.is_high_value is False
 
     def test_record_tool_call_does_not_match_test_substrings(

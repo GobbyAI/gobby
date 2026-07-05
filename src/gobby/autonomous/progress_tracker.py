@@ -36,6 +36,7 @@ class ProgressType(str, Enum):
     BUILD_SUCCEEDED = "build_succeeded"  # Build succeeded
     BUILD_FAILED = "build_failed"  # Build failed
     COMMIT_CREATED = "commit_created"  # Git commit was created
+    MCP_MUTATION = "mcp_mutation"  # A state-mutating MCP tool call succeeded
     ERROR_OCCURRED = "error_occurred"  # An error occurred
 
 
@@ -55,9 +56,33 @@ HIGH_VALUE_PROGRESS = {
     ProgressType.FILE_MODIFIED,
     ProgressType.TASK_COMPLETED,
     ProgressType.COMMIT_CREATED,
+    ProgressType.MCP_MUTATION,
     ProgressType.TEST_PASSED,
     ProgressType.BUILD_SUCCEEDED,
 }
+
+# Inner MCP tool-name prefixes that only read state; everything else mutates.
+# Agents doing pure MCP work (wiki ingest/compile, task filing) must reset the
+# stagnation clock, or the stuck detector kills healthy research runs.
+MCP_READONLY_TOOL_PREFIXES = (
+    "list",
+    "get",
+    "search",
+    "read",
+    "wait",
+    "can_",
+    "check",
+    "describe",
+    "evaluate",
+    "fetch",
+    "peek",
+    "preview",
+    "query",
+    "recommend",
+    "resolve",
+    "show",
+    "status",
+)
 
 
 def _normalize_tool_args(tool_args: dict[str, Any] | None) -> str:
@@ -112,6 +137,32 @@ def _result_indicates_failure(result_str: str) -> bool:
 
 def _result_indicates_test_success(result_str: str) -> bool:
     return "passed" in result_str.lower() or "OK" in result_str
+
+
+def _is_mcp_proxy_call(tool_name: str) -> bool:
+    """Return True for the MCP proxy's call_tool step (any client prefix)."""
+    return tool_name == "call_tool" or tool_name.endswith("__call_tool")
+
+
+def _mcp_result_indicates_failure(result_str: str) -> bool:
+    """Detect an explicit success=false payload from a proxied MCP call."""
+    compact = "".join(result_str.split()).lower()
+    return '"success":false' in compact or "'success':false" in compact
+
+
+def _classify_mcp_call(tool_args: dict[str, Any] | None, tool_result: Any) -> ProgressType:
+    """Classify a proxied MCP call as mutation progress or a plain tool call.
+
+    Rule blocks deny at before_tool, so any call observed here actually
+    executed; only an explicit success=false payload demotes it.
+    """
+    inner_tool = str((tool_args or {}).get("tool_name") or "")
+    if not inner_tool or inner_tool.startswith(MCP_READONLY_TOOL_PREFIXES):
+        return ProgressType.TOOL_CALL
+    result_str = str(tool_result) if tool_result else ""
+    if _mcp_result_indicates_failure(result_str):
+        return ProgressType.TOOL_CALL
+    return ProgressType.MCP_MUTATION
 
 
 def _result_indicates_build_success(result_str: str) -> bool:
@@ -289,6 +340,8 @@ class ProgressTracker:
                     progress_type = ProgressType.BUILD_FAILED
                 elif _result_indicates_build_success(result_str):
                     progress_type = ProgressType.BUILD_SUCCEEDED
+        elif _is_mcp_proxy_call(canonical_tool_name):
+            progress_type = _classify_mcp_call(tool_args, tool_result)
 
         # Don't track Read/Glob/Grep as high-priority events
         # They're useful but don't represent meaningful progress alone
