@@ -107,7 +107,7 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
         Command::Lint { scope } => lint::execute(scope),
         Command::Normalize { scope, check } => normalize::execute(scope, check),
         Command::Health { scope } => health::execute(scope),
-        Command::Librarian { scope } => librarian::execute(scope),
+        Command::Librarian { scope, ai } => librarian::execute(scope, ai),
         Command::Status { scope } => status::execute(scope),
         Command::Trust { scope } => trust::execute(scope),
         Command::CitationQuality { scope } => citation_quality::execute(scope),

@@ -146,7 +146,7 @@ enum CliCommand {
     /// Write wiki health snapshots under meta/health.
     Health,
     /// Propose wiki upkeep tasks and patches without rewriting pages.
-    Librarian,
+    Librarian(LibrarianArgs),
     /// Show shell readiness.
     Status,
     /// Show search, graph, freshness, and audit trust status.
@@ -376,6 +376,13 @@ struct BacklinksArgs {
 struct LinkSuggestArgs {
     #[arg(long, default_value = "10")]
     limit: usize,
+}
+
+#[derive(Debug, Args)]
+struct LibrarianArgs {
+    /// AI routing for the model-provider probe behind patch suggestions.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
 }
 
 #[derive(Debug, Args)]
@@ -752,7 +759,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             check: args.check,
         }),
         CliCommand::Health => Ok(Command::Health { scope }),
-        CliCommand::Librarian => Ok(Command::Librarian { scope }),
+        CliCommand::Librarian(args) => Ok(Command::Librarian { scope, ai: args.ai }),
         CliCommand::Status => Ok(Command::Status { scope }),
         CliCommand::Trust => Ok(Command::Trust { scope }),
         CliCommand::CitationQuality => Ok(Command::CitationQuality { scope }),

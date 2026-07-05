@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 7,
+  "contract_version": 8,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -735,7 +735,21 @@
       "summary": "Emit wiki upkeep proposals without rewriting canonical content.",
       "daemon_consumed": true,
       "positionals": [],
-      "flags": [],
+      "flags": [
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
       "json_output_keys": [
         "command",
         "scope",

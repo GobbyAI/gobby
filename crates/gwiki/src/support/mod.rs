@@ -5,6 +5,7 @@ pub(crate) mod graph;
 pub(crate) mod postgres;
 pub(crate) mod scope;
 pub(crate) mod search;
+pub(crate) mod services;
 #[cfg(test)]
 pub(crate) mod test_env;
 pub(crate) mod text;

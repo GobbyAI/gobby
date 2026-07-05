@@ -123,6 +123,7 @@ pub enum Command {
     },
     Librarian {
         scope: ScopeSelection,
+        ai: AiRouting,
     },
     Status {
         scope: ScopeSelection,
