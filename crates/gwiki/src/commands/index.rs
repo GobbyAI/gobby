@@ -201,6 +201,7 @@ pub(crate) fn execute_ingest_file(
             "gwiki ingest-file",
             &mut progress_options,
         )?;
+        crate::log::append_sources_ingested(scope.root(), &output_scope, &fetched_at, [&result])?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
@@ -223,6 +224,7 @@ pub(crate) fn execute_ingest_file(
         &mut progress_options,
     )?;
     let counts = index_counts(&store);
+    crate::log::append_sources_ingested(scope.root(), &output_scope, &fetched_at, [&result])?;
     Ok(render_ingest_file(&path, output_scope, &result, counts))
 }
 
@@ -274,6 +276,12 @@ pub(crate) fn execute_ingest_url(
                 &mut progress_options,
             )?;
         }
+        crate::log::append_sources_ingested(
+            scope.root(),
+            &output_scope,
+            &fetched_at,
+            result.accepted.iter().map(|accepted| &accepted.result),
+        )?;
         return Ok(render_ingest_url(output_scope, &result, counts));
     }
 
@@ -286,6 +294,12 @@ pub(crate) fn execute_ingest_url(
         &mut progress_options,
     )?;
     let counts = index_counts(&store);
+    crate::log::append_sources_ingested(
+        scope.root(),
+        &output_scope,
+        &fetched_at,
+        result.accepted.iter().map(|accepted| &accepted.result),
+    )?;
     Ok(render_ingest_url(output_scope, &result, counts))
 }
 

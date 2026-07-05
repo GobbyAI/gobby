@@ -97,6 +97,12 @@ pub(crate) fn execute(
             sync_qdrant_vectors(&mut conn, &search_scope, COMMAND, &mut progress)?;
             sync_falkor_graph(&mut conn, &search_scope, COMMAND, &mut progress)?;
         }
+        crate::log::append_sources_ingested(
+            scope.root(),
+            &output_scope,
+            &fetched_at,
+            result.accepted.iter().map(|accepted| &accepted.result),
+        )?;
         return Ok(render_sync_sessions(output_scope, &result, counts));
     }
 
@@ -112,6 +118,12 @@ pub(crate) fn execute(
         &mut progress,
     )?;
     let counts = index_counts(&store);
+    crate::log::append_sources_ingested(
+        scope.root(),
+        &output_scope,
+        &fetched_at,
+        result.accepted.iter().map(|accepted| &accepted.result),
+    )?;
     Ok(render_sync_sessions(output_scope, &result, counts))
 }
 

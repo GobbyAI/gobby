@@ -9,6 +9,7 @@ pub(crate) mod test_http;
 
 pub(crate) mod audit;
 pub(crate) mod benchmark;
+pub(crate) mod catalog;
 pub(crate) mod citations;
 pub(crate) mod code_graph;
 pub(crate) mod collect;

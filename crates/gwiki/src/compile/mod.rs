@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::WikiError;
 use crate::citations::{
     render_source_citations, source_record_matches_path, source_records_for_paths,
 };
@@ -17,15 +16,18 @@ use crate::paths::derived_markdown_path;
 use crate::session::{CompileState, ResearchSession};
 use crate::sources::SourceRecord;
 use crate::synthesis::{
-    ArticleKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource, WritePolicy,
-    synthesize_article, synthesize_source_pages, write_synthesized_page,
+    ArticleKind, PageWriteKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource,
+    SynthesizedPage, WritePolicy, relative_path, synthesize_article, synthesize_source_pages,
+    write_synthesized_page,
 };
+use crate::{ScopeIdentity, WikiError};
 
 mod collect;
 mod index;
 mod render;
 
 use collect::*;
+pub(crate) use index::lock_file;
 use index::*;
 use render::*;
 
@@ -224,7 +226,8 @@ pub fn compile_to_wiki_with_options(
     for page in &pages {
         page_writes.push(write_synthesized_page(vault_root, page, policy)?);
     }
-    update_wiki_index(vault_root, &article)?;
+    let scope_identity = session.scope.identity();
+    crate::catalog::regenerate(vault_root, &scope_identity)?;
     write_provenance(
         vault_root,
         &article,
@@ -232,6 +235,7 @@ pub fn compile_to_wiki_with_options(
         &handoff.bundle.outline,
     )?;
     mark_sources_compiled(vault_root, &source_paths)?;
+    log_page_writes(vault_root, &scope_identity, &pages, &page_writes)?;
 
     Ok(WikiCompileOutcome {
         handoff_id: handoff.bundle.handoff_id,
@@ -283,6 +287,36 @@ fn existing_target_page_body(target_page: Option<&Path>) -> Result<Option<String
         Err(_) => text,
     };
     Ok(Some(body))
+}
+
+/// Append one `page_created`/`page_updated` log line per synthesized page,
+/// after every compile side effect has succeeded.
+fn log_page_writes(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    pages: &[SynthesizedPage],
+    page_writes: &[PageWriteOutcome],
+) -> Result<(), WikiError> {
+    let timestamp = crate::support::time::collect_timestamp()?;
+    for (page, write) in pages.iter().zip(page_writes) {
+        let action = match write.kind {
+            PageWriteKind::Created => crate::log::ACTION_PAGE_CREATED,
+            PageWriteKind::Overwritten => crate::log::ACTION_PAGE_UPDATED,
+        };
+        let relative = relative_path(vault_root, &write.path);
+        crate::log::append_logs(
+            vault_root,
+            None,
+            &crate::log::LogEntry {
+                timestamp: timestamp.clone(),
+                scope: scope.clone(),
+                action: action.to_string(),
+                summary: page.title.clone(),
+                artifacts: vec![PathBuf::from(relative)],
+            },
+        )?;
+    }
+    Ok(())
 }
 
 pub fn prepare_handoff(

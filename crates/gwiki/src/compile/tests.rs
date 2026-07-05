@@ -3,7 +3,6 @@ use crate::explainer::{ExplainerPrompt, ExplainerResponse};
 use crate::provenance::ProvenanceGraph;
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
-use crate::synthesis::SynthesizedPage;
 
 fn session_with_note(scope: &ResearchScope, title: &str, relative_path: &str) -> ResearchSession {
     ResearchSession {
@@ -454,14 +453,16 @@ fn recompile_carries_existing_target_body_into_prompt() {
 }
 
 #[test]
-fn index_update_preserves_unrelated_entries() {
+fn compile_regenerates_index_catalog_from_vault_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let topics_dir = scope.root().join("knowledge/topics");
+    std::fs::create_dir_all(&topics_dir).expect("topics dir");
     std::fs::write(
-        scope.root().join("_index.md"),
-        "# Wiki Index\n\n- [[knowledge/topics/existing|Existing Entry]]\n",
+        topics_dir.join("existing.md"),
+        "---\ntitle: \"Existing Entry\"\n---\n\nAlready compiled body.\n",
     )
-    .expect("index written");
+    .expect("existing page written");
     let note_path = scope.root().join("raw/research/index.md");
     std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
     std::fs::write(&note_path, "Index updates keep unrelated entries.").expect("note written");
@@ -479,50 +480,51 @@ fn index_update_preserves_unrelated_entries() {
     .expect("wiki article compiled");
 
     let index = std::fs::read_to_string(scope.root().join("_index.md")).expect("index read");
-    assert!(index.contains("[[knowledge/topics/existing|Existing Entry]]"));
-    assert!(index.contains("[[knowledge/topics/index-preservation|Index Preservation]]"));
-}
-
-#[test]
-fn index_update_uses_structural_heading_and_link_checks() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let article = SynthesizedPage {
-        path: temp.path().join("knowledge/topics/exact.md"),
-        title: "Exact".to_string(),
-        markdown: "# Exact\n\n".to_string(),
-        explainer: None,
-    };
-    std::fs::write(
-        temp.path().join("_index.md"),
-        concat!(
-            "# Wiki Index\n\n",
-            "## Compiled pages archive\n\n",
-            "- [[knowledge/topics/exact|Exact]] archived copy\n"
-        ),
-    )
-    .expect("index written");
-
-    update_wiki_index(temp.path(), &article).expect("index updated");
-
-    let index = std::fs::read_to_string(temp.path().join("_index.md")).expect("index read");
-    assert!(index.lines().any(|line| line == "## Compiled pages"));
-    assert_eq!(
-        index
-            .lines()
-            .filter(|line| *line == "- [[knowledge/topics/exact|Exact]]")
-            .count(),
-        1
+    assert!(index.contains("## Overview"), "{index}");
+    assert!(
+        index.contains("[[knowledge/topics/existing|Existing Entry]]"),
+        "{index}"
+    );
+    assert!(
+        index.contains("[[knowledge/topics/index-preservation|Index Preservation]]"),
+        "{index}"
+    );
+    let knowledge = std::fs::read_to_string(scope.root().join("knowledge/INDEX.md"))
+        .expect("knowledge index read");
+    assert!(
+        knowledge.contains("[[knowledge/topics/index-preservation|Index Preservation]]"),
+        "{knowledge}"
     );
 }
 
 #[test]
-fn insert_compiled_page_link_creates_missing_compiled_heading() {
-    let mut index = "# Wiki Index\n\n".to_string();
+fn compile_appends_page_write_log_entries() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/logged.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Compile writes go to the log.").expect("note written");
+    let mut session = session_with_note(&scope, "Logged compile", "raw/research/logged.md");
 
-    insert_compiled_page_link(&mut index, "[[knowledge/topics/missing|Missing]]")
-        .expect("missing heading is created");
+    compile_to_wiki(
+        &mut session,
+        CompileRequest {
+            topic: "Logged Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+    )
+    .expect("wiki article compiled");
 
-    assert!(index.contains("## Compiled pages\n\n- [[knowledge/topics/missing|Missing]]\n"));
+    let log = std::fs::read_to_string(scope.root().join("log.md")).expect("log read");
+    let article_line = log
+        .lines()
+        .find(|line| line.contains("knowledge/topics/logged-compile.md"))
+        .expect("article write logged");
+    assert!(article_line.starts_with("- "), "{article_line}");
+    assert!(article_line.contains("page_created:"), "{article_line}");
+    assert!(article_line.contains("Logged Compile"), "{article_line}");
 }
 
 #[test]
