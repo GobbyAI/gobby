@@ -298,6 +298,14 @@ async def test_ignores_noncanonical_churn(tmp_path: Path) -> None:
 
     await watcher.record_change(tmp_path / "outputs" / "build.json")
     await watcher.record_change(tmp_path / "meta" / "health" / "status.json")
+    await watcher.record_change(tmp_path / "meta" / "librarian" / "proposal-001.md")
+    await watcher.record_change(tmp_path / "meta" / "upkeep" / "run-report.md")
+    await watcher.record_change(tmp_path / "_meta" / "catalog.md")
     await watcher.flush_pending()
 
     assert coordinator.calls == []
+
+    await watcher.record_change(tmp_path / "knowledge" / "topics" / "hooks.md")
+    await watcher.flush_pending()
+
+    assert coordinator.calls == [{"project": ["hooks.md"]}]
