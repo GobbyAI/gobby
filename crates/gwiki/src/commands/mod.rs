@@ -11,6 +11,7 @@ pub(crate) mod graph_context;
 pub(crate) mod health;
 pub(crate) mod index;
 pub(crate) mod init;
+pub(crate) mod lanes;
 pub(crate) mod librarian;
 pub(crate) mod lint;
 pub(crate) mod normalize;
@@ -24,6 +25,7 @@ pub(crate) mod setup;
 pub(crate) mod sources;
 pub(crate) mod status;
 pub(crate) mod trust;
+pub(crate) mod upkeep;
 pub(crate) mod vault_tools;
 
 use std::path::Path;
@@ -108,6 +110,7 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
         Command::Normalize { scope, check } => normalize::execute(scope, check),
         Command::Health { scope } => health::execute(scope),
         Command::Librarian { scope, ai } => librarian::execute(scope, ai),
+        Command::Upkeep { scope, options, ai } => upkeep::execute(scope, options, ai),
         Command::Status { scope } => status::execute(scope),
         Command::Trust { scope } => trust::execute(scope),
         Command::CitationQuality { scope } => citation_quality::execute(scope),

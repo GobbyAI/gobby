@@ -498,6 +498,42 @@ fn compile_regenerates_index_catalog_from_vault_state() {
 }
 
 #[test]
+fn compile_without_checkpoint_persistence_leaves_research_session_untouched() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/ephemeral.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Ephemeral compile evidence.").expect("note written");
+    let mut session = session_with_note(&scope, "Ephemeral", "raw/research/ephemeral.md");
+
+    compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Ephemeral Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+        WikiCompileOptions {
+            persist_checkpoint: false,
+            ..WikiCompileOptions::default()
+        },
+        None,
+    )
+    .expect("wiki article compiled");
+
+    // Compile state is recorded in memory for the caller...
+    assert!(session.compile_state.is_some());
+    // ...but the on-disk research checkpoint is never written.
+    let checkpoint = ResearchSession::checkpoint_path(scope.root());
+    assert!(
+        !checkpoint.exists(),
+        "persist_checkpoint=false must not write {}",
+        checkpoint.display()
+    );
+}
+
+#[test]
 fn compile_appends_page_write_log_entries() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

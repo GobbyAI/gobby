@@ -50,6 +50,7 @@ pub mod sources;
 pub(crate) mod store;
 pub mod synthesis;
 pub(crate) mod transcribe;
+pub(crate) mod upkeep;
 pub(crate) mod vault;
 pub(crate) mod vector;
 pub(crate) mod video;
@@ -58,7 +59,7 @@ pub(crate) mod vision;
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget,
     ReviewReportOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
-    SyncSessionsOptions,
+    SyncSessionsOptions, UpkeepOptions,
 };
 pub use error::WikiError;
 pub use runner::run;

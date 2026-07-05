@@ -5,12 +5,10 @@ use std::path::{Path, PathBuf};
 use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
 
-/// Log action names written by production call sites. `upkeep_completed` is
-/// reserved for the `gwiki upkeep` conductor.
+/// Log action names written by production call sites.
 pub const ACTION_SOURCE_INGESTED: &str = "source_ingested";
 pub const ACTION_PAGE_CREATED: &str = "page_created";
 pub const ACTION_PAGE_UPDATED: &str = "page_updated";
-#[allow(dead_code, reason = "reserved for the gwiki upkeep conductor")]
 pub const ACTION_UPKEEP_COMPLETED: &str = "upkeep_completed";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

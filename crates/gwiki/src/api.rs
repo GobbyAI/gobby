@@ -125,6 +125,11 @@ pub enum Command {
         scope: ScopeSelection,
         ai: AiRouting,
     },
+    Upkeep {
+        scope: ScopeSelection,
+        options: UpkeepOptions,
+        ai: AiRouting,
+    },
     Status {
         scope: ScopeSelection,
     },
@@ -139,6 +144,26 @@ pub enum Command {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RunOptions {
     pub quiet: bool,
+}
+
+/// Budgets and toggles for the `upkeep` conductor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpkeepOptions {
+    pub max_pages: usize,
+    pub min_mentions: usize,
+    pub max_sources_per_page: usize,
+    pub dry_run: bool,
+}
+
+impl Default for UpkeepOptions {
+    fn default() -> Self {
+        Self {
+            max_pages: crate::upkeep::DEFAULT_MAX_PAGES,
+            min_mentions: crate::upkeep::DEFAULT_MIN_MENTIONS,
+            max_sources_per_page: crate::upkeep::DEFAULT_MAX_SOURCES_PER_PAGE,
+            dry_run: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

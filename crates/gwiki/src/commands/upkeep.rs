@@ -1,0 +1,151 @@
+use gobby_core::config::AiRouting;
+
+use crate::explainer::{ExplainerGenerator, ExplainerPrompt};
+use crate::support::scope::resolve_selection_context;
+use crate::support::services;
+use crate::support::time::collect_timestamp;
+use crate::{CommandOutcome, ScopeSelection, UpkeepOptions, WikiError, daemon, session, upkeep};
+
+use super::lanes::{
+    ai_notice_label, resolve_explainer_transport, resolve_lane_b_generator, routing_label,
+};
+
+const COMMAND: &str = "gwiki upkeep";
+
+pub(crate) fn execute(
+    selection: ScopeSelection,
+    options: UpkeepOptions,
+    ai: AiRouting,
+) -> Result<CommandOutcome, WikiError> {
+    let context = resolve_selection_context(&selection)?;
+    let research_scope = session::ResearchScope::from(&context.scope);
+    let vault_root = research_scope.root().to_path_buf();
+    let timestamp = collect_timestamp()?;
+    let daemon_report = daemon::probe_daemon_capabilities();
+
+    let mut notes: Vec<String> = Vec::new();
+    // A configured-but-unreachable hub only degrades the near-duplicate layer;
+    // the drain itself is vault-file based and keeps running.
+    let runtime_services = match services::probe_runtime_services(COMMAND) {
+        Ok(services) => Some(services),
+        Err(error) => {
+            notes.push(format!("runtime service probe failed: {error}"));
+            None
+        }
+    };
+    let mut semantic_backend = runtime_services
+        .as_ref()
+        .and_then(services::RuntimeServices::semantic_backend);
+    let probe = semantic_backend
+        .as_mut()
+        .map(|backend| upkeep::SemanticProbe {
+            backend,
+            search_scope: context.search_scope.clone(),
+        });
+
+    let mut lib_options = upkeep::Options {
+        max_pages: options.max_pages,
+        min_mentions: options.min_mentions,
+        max_sources_per_page: options.max_sources_per_page,
+        dry_run: options.dry_run,
+        daemon_synthesis_available: daemon_report.synthesis.available,
+        hard_fail_on_generation_failure: false,
+    };
+
+    // Dry runs never generate, so skip AI route resolution entirely.
+    let (mut report, ai_payload) = if options.dry_run {
+        let report = upkeep::run(
+            research_scope,
+            context.output_scope.clone(),
+            &lib_options,
+            probe,
+            None,
+            &timestamp,
+        )?;
+        (
+            report,
+            serde_json::json!({
+                "requested_mode": routing_label(ai),
+                "lane": "none",
+                "route": "off",
+                "fallback": false,
+                "notice": Option::<&str>::None,
+            }),
+        )
+    } else if let Some(mut lane_b) = resolve_lane_b_generator(
+        ai,
+        &selection,
+        vault_root,
+        context.output_scope.clone(),
+        COMMAND,
+    ) {
+        // Lane B tool loop resolved: generation failures fail the cluster
+        // instead of writing a skeleton page.
+        lib_options.hard_fail_on_generation_failure = true;
+        let info = lane_b.info;
+        let report = upkeep::run(
+            research_scope,
+            context.output_scope.clone(),
+            &lib_options,
+            probe,
+            Some(lane_b.generator.as_mut()),
+            &timestamp,
+        )?;
+        (
+            report,
+            serde_json::json!({
+                "requested_mode": routing_label(ai),
+                "lane": "tool_loop",
+                "route": info.route_label,
+                "fallback": info.fallback,
+                "notice": info.notice.map(ai_notice_label),
+            }),
+        )
+    } else {
+        let transport = resolve_explainer_transport(ai, COMMAND);
+        let route_label = transport.route_label();
+        let fallback = transport.fallback();
+        let notice = transport.notice_kind();
+        let mut generate = |prompt: &ExplainerPrompt| transport.generate(prompt);
+        let generator: Option<ExplainerGenerator<'_>> = if transport.is_active() {
+            Some(&mut generate)
+        } else {
+            None
+        };
+        let report = upkeep::run(
+            research_scope,
+            context.output_scope.clone(),
+            &lib_options,
+            probe,
+            generator,
+            &timestamp,
+        )?;
+        (
+            report,
+            serde_json::json!({
+                "requested_mode": routing_label(ai),
+                "lane": "one_shot",
+                "route": route_label,
+                "fallback": fallback,
+                "notice": notice.map(ai_notice_label),
+            }),
+        )
+    };
+    report.notes.splice(0..0, notes);
+
+    let mut payload = serde_json::to_value(&report).map_err(|error| WikiError::Json {
+        action: "serialize upkeep report",
+        path: None,
+        source: error,
+    })?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("ai".to_string(), ai_payload);
+    }
+    let text = upkeep::render_text(&report);
+    Ok(super::scoped_outcome(
+        "upkeep",
+        &context.output_scope,
+        payload,
+        text,
+    ))
+}

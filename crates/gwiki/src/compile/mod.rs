@@ -25,6 +25,7 @@ use crate::{ScopeIdentity, WikiError};
 mod collect;
 mod index;
 mod render;
+pub(crate) mod select;
 
 use collect::*;
 pub(crate) use index::lock_file;
@@ -62,6 +63,11 @@ pub struct WikiCompileOptions {
     /// Frontmatter tags appended after the standard `gwiki`/`compiled` pair
     /// (e.g. the `entity` marker on entity concept pages).
     pub extra_tags: Vec<String>,
+    /// When false, the compile state is recorded on the in-memory session only
+    /// and `_gwiki/research-session.json` is left untouched. Batch conductors
+    /// (`gwiki upkeep`) compile many ephemeral sessions against one vault and
+    /// must not clobber the user's interactive research checkpoint.
+    pub persist_checkpoint: bool,
 }
 
 impl Default for WikiCompileOptions {
@@ -72,6 +78,7 @@ impl Default for WikiCompileOptions {
             hard_fail_on_generation_failure: false,
             aliases: Vec::new(),
             extra_tags: Vec::new(),
+            persist_checkpoint: true,
         }
     }
 }
@@ -137,11 +144,12 @@ pub fn compile_to_wiki_with_options(
         target_page: None,
         write_intent: false,
     };
-    let mut handoff = prepare_handoff(session, handoff_request)?;
+    let mut handoff =
+        prepare_handoff_with_persistence(session, handoff_request, options.persist_checkpoint)?;
     handoff.bundle.target_page = target_page.clone();
     handoff.bundle.write_intent = write_intent;
     handoff.state.write_intent = write_intent;
-    session.record_compile_state(handoff.state.clone())?;
+    record_compile_state(session, handoff.state.clone(), options.persist_checkpoint)?;
 
     let vault_root = session.scope.root();
     let source_paths: Vec<PathBuf> = handoff
@@ -319,9 +327,18 @@ fn log_page_writes(
     Ok(())
 }
 
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn prepare_handoff(
     session: &mut ResearchSession,
+    request: CompileRequest,
+) -> Result<CompileOutcome, WikiError> {
+    prepare_handoff_with_persistence(session, request, true)
+}
+
+fn prepare_handoff_with_persistence(
+    session: &mut ResearchSession,
     mut request: CompileRequest,
+    persist_checkpoint: bool,
 ) -> Result<CompileOutcome, WikiError> {
     if request.topic.trim().is_empty() {
         return Err(WikiError::InvalidInput {
@@ -390,9 +407,24 @@ pub fn prepare_handoff(
         missing_evidence: bundle.missing_evidence.clone(),
         write_intent: bundle.write_intent,
     };
-    session.record_compile_state(state.clone())?;
+    record_compile_state(session, state.clone(), persist_checkpoint)?;
 
     Ok(CompileOutcome { bundle, state })
+}
+
+/// Record compile state on the session, persisting the research checkpoint
+/// only when the caller opted in (see [`WikiCompileOptions::persist_checkpoint`]).
+fn record_compile_state(
+    session: &mut ResearchSession,
+    state: CompileState,
+    persist_checkpoint: bool,
+) -> Result<(), WikiError> {
+    if persist_checkpoint {
+        session.record_compile_state(state)
+    } else {
+        session.compile_state = Some(state);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]

@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 8,
+  "contract_version": 9,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -778,6 +778,94 @@
         "output_shape": "each check skipped independently with a note",
         "metadata_keys": [
           "checks[].available"
+        ]
+      }
+    },
+    {
+      "name": "upkeep",
+      "summary": "Drain pending sources into entity concept pages.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--max-pages",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--min-mentions",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--max-sources-per-page",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--dry-run",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "timestamp",
+        "dry_run",
+        "max_pages",
+        "min_mentions",
+        "max_sources_per_page",
+        "pending_before",
+        "pending_after",
+        "pages_created",
+        "pages_updated",
+        "failures",
+        "clusters",
+        "skipped_over_budget",
+        "reconciled_no_synthesis",
+        "notes",
+        "ai"
+      ],
+      "hard_dependencies": [
+        "vault"
+      ],
+      "optional_dependencies": [
+        "Qdrant+embeddings",
+        "model synthesis"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "missing semantic backend skips near-duplicate checks with a note; AI off writes structural skeleton pages; per-page failures are recorded and the run continues",
+        "metadata_keys": [
+          "notes[]",
+          "clusters[].error",
+          "ai"
         ]
       }
     },
