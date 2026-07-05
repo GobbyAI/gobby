@@ -12,6 +12,37 @@ use crate::provenance::ProvenanceGraph;
 use crate::sources::{SourceDraft, SourceManifest};
 
 #[test]
+fn catalog_surfaces_are_exempt_from_claim_scanning() {
+    // The deterministic catalog files rebuilt by `catalog::regenerate` are
+    // navigation artifacts; their placeholder prose must not flag, while the
+    // identical text on any other page still does.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let body = "# Code\n\n## Handbook\n\n(none yet)\n";
+    for relative in ["_index.md", "knowledge/INDEX.md", "code/INDEX.md"] {
+        let page = root.join(relative);
+        std::fs::create_dir_all(page.parent().expect("page parent")).expect("create wiki dir");
+        std::fs::write(&page, body).expect("write catalog page");
+    }
+    let control = root.join("knowledge/topics/placeholder.md");
+    std::fs::create_dir_all(control.parent().expect("page parent")).expect("create wiki dir");
+    std::fs::write(&control, body).expect("write control page");
+
+    let report = run(root, ScopeIdentity::topic("ops")).expect("audit runs");
+
+    assert_eq!(
+        report.unsupported_claims.len(),
+        1,
+        "only the non-catalog page flags: {:?}",
+        report.unsupported_claims
+    );
+    assert_eq!(
+        report.unsupported_claims[0].path,
+        PathBuf::from("knowledge/topics/placeholder.md")
+    );
+}
+
+#[test]
 fn reports_unsupported_claims() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();

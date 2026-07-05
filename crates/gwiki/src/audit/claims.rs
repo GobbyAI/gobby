@@ -19,7 +19,7 @@ pub(super) fn unsupported_claims(
     manifest_hashes: &BTreeSet<String>,
     options: &AuditOptions,
 ) -> Vec<UnsupportedClaim> {
-    if is_manifest_backed_source_digest(page, manifest_hashes) {
+    if is_manifest_backed_source_digest(page, manifest_hashes) || is_catalog_page(page) {
         return Vec::new();
     }
     let claims = claim_lines(page, options);
@@ -56,6 +56,18 @@ fn claim_source_context(
     } else {
         Arc::clone(source_context)
     }
+}
+
+/// Deterministic catalog surfaces rebuilt by `catalog::regenerate` from
+/// on-disk vault state with no LLM involvement. They are navigation
+/// artifacts — derived listings and `(none yet)` placeholders, never claims
+/// needing provenance — so the audit skips them the same way it skips
+/// manifest-backed source digests.
+const CATALOG_PAGES: &[&str] = &["_index.md", "knowledge/INDEX.md", "code/INDEX.md"];
+
+fn is_catalog_page(page: &WikiPage) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    CATALOG_PAGES.contains(&page_path.as_str())
 }
 
 fn is_generated_codewiki_page(page: &WikiPage) -> bool {
