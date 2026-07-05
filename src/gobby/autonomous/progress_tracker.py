@@ -15,6 +15,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
+from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -354,7 +355,7 @@ class ProgressTracker:
             (session_id,),
         )
         last_high_value_at = (
-            datetime.fromisoformat(last_hv_result["recorded_at"]) if last_hv_result else None
+            parse_stored_datetime(last_hv_result["recorded_at"]) if last_hv_result else None
         )
 
         # Get last event time
@@ -369,7 +370,7 @@ class ProgressTracker:
             (session_id,),
         )
         last_event_at = (
-            datetime.fromisoformat(last_event_result["recorded_at"]) if last_event_result else None
+            parse_stored_datetime(last_event_result["recorded_at"]) if last_event_result else None
         )
 
         # Calculate stagnation
@@ -444,7 +445,7 @@ class ProgressTracker:
                 (session_id,),
             )
             if first_event:
-                first_time = datetime.fromisoformat(first_event["recorded_at"])
+                first_time = require_stored_datetime(first_event["recorded_at"], "recorded_at")
                 duration = (now - first_time).total_seconds()
             else:
                 duration = 0.0
@@ -526,7 +527,7 @@ class ProgressTracker:
             ProgressEvent(
                 session_id=row["session_id"],
                 progress_type=ProgressType(row["progress_type"]),
-                timestamp=datetime.fromisoformat(row["recorded_at"]),
+                timestamp=require_stored_datetime(row["recorded_at"], "recorded_at"),
                 tool_name=row["tool_name"],
                 details=json.loads(row["details"]) if row["details"] else {},  # Safe: json loads
             )

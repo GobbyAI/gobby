@@ -7,8 +7,10 @@ Tests cover:
 """
 
 import threading
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -34,6 +36,16 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+
+
+def _tid(seed: str) -> str:
+    """Deterministic UUID string for a fake task id.
+
+    task_selection_history.task_id is a UUID column, so recorded task ids must
+    be valid UUIDs; production passes task UUIDs from suggest_next_task.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby-test-task/{seed}"))
+
 
 # ==============================================================================
 # Fixtures
@@ -946,7 +958,7 @@ class TestStopRegistry:
         self, stop_registry: StopRegistry, session_id: str
     ) -> None:
         """Test get_signal returns None for unknown session."""
-        signal = stop_registry.get_signal("unknown-session")
+        signal = stop_registry.get_signal(str(uuid.uuid4()))
         assert signal is None
 
     def test_has_pending_signal(self, stop_registry: StopRegistry, session_id: str) -> None:
@@ -1223,14 +1235,15 @@ class TestStuckDetector:
         self, stuck_detector: StuckDetector, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test recording a task selection."""
+        task_id = _tid("abc123")
         event = stuck_detector.record_task_selection(
             session_id=session_id,
-            task_id="gt-abc123",
+            task_id=task_id,
             context={"method": "suggest_next_task"},
         )
 
         assert event.session_id == session_id
-        assert event.task_id == "gt-abc123"
+        assert event.task_id == task_id
         assert event.context == {"method": "suggest_next_task"}
 
         # Verify in database
@@ -1239,7 +1252,7 @@ class TestStuckDetector:
             (session_id,),
         )
         assert row is not None
-        assert row["task_id"] == "gt-abc123"
+        assert row["task_id"] == task_id
 
 
 class TestStuckDetectorTaskLoop:
@@ -1258,7 +1271,7 @@ class TestStuckDetectorTaskLoop:
     ) -> None:
         """Test no task loop with varied task selections."""
         for i in range(5):
-            stuck_detector.record_task_selection(session_id, f"task-{i}")
+            stuck_detector.record_task_selection(session_id, _tid(f"task-{i}"))
 
         result = stuck_detector.detect_task_loop(session_id)
 
@@ -1269,14 +1282,15 @@ class TestStuckDetectorTaskLoop:
         detector = StuckDetector(test_db, task_loop_threshold=3)
 
         # Select same task multiple times
+        stuck_task = _tid("stuck-task-123")
         for _ in range(4):
-            detector.record_task_selection(session_id, "stuck-task-123")
+            detector.record_task_selection(session_id, stuck_task)
 
         result = detector.detect_task_loop(session_id)
 
         assert result.is_stuck is True
         assert result.layer == "task_loop"
-        assert "stuck-task-123" in result.reason
+        assert stuck_task in result.reason
         assert result.suggested_action == "change_approach"
 
     def test_task_loop_threshold_boundary(self, test_db: HubDatabase, session_id: str) -> None:
@@ -1285,7 +1299,7 @@ class TestStuckDetectorTaskLoop:
 
         # Select same task exactly threshold times
         for _ in range(3):
-            detector.record_task_selection(session_id, "boundary-task")
+            detector.record_task_selection(session_id, _tid("boundary-task"))
 
         result = detector.detect_task_loop(session_id)
 
@@ -1455,8 +1469,8 @@ class TestStuckDetectorIsStuck:
         progress_tracker.record_event(session_id, ProgressType.FILE_READ)
 
         # Record varied task selections
-        stuck_detector.record_task_selection(session_id, "task-1")
-        stuck_detector.record_task_selection(session_id, "task-2")
+        stuck_detector.record_task_selection(session_id, _tid("task-1"))
+        stuck_detector.record_task_selection(session_id, _tid("task-2"))
 
         result = stuck_detector.is_stuck(session_id)
 
@@ -1475,7 +1489,7 @@ class TestStuckDetectorIsStuck:
 
         # Create task loop
         for _ in range(3):
-            detector.record_task_selection(session_id, "loop-task")
+            detector.record_task_selection(session_id, _tid("loop-task"))
 
         result = detector.is_stuck(session_id)
 
@@ -1491,8 +1505,8 @@ class TestStuckDetectorClearSession:
         self, stuck_detector: StuckDetector, test_db: HubDatabase, session_id: str
     ) -> None:
         """Test clearing session history."""
-        stuck_detector.record_task_selection(session_id, "task-1")
-        stuck_detector.record_task_selection(session_id, "task-2")
+        stuck_detector.record_task_selection(session_id, _tid("task-1"))
+        stuck_detector.record_task_selection(session_id, _tid("task-2"))
 
         count = stuck_detector.clear_session(session_id)
 
@@ -1515,23 +1529,23 @@ class TestStuckDetectorSelectionHistory:
 
     def test_get_selection_history(self, stuck_detector: StuckDetector, session_id: str) -> None:
         """Test getting selection history."""
-        stuck_detector.record_task_selection(session_id, "task-1")
-        stuck_detector.record_task_selection(session_id, "task-2")
-        stuck_detector.record_task_selection(session_id, "task-3")
+        stuck_detector.record_task_selection(session_id, _tid("task-1"))
+        stuck_detector.record_task_selection(session_id, _tid("task-2"))
+        stuck_detector.record_task_selection(session_id, _tid("task-3"))
 
         history = stuck_detector.get_selection_history(session_id, limit=10)
 
         assert len(history) == 3
         # Most recent first
-        assert history[0].task_id == "task-3"
-        assert history[2].task_id == "task-1"
+        assert history[0].task_id == _tid("task-3")
+        assert history[2].task_id == _tid("task-1")
 
     def test_get_selection_history_respects_limit(
         self, stuck_detector: StuckDetector, session_id: str
     ) -> None:
         """Test history respects limit."""
         for i in range(10):
-            stuck_detector.record_task_selection(session_id, f"task-{i}")
+            stuck_detector.record_task_selection(session_id, _tid(f"task-{i}"))
 
         history = stuck_detector.get_selection_history(session_id, limit=5)
 
@@ -1561,7 +1575,7 @@ class TestStuckDetectorThreadSafety:
                 for i in range(selections_per_thread):
                     stuck_detector.record_task_selection(
                         session_id=session_id,
-                        task_id=f"task-{thread_id}-{i}",
+                        task_id=_tid(f"task-{thread_id}-{i}"),
                         context={"thread": thread_id},
                     )
             except Exception as e:
@@ -1603,7 +1617,7 @@ class TestAutonomousIntegration:
         """Test a complete autonomous workflow scenario."""
         # Session starts work
         progress_tracker.record_event(session_id, ProgressType.TASK_STARTED)
-        stuck_detector.record_task_selection(session_id, "gt-task-1")
+        stuck_detector.record_task_selection(session_id, _tid("gt-task-1"))
 
         # Session makes progress
         progress_tracker.record_tool_call(session_id, "Read", {"file_path": "/src/main.py"})
@@ -1649,8 +1663,9 @@ class TestAutonomousIntegration:
         )
 
         # Session gets stuck in task loop
+        problematic_task = _tid("problematic-task")
         for _ in range(3):
-            detector.record_task_selection(session_id, "problematic-task")
+            detector.record_task_selection(session_id, problematic_task)
             tracker.record_tool_call(session_id, "Read", {"file_path": "/same/file"})
 
         # Detect stuck state
@@ -1670,7 +1685,7 @@ class TestAutonomousIntegration:
         assert registry.has_pending_signal(session_id) is True
         signal = registry.get_signal(session_id)
         assert signal.source == "workflow"
-        assert "problematic-task" in signal.reason
+        assert problematic_task in signal.reason
 
     def test_session_cleanup_on_completion(
         self,
@@ -1684,7 +1699,7 @@ class TestAutonomousIntegration:
         progress_tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         stop_registry.signal_stop(session_id, source="test")
         stop_registry.acknowledge(session_id)
-        stuck_detector.record_task_selection(session_id, "task-1")
+        stuck_detector.record_task_selection(session_id, _tid("task-1"))
 
         # Clean up all data
         progress_tracker.clear_session(session_id)
@@ -1770,3 +1785,70 @@ class TestAutonomousIntegration:
         stuck = stuck_detector.is_stuck(session_id)
         assert stuck.is_stuck is True
         assert stuck.layer == "tool_loop"
+
+
+# ==============================================================================
+# Datetime-typed row decode regression (#17583)
+# ==============================================================================
+
+
+class TestDatetimeRowDecodeRegression:
+    """Row decode must accept datetime-typed values, not just ISO strings.
+
+    PostgreSQL TIMESTAMPTZ columns arrive as datetime objects. Before #17583
+    these decode paths called datetime.fromisoformat on them and raised
+    TypeError on every stuck-detection heartbeat.
+    """
+
+    def test_stop_registry_get_signal_decodes_datetime_row(self) -> None:
+        requested = datetime(2026, 7, 5, 14, 42, tzinfo=UTC)
+        acknowledged = datetime(2026, 7, 5, 14, 43, tzinfo=UTC)
+        db = MagicMock()
+        db.fetchone.return_value = {
+            "session_id": str(uuid.uuid4()),
+            "source": "http",
+            "reason": None,
+            "requested_at": requested,
+            "acknowledged_at": acknowledged,
+        }
+
+        signal = StopRegistry(db).get_signal(str(uuid.uuid4()))
+
+        assert signal is not None
+        assert signal.requested_at == requested
+        assert signal.acknowledged_at == acknowledged
+
+    def test_stuck_detector_selection_history_decodes_datetime_row(self) -> None:
+        selected = datetime(2026, 7, 5, 14, 42, tzinfo=UTC)
+        db = MagicMock()
+        db.fetchall.return_value = [
+            {
+                "session_id": str(uuid.uuid4()),
+                "task_id": _tid("decode"),
+                "selected_at": selected,
+                "context": None,
+            }
+        ]
+
+        events = StuckDetector(db).get_selection_history(str(uuid.uuid4()))
+
+        assert len(events) == 1
+        assert events[0].selected_at == selected
+
+    def test_progress_tracker_recent_events_decode_datetime_row(self) -> None:
+        recorded = datetime(2026, 7, 5, 14, 42, tzinfo=UTC)
+        db = MagicMock()
+        db.fetchall.return_value = [
+            {
+                "session_id": str(uuid.uuid4()),
+                "progress_type": "tool_call",
+                "tool_name": "Read",
+                "details": None,
+                "recorded_at": recorded,
+            }
+        ]
+
+        events = ProgressTracker(db).get_recent_events(str(uuid.uuid4()))
+
+        assert len(events) == 1
+        assert events[0].timestamp == recorded
