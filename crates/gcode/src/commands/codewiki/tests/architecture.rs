@@ -402,11 +402,13 @@ fn diagram_model() -> SystemModel {
     }
 }
 
-/// Drive the core generator with an explicit system model (AI off) and return
-/// the architecture page's BuiltDoc.
-fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
+/// Drive the core generator with an explicit system model and an optional
+/// generator, returning the architecture page's BuiltDoc.
+fn build_architecture_page_with(
+    model: Option<&SystemModel>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> BuiltDoc {
     let input = diagram_input();
-    let mut generate = None::<&mut TextGenerator<'_>>;
     let mut progress = CodewikiProgress::silent();
     let doc_scope = DocPruneScope::unscoped();
     let mut docs = Vec::new();
@@ -416,7 +418,7 @@ fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
         model,
         None,
         None,
-        &mut generate,
+        generate,
         &mut None,
         &mut None,
         AiDepth::Symbols,
@@ -436,33 +438,90 @@ fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
         .expect("architecture page built")
 }
 
-#[test]
-fn architecture_page_renders_model_seeded_diagrams_without_degrading() {
-    let model = diagram_model();
-    let page = build_architecture_page(Some(&model));
+/// AI-off variant: no generator at all.
+fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
+    let mut generate = None::<&mut TextGenerator<'_>>;
+    build_architecture_page_with(model, &mut generate)
+}
 
-    // The diagram section is present with at least the topology + one flow.
+#[test]
+fn architecture_page_composes_evidence_verified_diagrams() {
+    // The composer (#17521) answers the flow-diagram prompt by drawing three
+    // evidenced arrows; every other generation skips (None) and falls back to
+    // structural output.
+    let model = diagram_model();
+    let mut responses = vec![
+        "flowchart TD\n    c_gobby_code --> c_gobby_core\n    c_gobby_hooks --> c_gobby_core\n    c_gobby_code -.-> svc_postgres\n"
+            .to_string(),
+    ];
+    let mut generator = move |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::FLOW_DIAGRAM_SYSTEM {
+            (!responses.is_empty()).then(|| responses.remove(0))
+        } else {
+            None
+        }
+    };
+    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+    let page = build_architecture_page_with(Some(&model), &mut generate);
+
+    // The diagram section is present, LLM-composed, and caption-marked.
     assert!(
         page.content.contains("## Architecture Diagrams"),
         "missing diagram section:\n{}",
         page.content
     );
-    assert!(page.content.contains("```mermaid"), "{}", page.content);
+    assert!(
+        page.content.contains("composed by the model"),
+        "{}",
+        page.content
+    );
     assert!(page.content.contains("flowchart TD"), "{}", page.content);
-    assert!(page.content.contains("sequenceDiagram"), "{}", page.content);
+    // The deterministic sequence-diagram composers are retired (#17521);
+    // runtime facts now live in the evidence-verified topology.
+    assert!(
+        !page.content.contains("sequenceDiagram"),
+        "{}",
+        page.content
+    );
 
-    // Crate nodes and the gobby-code -> gobby-core edge are drawn.
+    // Drawn arrows survive with evidence labels/styles: the crate dependency
+    // stays solid, the service edge re-attaches its canonical dotted
+    // `required` label.
+    assert!(page.content.contains("c_gobby_code --> c_gobby_core"));
+    assert!(
+        page.content
+            .contains("c_gobby_code -.->|\"required\"| svc_postgres"),
+        "{}",
+        page.content
+    );
     assert!(page.content.contains("gobby-code"));
-    assert!(page.content.contains("gobby-core"));
+    assert!(page.content.contains("PostgreSQL hub"));
 
     // Every emitted mermaid fence is individually well-formed per the gate.
-    for block in mermaid_blocks(&page.content) {
+    let blocks = mermaid_blocks(&page.content);
+    assert!(!blocks.is_empty());
+    for block in blocks {
         assert!(is_valid_mermaid(&block), "invalid fence emitted:\n{block}");
     }
+}
 
-    // AI is off (structural intent), so the page is NOT degraded; rendering
-    // diagrams must never set degraded.
-    assert!(!page.degraded, "diagram render must not degrade the page");
+#[test]
+fn architecture_page_omits_diagrams_when_ai_is_off_without_degrading() {
+    // Diagrams are LLM-composed (#17521): with AI off there is no composer,
+    // so a full model still yields no diagram section — and omission is
+    // normal, never degradation.
+    let model = diagram_model();
+    let page = build_architecture_page(Some(&model));
+
+    assert!(
+        !page.content.contains("## Architecture Diagrams"),
+        "{}",
+        page.content
+    );
+    assert!(!page.content.contains("```mermaid"), "{}", page.content);
+    // The deterministic service matrix still renders from the model.
+    assert!(page.content.contains("## Services"), "{}", page.content);
+    assert!(!page.degraded, "omitted diagram must not degrade the page");
     assert!(!page.content.contains("degraded: true"), "{}", page.content);
 }
 
