@@ -76,6 +76,7 @@ pub(crate) fn execute(
         ai,
         &selection,
         vault_root,
+        context.scope.project_root().map(|root| root.to_path_buf()),
         context.output_scope.clone(),
         COMMAND,
     ) {

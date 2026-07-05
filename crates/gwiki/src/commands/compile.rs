@@ -55,9 +55,15 @@ pub(crate) fn execute(
     // matching codewiki #978). A resolved Lane B route hard-fails on generation
     // failure (no skeleton fallback); when no tool-chat route resolves, fall back
     // to the Lane A one-shot explainer.
-    if let Some(mut lane_b) =
-        resolve_lane_b_generator(ai, &scope, vault_root, output_scope.clone(), COMMAND)
-    {
+    let project_root = resolved_scope.project_root().map(|root| root.to_path_buf());
+    if let Some(mut lane_b) = resolve_lane_b_generator(
+        ai,
+        &scope,
+        vault_root,
+        project_root,
+        output_scope.clone(),
+        COMMAND,
+    ) {
         let info = lane_b.info;
         let outcome = wiki_compile::compile_to_wiki_with_options(
             &mut session,

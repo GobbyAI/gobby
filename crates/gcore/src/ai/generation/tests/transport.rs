@@ -233,46 +233,4 @@ fn build_request_body_threads_reasoning_effort() {
     );
 }
 
-#[test]
-fn build_daemon_chat_body_forwards_profile_project_and_tools() {
-    let tools = vec![ToolSchema {
-        name: "outline_file".to_string(),
-        description: "outline a file".to_string(),
-        parameters: json!({"type":"object"}),
-    }];
-    let messages = vec![ChatMessage::user("map the crate")];
-    let request = ChatCompletionRequest {
-        messages: &messages,
-        tools: &tools,
-        max_tokens: Some(512),
-        tool_choice: ToolChoice::Auto,
-    };
-
-    let body = build_daemon_chat_body("feature_high", Some("project-9"), Some("high"), &request);
-    assert_eq!(body["profile"], "feature_high");
-    assert_eq!(body["project_id"], "project-9");
-    assert_eq!(body["reasoning_effort"], "high");
-    assert_eq!(body["max_tokens"], 512);
-    assert_eq!(body["tool_choice"], "auto");
-    assert_eq!(body["tools"][0]["function"]["name"], "outline_file");
-    // The daemon resolves the profile to a provider/model; none is pinned here.
-    assert!(body.get("model").is_none());
-    assert!(body.get("provider").is_none());
-
-    // Unset project_id / reasoning_effort are omitted, and Lane A style empty
-    // tools forward neither tools nor tool_choice.
-    let lane_a = ChatCompletionRequest {
-        messages: &messages,
-        tools: &[],
-        max_tokens: None,
-        tool_choice: ToolChoice::Auto,
-    };
-    let body = build_daemon_chat_body("feature_high", None, None, &lane_a);
-    assert_eq!(body["profile"], "feature_high");
-    assert!(body.get("project_id").is_none());
-    assert!(body.get("reasoning_effort").is_none());
-    assert!(body.get("tools").is_none());
-    assert!(body.get("tool_choice").is_none());
-}
-
 // ----- daemon-side agentic narrative generation ------------------------------

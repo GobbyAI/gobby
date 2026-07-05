@@ -7,7 +7,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::MutexGuard;
 
-mod chat;
 mod embeddings;
 mod environment;
 mod multipart;

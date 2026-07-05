@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai::generation::{
-    ChatMessage, ChatTransport, DaemonChatTransport, DirectChatTransport, DirectGenerationTarget,
-    GenerationTier, ToolLoopLimits, generate_one_shot, profile_for_tier,
+    ChatMessage, ChatTransport, DirectChatTransport, DirectGenerationTarget, GenerationTier,
+    ToolLoopLimits, ToolPolicy, daemon_agentic_chat, generate_one_shot, profile_for_tier,
     resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
@@ -40,6 +40,38 @@ pub(crate) struct LaneB {
     pub(crate) info: LaneBInfo,
 }
 
+/// Read-only gwiki subcommands the daemon's agent may run during a Lane B
+/// investigation. Must stay a subset of the daemon's `GWIKI_READONLY_TOOLS`
+/// whitelist in `src/gobby/ai/_tool_chat_tools.py` — the daemon rejects the
+/// whole policy if any listed subcommand is off its allowlist.
+const GWIKI_READONLY_TOOLS: [&str; 8] = [
+    "search",
+    "read",
+    "backlinks",
+    "sources",
+    "status",
+    "trust",
+    "audit",
+    "lint",
+];
+
+/// Turn budget for the daemon's server-side agent, matching the client-side
+/// [`ToolLoopLimits::default`] bound the Direct route runs under.
+const DAEMON_AGENTIC_MAX_TURNS: usize = 8;
+
+/// The read-only gwiki investigation policy Lane B hands the daemon: the agent
+/// may inspect the vault but never mutate it.
+fn gwiki_readonly_tool_policy() -> ToolPolicy {
+    ToolPolicy {
+        cli: "gwiki".to_string(),
+        tools: GWIKI_READONLY_TOOLS
+            .iter()
+            .map(|tool| (*tool).to_string())
+            .collect(),
+        allow_mutation: false,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct LaneBInfo {
     pub(crate) route_label: &'static str,
@@ -50,11 +82,14 @@ pub(crate) struct LaneBInfo {
 /// Resolve a Lane B tool-loop generator, mirroring codewiki's
 /// `resolve_tool_loop_generator` (#978). Returns `None` (so the caller falls back
 /// to the Lane A one-shot explainer) when AI is off, no tool-chat route resolves,
-/// or a Direct route lacks a usable `api_base`.
+/// a Direct route lacks a usable `api_base`, or a Daemon route lacks a project
+/// root (the daemon's agent investigates with `cwd=project_path`, which topic
+/// scopes cannot supply).
 pub(crate) fn resolve_lane_b_generator(
     requested: AiRouting,
     scope: &ScopeSelection,
     vault_root: PathBuf,
+    project_root: Option<PathBuf>,
     scope_identity: ScopeIdentity,
     command: &'static str,
 ) -> Option<LaneB> {
@@ -73,6 +108,12 @@ pub(crate) fn resolve_lane_b_generator(
     let observed = resolve_route_observed(&context, AiCapability::ToolChat);
     let route = observed.route;
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
+        return None;
+    }
+    // A Daemon-route Lane B without a project root (topic scope) cannot give
+    // the daemon's agent an investigation cwd; decline so the caller falls
+    // back to the Lane A one-shot explainer, which needs no project root.
+    if matches!(route, AiRouting::Daemon) && project_root.is_none() {
         return None;
     }
     let profile = profile_for_tier(ARTICLE_TIER, None);
@@ -101,6 +142,7 @@ pub(crate) fn resolve_lane_b_generator(
             route,
             &profile,
             target.as_ref(),
+            project_root.as_deref(),
             prompt,
             &scope,
             &vault_root,
@@ -110,39 +152,60 @@ pub(crate) fn resolve_lane_b_generator(
     Some(LaneB { generator, info })
 }
 
-/// Run one Lane B tool loop: the model investigates the vault via
-/// [`VaultToolExecutor`] and returns the grounded narrative body. Hard-fails
-/// (returns `Err`) on a non-completed stop reason or empty content; data-source
-/// degradation is logged as evidence, never a generation failure.
+/// Run one Lane B generation. Hard-fails (returns `Err`) on generation failure
+/// or empty content — callers fail the article instead of writing a skeleton.
+///
+/// Daemon route: one server-side agentic POST via [`daemon_agentic_chat`]. The
+/// daemon's agent investigates with whitelisted read-only gwiki subcommands in
+/// `cwd=project_root` and returns the finished narrative — no local tool loop
+/// runs (the agentic endpoint never returns `tool_calls`; a passthrough
+/// transport would re-prompt forever, and did 422 before this port because it
+/// omitted the route's required `project_path`/`tool_policy` fields).
+///
+/// Direct route: the local tool loop where the model investigates the vault
+/// via [`VaultToolExecutor`]. Data-source degradation mid-loop is logged as
+/// evidence, never a generation failure.
 #[allow(clippy::too_many_arguments)]
 fn run_lane_b(
     context: &AiContext,
     route: AiRouting,
     profile: &str,
     target: Option<&DirectGenerationTarget>,
+    project_root: Option<&Path>,
     prompt: &ExplainerPrompt,
     scope: &ScopeSelection,
     vault_root: &Path,
     scope_identity: &ScopeIdentity,
 ) -> Result<ExplainerResponse, String> {
-    let mut executor = VaultToolExecutor::new(
-        scope.clone(),
-        vault_root.to_path_buf(),
-        scope_identity.clone(),
-    );
     let messages = vec![
         ChatMessage::system(prompt.system.to_string()),
         ChatMessage::user(prompt.user.clone()),
     ];
-    let limits = ToolLoopLimits::default();
-    let (outcome, model) = match route {
+    match route {
         AiRouting::Daemon => {
-            let transport = DaemonChatTransport::new(context, profile.to_string())
-                .map_err(|error| error.to_string())?;
-            let model = transport.model().map(str::to_string);
-            let outcome = run_tool_loop(&transport, &mut executor, messages, &limits, None)
-                .map_err(|error| error.to_string())?;
-            (outcome, model)
+            let project_root = project_root
+                .ok_or_else(|| "daemon Lane B requires a project scope root".to_string())?;
+            let binding = context.binding(AiCapability::ToolChat);
+            let result = daemon_agentic_chat(
+                context,
+                profile,
+                None,
+                &project_root.display().to_string(),
+                &gwiki_readonly_tool_policy(),
+                &messages,
+                Some(DAEMON_AGENTIC_MAX_TURNS),
+                binding.reasoning_effort.as_deref(),
+            )
+            .map_err(|error| error.to_string())?;
+            let text = result
+                .content
+                .filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| "daemon agent returned no content".to_string())?;
+            Ok(ExplainerResponse {
+                text,
+                model: result.model,
+                route: routing_label(route),
+            })
         }
         AiRouting::Direct => {
             let target = target
@@ -151,38 +214,42 @@ fn run_lane_b(
                 DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
                     .map_err(|error| error.to_string())?;
             let model = transport.model().map(str::to_string);
+            let mut executor = VaultToolExecutor::new(
+                scope.clone(),
+                vault_root.to_path_buf(),
+                scope_identity.clone(),
+            );
+            let limits = ToolLoopLimits::default();
             let outcome = run_tool_loop(&transport, &mut executor, messages, &limits, None)
                 .map_err(|error| error.to_string())?;
-            (outcome, model)
+            // Data-source degradation (graph/semantic backend down mid-loop) is
+            // evidence degradation, not a generation failure — log it without
+            // hard-failing.
+            let degraded = executor.into_data_source_degraded();
+            if !degraded.is_empty() {
+                log::warn!(
+                    "Lane B: data-source degradation during tool loop: {}",
+                    degraded.join(", ")
+                );
+            }
+            if !outcome.stop_reason.is_completed() {
+                return Err(format!(
+                    "tool loop did not complete ({})",
+                    outcome.stop_reason.as_str()
+                ));
+            }
+            let content = outcome
+                .content
+                .filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| "tool loop returned no content".to_string())?;
+            Ok(ExplainerResponse {
+                text: content,
+                model,
+                route: routing_label(route),
+            })
         }
-        AiRouting::Off | AiRouting::Auto => {
-            return Err("tool-chat route is off or unresolved".to_string());
-        }
-    };
-    // Data-source degradation (graph/semantic backend down mid-loop) is evidence
-    // degradation, not a generation failure — log it without hard-failing.
-    let degraded = executor.into_data_source_degraded();
-    if !degraded.is_empty() {
-        log::warn!(
-            "Lane B: data-source degradation during tool loop: {}",
-            degraded.join(", ")
-        );
+        AiRouting::Off | AiRouting::Auto => Err("tool-chat route is off or unresolved".to_string()),
     }
-    if !outcome.stop_reason.is_completed() {
-        return Err(format!(
-            "tool loop did not complete ({})",
-            outcome.stop_reason.as_str()
-        ));
-    }
-    let content = outcome
-        .content
-        .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| "tool loop returned no content".to_string())?;
-    Ok(ExplainerResponse {
-        text: content,
-        model,
-        route: routing_label(route),
-    })
 }
 
 /// Resolved explainer transport, mirroring `gwiki ask` honesty semantics:
@@ -389,6 +456,31 @@ mod tests {
         use gobby_core::ai::generation::FEATURE_HIGH;
         assert_eq!(ARTICLE_TIER, GenerationTier::Aggregate);
         assert_eq!(profile_for_tier(ARTICLE_TIER, None), FEATURE_HIGH);
+    }
+
+    /// Pins the daemon Lane B investigation policy to the daemon's
+    /// `GWIKI_READONLY_TOOLS` whitelist (`src/gobby/ai/_tool_chat_tools.py`).
+    /// Adding a subcommand here without updating the daemon allowlist makes the
+    /// daemon reject the whole policy, so this list must only change in
+    /// lockstep with the daemon side.
+    #[test]
+    fn daemon_lane_b_policy_is_readonly_gwiki_whitelist() {
+        let policy = gwiki_readonly_tool_policy();
+        assert_eq!(policy.cli, "gwiki");
+        assert!(!policy.allow_mutation);
+        assert_eq!(
+            policy.tools,
+            vec![
+                "search",
+                "read",
+                "backlinks",
+                "sources",
+                "status",
+                "trust",
+                "audit",
+                "lint",
+            ]
+        );
     }
 
     #[test]
