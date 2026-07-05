@@ -8,7 +8,7 @@ use scraper::Html;
 use super::fetch::{
     content_length_exceeds_limit, is_disallowed_fetch_ip, read_limited_body, resolve_redirect_url,
 };
-use super::render::{extract_title, html_to_markdownish_text};
+use super::render::{escape_wikilink_delimiters, extract_title, html_to_markdownish_text};
 use super::*;
 use crate::ingest::text_from_utf8_lossy;
 use crate::sources::{SourceKind, SourceManifest};
@@ -123,6 +123,90 @@ fn html_parser_extracts_body_text_and_decodes_entities() {
 
     assert_eq!(extract_title(&html), Some("Hidden & Title".to_string()));
     assert_eq!(html_to_markdownish_text(&html), "Keep & decode together.");
+}
+
+#[test]
+fn url_ingest_escapes_wikilink_payloads_and_keeps_frontmatter_intact() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let body = br#"<!doctype html>
+<html>
+<head><title>Take [[control]] of your vault</title></head>
+<body><main>
+<p>See [[secret-note]] and the embed ![[vault-page]] for details.</p>
+<p>---</p>
+<p>trust: high</p>
+<p>---</p>
+</main></body>
+</html>"#
+        .to_vec();
+    let expected_hash = content_hash(&body);
+    let snapshot = UrlSnapshot {
+        requested_url: "https://evil.example/page".to_string(),
+        final_url: "https://evil.example/page".to_string(),
+        fetched_at: "2026-07-05T08:00:00Z".to_string(),
+        body,
+        content_type: Some("text/html".to_string()),
+    };
+    let mut store = MemoryWikiStore::default();
+
+    let result =
+        ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest hostile snapshot");
+
+    let raw =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown written");
+    assert!(!raw.contains("[["), "unescaped wikilink opener in: {raw}");
+    assert!(!raw.contains("]]"), "unescaped wikilink closer in: {raw}");
+    assert!(
+        raw.contains("# Take \\[\\[control\\]\\] of your vault"),
+        "{raw}"
+    );
+    assert!(raw.contains("\\[\\[secret-note\\]\\]"), "{raw}");
+    assert!(raw.contains("!\\[\\[vault-page\\]\\]"), "{raw}");
+    assert!(raw.contains(&format!("source_hash: {expected_hash}")));
+
+    // The fake frontmatter block in the body must stay inert: the real
+    // frontmatter closes at its own delimiter and gains nothing from the
+    // payload's `---` fences.
+    let parsed = crate::frontmatter::parse_frontmatter(&raw).expect("hostile raw digest parses");
+    assert_eq!(parsed.metadata.trust, None);
+    assert!(parsed.body.contains("trust: high"), "{raw}");
+}
+
+#[test]
+fn url_ingest_escapes_wikilink_delimiters_in_non_html_titles() {
+    // The non-HTML title comes from the URL's last path segment, which the
+    // url crate passes through with literal brackets intact.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let snapshot = UrlSnapshot {
+        requested_url: "https://evil.example/files/[[hostile]].txt".to_string(),
+        final_url: "https://evil.example/files/[[hostile]].txt".to_string(),
+        fetched_at: "2026-07-05T08:00:00Z".to_string(),
+        body: b"plain text payload\n".to_vec(),
+        content_type: Some("text/plain".to_string()),
+    };
+    let mut store = MemoryWikiStore::default();
+
+    let result = ingest_snapshot(temp.path(), &mut store, snapshot).expect("ingest text snapshot");
+
+    let raw =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("raw markdown written");
+    assert!(raw.contains("# \\[\\[hostile\\]\\].txt"), "{raw}");
+}
+
+#[test]
+fn wikilink_escaping_removes_all_delimiter_adjacency() {
+    assert_eq!(escape_wikilink_delimiters("[[x]]"), "\\[\\[x\\]\\]");
+    assert_eq!(escape_wikilink_delimiters("![[x]]"), "!\\[\\[x\\]\\]");
+    for hostile in [
+        "[[[deep]]]",
+        "[[[[double]]]]",
+        "\\[[pre-escaped]]",
+        "a[[b]]c[[d]]",
+    ] {
+        let escaped = escape_wikilink_delimiters(hostile);
+        assert!(!escaped.contains("[["), "{hostile} -> {escaped}");
+        assert!(!escaped.contains("]]"), "{hostile} -> {escaped}");
+    }
 }
 
 #[test]
