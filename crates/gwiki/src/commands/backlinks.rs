@@ -64,6 +64,7 @@ fn render_link_suggest(
                 "target": &suggestion.target,
                 "mention_count": suggestion.mention_count,
                 "source_paths": &suggestion.source_paths,
+                "variants": &suggestion.variants,
             })
         })
         .collect::<Vec<_>>();
@@ -120,6 +121,10 @@ Scope: {scope}
         } else {
             "mentions"
         });
+        if suggestion.variants.len() > 1 {
+            text.push_str("; variants: ");
+            text.push_str(&suggestion.variants.join(", "));
+        }
         text.push_str(")\n");
     }
     text

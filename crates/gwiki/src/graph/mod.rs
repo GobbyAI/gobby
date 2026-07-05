@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::links::canonical_target_key;
 use crate::search::SearchScope;
 use uuid::Uuid;
 
@@ -137,9 +138,15 @@ pub struct WikiBacklink {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkSuggestion {
     pub scope: SearchScope,
+    /// Most frequent raw spelling in the case-folded cluster (ties break
+    /// lexicographically).
     pub target: String,
+    /// Total mentions across every case variant in the cluster.
     pub mention_count: usize,
     pub source_paths: Vec<PathBuf>,
+    /// Distinct raw spellings in the cluster, most frequent first (ties
+    /// break lexicographically). Always contains `target`.
+    pub variants: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -153,6 +160,22 @@ impl Default for RelatedPathOptions {
             backward_link_weight: BACKWARD_LINK_WEIGHT,
         }
     }
+}
+
+/// Case-insensitive document lookup map from [`canonical_target_key`] of a
+/// document path to the actual path. On case-colliding paths the first path
+/// in iteration order wins.
+pub fn document_target_map<'a, I>(paths: I) -> BTreeMap<String, PathBuf>
+where
+    I: IntoIterator<Item = &'a PathBuf>,
+{
+    let mut targets = BTreeMap::new();
+    for path in paths {
+        targets
+            .entry(canonical_target_key(&path.to_string_lossy()))
+            .or_insert_with(|| path.clone());
+    }
+    targets
 }
 
 pub fn graph_write_statements(facts: &WikiGraphFacts) -> Vec<GraphStatement> {
@@ -297,9 +320,12 @@ impl MemoryWikiGraph {
         #[derive(Default)]
         struct Accumulator {
             count: usize,
+            variant_counts: BTreeMap<String, usize>,
             source_paths: BTreeSet<PathBuf>,
         }
 
+        // Cluster unresolved targets case-insensitively so [[gcode]] and
+        // [[Gcode]] surface as one suggestion instead of split mentions.
         let mut by_target = BTreeMap::<String, Accumulator>::new();
         for link in &self.facts.links {
             let WikiGraphLinkTarget::Unresolved(target) = &link.target else {
@@ -309,18 +335,32 @@ impl MemoryWikiGraph {
                 continue;
             }
 
-            let entry = by_target.entry(target.clone()).or_default();
+            let entry = by_target.entry(canonical_target_key(target)).or_default();
             entry.count += 1;
+            *entry.variant_counts.entry(target.clone()).or_default() += 1;
             entry.source_paths.insert(link.source_path.clone());
         }
 
         let mut suggestions = by_target
-            .into_iter()
-            .map(|(target, entry)| LinkSuggestion {
-                scope: scope.clone(),
-                target,
-                mention_count: entry.count,
-                source_paths: entry.source_paths.into_iter().collect(),
+            .into_values()
+            .map(|entry| {
+                let mut variants = entry.variant_counts.into_iter().collect::<Vec<_>>();
+                variants.sort_by(|(left_target, left_count), (right_target, right_count)| {
+                    right_count
+                        .cmp(left_count)
+                        .then_with(|| left_target.cmp(right_target))
+                });
+                let variants = variants
+                    .into_iter()
+                    .map(|(variant, _)| variant)
+                    .collect::<Vec<_>>();
+                LinkSuggestion {
+                    scope: scope.clone(),
+                    target: variants[0].clone(),
+                    mention_count: entry.count,
+                    source_paths: entry.source_paths.into_iter().collect(),
+                    variants,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -812,8 +852,46 @@ mod tests {
         assert_eq!(suggestions[0].target, "Ownership");
         assert_eq!(suggestions[0].mention_count, 2);
         assert_eq!(suggestions[0].source_paths.len(), 2);
+        assert_eq!(suggestions[0].variants, vec!["Ownership".to_string()]);
         assert_eq!(suggestions[1].target, "Borrow checker");
         assert_eq!(suggestions[1].mention_count, 1);
+    }
+
+    #[test]
+    fn link_suggestions_cluster_case_variants() {
+        let scope = SearchScope::project("project-1");
+        let mut graph = MemoryWikiGraph::default();
+        graph.replace_facts(WikiGraphFacts {
+            documents: vec![doc(scope.clone(), "knowledge/topics/rust.md")],
+            links: vec![
+                unresolved_link(scope.clone(), "knowledge/topics/a.md", "gcode"),
+                unresolved_link(scope.clone(), "knowledge/topics/b.md", "gcode"),
+                unresolved_link(scope.clone(), "knowledge/topics/c.md", "Gcode"),
+                unresolved_link(scope.clone(), "knowledge/topics/c.md", "GCODE"),
+                unresolved_link(scope.clone(), "knowledge/topics/d.md", "Other"),
+            ],
+            sources: Vec::new(),
+            code_edges: Vec::new(),
+        });
+
+        let suggestions = graph.link_suggestions(&scope, 10);
+
+        assert_eq!(suggestions.len(), 2);
+        // The cluster keeps the most frequent raw spelling as display target
+        // and sums mentions across every case variant.
+        assert_eq!(suggestions[0].target, "gcode");
+        assert_eq!(suggestions[0].mention_count, 4);
+        assert_eq!(suggestions[0].source_paths.len(), 3);
+        assert_eq!(
+            suggestions[0].variants,
+            vec![
+                "gcode".to_string(),
+                "GCODE".to_string(),
+                "Gcode".to_string(),
+            ]
+        );
+        assert_eq!(suggestions[1].target, "Other");
+        assert_eq!(suggestions[1].variants, vec!["Other".to_string()]);
     }
 
     #[test]

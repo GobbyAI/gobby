@@ -22,12 +22,26 @@ pub fn normalize_wiki_path(target: &str) -> String {
     normalized_target_parts(target).0
 }
 
+/// Case-insensitive canonical key for matching wiki targets.
+///
+/// Applies only the non-destructive normalization (anchor split, backslash
+/// folding, slash collapsing — no page-extension stripping, so `X.md` page
+/// names stay distinct from `X`) plus Unicode lowercasing. Both sides of a
+/// target lookup must be folded through this key; raw target text is never
+/// rewritten.
+pub fn canonical_target_key(target: &str) -> String {
+    wikilink_target_parts(target).0.to_lowercase()
+}
+
 pub fn extract_links<I, S>(markdown: &str, known_targets: I) -> Vec<WikiLink>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let known_targets = normalized_targets(known_targets);
+    let known_targets = normalized_targets(known_targets)
+        .into_iter()
+        .map(|target| canonical_target_key(&target))
+        .collect::<BTreeSet<_>>();
     let code_ranges = markdown_code_ranges(markdown);
     let mut links = Vec::new();
     let mut offset = 0;
@@ -87,7 +101,7 @@ fn parse_wikilink(
     }
 
     let (normalized_target, anchor) = wikilink_target_parts(target);
-    let resolved = known_targets.contains(&normalized_target);
+    let resolved = known_targets.contains(&canonical_target_key(&normalized_target));
     Some((
         WikiLink {
             kind: LinkKind::Wikilink,
@@ -124,7 +138,7 @@ fn parse_markdown_link(
     }
 
     let (normalized_target, anchor) = normalized_target_parts(&target);
-    let resolved = known_targets.contains(&normalized_target);
+    let resolved = known_targets.contains(&canonical_target_key(&normalized_target));
     Some((
         WikiLink {
             kind: LinkKind::Markdown,
@@ -485,6 +499,37 @@ mod tests {
         assert_eq!(links[1].kind, LinkKind::Markdown);
         assert_eq!(links[1].normalized_target, "code/files/README.md");
         assert!(links[1].resolved);
+    }
+
+    #[test]
+    fn link_resolution_is_case_insensitive() {
+        let links = extract_links(
+            "[[gcode]], [[GCODE]], [guide](docs/guide.md), and [[Code/Files/AGENTS.md]]",
+            ["Gcode", "docs/Guide", "code/files/AGENTS.md.md"],
+        );
+
+        assert_eq!(links.len(), 4);
+        for link in &links {
+            assert!(link.resolved, "expected {} to resolve", link.target);
+        }
+        // Raw and normalized target text keep their original case.
+        assert_eq!(links[0].target, "gcode");
+        assert_eq!(links[1].normalized_target, "GCODE");
+        assert_eq!(links[3].normalized_target, "Code/Files/AGENTS.md");
+    }
+
+    #[test]
+    fn canonical_target_key_folds_case_without_stripping_page_extension() {
+        assert_eq!(canonical_target_key("Gcode"), "gcode");
+        assert_eq!(canonical_target_key("ÜNÏCODE"), "ünïcode");
+        assert_eq!(
+            canonical_target_key("code/files/AGENTS.md"),
+            "code/files/agents.md"
+        );
+        assert_eq!(
+            canonical_target_key(r"knowledge\\Topics\\GCode#Usage"),
+            "knowledge/topics/gcode"
+        );
     }
 
     #[test]

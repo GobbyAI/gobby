@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::frontmatter::{WikiFrontmatter, parse_frontmatter};
-use crate::links::{LinkKind, WikiLink, normalize_wiki_path};
+use crate::links::{LinkKind, WikiLink, canonical_target_key, normalize_wiki_path};
 use crate::markdown::{MarkdownDomainRecord, parse_markdown};
 use crate::{ScopeIdentity, WikiError};
 
@@ -298,18 +298,20 @@ fn insert_page_targets(
     targets.extend(page_targets(relative_path, frontmatter));
 }
 
+/// Lookup keys a page can be addressed by. Keys are case-folded through
+/// [`canonical_target_key`] so link resolution is case-insensitive.
 fn page_targets(relative_path: &Path, frontmatter: &WikiFrontmatter) -> Vec<String> {
     let mut targets = Vec::new();
     let relative = relative_path.to_string_lossy().replace('\\', "/");
-    targets.push(normalize_wiki_path(&relative));
+    targets.push(canonical_target_key(&normalize_wiki_path(&relative)));
     if let Some(file_stem) = relative_path.file_stem().and_then(|stem| stem.to_str()) {
-        targets.push(normalize_wiki_path(file_stem));
+        targets.push(canonical_target_key(&normalize_wiki_path(file_stem)));
     }
     if let Some(title) = &frontmatter.title {
-        targets.push(normalize_wiki_path(title));
+        targets.push(canonical_target_key(&normalize_wiki_path(title)));
     }
     for alias in &frontmatter.aliases {
-        targets.push(normalize_wiki_path(alias));
+        targets.push(canonical_target_key(&normalize_wiki_path(alias)));
     }
     targets
 }
@@ -324,13 +326,16 @@ fn ignored_target(target: &str) -> bool {
         || trimmed.starts_with("tel:")
 }
 
+/// Candidate [`canonical_target_key`] lookup keys for a link, matching the
+/// case-folded keys produced by [`page_targets`].
 fn link_lookup_targets(page: &WikiPage, link: &WikiLink) -> Vec<String> {
-    let mut targets = vec![link.normalized_target.clone()];
+    let folded_target = canonical_target_key(&link.normalized_target);
+    let mut targets = vec![folded_target.clone()];
     if (link.kind != LinkKind::Markdown && link.kind != LinkKind::Wikilink)
-        || link.normalized_target.starts_with("knowledge/")
-        || link.normalized_target.starts_with("code/")
-        || link.normalized_target.starts_with("raw/")
-        || link.normalized_target.starts_with("meta/")
+        || folded_target.starts_with("knowledge/")
+        || folded_target.starts_with("code/")
+        || folded_target.starts_with("raw/")
+        || folded_target.starts_with("meta/")
         || Path::new(&link.normalized_target).is_absolute()
     {
         return targets;
@@ -347,7 +352,7 @@ fn link_lookup_targets(page: &WikiPage, link: &WikiLink) -> Vec<String> {
         if parent.is_empty() {
             continue;
         }
-        let candidate = normalize_path_components(&parent, &link.normalized_target);
+        let candidate = canonical_target_key(&normalize_path_components(&parent, &folded_target));
         if !targets.contains(&candidate) {
             targets.push(candidate);
         }
@@ -562,6 +567,26 @@ mod tests {
             report.orphan_pages,
             vec![PathBuf::from("knowledge/topics/orphan.md")]
         );
+    }
+
+    #[test]
+    fn link_targets_resolve_case_insensitively() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/topics/Gcode.md",
+            "---\ntitle: Gcode\n---\n# Gcode\nSee [[home]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/topics/home.md",
+            "---\ntitle: Home\n---\n# Home\nSee [[gcode]], [[GCODE]], [[Knowledge/Topics/GCode]], and [gcode](Gcode.md).\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert!(report.broken_links.is_empty(), "{:?}", report.broken_links);
     }
 
     #[test]
