@@ -571,6 +571,83 @@ fn benchmark_cli_maps_to_command_options() {
 }
 
 #[test]
+fn upkeep_cli_flags_map_to_command_options() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "upkeep",
+        "--max-pages",
+        "4",
+        "--min-mentions",
+        "3",
+        "--max-sources-per-page",
+        "6",
+        "--dry-run",
+        "--ai",
+        "off",
+    ])
+    .expect("parse upkeep command");
+    let CliCommand::Upkeep(args) = cli.command else {
+        panic!("expected parsed upkeep command");
+    };
+    assert_eq!(args.max_pages, 4);
+    assert_eq!(args.min_mentions, 3);
+    assert_eq!(args.max_sources_per_page, 6);
+    assert!(args.dry_run);
+    assert_eq!(args.ai, AiRouting::Off);
+
+    let command =
+        command_from_cli(CliCommand::Upkeep(args), cli.scope.into()).expect("map upkeep command");
+    let Command::Upkeep { options, ai, .. } = command else {
+        panic!("expected upkeep command");
+    };
+    assert_eq!(options.max_pages, 4);
+    assert_eq!(options.min_mentions, 3);
+    assert_eq!(options.max_sources_per_page, 6);
+    assert!(options.dry_run);
+    assert_eq!(ai, AiRouting::Off);
+
+    let default_cli = Cli::try_parse_from(["gwiki", "upkeep"]).expect("parse default upkeep");
+    let CliCommand::Upkeep(default_args) = default_cli.command else {
+        panic!("expected parsed upkeep command");
+    };
+    assert_eq!(default_args.max_pages, 10);
+    assert_eq!(default_args.min_mentions, 2);
+    assert_eq!(default_args.max_sources_per_page, 12);
+    assert!(!default_args.dry_run);
+    assert_eq!(default_args.ai, AiRouting::Auto);
+}
+
+#[test]
+fn recap_cli_flags_map_to_command_options() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from(["gwiki", "recap", "--date", "2026-07-04", "--ai", "off"])
+        .expect("parse recap command");
+    let CliCommand::Recap(args) = cli.command else {
+        panic!("expected parsed recap command");
+    };
+    assert_eq!(args.date.as_deref(), Some("2026-07-04"));
+    assert_eq!(args.ai, AiRouting::Off);
+
+    let command =
+        command_from_cli(CliCommand::Recap(args), cli.scope.into()).expect("map recap command");
+    let Command::Recap { options, ai, .. } = command else {
+        panic!("expected recap command");
+    };
+    assert_eq!(options.date.as_deref(), Some("2026-07-04"));
+    assert_eq!(ai, AiRouting::Off);
+
+    let default_cli = Cli::try_parse_from(["gwiki", "recap"]).expect("parse default recap");
+    let CliCommand::Recap(default_args) = default_cli.command else {
+        panic!("expected parsed recap command");
+    };
+    assert!(default_args.date.is_none());
+    assert_eq!(default_args.ai, AiRouting::Auto);
+}
+
+#[test]
 fn log_level_honors_rust_log_and_quiet() {
     assert_eq!(log_level(false, None), log::LevelFilter::Off);
     assert_eq!(log_level(false, Some("warn")), log::LevelFilter::Warn);
