@@ -30,16 +30,25 @@ fn codewiki_ownership_timed_out_blame_reaps_child_without_thread_leak() {
         .expect("timed git blame");
         assert!(output.is_none());
     }
-    let Some(after_threads) = current_thread_count() else {
-        return;
-    };
-    // The Rust test harness can start an unrelated worker while this
-    // process-wide count is sampled. Repeated timed-out blames must not add
-    // one thread per timeout.
-    assert!(
-        after_threads <= baseline_threads + 1,
-        "timed-out blame should not leak threads: before={baseline_threads}, after={after_threads}"
-    );
+    // The Rust test harness and concurrently running tests can start
+    // transient workers while this process-wide count is sampled. Transient
+    // threads exit quickly, but a thread leaked by a timed-out blame stays
+    // blocked in the fake git's 5s sleep — poll briefly so harness noise
+    // settles while a real leak stays visible at the deadline.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let Some(after_threads) = current_thread_count() else {
+            return;
+        };
+        if after_threads <= baseline_threads + 1 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed-out blame should not leak threads: before={baseline_threads}, after={after_threads}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[cfg(target_os = "linux")]

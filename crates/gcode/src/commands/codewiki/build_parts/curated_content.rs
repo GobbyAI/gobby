@@ -605,12 +605,14 @@ const FLOW_ROLE_WORDS: usize = 8;
 /// real member, its role phrase comes from that member's grounded summary, and
 /// the stage order follows a documented data flow — an `A -> B -> C` arrow chain
 /// found in the member summaries or bounded source excerpts (e.g. a CLAUDE.md
-/// "Data Flow" section indexed into the evidence) — when present, otherwise the
-/// member declaration order. Returns `None` when there are fewer than two
-/// members to chain, so callers can simply omit the section. When a stage lacks
-/// a grounded role the diagram shows it by name only and its caption carries an
-/// honest degradation note. Works for repos without curated docs because
-/// module/file summaries are always available from indexing.
+/// "Data Flow" section indexed into the evidence). Without such a documented
+/// chain the diagram is suppressed entirely (`None`) — chaining members in
+/// declaration order would fabricate a flow no source evidences (#17499).
+/// Members the chain does not reference are dropped from the diagram for the
+/// same reason: every drawn edge is documented. Also `None` when fewer than two
+/// members exist to chain. When a chained stage lacks a grounded role the
+/// diagram shows it by name only and its caption carries an honest degradation
+/// note.
 pub(crate) fn curated_flow_diagram(
     member_modules: &[String],
     member_files: &[String],
@@ -630,7 +632,11 @@ pub(crate) fn curated_flow_diagram(
         file_lookup,
         leading_chunks,
     );
-    let ordered_from_docs = order_components_by_hint(&mut components, &hint);
+    if !order_components_by_hint(&mut components, &hint) {
+        // No documented data flow references these members; a declaration-order
+        // chain would be a fabricated flow, so no diagram is emitted.
+        return None;
+    }
     let degraded = components.iter().any(|component| component.role.is_none());
 
     let steps = components
@@ -645,7 +651,7 @@ pub(crate) fn curated_flow_diagram(
         )
         .collect::<Vec<_>>();
 
-    architecture_diagrams::render_conceptual_flow(&steps, ordered_from_docs, degraded)
+    architecture_diagrams::render_conceptual_flow(&steps, degraded)
 }
 
 /// Resolve the page's members into flow stages. Modules are the subsystem unit;
@@ -722,25 +728,21 @@ fn flow_hint_text(
     text
 }
 
-/// Reorder `components` to follow a documented `A -> B -> C` data-flow chain in
-/// `hint` when one references at least two of them. Returns true when the order
-/// came from such a chain. Recognises ASCII `->`/`-->` and the Unicode `→`.
+/// Reduce `components` to the documented `A -> B -> C` data-flow chain found in
+/// `hint`, in documented order, when one references at least two of them.
+/// Members the chain does not name are dropped — an edge to an unchained member
+/// would be fabricated, not documented. Returns false (components untouched)
+/// when no such chain exists. Recognises ASCII `->`/`-->` and the Unicode `→`.
 fn order_components_by_hint(components: &mut Vec<FlowComponent>, hint: &str) -> bool {
     let chain = parse_flow_chain(hint, components);
     if chain.len() < 2 {
         return false;
     }
-    // Chain-matched stages first (documented order), then any remaining members
-    // in their original order. Drain into slots so each stage moves exactly once.
+    // Drain into slots so each retained stage moves exactly once.
     let mut slots: Vec<Option<FlowComponent>> = components.drain(..).map(Some).collect();
-    let mut ordered: Vec<FlowComponent> = Vec::with_capacity(slots.len());
+    let mut ordered: Vec<FlowComponent> = Vec::with_capacity(chain.len());
     for &index in &chain {
         if let Some(component) = slots[index].take() {
-            ordered.push(component);
-        }
-    }
-    for slot in &mut slots {
-        if let Some(component) = slot.take() {
             ordered.push(component);
         }
     }
@@ -810,9 +812,12 @@ fn normalize_key(text: &str) -> String {
         .collect()
 }
 
-/// First clause of a member summary, capped to a few words, as the stage's
-/// behavior role. `None` for an empty summary so the renderer shows the stage by
-/// name only and marks the flow degraded.
+/// First clause of a member summary as the stage's behavior role. The clause is
+/// cut at sentence punctuation; when it would blow the [`FLOW_ROLE_WORDS`] cap,
+/// it is clipped back to the longest comma-bounded prefix that fits, so the
+/// label stays a complete thought. `None` for an empty summary or when no
+/// boundary fits the cap — a mid-thought fragment is worse than showing the
+/// stage by name only and marking the flow degraded.
 fn role_phrase(summary: &str) -> Option<String> {
     let summary = summary.trim();
     if summary.is_empty() {
@@ -823,10 +828,24 @@ fn role_phrase(summary: &str) -> Option<String> {
         .next()
         .unwrap_or(summary)
         .trim();
-    let phrase = clause
-        .split_whitespace()
-        .take(FLOW_ROLE_WORDS)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let within_cap = |text: &str| text.split_whitespace().count() <= FLOW_ROLE_WORDS;
+    if within_cap(clause) {
+        return normalized_phrase(clause);
+    }
+    let mut best: Option<&str> = None;
+    for (offset, _) in clause.match_indices(',') {
+        let candidate = clause[..offset].trim_end();
+        if !within_cap(candidate) {
+            // Prefixes only grow; nothing later can fit either.
+            break;
+        }
+        best = Some(candidate);
+    }
+    best.and_then(normalized_phrase)
+}
+
+/// Whitespace-collapsed copy of `text`, or `None` when it holds no words.
+fn normalized_phrase(text: &str) -> Option<String> {
+    let phrase = text.split_whitespace().collect::<Vec<_>>().join(" ");
     (!phrase.is_empty()).then_some(phrase)
 }

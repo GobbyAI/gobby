@@ -210,21 +210,39 @@ fn render_topology_flowchart(model: &SystemModel) -> Option<String> {
         );
     }
 
-    // Standalone-vs-daemon runtime branch. Both modes are always present in
-    // the model; draw the decision as a small annotated branch so the page
-    // shows the AI-routing fork without inventing components.
-    if has_mode(model, RuntimeMode::Standalone) || has_mode(model, RuntimeMode::DaemonAttached) {
+    // Standalone-vs-daemon runtime branch, anchored to the crate that makes
+    // the routing decision (the ai-feature consumer) so the branch joins the
+    // crate topology instead of floating as a disconnected island. When no
+    // model crate pulls the `ai` feature there is nothing real to anchor to,
+    // so the fork is omitted rather than fabricated.
+    let standalone = has_mode(model, RuntimeMode::Standalone);
+    let daemon_attached = has_mode(model, RuntimeMode::DaemonAttached);
+    let routing_crate = ai_feature_crate(model).filter(|name| crate_names.contains(name));
+    if let Some(krate) = routing_crate
+        && (standalone || daemon_attached)
+    {
         body.push_str("    subgraph runtime [\"Runtime routing\"]\n");
         body.push_str("        cli{{\"AI routing decision\"}}\n");
-        if has_mode(model, RuntimeMode::Standalone) {
+        if standalone {
             body.push_str(
                 "        cli -->|standalone| standalone[\"Direct to datastores / API\"]\n",
             );
         }
-        if has_mode(model, RuntimeMode::DaemonAttached) {
+        if daemon_attached {
             body.push_str("        cli -->|daemon| daemonmode[\"Delegate to Gobby daemon\"]\n");
         }
         body.push_str("    end\n");
+        let _ = writeln!(body, "    {} --> cli", node_id(krate));
+        // The daemon-mode leaf delegates to the daemon service boundary when
+        // the model reaches one, closing the branch into the graph.
+        let daemon_reached = model.services.iter().any(|s| s.kind == ServiceKind::Daemon);
+        if daemon_attached && daemon_reached {
+            let _ = writeln!(
+                body,
+                "    daemonmode -.-> {}",
+                service_node_id(ServiceKind::Daemon)
+            );
+        }
     }
 
     // Boundary styling so services read distinctly from crates.
@@ -394,17 +412,22 @@ fn service_edge_label(kind: ServiceKind) -> &'static str {
 }
 
 /// Escape a label for use inside a Mermaid `["..."]` node so brackets, quotes,
-/// and pipes cannot break the surrounding syntax.
+/// and pipes cannot break the surrounding syntax. Uses Mermaid's native
+/// `#NN;` entity codes (decoded by the Mermaid lexer itself), NOT HTML
+/// `&#NN;` entities — those only decode with `htmlLabels` enabled and render
+/// as literal `&#40;` garbage when it is off. `#` is escaped first so source
+/// text cannot forge an entity.
 fn mermaid_label(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('"', "&quot;")
-        .replace('[', "&#91;")
-        .replace(']', "&#93;")
-        .replace('(', "&#40;")
-        .replace(')', "&#41;")
-        .replace('{', "&#123;")
-        .replace('}', "&#125;")
-        .replace('|', "&#124;")
+    text.replace('#', "#35;")
+        .replace('\\', "#92;")
+        .replace('"', "#quot;")
+        .replace('[', "#91;")
+        .replace(']', "#93;")
+        .replace('(', "#40;")
+        .replace(')', "#41;")
+        .replace('{', "#123;")
+        .replace('}', "#125;")
+        .replace('|', "#124;")
 }
 
 /// Wrap a diagram body in a ```` ```mermaid ```` fence with a trailing newline.
@@ -536,12 +559,14 @@ pub(crate) struct ConceptualFlowStep {
 /// removed. A flow with fewer than two stages is omitted (`None`) — normal, not
 /// degradation, exactly like a too-sparse architecture model.
 ///
-/// `ordered_from_docs` records whether the stage order came from a documented
-/// data-flow chain (so the caption stays honest about provenance); `degraded`
-/// is set when a stage is missing its grounded role phrase.
+/// Callers only pass stages whose order came from a documented data-flow
+/// chain — a flow without that evidence is suppressed upstream
+/// ([`super::build_parts::curated_content::curated_flow_diagram`]) instead of
+/// fabricated from declaration order, so the caption states documented
+/// provenance unconditionally. `degraded` is set when a stage is missing its
+/// grounded role phrase.
 pub(crate) fn render_conceptual_flow(
     steps: &[ConceptualFlowStep],
-    ordered_from_docs: bool,
     degraded: bool,
 ) -> Option<String> {
     if steps.len() < 2 {
@@ -569,16 +594,12 @@ pub(crate) fn render_conceptual_flow(
     }
 
     let mut section = String::from("## Conceptual flow\n\n");
-    let provenance = if ordered_from_docs {
-        "ordered by the data flow documented in the sources"
-    } else {
-        "in the order these subsystems are grouped on this page"
-    };
     let _ = write!(
         section,
         "> _Conceptual flow_ — how this page's subsystems behave together, \
-{provenance}. Grounded in the member module/file summaries below; it is a \
-behavior sketch, not a per-symbol call or import graph.\n\n"
+ordered by the data flow documented in the sources. Grounded in the member \
+module/file summaries below; it is a behavior sketch, not a per-symbol call \
+or import graph.\n\n"
     );
     if degraded {
         section.push_str(
@@ -615,7 +636,7 @@ mod tests {
             step("s1", "parser", Some("extracts the AST")),
             step("s2", "indexer", None),
         ];
-        let section = render_conceptual_flow(&steps, true, true).expect("flow section");
+        let section = render_conceptual_flow(&steps, true).expect("flow section");
 
         assert!(section.contains("## Conceptual flow"), "{section}");
         assert!(section.contains("```mermaid"), "{section}");
@@ -652,7 +673,7 @@ mod tests {
     #[test]
     fn conceptual_flow_omitted_below_two_stages() {
         let steps = vec![step("s0", "only", None)];
-        assert!(render_conceptual_flow(&steps, false, false).is_none());
+        assert!(render_conceptual_flow(&steps, false).is_none());
     }
 
     /// A realistic three-binary + foundation model resembling the real
@@ -758,9 +779,34 @@ mod tests {
         assert!(block.contains("PostgreSQL hub"));
         assert!(block.contains("classDef service"));
 
-        // The standalone-vs-daemon runtime branch is represented.
+        // The standalone-vs-daemon runtime branch is represented and anchored
+        // to the ai-feature crate — never a disconnected island.
         assert!(block.contains("standalone"));
         assert!(block.contains("daemon"));
+        assert!(
+            block.contains(&format!("{} --> cli", node_id("gobby-code"))),
+            "runtime branch must be anchored to the routing crate:\n{block}"
+        );
+        assert!(
+            block.contains(&format!(
+                "daemonmode -.-> {}",
+                service_node_id(ServiceKind::Daemon)
+            )),
+            "daemon-mode leaf must delegate to the daemon boundary:\n{block}"
+        );
+    }
+
+    #[test]
+    fn runtime_routing_omitted_without_an_ai_feature_crate() {
+        // With no crate pulling the `ai` feature there is nothing real to
+        // anchor the routing fork to, so it is dropped rather than drawn as a
+        // disconnected island.
+        let mut model = sample_model();
+        model.features_by_crate.clear();
+        let block = render_topology_flowchart(&model).expect("topology still rendered");
+        assert!(is_valid_mermaid(&block), "{block}");
+        assert!(!block.contains("Runtime routing"), "{block}");
+        assert!(!block.contains("cli{{"), "{block}");
     }
 
     #[test]
@@ -940,5 +986,88 @@ mod tests {
     fn validator_rejects_content_after_close() {
         let block = "```mermaid\nflowchart TD\n    a --> b\n```\nstray text\n";
         assert!(!is_valid_mermaid(block));
+    }
+
+    #[test]
+    fn labels_escape_with_mermaid_native_entities_not_html() {
+        // Mermaid-native `#NN;` codes decode in the Mermaid lexer regardless
+        // of htmlLabels; HTML `&#NN;` entities render as literal garbage with
+        // htmlLabels off, so none may survive.
+        assert_eq!(
+            mermaid_label(r#"run(a) [b] {c} |d| "e" #f \g"#),
+            "run#40;a#41; #91;b#93; #123;c#125; #124;d#124; #quot;e#quot; #35;f #92;g"
+        );
+        // `#` escapes first, so source text cannot forge an entity code.
+        assert_eq!(mermaid_label("#40;"), "#35;40;");
+        assert!(!mermaid_label("(x)").contains('&'));
+    }
+
+    /// RC4 gate (#17499): every Mermaid block this module can emit must pass
+    /// the REAL Mermaid parser, not just the structural `is_valid_mermaid`
+    /// check. Runs `npx -y @mermaid-js/mermaid-cli` over one markdown document
+    /// holding every block; mmdc exits non-zero if any block fails to parse.
+    /// Skips (with a note) only when the CLI itself cannot be resolved, so
+    /// offline environments do not fail spuriously.
+    #[test]
+    fn emitted_mermaid_blocks_pass_real_mermaid_parser() {
+        let probe = std::process::Command::new("npx")
+            .args(["-y", "@mermaid-js/mermaid-cli", "--version"])
+            .output();
+        match probe {
+            Ok(out) if out.status.success() => {}
+            _ => {
+                eprintln!("skipping: npx / @mermaid-js/mermaid-cli unavailable");
+                return;
+            }
+        }
+
+        let mut doc = String::new();
+
+        // Architecture section: topology flowchart + AI-generation sequence.
+        let section =
+            render_architecture_diagrams(&sample_model()).expect("section for full model");
+        doc.push_str(&section);
+
+        // Ghook enqueue sequence (the no-ai fallback flow).
+        let mut ghook_model = sample_model();
+        ghook_model.features_by_crate.clear();
+        ghook_model
+            .services
+            .retain(|s| s.kind == ServiceKind::GhookInbox || s.kind == ServiceKind::Daemon);
+        let ghook = render_runtime_flow_sequence(&ghook_model).expect("ghook flow");
+        doc.push('\n');
+        doc.push_str(&ghook);
+
+        // Conceptual flow with every escaped character class in its labels.
+        let steps = vec![
+            step("s0", "walker (fs)", Some("discovers [candidate] files")),
+            step(
+                "s1",
+                "parser {ts}",
+                Some("extracts the |AST| via \"tree-sitter\""),
+            ),
+            step("s2", "indexer #1", Some("writes hub rows \\ chunks")),
+        ];
+        let flow = render_conceptual_flow(&steps, false).expect("conceptual flow");
+        doc.push('\n');
+        doc.push_str(&flow);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("emitted.md");
+        let output = dir.path().join("emitted.out.md");
+        std::fs::write(&input, &doc).expect("write emitted blocks");
+
+        let run = std::process::Command::new("npx")
+            .args(["-y", "@mermaid-js/mermaid-cli", "-i"])
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .expect("run mmdc");
+        assert!(
+            run.status.success(),
+            "mmdc rejected an emitted block:\n--- stderr ---\n{}\n--- blocks ---\n{doc}",
+            String::from_utf8_lossy(&run.stderr)
+        );
     }
 }
