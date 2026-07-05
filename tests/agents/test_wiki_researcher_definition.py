@@ -96,6 +96,7 @@ class TestWikiResearcherStepMachine:
             "gobby-tasks:*",
             "gobby-skills:get_skill",
             "gobby-agents:end_agent_run",
+            "gobby-sessions:record_verification_evidence",
         ]
 
     def test_research_step_blocks_lifecycle_and_spawn(self, agent: AgentDefinitionBody) -> None:
