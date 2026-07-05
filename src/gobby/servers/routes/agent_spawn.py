@@ -58,7 +58,6 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    max_turns: int | None = None
 
 
 class AgentSpawnResponse(BaseModel):
@@ -358,7 +357,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             reasoning_effort=req.reasoning_effort,
             reasoning_required=req.reasoning_required,
             timeout=req.timeout,
-            max_turns=req.max_turns,
             parent_session_id=parent_session_id,
             initial_variables=initial_variables,
             session_manager=server.services.session_manager,

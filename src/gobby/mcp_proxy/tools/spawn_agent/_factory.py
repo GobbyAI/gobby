@@ -313,7 +313,6 @@ def create_spawn_agent_registry(
         reasoning_required: bool | None = None,
         # Limits
         timeout: float | None = None,
-        max_turns: int | None = None,
         # Context
         parent_session_id: str | None = None,
         project_path: str | None = None,
@@ -337,7 +336,6 @@ def create_spawn_agent_registry(
                     reasoning_effort: Optional reasoning override for supported providers/models
                     reasoning_required: Fail instead of warning when requested reasoning is unsupported
                     timeout: Timeout in seconds
-                    max_turns: Maximum conversation turns
                     parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
                     project_path: Project path override
                     notify_parent_on_completion: Whether to notify the parent when the agent completes
@@ -480,7 +478,6 @@ def create_spawn_agent_registry(
             reasoning_effort=reasoning_effort,
             reasoning_required=reasoning_required,
             timeout=timeout,
-            max_turns=max_turns,
             parent_session_id=resolved_parent_session_id,
             project_path=effective_project_path,
             initial_variables=initial_variables,

@@ -286,6 +286,7 @@
     "workflows/agents/researcher.yaml": "5cef9a85261dde36bfcc2776fa1bffd00075f635d00571a5ad89d48dd92b260e",
     "workflows/agents/tech-writer.yaml": "dee7a86cddd11862e3baaf8fcbd2703cdfd0eca83e34f32b987c56f6aac7f0dd",
     "workflows/agents/triage-agent.yaml": "4351666c34152569d4118e92a11cc59f2c7e114ab19536097a1536d0d9e1e7dd",
+    "workflows/agents/wiki-researcher.yaml": "94c51c950e917a417f52e6c393e06aebffbecf42f9dc33821757dad2794db846",
     "workflows/dev.yaml": "256dc97ec0329269ee5a598fa40a5c2d08683f590e1a00557870e29a1b7b95ad",
     "workflows/pipelines/expand-task.yaml": "edf9693d762212fa858196dc49211cef7ad5ca22b256ca268d7e859ec5c857e9",
     "workflows/pipelines/gobby-merge.yaml": "787b2d5a346293744e76f9208a65bdf85dd5fbbc3c60a5d812f39b5dc419f962",
