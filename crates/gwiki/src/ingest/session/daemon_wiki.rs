@@ -68,6 +68,14 @@ impl DaemonWikiPage {
         self.frontmatter.get(key)
     }
 
+    pub(super) fn body(&self) -> &str {
+        &self.body
+    }
+
+    pub(super) fn set_body(&mut self, body: String) {
+        self.body = body;
+    }
+
     fn tags(&self) -> Vec<String> {
         let Some(raw) = self.frontmatter.get("tags") else {
             return Vec::new();

@@ -14,8 +14,8 @@ fn standalone_summary_page_records_summary_mode_provenance() {
         bytes,
     };
 
-    let result =
-        ingest_session_wiki_file_without_index(temp.path(), snapshot).expect("ingest standalone");
+    let result = ingest_session_wiki_file_without_index(temp.path(), snapshot, None)
+        .expect("ingest standalone");
 
     let derived = fs::read_to_string(
         temp.path()

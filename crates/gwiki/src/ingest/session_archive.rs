@@ -12,7 +12,7 @@ use crate::sources::{SourceKind, SourceManifest, SourceRecord};
 use crate::store::WikiIndexStore;
 
 use super::session::{
-    SessionFileSnapshot, SessionSummarizer, SessionWikiFileSnapshot,
+    ConnectionsEnricher, SessionFileSnapshot, SessionSummarizer, SessionWikiFileSnapshot,
     ingest_session_file_without_index, ingest_session_wiki_file_without_index,
 };
 
@@ -192,6 +192,9 @@ pub(crate) fn sync_session_transcript_archives(
     // is unavailable (mode not Summarize, AI routed off, or no `ai` feature) and
     // raw archives fall back to skeleton pages.
     let summarizer = SessionSummarizer::resolve(raw_mode == RawArchiveMode::Summarize);
+    // Connections enrichment resolves once per batch too; AI being unavailable
+    // degrades it to gathering the body's inline links, never disables ingest.
+    let enricher = ConnectionsEnricher::resolve();
     let scanned = work.len();
     let mut accepted = Vec::new();
     let mut skipped = Vec::new();
@@ -251,7 +254,11 @@ pub(crate) fn sync_session_transcript_archives(
                         &manifest,
                         path,
                         &external_id,
-                        ingest_session_wiki_file_without_index(vault_root, snapshot),
+                        ingest_session_wiki_file_without_index(
+                            vault_root,
+                            snapshot,
+                            Some(&enricher),
+                        ),
                         IngestBookkeeping {
                             known_session_hashes: &mut known_session_hashes,
                             accepted: &mut accepted,
@@ -324,7 +331,11 @@ pub(crate) fn sync_session_transcript_archives(
                                 &manifest,
                                 path,
                                 &external_id,
-                                ingest_session_wiki_file_without_index(vault_root, snapshot),
+                                ingest_session_wiki_file_without_index(
+                                    vault_root,
+                                    snapshot,
+                                    Some(&enricher),
+                                ),
                                 IngestBookkeeping {
                                     known_session_hashes: &mut known_session_hashes,
                                     accepted: &mut accepted,
