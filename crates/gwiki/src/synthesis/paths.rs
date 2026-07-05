@@ -157,6 +157,9 @@ pub(super) fn source_page_paths(
     sources
         .iter()
         .map(|source| {
+            if let Some(existing) = &source.existing_page {
+                return existing.clone();
+            }
             let slug = slugify_unique(&source.title, |slug| {
                 reserved.contains(slug) || directory.join(format!("{slug}.md")).exists()
             });

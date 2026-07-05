@@ -68,6 +68,7 @@ pub(crate) fn execute(
                 target_kind,
                 daemon_synthesis_available,
                 hard_fail_on_generation_failure: true,
+                ..wiki_compile::WikiCompileOptions::default()
             },
             Some(lane_b.generator.as_mut()),
         )?;
@@ -103,6 +104,7 @@ pub(crate) fn execute(
             target_kind,
             daemon_synthesis_available,
             hard_fail_on_generation_failure: false,
+            ..wiki_compile::WikiCompileOptions::default()
         },
         generator,
     )?;

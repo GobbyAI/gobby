@@ -1,16 +1,21 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::WikiError;
-use crate::citations::render_source_citations;
+use crate::citations::{
+    render_source_citations, source_record_matches_path, source_records_for_paths,
+};
 use crate::explainer::{
     ExplainerGeneration, ExplainerGenerator, ExplainerReport, build_explainer_prompt,
     generate_explainer,
 };
+use crate::frontmatter::parse_frontmatter;
+use crate::paths::derived_markdown_path;
 use crate::session::{CompileState, ResearchSession};
+use crate::sources::SourceRecord;
 use crate::synthesis::{
     ArticleKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource, WritePolicy,
     synthesize_article, synthesize_source_pages, write_synthesized_page,
@@ -41,7 +46,7 @@ pub struct CompileOutcome {
     pub state: CompileState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiCompileOptions {
     pub target_kind: ArticleKind,
     pub daemon_synthesis_available: bool,
@@ -49,6 +54,12 @@ pub struct WikiCompileOptions {
     /// distinct [`WikiError::Generation`] instead of writing a structural skeleton
     /// page (#982, matching codewiki #978). Off for the Lane A one-shot path.
     pub hard_fail_on_generation_failure: bool,
+    /// Frontmatter `aliases` for the synthesized article (observed case
+    /// variants of an entity name).
+    pub aliases: Vec<String>,
+    /// Frontmatter tags appended after the standard `gwiki`/`compiled` pair
+    /// (e.g. the `entity` marker on entity concept pages).
+    pub extra_tags: Vec<String>,
 }
 
 impl Default for WikiCompileOptions {
@@ -57,6 +68,8 @@ impl Default for WikiCompileOptions {
             target_kind: ArticleKind::Topic,
             daemon_synthesis_available: false,
             hard_fail_on_generation_failure: false,
+            aliases: Vec::new(),
+            extra_tags: Vec::new(),
         }
     }
 }
@@ -141,6 +154,7 @@ pub fn compile_to_wiki_with_options(
         render_source_citations(vault_root, &source_paths)?,
     );
 
+    let manifest_records = source_records_for_paths(vault_root, &source_paths)?;
     let synthesis_sources = handoff
         .bundle
         .accepted_sources
@@ -149,6 +163,7 @@ pub fn compile_to_wiki_with_options(
             title: source.title.clone(),
             path: source.path.clone(),
             chunks: source.chunks.clone(),
+            existing_page: existing_digest_page(vault_root, &manifest_records, &source.path),
         })
         .collect();
     let input = SynthesisInput {
@@ -160,6 +175,9 @@ pub fn compile_to_wiki_with_options(
         citations,
         conflicting_claims: handoff.bundle.conflicting_claims.clone(),
         missing_evidence: handoff.bundle.missing_evidence.clone(),
+        existing_page_body: existing_target_page_body(target_page.as_deref())?,
+        aliases: options.aliases.clone(),
+        extra_tags: options.extra_tags.clone(),
     };
     let explainer_prompt = build_explainer_prompt(vault_root, &input);
     let prompt = SynthesisPrompt {
@@ -182,7 +200,12 @@ pub fn compile_to_wiki_with_options(
             ),
         });
     }
+    // The bundle pre-write is create-only (`create_new` guards the race). On a
+    // recompile of an existing target the article overwrite below is the write
+    // path, gated by [`WritePolicy::AllowOverwriteAfterMerge`] under
+    // write_intent.
     if handoff.bundle.write_intent
+        && input.existing_page_body.is_none()
         && let Some(target_page) = handoff.bundle.target_page.as_ref()
     {
         let rendered = render_bundle(&handoff.bundle);
@@ -219,6 +242,47 @@ pub fn compile_to_wiki_with_options(
         prompt,
         explainer: article.explainer,
     })
+}
+
+/// Manifest-backed digest page already on disk for an accepted source: compile
+/// links the article there instead of writing a duplicate title-slugged stub.
+fn existing_digest_page(
+    vault_root: &Path,
+    records: &[SourceRecord],
+    source_path: &Path,
+) -> Option<PathBuf> {
+    let record = records
+        .iter()
+        .find(|record| source_record_matches_path(record, vault_root, source_path))?;
+    let relative = derived_markdown_path(record).ok()?;
+    let page = vault_root.join(relative);
+    page.exists().then_some(page)
+}
+
+/// Body of an existing compile target, carried into the explainer prompt so a
+/// recompile updates the page instead of regenerating it from scratch.
+/// Frontmatter is stripped: the prompt needs the prose, and metadata is
+/// re-rendered on write.
+fn existing_target_page_body(target_page: Option<&Path>) -> Result<Option<String>, WikiError> {
+    let Some(target_page) = target_page else {
+        return Ok(None);
+    };
+    let text = match fs::read_to_string(target_page) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read existing compile target page",
+                path: Some(target_page.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+    let body = match parse_frontmatter(&text) {
+        Ok(parsed) => parsed.body.to_string(),
+        Err(_) => text,
+    };
+    Ok(Some(body))
 }
 
 pub fn prepare_handoff(

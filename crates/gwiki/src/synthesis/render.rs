@@ -1,33 +1,49 @@
 use super::types::SynthesisSource;
 
-pub(super) fn render_frontmatter(
-    markdown: &mut String,
-    title: &str,
-    source_kind: &str,
-    handoff_id: &str,
-    synthesis_mode: &str,
-    degraded_sources: &[&str],
-) {
+pub(super) struct FrontmatterFields<'a> {
+    pub title: &'a str,
+    pub source_kind: &'a str,
+    pub handoff_id: &'a str,
+    pub synthesis_mode: &'a str,
+    pub degraded_sources: &'a [&'a str],
+    pub aliases: &'a [String],
+    pub extra_tags: &'a [String],
+}
+
+pub(super) fn render_frontmatter(markdown: &mut String, fields: &FrontmatterFields<'_>) {
     markdown.push_str("---\n");
     markdown.push_str("title: ");
-    markdown.push_str(&yaml_scalar(title));
+    markdown.push_str(&yaml_scalar(fields.title));
     markdown.push('\n');
+    if !fields.aliases.is_empty() {
+        markdown.push_str("aliases:\n");
+        for alias in fields.aliases {
+            markdown.push_str("  - ");
+            markdown.push_str(&yaml_scalar(alias));
+            markdown.push('\n');
+        }
+    }
     markdown.push_str("source_kind: ");
-    markdown.push_str(&yaml_scalar(source_kind));
+    markdown.push_str(&yaml_scalar(fields.source_kind));
     markdown.push('\n');
     markdown.push_str("tags:\n");
     markdown.push_str("  - gwiki\n");
     markdown.push_str("  - compiled\n");
+    for tag in fields.extra_tags {
+        markdown.push_str("  - ");
+        markdown.push_str(&yaml_scalar(tag));
+        markdown.push('\n');
+    }
     markdown.push_str("compile_handoff: ");
-    markdown.push_str(&yaml_scalar(handoff_id));
+    markdown.push_str(&yaml_scalar(fields.handoff_id));
     markdown.push('\n');
     markdown.push_str("synthesis_mode: ");
-    markdown.push_str(&yaml_scalar(synthesis_mode));
+    markdown.push_str(&yaml_scalar(fields.synthesis_mode));
     markdown.push('\n');
-    if !degraded_sources.is_empty() {
+    if !fields.degraded_sources.is_empty() {
         markdown.push_str("degraded: true\n");
         markdown.push_str("degraded_sources:\n");
-        for source in degraded_sources {
+        for source in fields.degraded_sources {
             markdown.push_str("  - ");
             markdown.push_str(source);
             markdown.push('\n');

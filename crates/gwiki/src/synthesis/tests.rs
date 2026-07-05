@@ -8,8 +8,24 @@ use super::paths::source_page_paths;
 use super::render::yaml_scalar;
 use super::{
     ArticleKind, PageWriteKind, SynthesisInput, SynthesisSource, SynthesizedPage, WritePolicy,
-    slugify_unique, synthesize_article, write_synthesized_page,
+    slugify_unique, synthesize_article, synthesize_source_pages, write_synthesized_page,
 };
+
+fn empty_input(topic: &str, target_kind: ArticleKind) -> SynthesisInput {
+    SynthesisInput {
+        handoff_id: "handoff-1".to_string(),
+        topic: topic.to_string(),
+        outline: vec![],
+        target_kind,
+        accepted_sources: vec![],
+        citations: vec![],
+        conflicting_claims: vec![],
+        missing_evidence: vec![],
+        existing_page_body: None,
+        aliases: vec![],
+        extra_tags: vec![],
+    }
+}
 
 #[test]
 fn existing_page_requires_merge_intent() {
@@ -82,6 +98,7 @@ fn source_page_paths_reserve_article_path() {
         title: "Collision".to_string(),
         path: PathBuf::from("raw/collision.md"),
         chunks: Vec::new(),
+        existing_page: None,
     }];
 
     let paths = source_page_paths(temp.path(), &article_path, &sources);
@@ -91,18 +108,100 @@ fn source_page_paths_reserve_article_path() {
 }
 
 #[test]
+fn source_page_paths_reuse_existing_digest_pages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let digest = temp.path().join("knowledge/sources/gwiki-source-1.md");
+    let article_path = temp.path().join("knowledge/topics/reuse.md");
+    let sources = vec![
+        SynthesisSource {
+            title: "Session digest".to_string(),
+            path: PathBuf::from("raw/sessions/digest.md"),
+            chunks: Vec::new(),
+            existing_page: Some(digest.clone()),
+        },
+        SynthesisSource {
+            title: "Fresh note".to_string(),
+            path: PathBuf::from("raw/research/fresh.md"),
+            chunks: Vec::new(),
+            existing_page: None,
+        },
+    ];
+
+    let paths = source_page_paths(temp.path(), &article_path, &sources);
+
+    assert_eq!(paths[0], digest);
+    assert_eq!(
+        paths[1],
+        temp.path().join("knowledge/sources/fresh-note.md")
+    );
+}
+
+#[test]
+fn synthesize_source_pages_skips_sources_with_existing_digest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let digest = temp.path().join("knowledge/sources/gwiki-source-1.md");
+    let mut input = empty_input("Reuse", ArticleKind::Concept);
+    input.accepted_sources = vec![
+        SynthesisSource {
+            title: "Session digest".to_string(),
+            path: PathBuf::from("raw/sessions/digest.md"),
+            chunks: vec!["Digest extract.".to_string()],
+            existing_page: Some(digest),
+        },
+        SynthesisSource {
+            title: "Fresh note".to_string(),
+            path: PathBuf::from("raw/research/fresh.md"),
+            chunks: vec!["Fresh extract.".to_string()],
+            existing_page: None,
+        },
+    ];
+    let article_path = temp.path().join("knowledge/concepts/reuse.md");
+
+    let pages = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("source pages synthesized");
+
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].title, "Fresh note");
+    assert_eq!(
+        pages[0].path,
+        temp.path().join("knowledge/sources/fresh-note.md")
+    );
+}
+
+#[test]
+fn frontmatter_renders_aliases_and_extra_tags() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut input = empty_input("Gcode", ArticleKind::Concept);
+    input.aliases = vec!["gcode".to_string(), "GCode".to_string()];
+    input.extra_tags = vec!["entity".to_string()];
+
+    let article = synthesize_article(temp.path(), &input, None, &ExplainerGeneration::Skipped)
+        .expect("article synthesized");
+
+    assert!(
+        article
+            .markdown
+            .contains("aliases:\n  - \"gcode\"\n  - \"GCode\"\n"),
+        "{}",
+        article.markdown
+    );
+    assert!(
+        article
+            .markdown
+            .contains("tags:\n  - gwiki\n  - compiled\n  - \"entity\"\n"),
+        "{}",
+        article.markdown
+    );
+    let parsed =
+        crate::frontmatter::parse_frontmatter(&article.markdown).expect("frontmatter parses");
+    assert_eq!(parsed.metadata.aliases, vec!["gcode", "GCode"]);
+    assert!(parsed.metadata.tags.iter().any(|tag| tag == "entity"));
+}
+
+#[test]
 fn synthesized_article_rejects_escaping_target_path() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let input = SynthesisInput {
-        handoff_id: "handoff-1".to_string(),
-        topic: "Escape".to_string(),
-        outline: vec![],
-        target_kind: ArticleKind::Topic,
-        accepted_sources: vec![],
-        citations: vec![],
-        conflicting_claims: vec![],
-        missing_evidence: vec![],
-    };
+    let input = empty_input("Escape", ArticleKind::Topic);
     let outside_name = format!(
         "{}-outside.md",
         temp.path()

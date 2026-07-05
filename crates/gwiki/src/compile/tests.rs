@@ -2,6 +2,7 @@ use super::*;
 use crate::explainer::{ExplainerPrompt, ExplainerResponse};
 use crate::provenance::ProvenanceGraph;
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
+use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::synthesis::SynthesizedPage;
 
 fn session_with_note(scope: &ResearchScope, title: &str, relative_path: &str) -> ResearchSession {
@@ -346,6 +347,110 @@ fn compile_writes_obsidian_markdown() {
     );
     let source = &provenance.links()[0].source;
     assert!(source.byte_end > source.byte_start);
+}
+
+#[test]
+fn compile_reuses_existing_source_digest_pages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_body = "Compile turns accepted notes into source-grounded wiki articles.\n";
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, note_body).expect("note written");
+    // Register the note as a manifest source and materialize its digest page,
+    // the way session/document ingest does.
+    let record = SourceManifest::register(
+        scope.root(),
+        SourceDraft::new(
+            "raw/research/compile.md",
+            SourceKind::Text,
+            "2026-07-05T00:00:00Z",
+            note_body.as_bytes().to_vec(),
+        ),
+    )
+    .expect("source registered");
+    let digest_path = scope
+        .root()
+        .join("knowledge/sources")
+        .join(format!("{}.md", record.id));
+    std::fs::create_dir_all(digest_path.parent().expect("digest parent")).expect("sources dir");
+    std::fs::write(
+        &digest_path,
+        "---\ntitle: Compile behavior\n---\n\nRich digest body.\n",
+    )
+    .expect("digest written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let outcome = compile_to_wiki(
+        &mut session,
+        CompileRequest {
+            topic: "Durable Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+    )
+    .expect("wiki articles compiled");
+
+    // The digest is the only page under knowledge/sources/ — no duplicate stub.
+    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/sources"))
+        .expect("sources dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, vec![format!("{}.md", record.id)]);
+    assert!(outcome.source_paths.is_empty());
+    let article = std::fs::read_to_string(&outcome.article_path).expect("article written");
+    assert!(
+        article.contains(&format!(
+            "[[knowledge/sources/{}|Compile behavior]]",
+            record.id
+        )),
+        "{article}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&digest_path).expect("digest retained"),
+        "---\ntitle: Compile behavior\n---\n\nRich digest body.\n"
+    );
+}
+
+#[test]
+fn recompile_carries_existing_target_body_into_prompt() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Compile evidence.\n").expect("note written");
+    let target_path = scope.root().join("knowledge/topics/durable-compile.md");
+    std::fs::create_dir_all(target_path.parent().expect("target parent")).expect("topics dir");
+    std::fs::write(
+        &target_path,
+        "---\ntitle: Stale Title\n---\n\n## Overview\n\nPreviously compiled claim.\n",
+    )
+    .expect("target written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let outcome = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Durable Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(PathBuf::from("knowledge/topics/durable-compile.md")),
+            write_intent: true,
+        },
+        WikiCompileOptions::default(),
+        None,
+    )
+    .expect("recompile succeeded");
+
+    assert!(
+        outcome.prompt.user.contains("Current page content"),
+        "{}",
+        outcome.prompt.user
+    );
+    assert!(outcome.prompt.user.contains("Previously compiled claim."));
+    // Frontmatter is stripped before the body enters the prompt.
+    assert!(!outcome.prompt.user.contains("Stale Title"));
 }
 
 #[test]
