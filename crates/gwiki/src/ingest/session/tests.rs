@@ -85,7 +85,7 @@ fn session_wiki_ingest_strips_daemon_frontmatter_and_redacts() {
     };
 
     let result =
-        ingest_session_wiki_file_without_index(temp.path(), snapshot).expect("ingest wiki");
+        ingest_session_wiki_file_without_index(temp.path(), snapshot, None).expect("ingest wiki");
 
     assert_eq!(
         result.record.location,
@@ -150,6 +150,67 @@ fn session_wiki_ingest_strips_daemon_frontmatter_and_redacts() {
     assert!(!derived.contains("/Users/casey"));
     assert!(!derived.contains("/Users/josh"));
     assert!(derived.contains("[REDACTED_HOME]"));
+}
+
+#[test]
+fn wiki_ingest_enriches_connections_for_both_summary_formats() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let enricher = ConnectionsEnricher::deterministic();
+
+    // Handoff-format body: entity links appear inline only, no Connections
+    // section — the digest must still gain a wikilinked one.
+    let snapshot = SessionWikiFileSnapshot {
+        external_id: "sess-handoff".to_string(),
+        path: PathBuf::from("/tmp/session_wiki/sess-handoff.md"),
+        fetched_at: "2026-06-25T00:00:00Z".to_string(),
+        bytes: concat!(
+            "---\ntitle: Handoff summary\nsource: claude\n---\n",
+            "## Current State\n\nWired [[gcode]] into [[FalkorDB]].\n",
+        )
+        .as_bytes()
+        .to_vec(),
+    };
+    let result = ingest_session_wiki_file_without_index(temp.path(), snapshot, Some(&enricher))
+        .expect("ingest handoff page");
+    let derived = std::fs::read_to_string(
+        temp.path()
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{}.md", result.record.id)),
+    )
+    .expect("derived handoff markdown");
+    assert!(derived.contains("## Connections"), "{derived}");
+    assert!(derived.contains("- [[gcode]]"), "{derived}");
+    assert!(derived.contains("- [[FalkorDB]]"), "{derived}");
+
+    // Old wiki-digest format: the Connections section is already wikilinked
+    // and must pass through unchanged — exactly one section, original link.
+    let snapshot = SessionWikiFileSnapshot {
+        external_id: "sess-digest".to_string(),
+        path: PathBuf::from("/tmp/session_wiki/sess-digest.md"),
+        fetched_at: "2026-06-25T00:00:00Z".to_string(),
+        bytes: concat!(
+            "---\ntitle: Wiki digest\nsource: claude\n---\n",
+            "## Summary\n\nShipped the loop.\n\n",
+            "## Connections\n\n- [[session-transcript-wiki-fix]]\n",
+        )
+        .as_bytes()
+        .to_vec(),
+    };
+    let result = ingest_session_wiki_file_without_index(temp.path(), snapshot, Some(&enricher))
+        .expect("ingest digest page");
+    let derived = std::fs::read_to_string(
+        temp.path()
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{}.md", result.record.id)),
+    )
+    .expect("derived digest markdown");
+    assert_eq!(derived.matches("## Connections").count(), 1, "{derived}");
+    assert!(
+        derived.contains("- [[session-transcript-wiki-fix]]"),
+        "{derived}"
+    );
 }
 
 #[test]

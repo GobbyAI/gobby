@@ -600,25 +600,33 @@ const FLOW_HINT_EXCERPT_CHARS: usize = 600;
 /// Word cap on a stage's role phrase so node labels stay legible.
 const FLOW_ROLE_WORDS: usize = 8;
 
-/// Build the conceptual-behavior flow diagram for a curated concept/narrative
-/// page. Grounded strictly in the page's member modules/files: each stage is a
-/// real member, its role phrase comes from that member's grounded summary, and
-/// the stage order follows a documented data flow — an `A -> B -> C` arrow chain
-/// found in the member summaries or bounded source excerpts (e.g. a CLAUDE.md
-/// "Data Flow" section indexed into the evidence) — when present, otherwise the
-/// member declaration order. Returns `None` when there are fewer than two
-/// members to chain, so callers can simply omit the section. When a stage lacks
-/// a grounded role the diagram shows it by name only and its caption carries an
-/// honest degradation note. Works for repos without curated docs because
-/// module/file summaries are always available from indexing.
+/// Build the conceptual-behavior flow section for a curated concept/narrative
+/// page (#17521): supply the page's evidenced member edges to the LLM
+/// composer, then verify and normalize what it draws.
+///
+/// Evidence, per the diagrams-from-supplied-evidence-only contract:
+///
+/// * every node is a real member (module/file) with its grounded role phrase,
+/// * a documented `A -> B -> C` data-flow chain found in the member summaries
+///   or bounded source excerpts contributes its consecutive pairs as edges,
+/// * real member-level call/import edges from the code index (graph edges
+///   attributed through each member's owning components) contribute the rest.
+///
+/// A page whose members have no evidenced edges gets no diagram — composing
+/// one would fabricate a flow no source evidences. The composer additionally
+/// rejects any arrow the model draws that matches no supplied edge and keeps
+/// the result island-free. `None` is normal, never degradation. When a member
+/// lacks a grounded role the caption carries an honest degradation note.
 pub(crate) fn curated_flow_diagram(
     member_modules: &[String],
     member_files: &[String],
     module_lookup: &BTreeMap<&str, &ModuleDoc>,
     file_lookup: &BTreeMap<&str, &FileDoc>,
     leading_chunks: &BTreeMap<String, LeadingChunk>,
+    graph_edges: &[CodewikiGraphEdge],
+    generate: &mut Option<&mut TextGenerator<'_>>,
 ) -> Option<String> {
-    let mut components = flow_components(member_modules, member_files, module_lookup, file_lookup);
+    let components = flow_components(member_modules, member_files, module_lookup, file_lookup);
     if components.len() < 2 {
         return None;
     }
@@ -630,22 +638,153 @@ pub(crate) fn curated_flow_diagram(
         file_lookup,
         leading_chunks,
     );
-    let ordered_from_docs = order_components_by_hint(&mut components, &hint);
+    let evidence = curated_flow_evidence(
+        &components,
+        &hint,
+        member_modules,
+        member_files,
+        module_lookup,
+        file_lookup,
+        graph_edges,
+    );
     let degraded = components.iter().any(|component| component.role.is_none());
 
-    let steps = components
-        .iter()
-        .enumerate()
-        .map(
-            |(index, component)| architecture_diagrams::ConceptualFlowStep {
-                id: format!("s{index}"),
-                label: component.label.clone(),
-                role: component.role.clone(),
-            },
-        )
-        .collect::<Vec<_>>();
+    let block = compose_flowchart(
+        generate,
+        &evidence,
+        "how this page's subsystems behave together",
+    )?;
 
-    architecture_diagrams::render_conceptual_flow(&steps, ordered_from_docs, degraded)
+    let mut section = String::from("## Conceptual flow\n\n");
+    section.push_str(
+        "> _Conceptual flow_ — how this page's subsystems behave together, \
+composed by the model from supplied evidence only: the data flow documented in \
+the sources plus member-level call/import edges from the code index. Every \
+arrow is verified against that evidence before the diagram is emitted.\n\n",
+    );
+    if degraded {
+        section.push_str(
+            "> _Degraded:_ one or more subsystems had no indexed summary, so it \
+appears by name only.\n\n",
+        );
+    }
+    section.push_str(&block);
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
+    section.push('\n');
+    Some(section)
+}
+
+/// Reduce a curated page's members to the evidence graph the composer may draw
+/// from. Nodes are the resolved flow components (`s0..sN`, labelled with the
+/// member name and its grounded role phrase). Edges come from two evidenced
+/// sources only: the documented data-flow chain in `hint` (consecutive pairs,
+/// in documented order) and member-level call/import graph edges attributed
+/// through each member's owning components.
+#[allow(clippy::too_many_arguments)]
+fn curated_flow_evidence(
+    components: &[FlowComponent],
+    hint: &str,
+    member_modules: &[String],
+    member_files: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &BTreeMap<&str, &FileDoc>,
+    graph_edges: &[CodewikiGraphEdge],
+) -> DiagramEvidence {
+    let mut evidence = DiagramEvidence::default();
+    for (index, component) in components.iter().enumerate() {
+        let label = match component.role.as_deref() {
+            Some(role) if !role.is_empty() => format!("{} — {role}", component.label),
+            _ => component.label.clone(),
+        };
+        evidence.push_node(format!("s{index}"), label, NodeShape::Box);
+    }
+
+    // Documented data-flow chain: an `A -> B -> C` arrow chain in the member
+    // summaries or bounded source excerpts evidences its consecutive pairs.
+    let chain = parse_flow_chain(hint, components);
+    for pair in chain.windows(2) {
+        evidence.push_edge(
+            format!("s{}", pair[0]),
+            format!("s{}", pair[1]),
+            None,
+            false,
+        );
+    }
+
+    // Member-level call/import edges from the code index: attribute each
+    // graph edge through the components' owning members and keep only
+    // cross-member edges. Which member owns a component follows the same
+    // resolution as `flow_components`: modules own their files' components
+    // (including descendant modules); explicit member files own their own.
+    let component_owner =
+        component_owner_map(member_modules, member_files, module_lookup, file_lookup);
+    for edge in graph_edges {
+        let Some(source) = component_owner.get(edge.source_component_id.as_str()) else {
+            continue;
+        };
+        let Some(target) = component_owner.get(edge.target_component_id.as_str()) else {
+            continue;
+        };
+        if source == target {
+            continue;
+        }
+        let label = match edge.kind {
+            CodewikiGraphEdgeKind::Call => "calls",
+            CodewikiGraphEdgeKind::Import => "imports",
+        };
+        evidence.push_edge(
+            format!("s{source}"),
+            format!("s{target}"),
+            Some(label.to_string()),
+            false,
+        );
+    }
+
+    evidence
+}
+
+/// Map component ids to the index of the flow stage that owns them, mirroring
+/// the member resolution in [`flow_components`]: member modules (in order,
+/// counting only those with docs) own the components of every file in their
+/// module subtree; member files — appended as stages only when fewer than two
+/// module stages exist — own their own components. The first owning stage
+/// wins, deterministically, so a member file inside a member module's subtree
+/// attributes to the module.
+fn component_owner_map(
+    member_modules: &[String],
+    member_files: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &BTreeMap<&str, &FileDoc>,
+) -> BTreeMap<String, usize> {
+    let mut owners: BTreeMap<String, usize> = BTreeMap::new();
+    let mut stage = 0usize;
+    for module in member_modules {
+        if !module_lookup.contains_key(module.as_str()) {
+            continue;
+        }
+        for file in file_lookup.values() {
+            if file.module == *module || module_is_ancestor(module, &file.module) {
+                for component in &file.component_ids {
+                    owners.entry(component.clone()).or_insert(stage);
+                }
+            }
+        }
+        stage += 1;
+    }
+    if stage < 2 {
+        for file in member_files {
+            let Some(doc) = file_lookup.get(file.as_str()) else {
+                continue;
+            };
+            for component in &doc.component_ids {
+                owners.entry(component.clone()).or_insert(stage);
+            }
+            stage += 1;
+        }
+    }
+    owners
 }
 
 /// Resolve the page's members into flow stages. Modules are the subsystem unit;
@@ -722,34 +861,11 @@ fn flow_hint_text(
     text
 }
 
-/// Reorder `components` to follow a documented `A -> B -> C` data-flow chain in
-/// `hint` when one references at least two of them. Returns true when the order
-/// came from such a chain. Recognises ASCII `->`/`-->` and the Unicode `→`.
-fn order_components_by_hint(components: &mut Vec<FlowComponent>, hint: &str) -> bool {
-    let chain = parse_flow_chain(hint, components);
-    if chain.len() < 2 {
-        return false;
-    }
-    // Chain-matched stages first (documented order), then any remaining members
-    // in their original order. Drain into slots so each stage moves exactly once.
-    let mut slots: Vec<Option<FlowComponent>> = components.drain(..).map(Some).collect();
-    let mut ordered: Vec<FlowComponent> = Vec::with_capacity(slots.len());
-    for &index in &chain {
-        if let Some(component) = slots[index].take() {
-            ordered.push(component);
-        }
-    }
-    for slot in &mut slots {
-        if let Some(component) = slot.take() {
-            ordered.push(component);
-        }
-    }
-    *components = ordered;
-    true
-}
-
 /// Find the first arrow-delimited line in `hint` that maps at least two
-/// components, returning their indices in documented order.
+/// components, returning their indices in documented order. Recognises ASCII
+/// `->`/`-->` and the Unicode `→`. The consecutive pairs of this chain are
+/// documented data-flow evidence edges; a hint with no such chain contributes
+/// none.
 fn parse_flow_chain(hint: &str, components: &[FlowComponent]) -> Vec<usize> {
     let normalized = hint.replace("-->", "\u{2192}").replace("->", "\u{2192}");
     for line in normalized.lines() {
@@ -810,9 +926,12 @@ fn normalize_key(text: &str) -> String {
         .collect()
 }
 
-/// First clause of a member summary, capped to a few words, as the stage's
-/// behavior role. `None` for an empty summary so the renderer shows the stage by
-/// name only and marks the flow degraded.
+/// First clause of a member summary as the stage's behavior role. The clause is
+/// cut at sentence punctuation; when it would blow the [`FLOW_ROLE_WORDS`] cap,
+/// it is clipped back to the longest comma-bounded prefix that fits, so the
+/// label stays a complete thought. `None` for an empty summary or when no
+/// boundary fits the cap — a mid-thought fragment is worse than showing the
+/// stage by name only and marking the flow degraded.
 fn role_phrase(summary: &str) -> Option<String> {
     let summary = summary.trim();
     if summary.is_empty() {
@@ -823,10 +942,24 @@ fn role_phrase(summary: &str) -> Option<String> {
         .next()
         .unwrap_or(summary)
         .trim();
-    let phrase = clause
-        .split_whitespace()
-        .take(FLOW_ROLE_WORDS)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let within_cap = |text: &str| text.split_whitespace().count() <= FLOW_ROLE_WORDS;
+    if within_cap(clause) {
+        return normalized_phrase(clause);
+    }
+    let mut best: Option<&str> = None;
+    for (offset, _) in clause.match_indices(',') {
+        let candidate = clause[..offset].trim_end();
+        if !within_cap(candidate) {
+            // Prefixes only grow; nothing later can fit either.
+            break;
+        }
+        best = Some(candidate);
+    }
+    best.and_then(normalized_phrase)
+}
+
+/// Whitespace-collapsed copy of `text`, or `None` when it holds no words.
+fn normalized_phrase(text: &str) -> Option<String> {
+    let phrase = text.split_whitespace().collect::<Vec<_>>().join(" ");
     (!phrase.is_empty()).then_some(phrase)
 }

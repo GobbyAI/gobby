@@ -1,0 +1,292 @@
+//! Source-selection helpers shared by the `compile` command and the `upkeep`
+//! conductor: resolve manifest records from user-facing selectors and turn
+//! them into accepted research notes backed by raw source files.
+
+use std::collections::HashSet;
+use std::path::Path;
+
+use crate::sources::{SourceManifest, SourceRecord};
+use crate::{WikiError, paths, session};
+
+/// Resolve `selectors` against the manifest into accepted notes, deduplicating
+/// repeated selections of the same source while preserving selector order.
+pub(crate) fn resolve_source_notes(
+    vault_root: &Path,
+    manifest: &SourceManifest,
+    selectors: &[String],
+) -> Result<Vec<session::AcceptedResearchNote>, WikiError> {
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for selector in selectors {
+        let record = resolve_source_selector(manifest, selector)?;
+        if seen.insert(record.id.clone()) {
+            selected.push(accepted_note_from_source(vault_root, record)?);
+        }
+    }
+    Ok(selected)
+}
+
+pub(crate) fn resolve_source_selector<'a>(
+    manifest: &'a SourceManifest,
+    selector: &str,
+) -> Result<&'a SourceRecord, WikiError> {
+    let selector = selector.trim();
+    if let Some(record) = manifest.entries.iter().find(|entry| entry.id == selector) {
+        return Ok(record);
+    }
+
+    let selector_path = Path::new(selector);
+    for record in &manifest.entries {
+        if paths::raw_source_path(&record.id)? == selector_path {
+            return Ok(record);
+        }
+    }
+
+    let matches = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.location == selector || entry.canonical_location == selector)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [record] => Ok(record),
+        [] => Err(WikiError::NotFound {
+            resource: "source",
+            id: selector.to_string(),
+        }),
+        _ => Err(WikiError::InvalidInput {
+            field: "source",
+            message: format!(
+                "source selector `{selector}` matched multiple records; pass a source id"
+            ),
+        }),
+    }
+}
+
+pub(crate) fn accepted_note_from_source(
+    vault_root: &Path,
+    record: &SourceRecord,
+) -> Result<session::AcceptedResearchNote, WikiError> {
+    let raw_path = paths::raw_source_path(&record.id)?;
+    let absolute_path = vault_root.join(&raw_path);
+    match absolute_path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(WikiError::NotFound {
+                resource: "raw_source",
+                id: raw_path.display().to_string(),
+            });
+        }
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "check raw source",
+                path: Some(absolute_path),
+                source: error,
+            });
+        }
+    }
+
+    Ok(session::AcceptedResearchNote {
+        title: record
+            .title
+            .clone()
+            .unwrap_or_else(|| record.location.clone()),
+        path: raw_path,
+        code_citations: Vec::new(),
+        degradation: None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::{CompileStatus, IngestionMethod, SourceKind};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn source_record(
+        id: &str,
+        location: &str,
+        canonical_location: &str,
+        title: Option<&str>,
+    ) -> SourceRecord {
+        SourceRecord {
+            id: id.to_string(),
+            location: location.to_string(),
+            canonical_location: canonical_location.to_string(),
+            kind: SourceKind::Markdown,
+            fetched_at: "2026-06-14T00:00:00Z".to_string(),
+            content_hash: format!("{id}-hash"),
+            title: title.map(str::to_string),
+            citation: None,
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+            replay: None,
+        }
+    }
+
+    fn write_raw_source(root: &Path, record: &SourceRecord) {
+        let path = root.join(paths::raw_source_path(&record.id).expect("raw path"));
+        fs::create_dir_all(path.parent().expect("raw parent")).expect("create raw parent");
+        fs::write(&path, format!("# {}\n", record.id)).expect("write raw source");
+    }
+
+    #[test]
+    fn source_selectors_resolve_id_raw_path_location_and_canonical_location() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let records = vec![
+            source_record(
+                "src-alpha",
+                "alpha.md",
+                "file:///vault/alpha.md",
+                Some("Alpha"),
+            ),
+            source_record("src-beta", "beta.md", "file:///vault/beta.md", Some("Beta")),
+            source_record(
+                "src-gamma",
+                "gamma.md",
+                "file:///vault/gamma.md",
+                Some("Gamma"),
+            ),
+            source_record("src-delta", "delta.md", "canonical:delta", None),
+        ];
+        for record in &records {
+            write_raw_source(temp.path(), record);
+        }
+        let manifest = SourceManifest { entries: records };
+
+        let notes = resolve_source_notes(
+            temp.path(),
+            &manifest,
+            &[
+                "src-alpha".to_string(),
+                "raw/src-beta.md".to_string(),
+                "gamma.md".to_string(),
+                "canonical:delta".to_string(),
+            ],
+        )
+        .expect("source notes");
+
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("raw/src-alpha.md"),
+                PathBuf::from("raw/src-beta.md"),
+                PathBuf::from("raw/src-gamma.md"),
+                PathBuf::from("raw/src-delta.md"),
+            ]
+        );
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alpha", "Beta", "Gamma", "delta.md"]
+        );
+    }
+
+    #[test]
+    fn source_selection_dedupes_by_source_id_in_selector_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let alpha = source_record("src-alpha", "alpha.md", "canonical:alpha", Some("Alpha"));
+        let beta = source_record("src-beta", "beta.md", "canonical:beta", Some("Beta"));
+        write_raw_source(temp.path(), &alpha);
+        write_raw_source(temp.path(), &beta);
+        let manifest = SourceManifest {
+            entries: vec![alpha, beta],
+        };
+
+        let notes = resolve_source_notes(
+            temp.path(),
+            &manifest,
+            &[
+                "src-beta".to_string(),
+                "src-alpha".to_string(),
+                "raw/src-beta.md".to_string(),
+                "alpha.md".to_string(),
+            ],
+        )
+        .expect("source notes");
+
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("raw/src-beta.md"),
+                PathBuf::from("raw/src-alpha.md"),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_source_selector_reports_source_not_found() {
+        let manifest = SourceManifest {
+            entries: vec![source_record(
+                "src-alpha",
+                "alpha.md",
+                "canonical:alpha",
+                Some("Alpha"),
+            )],
+        };
+        let error = resolve_source_selector(&manifest, "missing").expect_err("missing source");
+
+        match error {
+            WikiError::NotFound { resource, id } => {
+                assert_eq!(resource, "source");
+                assert_eq!(id, "missing");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ambiguous_non_id_selector_reports_invalid_input() {
+        let manifest = SourceManifest {
+            entries: vec![
+                source_record("src-alpha", "shared.md", "canonical:alpha", Some("Alpha")),
+                source_record("src-beta", "shared.md", "canonical:beta", Some("Beta")),
+            ],
+        };
+        let error = resolve_source_selector(&manifest, "shared.md").expect_err("ambiguous source");
+
+        match error {
+            WikiError::InvalidInput { field, message } => {
+                assert_eq!(field, "source");
+                assert_eq!(
+                    message,
+                    "source selector `shared.md` matched multiple records; pass a source id"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_raw_file_for_selected_source_reports_raw_source_not_found() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest = SourceManifest {
+            entries: vec![source_record(
+                "src-alpha",
+                "alpha.md",
+                "canonical:alpha",
+                Some("Alpha"),
+            )],
+        };
+
+        let error = resolve_source_notes(temp.path(), &manifest, &["src-alpha".to_string()])
+            .expect_err("missing raw source");
+
+        match error {
+            WikiError::NotFound { resource, id } => {
+                assert_eq!(resource, "raw_source");
+                assert_eq!(id, "raw/src-alpha.md");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+}

@@ -62,10 +62,12 @@ fn maybe_dump_nav_failure(prompt: &str, raw: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_curated_navigation_docs(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
+    graph_edges: &[CodewikiGraphEdge],
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -173,6 +175,7 @@ pub(crate) fn build_curated_navigation_docs(
         lane,
         &plan_observability,
         leading_chunks,
+        graph_edges,
         generate,
         verify,
     )

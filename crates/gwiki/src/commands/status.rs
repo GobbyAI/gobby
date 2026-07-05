@@ -36,45 +36,26 @@ pub(crate) struct RuntimeStatus {
 }
 
 pub(crate) fn runtime_status_for(command: &'static str) -> Result<RuntimeStatus, WikiError> {
-    let Some(database_url) = crate::support::env::database_url_for(command)? else {
+    let services = crate::support::services::probe_runtime_services(command)?;
+    if !services.postgres_configured {
         return Ok(RuntimeStatus {
             status: "shell-ready",
             mode: "memory",
             services: json!({}),
         });
-    };
-    let mut conn = gobby_core::postgres::connect_readonly(&database_url).map_err(|error| {
-        WikiError::Config {
-            detail: format!("failed to connect to PostgreSQL for {command}: {error}"),
-        }
-    })?;
-    let home = gobby_home()?;
-    let primary = crate::support::search::PostgresConfigSource { conn: &mut conn };
-    let mut source =
-        gobby_core::ai_context::AiConfigSource::with_primary_from_gobby_home(primary, &home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve runtime config for {command}: {error}"),
-            })?;
-    let falkor = gobby_core::config::resolve_falkordb_config(&mut source);
-    let qdrant = gobby_core::config::resolve_qdrant_config(&mut source).filter(|config| {
-        config
-            .url
-            .as_deref()
-            .is_some_and(|url| !url.trim().is_empty())
-    });
-    let embedding = gobby_core::config::resolve_embedding_config(&mut source);
+    }
     Ok(RuntimeStatus {
         status: "datastore-ready",
         mode: "postgres",
         services: json!({
             "postgres": {"configured": true},
-            "falkordb": falkor
+            "falkordb": services.falkor
                 .map(|config| json!({"configured": true, "host": config.host, "port": config.port}))
                 .unwrap_or_else(|| json!({"configured": false})),
-            "qdrant": qdrant
+            "qdrant": services.qdrant
                 .map(|config| json!({"configured": true, "url": config.url}))
                 .unwrap_or_else(|| json!({"configured": false})),
-            "embeddings": embedding
+            "embeddings": services.embedding
                 .map(|config| {
                     json!({
                         "configured": true,
@@ -84,11 +65,5 @@ pub(crate) fn runtime_status_for(command: &'static str) -> Result<RuntimeStatus,
                 })
                 .unwrap_or_else(|| json!({"configured": false})),
         }),
-    })
-}
-
-fn gobby_home() -> Result<std::path::PathBuf, WikiError> {
-    gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki status: {error}"),
     })
 }

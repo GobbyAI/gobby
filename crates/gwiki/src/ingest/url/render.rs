@@ -29,9 +29,11 @@ pub(super) fn render_url_markdown(
     }
     let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
-    markdown.push_str(&markdown_title(title));
+    markdown.push_str(&escape_wikilink_delimiters(&markdown_title(title)));
     markdown.push_str("\n\n");
-    markdown.push_str(&html_to_markdownish_text(document));
+    markdown.push_str(&escape_wikilink_delimiters(&html_to_markdownish_text(
+        document,
+    )));
     markdown.push('\n');
     markdown
 }
@@ -59,10 +61,24 @@ pub(super) fn render_non_html_url_markdown(
     }
     let mut markdown = markdown_metadata(&fields);
     markdown.push_str("# ");
-    markdown.push_str(&markdown_title(title));
+    markdown.push_str(&escape_wikilink_delimiters(&markdown_title(title)));
     markdown.push_str("\n\n");
     markdown.push_str("Non-HTML URL response preserved as a source asset.\n");
     markdown
+}
+
+/// Fetched URL content is untrusted: a hostile page whose text (or `<title>`,
+/// or URL-derived file name) contains `[[...]]` would otherwise inject
+/// wikilink edges — or `![[...]]` transclusions — into the vault graph once
+/// this markdown is compiled into knowledge pages. Escaping backslashes first
+/// and then every bracket (the same scheme as the source-catalog escaping in
+/// sources/render.rs) leaves each `[` preceded by `\`, so no `[[` byte
+/// adjacency survives for either markdown-aware parsers or naive delimiter
+/// scanners, while rendered markdown still shows the original brackets.
+pub(super) fn escape_wikilink_delimiters(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }
 
 pub(super) fn snapshot_is_html(snapshot: &UrlSnapshot) -> bool {

@@ -5,7 +5,8 @@ use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::{DegradationKind, ServiceState};
 use gobby_core::falkor::GraphClient;
 
-use crate::graph::MemoryWikiGraph;
+use crate::graph::{MemoryWikiGraph, document_target_map};
+use crate::links::canonical_target_key;
 use crate::search::{
     SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource, WikiSearchResult,
     bm25::is_keyword_searchable_path,
@@ -210,6 +211,7 @@ pub fn rank_link_neighborhood(
         .iter()
         .map(|document| document.path.clone())
         .collect::<BTreeSet<_>>();
+    let document_targets = document_target_map(documents.iter().map(|document| &document.path));
     let slug_targets = slug_target_map(documents);
     let seed_set = seed_paths.iter().cloned().collect::<BTreeSet<_>>();
     let mut scores = BTreeMap::<PathBuf, f64>::new();
@@ -226,7 +228,7 @@ pub fn rank_link_neighborhood(
             let Some(target_path) = resolve_graph_target(
                 &link.source_path,
                 &link.target_path,
-                &document_paths,
+                &document_targets,
                 &slug_targets,
             ) else {
                 continue;
@@ -310,7 +312,7 @@ fn graph_degradation(message: String) -> DegradationKind {
 fn resolve_graph_target(
     source_path: &Path,
     raw_target: &str,
-    document_paths: &BTreeSet<PathBuf>,
+    document_targets: &BTreeMap<String, PathBuf>,
     slug_targets: &BTreeMap<String, PathBuf>,
 ) -> Option<PathBuf> {
     let trimmed = raw_target.trim();
@@ -329,17 +331,18 @@ fn resolve_graph_target(
         return None;
     }
 
-    let direct = PathBuf::from(&normalized);
-    if document_paths.contains(&direct) {
-        return Some(direct);
+    if let Some(path) = document_targets.get(&canonical_target_key(&normalized)) {
+        return Some(path.clone());
     }
 
-    if let Some(relative) = source_path
+    if let Some(path) = source_path
         .parent()
         .map(|parent| normalize_path(parent.join(&normalized)))
-        .filter(|path| document_paths.contains(path))
+        .and_then(|relative| {
+            document_targets.get(&canonical_target_key(&relative.to_string_lossy()))
+        })
     {
-        return Some(relative);
+        return Some(path.clone());
     }
 
     let target_slug = slugify(normalized.strip_suffix(".md").unwrap_or(&normalized));

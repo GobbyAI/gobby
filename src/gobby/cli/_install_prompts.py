@@ -452,22 +452,23 @@ def _echo_wiki_setup_summary(wiki_setup: dict[str, Any] | None) -> None:
     if not wiki_setup:
         return
 
+    vault_dir = wiki_setup.get("vault_dir") or "wiki"
     click.echo("Wiki branch setup:")
     if wiki_setup.get("success"):
         worktree_path = wiki_setup.get("worktree_path")
         if worktree_path:
             click.echo(f"  - Worktree: {worktree_path}")
         if wiki_setup.get("gitignore_updated"):
-            click.echo("  - Added gobby-wiki/ to .gitignore")
+            click.echo(f"  - Added {vault_dir}/ to .gitignore")
         else:
-            click.echo("  - .gitignore already covers gobby-wiki/")
+            click.echo(f"  - .gitignore already covers {vault_dir}/")
     else:
         click.echo("  - Skipped")
 
     tracked_files = wiki_setup.get("tracked_files") or []
     if tracked_files:
-        click.echo(f"  - Tracked gobby-wiki files: {len(tracked_files)}")
-        click.echo("  - Manual cleanup: git rm --cached -r gobby-wiki")
+        click.echo(f"  - Tracked {vault_dir} files: {len(tracked_files)}")
+        click.echo(f"  - Manual cleanup: git rm --cached -r {vault_dir}")
 
     for warning in wiki_setup.get("warnings") or []:
         click.echo(f"  - Warning: {warning}")

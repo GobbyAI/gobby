@@ -37,16 +37,14 @@ fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
         path: PathBuf::from("knowledge/topics/rust.md"),
         title: Some("Rust Async".to_string()),
     }];
-    let document_paths = documents
-        .iter()
-        .map(|document| document.path.clone())
-        .collect::<BTreeSet<_>>();
+    let document_targets =
+        graph::document_target_map(documents.iter().map(|document| &document.path));
     let slug_targets = slug_target_map(&documents);
     assert_eq!(
         resolve_graph_target(
             "Rust Async",
             Path::new("knowledge/topics/source.md"),
-            &document_paths,
+            &document_targets,
             &slug_targets
         ),
         Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
@@ -55,9 +53,21 @@ fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
     );
     assert_eq!(
         resolve_graph_target(
+            "RUST.md",
+            Path::new("knowledge/topics/source.md"),
+            &document_targets,
+            &slug_targets
+        ),
+        Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
+            "knowledge/topics/rust.md"
+        ))),
+        "document paths resolve case-insensitively"
+    );
+    assert_eq!(
+        resolve_graph_target(
             "Missing Page",
             Path::new("knowledge/topics/source.md"),
-            &document_paths,
+            &document_targets,
             &slug_targets
         ),
         Some(graph::WikiGraphLinkTarget::Unresolved(
@@ -68,7 +78,7 @@ fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
         resolve_graph_target(
             "https://example.test",
             Path::new("knowledge/topics/source.md"),
-            &document_paths,
+            &document_targets,
             &slug_targets
         )
         .is_none()

@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 7,
+        contract_version: 10,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -350,7 +350,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![],
+                flags: vec![ai_flag("--ai")],
                 json_output_keys: scoped_keys(vec![
                     "checks",
                     "suggested_tasks",
@@ -374,6 +374,70 @@ pub fn contract() -> CliContract {
                     "librarian",
                     "Emit wiki upkeep proposals without rewriting canonical content.",
                 )
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--max-pages", "N"),
+                    FlagContract::value("--min-mentions", "N"),
+                    FlagContract::value("--max-sources-per-page", "N"),
+                    FlagContract::switch("--dry-run"),
+                    ai_flag("--ai"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "timestamp",
+                    "dry_run",
+                    "max_pages",
+                    "min_mentions",
+                    "max_sources_per_page",
+                    "pending_before",
+                    "pending_after",
+                    "pages_created",
+                    "pages_updated",
+                    "failures",
+                    "clusters",
+                    "skipped_over_budget",
+                    "reconciled_no_synthesis",
+                    "notes",
+                    "ai",
+                ]),
+                hard_dependencies: vec!["vault"],
+                optional_dependencies: vec!["Qdrant+embeddings", "model synthesis"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "missing semantic backend skips near-duplicate checks with a note; AI off writes structural skeleton pages; per-page failures are recorded and the run continues",
+                    metadata_keys: vec!["notes[]", "clusters[].error", "ai"],
+                }),
+                ..CommandContract::new("upkeep", "Drain pending sources into entity concept pages.")
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--date", "YYYY-MM-DD"), ai_flag("--ai")],
+                json_output_keys: scoped_keys(vec![
+                    "timestamp",
+                    "date",
+                    "sessions_selected",
+                    "session_ids",
+                    "sources_truncated",
+                    "synthesis",
+                    "page_path",
+                    "page_action",
+                    "citations_kept",
+                    "citations_stripped",
+                    "fallback_sections",
+                    "notes",
+                    "ai",
+                ]),
+                hard_dependencies: vec!["vault"],
+                optional_dependencies: vec!["model synthesis"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "AI off or failed still writes the deterministic session listing with a fallback overview; a day with no sessions writes no page and is not an error",
+                    metadata_keys: vec!["synthesis", "notes[]", "ai"],
+                }),
+                ..CommandContract::new("recap", "Write the day's session recap page.")
             },
             CommandContract {
                 daemon_consumed: true,

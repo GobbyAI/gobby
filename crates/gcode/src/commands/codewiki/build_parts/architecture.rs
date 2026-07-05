@@ -8,10 +8,11 @@ pub(crate) fn build_architecture_doc(
     modules: &[ModuleDoc],
     graph_edges: &[CodewikiGraphEdge],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
-    // Deterministic workspace system model (#891). When supplied, seeds the
-    // model-derived topology / runtime-flow Mermaid diagrams; `None` (e.g. the
-    // AI-off / test entry points) omits the diagram section entirely. The model
-    // is the sole source for diagrams — they never read the code graph.
+    // Deterministic workspace system model (#891, #17521). When supplied, it
+    // is reduced to the diagram evidence graph the LLM composes the topology
+    // flowchart from; `None` (e.g. the AI-off / test entry points) omits the
+    // diagram section entirely. The model is the sole evidence source for
+    // this page's diagram — it never reads the code graph.
     system_model: Option<&SystemModel>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
@@ -169,11 +170,13 @@ pub(crate) fn build_architecture_doc(
         }
     };
 
-    // Model-seeded architectural diagrams (#891). Rendered deterministically
-    // from the workspace SystemModel and pre-validated by the renderer's
-    // valid-Mermaid gate; a sparse model or an invalid block yields `None`,
-    // which is normal and never touches `degraded_sources`.
-    let diagrams = system_model.and_then(render_architecture_diagrams);
+    // Model-seeded architectural diagrams (#891, #17521): the SystemModel is
+    // reduced to an evidence graph, the LLM composes the topology flowchart,
+    // and deterministic code verifies every arrow against that evidence and
+    // gates the block. A sparse model, an AI-off run, or a composition that
+    // fails verification yields `None`, which is normal and never touches
+    // `degraded_sources`.
+    let diagrams = system_model.and_then(|model| render_architecture_diagrams(model, generate));
 
     // Deterministic service matrix from the same model: the at-a-glance
     // required/degraded picture an evaluator needs. Same non-degrading contract

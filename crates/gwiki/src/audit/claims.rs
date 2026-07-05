@@ -16,8 +16,15 @@ pub(super) fn unsupported_claims(
     page: &WikiPage,
     provenance: &ProvenanceGraph,
     source_context: &Arc<Vec<AuditSourceContext>>,
+    manifest_hashes: &BTreeSet<String>,
     options: &AuditOptions,
 ) -> Vec<UnsupportedClaim> {
+    if is_manifest_backed_source_digest(page, manifest_hashes)
+        || is_catalog_page(page)
+        || is_recap_page(page)
+    {
+        return Vec::new();
+    }
     let claims = claim_lines(page, options);
     let supported_lines = supported_claim_lines(page, provenance, &claims);
     let has_page_source_support = has_codewiki_frontmatter_source_spans(page);
@@ -54,6 +61,26 @@ fn claim_source_context(
     }
 }
 
+/// Deterministic catalog surfaces rebuilt by `catalog::regenerate` from
+/// on-disk vault state with no LLM involvement. They are navigation
+/// artifacts — derived listings and `(none yet)` placeholders, never claims
+/// needing provenance — so the audit skips them the same way it skips
+/// manifest-backed source digests.
+const CATALOG_PAGES: &[&str] = &["_index.md", "knowledge/INDEX.md", "code/INDEX.md"];
+
+fn is_catalog_page(page: &WikiPage) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    CATALOG_PAGES.contains(&page_path.as_str())
+}
+
+/// Daily recap pages under `recaps/` (marked by `recap_date` frontmatter) are
+/// page-level supported: the deterministic session listing is structural and
+/// the synthesized overview grounds on the day's listed digests.
+fn is_recap_page(page: &WikiPage) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    page_path.starts_with("recaps/") && page.parsed.frontmatter.unknown.contains_key("recap_date")
+}
+
 fn is_generated_codewiki_page(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
     page_path.starts_with("code/")
@@ -70,6 +97,25 @@ pub(super) fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
             .provenance
             .iter()
             .any(frontmatter_value_has_code_source_span)
+}
+
+/// A digest under `knowledge/sources/` whose frontmatter `source_hash` matches
+/// a registered manifest record is page-level supported for every claim kind:
+/// the digest has exactly one source, so each claim inherits it structurally.
+pub(super) fn is_manifest_backed_source_digest(
+    page: &WikiPage,
+    manifest_hashes: &BTreeSet<String>,
+) -> bool {
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    if !page_path.starts_with("knowledge/sources/") {
+        return false;
+    }
+    page.parsed
+        .frontmatter
+        .unknown
+        .get("source_hash")
+        .and_then(Value::as_str)
+        .is_some_and(|hash| manifest_hashes.contains(hash))
 }
 
 fn frontmatter_value_has_code_source_span(value: &Value) -> bool {

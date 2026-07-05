@@ -1,18 +1,24 @@
-use std::collections::{BTreeMap, BTreeSet};
+//! The `gwiki lint` report verb.
+//!
+//! Page collection, report shaping, and rendering live here; the checks
+//! themselves (wikilink resolution, orphan/backlink/duplicate-alias
+//! detection, Mermaid validity and grounding) are the shared vault lint core
+//! in `gobby_core::vault::lint` (#17514), so gcode's write-time prevention
+//! and this report verb cannot drift.
+
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use gobby_core::vault::lint::{LintPage, page_targets, run_checks};
 use serde::Serialize;
 
 use crate::frontmatter::{WikiFrontmatter, parse_frontmatter};
-use crate::links::{LinkKind, WikiLink, normalize_wiki_path};
 use crate::markdown::{MarkdownDomainRecord, parse_markdown};
 use crate::{ScopeIdentity, WikiError};
 
-mod diagrams;
-
-pub use diagrams::DiagramIssue;
-use diagrams::{invalid_diagrams, render_diagram_issues};
+pub(crate) use gobby_core::vault::lint::line_number;
+pub use gobby_core::vault::lint::{DiagramIssue, DuplicateAlias, LinkIssue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LintReport {
@@ -27,86 +33,32 @@ pub struct LintReport {
     pub invalid_diagrams: Vec<DiagramIssue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct LinkIssue {
-    pub path: PathBuf,
-    pub line: usize,
-    pub target: String,
-    pub kind: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DuplicateAlias {
-    pub alias: String,
-    pub paths: Vec<PathBuf>,
-}
-
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<LintReport, WikiError> {
     let pages = collect_pages(vault_root)?;
-    let target_map = target_map(&pages);
-    let mut broken_links = Vec::new();
-    let mut inbound: BTreeMap<PathBuf, usize> = pages
+    let lint_pages: Vec<LintPage<'_>> = pages
         .iter()
-        .map(|page| (page.relative_path.clone(), 0))
+        .map(|page| LintPage {
+            relative_path: &page.relative_path,
+            markdown: &page.markdown,
+            title: page.parsed.frontmatter.title.as_deref(),
+            display_title: title_for_page(page),
+            aliases: &page.parsed.frontmatter.aliases,
+            links: &page.parsed.links,
+            has_frontmatter: page.has_frontmatter,
+        })
         .collect();
-    let mut outgoing: BTreeMap<PathBuf, BTreeSet<PathBuf>> = pages
-        .iter()
-        .map(|page| (page.relative_path.clone(), BTreeSet::new()))
-        .collect();
-
-    for page in &pages {
-        for link in &page.parsed.links {
-            if ignored_target(&link.target) {
-                continue;
-            }
-            if let Some(target_path) = link_lookup_targets(page, link)
-                .iter()
-                .find_map(|lookup_target| target_map.get(lookup_target))
-            {
-                if target_path != &page.relative_path {
-                    *inbound.entry(target_path.clone()).or_default() += 1;
-                    outgoing
-                        .entry(page.relative_path.clone())
-                        .or_default()
-                        .insert(target_path.clone());
-                }
-            } else {
-                broken_links.push(LinkIssue {
-                    path: page.relative_path.clone(),
-                    line: line_number(&page.markdown, link.byte_start),
-                    target: link.target.clone(),
-                    kind: link_kind(link.kind).to_string(),
-                });
-            }
-        }
-    }
-
-    let mut orphan_pages: Vec<PathBuf> = inbound
-        .into_iter()
-        .filter_map(|(path, count)| (count == 0 && !is_orphan_exempt(&path)).then_some(path))
-        .collect();
-    orphan_pages.sort();
-
-    let mut missing_frontmatter: Vec<PathBuf> = pages
-        .iter()
-        .filter_map(|page| (!page.has_frontmatter).then_some(page.relative_path.clone()))
-        .collect();
-    missing_frontmatter.sort();
-
-    let duplicate_aliases = duplicate_aliases(&pages);
-    let missing_backlinks = missing_backlinks(&pages, &outgoing);
-    let invalid_diagrams = invalid_diagrams(&pages);
+    let outcome = run_checks(&lint_pages, None);
 
     Ok(LintReport {
         command: "lint",
         scope,
         root: vault_root.to_path_buf(),
-        broken_links,
-        orphan_pages,
-        missing_frontmatter,
-        duplicate_aliases,
-        missing_backlinks,
-        invalid_diagrams,
+        broken_links: outcome.broken_links,
+        orphan_pages: outcome.orphan_pages,
+        missing_frontmatter: outcome.missing_frontmatter,
+        duplicate_aliases: outcome.duplicate_aliases,
+        missing_backlinks: outcome.missing_backlinks,
+        invalid_diagrams: outcome.invalid_diagrams,
     })
 }
 
@@ -145,7 +97,10 @@ pub(crate) struct WikiPage {
 
 pub(crate) fn collect_pages(vault_root: &Path) -> Result<Vec<WikiPage>, WikiError> {
     let mut raw_pages = Vec::new();
-    for root_name in ["knowledge", "code"] {
+    // `recaps/` pages are first-class vault pages: their digest links must
+    // count as citations in the health index and lint their hygiene like any
+    // other page (#17506 wired the writer; this wires the readers).
+    for root_name in ["knowledge", "code", "recaps"] {
         let page_root = vault_root.join(root_name);
         if page_root.exists() {
             collect_markdown_files(vault_root, &page_root, &mut raw_pages)?;
@@ -179,14 +134,6 @@ pub(crate) fn collect_pages(vault_root: &Path) -> Result<Vec<WikiPage>, WikiErro
 
 pub(crate) fn relative_path(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
-}
-
-pub(crate) fn line_number(markdown: &str, byte_start: usize) -> usize {
-    markdown[..byte_start.min(markdown.len())]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count()
-        + 1
 }
 
 pub(crate) fn title_for_page(page: &WikiPage) -> String {
@@ -273,203 +220,13 @@ fn is_markdown_path(path: &Path) -> bool {
 fn known_targets(raw_pages: &[RawWikiPage]) -> BTreeSet<String> {
     let mut targets = BTreeSet::new();
     for page in raw_pages {
-        insert_page_targets(&mut targets, &page.relative_path, &page.frontmatter);
+        targets.extend(page_targets(
+            &page.relative_path,
+            page.frontmatter.title.as_deref(),
+            &page.frontmatter.aliases,
+        ));
     }
     targets
-}
-
-fn target_map(pages: &[WikiPage]) -> BTreeMap<String, PathBuf> {
-    let mut targets = BTreeMap::new();
-    for page in pages {
-        for target in page_targets(&page.relative_path, &page.parsed.frontmatter) {
-            targets
-                .entry(target)
-                .or_insert_with(|| page.relative_path.clone());
-        }
-    }
-    targets
-}
-
-fn insert_page_targets(
-    targets: &mut BTreeSet<String>,
-    relative_path: &Path,
-    frontmatter: &WikiFrontmatter,
-) {
-    targets.extend(page_targets(relative_path, frontmatter));
-}
-
-fn page_targets(relative_path: &Path, frontmatter: &WikiFrontmatter) -> Vec<String> {
-    let mut targets = Vec::new();
-    let relative = relative_path.to_string_lossy().replace('\\', "/");
-    targets.push(normalize_wiki_path(&relative));
-    if let Some(file_stem) = relative_path.file_stem().and_then(|stem| stem.to_str()) {
-        targets.push(normalize_wiki_path(file_stem));
-    }
-    if let Some(title) = &frontmatter.title {
-        targets.push(normalize_wiki_path(title));
-    }
-    for alias in &frontmatter.aliases {
-        targets.push(normalize_wiki_path(alias));
-    }
-    targets
-}
-
-fn ignored_target(target: &str) -> bool {
-    let trimmed = target.trim();
-    trimmed.starts_with('#')
-        || trimmed.starts_with("//")
-        || trimmed.starts_with("\\\\")
-        || trimmed.starts_with("mailto:")
-        || trimmed.contains("://")
-        || trimmed.starts_with("tel:")
-}
-
-fn link_lookup_targets(page: &WikiPage, link: &WikiLink) -> Vec<String> {
-    let mut targets = vec![link.normalized_target.clone()];
-    if (link.kind != LinkKind::Markdown && link.kind != LinkKind::Wikilink)
-        || link.normalized_target.starts_with("knowledge/")
-        || link.normalized_target.starts_with("code/")
-        || link.normalized_target.starts_with("raw/")
-        || link.normalized_target.starts_with("meta/")
-        || Path::new(&link.normalized_target).is_absolute()
-    {
-        return targets;
-    }
-
-    let parents: Box<dyn Iterator<Item = &Path> + '_> = if link.kind == LinkKind::Markdown {
-        Box::new(page.relative_path.parent().into_iter())
-    } else {
-        Box::new(page.relative_path.ancestors().skip(1))
-    };
-
-    for parent in parents {
-        let parent = parent.to_string_lossy().replace('\\', "/");
-        if parent.is_empty() {
-            continue;
-        }
-        let candidate = normalize_path_components(&parent, &link.normalized_target);
-        if !targets.contains(&candidate) {
-            targets.push(candidate);
-        }
-    }
-    targets
-}
-
-fn normalize_path_components(parent: &str, target: &str) -> String {
-    let mut parts = Vec::new();
-    for part in parent
-        .split('/')
-        .chain(target.split('/'))
-        .filter(|part| !part.is_empty() && *part != ".")
-    {
-        if part == ".." {
-            if !parts.is_empty() {
-                parts.pop();
-            }
-        } else {
-            parts.push(part);
-        }
-    }
-    parts.join("/")
-}
-
-fn is_orphan_exempt(path: &Path) -> bool {
-    path.file_stem()
-        .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| {
-            matches!(
-                stem.to_ascii_lowercase().as_str(),
-                "_index" | "index" | "home" | "readme"
-            )
-        })
-}
-
-/// Pure navigation/index/aggregate roots (the repo front page, the concept
-/// index, and the ownership/hotspots/onboarding dashboards) link out to many
-/// pages by design, so links *originating* from them never count as missing
-/// backlinks. Matched by relative path only (any `.md` extension stripped),
-/// never by display title — a content page that merely happens to be named
-/// `index` is not exempt (#853D).
-fn is_backlink_source_exempt(path: &Path) -> bool {
-    let relative = path.to_string_lossy().replace('\\', "/");
-    let relative = relative.strip_suffix(".md").unwrap_or(&relative);
-    matches!(
-        relative,
-        "code/repo"
-            | "code/concepts/index"
-            | "code/_ownership"
-            | "code/_hotspots"
-            | "code/_onboarding"
-    )
-}
-
-fn duplicate_aliases(pages: &[WikiPage]) -> Vec<DuplicateAlias> {
-    let mut aliases: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
-    for page in pages {
-        for alias in &page.parsed.frontmatter.aliases {
-            let display_alias = alias.trim().to_string();
-            aliases
-                .entry(display_alias.to_ascii_lowercase())
-                .or_insert_with(|| (display_alias, Vec::new()))
-                .1
-                .push(page.relative_path.clone());
-        }
-    }
-    aliases
-        .into_iter()
-        .filter_map(|(_, (alias, mut paths))| {
-            paths.sort();
-            (paths.len() > 1).then_some(DuplicateAlias { alias, paths })
-        })
-        .collect()
-}
-
-fn missing_backlinks(
-    pages: &[WikiPage],
-    outgoing: &BTreeMap<PathBuf, BTreeSet<PathBuf>>,
-) -> Vec<LinkIssue> {
-    let titles: BTreeMap<PathBuf, String> = pages
-        .iter()
-        .map(|page| (page.relative_path.clone(), title_for_page(page)))
-        .collect();
-    let mut issues = Vec::new();
-    for (source, targets) in outgoing {
-        // Navigation/index/aggregate roots fan out by design; do not require
-        // every page they link to link back (#853D).
-        if is_backlink_source_exempt(source) {
-            continue;
-        }
-        for target in targets {
-            if outgoing
-                .get(target)
-                .is_some_and(|target_outgoing| target_outgoing.contains(source))
-            {
-                continue;
-            }
-            issues.push(LinkIssue {
-                path: target.clone(),
-                line: 1,
-                target: titles
-                    .get(source)
-                    .cloned()
-                    .unwrap_or_else(|| source.display().to_string()),
-                kind: "missing_backlink".to_string(),
-            });
-        }
-    }
-    issues.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then(left.target.cmp(&right.target))
-    });
-    issues
-}
-
-fn link_kind(kind: LinkKind) -> &'static str {
-    match kind {
-        LinkKind::Wikilink => "wikilink",
-        LinkKind::Markdown => "markdown",
-    }
 }
 
 fn render_link_issues(text: &mut String, heading: &str, issues: &[LinkIssue]) {
@@ -490,6 +247,23 @@ fn render_link_issues(text: &mut String, heading: &str, issues: &[LinkIssue]) {
         text.push_str(" (");
         text.push_str(&issue.kind);
         text.push_str(")\n");
+    }
+}
+
+fn render_diagram_issues(text: &mut String, issues: &[DiagramIssue]) {
+    text.push_str("\nInvalid diagrams:\n");
+    if issues.is_empty() {
+        text.push_str("- none\n");
+        return;
+    }
+    for issue in issues {
+        text.push_str("- ");
+        text.push_str(&issue.path.display().to_string());
+        text.push(':');
+        text.push_str(&issue.line.to_string());
+        text.push_str(" -> ");
+        text.push_str(&issue.reason);
+        text.push('\n');
     }
 }
 
@@ -565,6 +339,26 @@ mod tests {
     }
 
     #[test]
+    fn link_targets_resolve_case_insensitively() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/topics/Gcode.md",
+            "---\ntitle: Gcode\n---\n# Gcode\nSee [[home]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/topics/home.md",
+            "---\ntitle: Home\n---\n# Home\nSee [[gcode]], [[GCODE]], [[Knowledge/Topics/GCode]], and [gcode](Gcode.md).\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert!(report.broken_links.is_empty(), "{:?}", report.broken_links);
+    }
+
+    #[test]
     fn nested_wikilinks_resolve_relative_to_current_subtree() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
@@ -582,22 +376,6 @@ mod tests {
         let report = run(root, ScopeIdentity::topic("lint")).expect("lint runs");
 
         assert!(report.broken_links.is_empty(), "{:?}", report.broken_links);
-    }
-
-    #[test]
-    fn relative_markdown_links_clamp_traversal_at_vault_root() {
-        assert_eq!(
-            normalize_path_components("knowledge/topics", "../../../outside.md"),
-            "outside.md"
-        );
-    }
-
-    #[test]
-    fn ignored_target_skips_external_network_references() {
-        assert!(ignored_target("//cdn.example.test/asset.png"));
-        assert!(ignored_target(r"\\server\share\page.md"));
-        assert!(ignored_target("https://example.test/page"));
-        assert!(!ignored_target("knowledge/topics/page.md"));
     }
 
     #[test]
@@ -675,6 +453,119 @@ mod tests {
         assert_eq!(issue.path, PathBuf::from("code/narrative/architecture.md"));
         assert_eq!(issue.kind, "missing_backlink");
         assert_eq!(issue.target, "Introduction");
+    }
+
+    #[test]
+    fn grounded_valid_diagram_passes_lint() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "code/concepts/pipeline.md",
+            r#"---
+title: Pipeline
+---
+# Pipeline
+The parser feeds the chunker.
+
+```mermaid
+flowchart LR
+    s0["parser — builds AST"]
+    s1["chunker — splits content"]
+    s0 --> s1
+```
+"#,
+        );
+
+        let report = run(root, ScopeIdentity::topic("code")).expect("lint runs");
+
+        assert!(
+            report.invalid_diagrams.is_empty(),
+            "{:?}",
+            report.invalid_diagrams
+        );
+    }
+
+    #[test]
+    fn ungrounded_node_is_flagged_not_silently_kept() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "code/concepts/flow.md",
+            r#"---
+title: Flow
+---
+# Flow
+The parser feeds downstream stages.
+
+```mermaid
+flowchart LR
+    s0["parser — builds AST"]
+    s1["telemetry — emits metrics"]
+    s0 --> s1
+```
+"#,
+        );
+
+        let report = run(root, ScopeIdentity::topic("code")).expect("lint runs");
+
+        assert_eq!(report.invalid_diagrams.len(), 1);
+        let issue = &report.invalid_diagrams[0];
+        assert_eq!(issue.path, PathBuf::from("code/concepts/flow.md"));
+        assert!(issue.reason.contains("ungrounded"), "{}", issue.reason);
+        assert!(issue.reason.contains("telemetry"), "{}", issue.reason);
+    }
+
+    #[test]
+    fn malformed_mermaid_is_flagged_invalid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "code/concepts/broken.md",
+            r#"---
+title: Broken
+---
+# Broken
+The parser stage.
+
+```mermaid
+flowchart LR
+    s0["parser
+    s0 --> s1
+```
+"#,
+        );
+
+        let report = run(root, ScopeIdentity::topic("code")).expect("lint runs");
+
+        assert_eq!(report.invalid_diagrams.len(), 1);
+        assert_eq!(report.invalid_diagrams[0].reason, "invalid-mermaid");
+    }
+
+    #[test]
+    fn render_text_reports_invalid_diagrams() {
+        let report = LintReport {
+            command: "lint",
+            scope: ScopeIdentity::topic("code"),
+            root: PathBuf::from("/vault"),
+            broken_links: Vec::new(),
+            orphan_pages: Vec::new(),
+            missing_frontmatter: Vec::new(),
+            duplicate_aliases: Vec::new(),
+            missing_backlinks: Vec::new(),
+            invalid_diagrams: vec![DiagramIssue {
+                path: PathBuf::from("code/concepts/flow.md"),
+                line: 7,
+                reason: "ungrounded: telemetry".to_string(),
+            }],
+        };
+
+        let text = render_text(&report);
+
+        assert!(text.contains("Invalid diagrams:"));
+        assert!(text.contains("code/concepts/flow.md:7 -> ungrounded: telemetry"));
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {

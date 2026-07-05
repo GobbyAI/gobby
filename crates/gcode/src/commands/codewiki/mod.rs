@@ -61,6 +61,11 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // Workflows/Getting Started/Operations/Data Model/CLI-API/Troubleshooting),
 // semantic cross-directory concept-cluster names, and an enumerable `Reference |
 // Summary` table on curated pages, so prior narrative/concept pages re-render.
+// 21 (#17521, architecture + curated only): diagrams are LLM-composed from
+// supplied evidence and edge-verified — the architecture page carries one
+// normalized topology flowchart (deterministic sequence diagrams retired) and
+// curated conceptual flows draw documented-chain plus code-index member edges
+// under new captions — so prior on-disk architecture/curated pages re-render.
 //
 // Per-category render versions (#1007): the single global version was replaced
 // by per-category constants so a template change in one renderer only
@@ -70,12 +75,12 @@ const RENDER_VERSION_DEFAULT: u32 = 20;
 const RENDER_VERSION_FILE: u32 = 20;
 const RENDER_VERSION_MODULE: u32 = 20;
 const RENDER_VERSION_REPO: u32 = 20;
-const RENDER_VERSION_ARCHITECTURE: u32 = 20;
+const RENDER_VERSION_ARCHITECTURE: u32 = 21;
 const RENDER_VERSION_INFRASTRUCTURE: u32 = 20;
 const RENDER_VERSION_FEATURES: u32 = 20;
 const RENDER_VERSION_DEPRECATIONS: u32 = 20;
 const RENDER_VERSION_MISC: u32 = 20;
-const RENDER_VERSION_CURATED: u32 = 20;
+const RENDER_VERSION_CURATED: u32 = 21;
 const RENDER_VERSION_CHANGES: u32 = 20;
 
 /// Returns the render-version constant for a doc page path. Each page category
@@ -121,6 +126,7 @@ pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_mid";
 mod architecture_diagrams;
 mod build;
 mod cluster;
+mod diagram_compose;
 mod generation;
 mod graph;
 mod io;
@@ -187,10 +193,17 @@ pub(crate) use relationship_facts::{RelationshipFacts, relationship_facts_for_fi
 pub use system_model::{
     Crate, Edge, RuntimeMode, ServiceBoundary, ServiceKind, SystemModel, build_system_model,
 };
-// Model-seeded architectural Mermaid diagrams for the architecture page (#891).
-#[cfg(test)]
-pub(crate) use architecture_diagrams::is_valid_mermaid;
+// Model-seeded architectural diagram evidence for the architecture page
+// (#891); since #17521 the diagrams themselves are LLM-composed from that
+// evidence and edge-verified by `diagram_compose`. The Valid-Mermaid gate is
+// the shared implementation in gobby-core (#17514); gwiki's lint consumes the
+// same one, so generator and lint cannot drift.
 pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_service_matrix};
+#[cfg(test)]
+pub(crate) use gobby_core::vault::mermaid::is_valid_mermaid;
+// Evidence-grounded LLM diagram composition (#17521): the model composes,
+// deterministic code verifies every arrow against supplied evidence.
+pub(crate) use diagram_compose::{DiagramEvidence, NodeShape, compose_flowchart};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,

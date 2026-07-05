@@ -7,7 +7,9 @@ use super::paths::{
     ensure_synthesized_path_inside_vault, relative_path, slugify_unique, source_links,
     source_page_paths, wiki_link,
 };
-use super::render::{render_frontmatter, render_list_section, render_source_excerpts};
+use super::render::{
+    FrontmatterFields, render_frontmatter, render_list_section, render_source_excerpts,
+};
 use super::types::{ArticleKind, SynthesisInput, SynthesizedPage};
 
 pub fn synthesize_article(
@@ -38,11 +40,15 @@ pub fn synthesize_article(
     let mut markdown = String::new();
     render_frontmatter(
         &mut markdown,
-        &input.topic,
-        input.target_kind.source_kind(),
-        &input.handoff_id,
-        report.route.unwrap_or("fallback"),
-        degraded_sources,
+        &FrontmatterFields {
+            title: &input.topic,
+            source_kind: input.target_kind.source_kind(),
+            handoff_id: &input.handoff_id,
+            synthesis_mode: report.route.unwrap_or("fallback"),
+            degraded_sources,
+            aliases: &input.aliases,
+            extra_tags: &input.extra_tags,
+        },
     );
     markdown.push_str("# ");
     markdown.push_str(&input.topic);
@@ -157,14 +163,23 @@ pub fn synthesize_source_pages(
     let mut pages = Vec::with_capacity(input.accepted_sources.len());
     for (source, path) in input.accepted_sources.iter().zip(source_paths) {
         ensure_synthesized_path_inside_vault(vault_root, &path, "source_path")?;
+        if source.existing_page.is_some() {
+            // The source already has a rich manifest-backed digest at this
+            // path; the article links there instead of duplicating a stub.
+            continue;
+        }
         let mut markdown = String::new();
         render_frontmatter(
             &mut markdown,
-            &source.title,
-            ArticleKind::Source.source_kind(),
-            &input.handoff_id,
-            "source",
-            &[],
+            &FrontmatterFields {
+                title: &source.title,
+                source_kind: ArticleKind::Source.source_kind(),
+                handoff_id: &input.handoff_id,
+                synthesis_mode: "source",
+                degraded_sources: &[],
+                aliases: &[],
+                extra_tags: &[],
+            },
         );
         markdown.push_str("# ");
         markdown.push_str(&source.title);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +51,7 @@ class FakeRefreshService(CodewikiRefreshService):
         self.requests: list[CodewikiRefreshRequest] = []
 
     def resolve_out_dir(self, root: Path, out_dir: str | None) -> Path:
-        value = out_dir or "gobby-wiki"
+        value = out_dir or "wiki"
         path = Path(value)
         if not path.is_absolute():
             path = root / path
@@ -116,12 +117,12 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
         "project_id": PROJECT_ID,
         "project_name": PROJECT_NAME,
         "root_path": str(tmp_path.resolve(strict=False)),
-        "out_dir": str((tmp_path / "gobby-wiki").resolve(strict=False)),
+        "out_dir": str((tmp_path / "wiki").resolve(strict=False)),
         "ai": CODEWIKI_NIGHTLY_AI,
         "scopes": ["crates", "web", "src"],
     }
     assert job.next_run_at is not None
-    assert job.next_run_at.endswith("+00:00")
+    assert job.next_run_at.utcoffset() == timedelta(0)
 
     register_codewiki_nightly_cron(
         cron_storage=storage,
@@ -146,7 +147,7 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
     updated = jobs[0]
     assert updated.cron_expr == "0 4 * * *"
     assert updated.next_run_at is not None
-    assert updated.next_run_at.endswith("+00:00")
+    assert updated.next_run_at.utcoffset() == timedelta(0)
 
 
 def test_register_codewiki_nightly_crons_covers_each_project_once(
@@ -198,7 +199,7 @@ async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -
     handler = create_codewiki_nightly_handler(
         project_id=PROJECT_ID,
         root_path=tmp_path,
-        out_dir=tmp_path / "gobby-wiki",
+        out_dir=tmp_path / "wiki",
         scopes=["crates", "web", "src"],
         refresh_service=service,
     )
@@ -210,7 +211,7 @@ async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -
         CodewikiRefreshRequest(
             root_path=str(tmp_path),
             project_id=PROJECT_ID,
-            out_dir=str(tmp_path / "gobby-wiki"),
+            out_dir=str(tmp_path / "wiki"),
             ai=CODEWIKI_NIGHTLY_AI,
             scopes=["crates", "web", "src"],
         )
@@ -223,7 +224,7 @@ async def test_codewiki_nightly_handler_raises_on_refresh_failure(tmp_path: Path
     handler = create_codewiki_nightly_handler(
         project_id=PROJECT_ID,
         root_path=tmp_path,
-        out_dir=tmp_path / "gobby-wiki",
+        out_dir=tmp_path / "wiki",
         refresh_service=service,
     )
 

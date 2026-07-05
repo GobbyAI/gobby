@@ -40,6 +40,8 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "normalize",
     "health",
     "librarian",
+    "upkeep",
+    "recap",
     "status",
     "trust",
 ];
@@ -146,7 +148,11 @@ enum CliCommand {
     /// Write wiki health snapshots under meta/health.
     Health,
     /// Propose wiki upkeep tasks and patches without rewriting pages.
-    Librarian,
+    Librarian(LibrarianArgs),
+    /// Drain pending sources into entity concept pages.
+    Upkeep(UpkeepArgs),
+    /// Write the day's session recap page.
+    Recap(RecapArgs),
     /// Show shell readiness.
     Status,
     /// Show search, graph, freshness, and audit trust status.
@@ -376,6 +382,47 @@ struct BacklinksArgs {
 struct LinkSuggestArgs {
     #[arg(long, default_value = "10")]
     limit: usize,
+}
+
+#[derive(Debug, Args)]
+struct LibrarianArgs {
+    /// AI routing for the model-provider probe behind patch suggestions.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
+}
+
+#[derive(Debug, Args)]
+struct UpkeepArgs {
+    /// Maximum concept pages synthesized in one run.
+    #[arg(long = "max-pages", value_name = "N", default_value = "10")]
+    max_pages: usize,
+
+    /// Minimum digest mentions before an unresolved target forms a cluster.
+    #[arg(long = "min-mentions", value_name = "N", default_value = "2")]
+    min_mentions: usize,
+
+    /// Maximum accepted sources compiled into one concept page.
+    #[arg(long = "max-sources-per-page", value_name = "N", default_value = "12")]
+    max_sources_per_page: usize,
+
+    /// Plan the run without writing anything to the vault.
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+
+    /// AI routing for concept-page synthesis.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
+}
+
+#[derive(Debug, Args)]
+struct RecapArgs {
+    /// Target day (YYYY-MM-DD, UTC session-day attribution); defaults to today.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    date: Option<String>,
+
+    /// AI routing for the single-shot recap synthesis.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
 }
 
 #[derive(Debug, Args)]
@@ -752,7 +799,22 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             check: args.check,
         }),
         CliCommand::Health => Ok(Command::Health { scope }),
-        CliCommand::Librarian => Ok(Command::Librarian { scope }),
+        CliCommand::Librarian(args) => Ok(Command::Librarian { scope, ai: args.ai }),
+        CliCommand::Upkeep(args) => Ok(Command::Upkeep {
+            scope,
+            options: gobby_wiki::UpkeepOptions {
+                max_pages: args.max_pages,
+                min_mentions: args.min_mentions,
+                max_sources_per_page: args.max_sources_per_page,
+                dry_run: args.dry_run,
+            },
+            ai: args.ai,
+        }),
+        CliCommand::Recap(args) => Ok(Command::Recap {
+            scope,
+            options: gobby_wiki::RecapOptions { date: args.date },
+            ai: args.ai,
+        }),
         CliCommand::Status => Ok(Command::Status { scope }),
         CliCommand::Trust => Ok(Command::Trust { scope }),
         CliCommand::CitationQuality => Ok(Command::CitationQuality { scope }),

@@ -325,6 +325,14 @@ fn resolve_gwiki_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gwiki/src/commands/benchmark.rs",
             "commands::benchmark::execute",
         ),
+        "upkeep" => (
+            "crates/gwiki/src/commands/upkeep.rs",
+            "commands::upkeep::execute",
+        ),
+        "recap" => (
+            "crates/gwiki/src/commands/recap.rs",
+            "commands::recap::execute",
+        ),
         _ => ("", ""),
     }
 }

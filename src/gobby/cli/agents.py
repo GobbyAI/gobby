@@ -205,7 +205,6 @@ def agents() -> None:
     help="Fail instead of warning when the requested reasoning is unsupported",
 )
 @click.option("--timeout", default=120.0, help="Execution timeout in seconds")
-@click.option("--max-turns", default=10, help="Maximum turns")
 @click.option(
     "--context",
     "-c",
@@ -225,7 +224,6 @@ def spawn_agent_cmd(
     reasoning_effort: str | None,
     reasoning_required: bool,
     timeout: float,
-    max_turns: int,
     session_context: str,
     json_format: bool,
 ) -> None:
@@ -260,7 +258,6 @@ def spawn_agent_cmd(
         "terminal": terminal,
         "provider": provider,
         "timeout": timeout,
-        "max_turns": max_turns,
         "session_context": session_context,
     }
 

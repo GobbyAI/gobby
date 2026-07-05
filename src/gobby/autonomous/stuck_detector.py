@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.utils.datetime import require_stored_datetime
+
 if TYPE_CHECKING:
     from gobby.autonomous.progress_tracker import ProgressTracker
     from gobby.storage.hub.protocol import HubDatabase
@@ -391,7 +393,7 @@ class StuckDetector:
                 TaskSelectionEvent(
                     session_id=row["session_id"],
                     task_id=row["task_id"],
-                    selected_at=datetime.fromisoformat(row["selected_at"]),
+                    selected_at=require_stored_datetime(row["selected_at"], "selected_at"),
                     context=context,
                 )
             )

@@ -176,8 +176,8 @@ def register_codewiki_nightly_crons(
 ) -> int:
     """Register the nightly codewiki cron for each ``(project_id, name, repo_path)``.
 
-    Every project the memory dream judges per-project reads its own
-    ``gobby-wiki/_meta/truth_digest.json``; a project whose codewiki is never
+    Every project the memory dream judges per-project reads its own resolved
+    vault's ``_meta/truth_digest.json``; a project whose codewiki is never
     refreshed is judged against a stale or absent digest. Registering one
     nightly refresh per memory-bearing repo keeps those digests fresh.
 

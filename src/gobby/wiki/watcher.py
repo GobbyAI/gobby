@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from gobby.config.wiki import DEFAULT_WIKI_IGNORE_GLOBS
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,7 @@ class WikiWatcher:
         self._coordinator = coordinator
         self._debounce_interval = debounce_interval
         self._poll_interval = poll_interval
-        self._ignore_globs = ignore_globs or ["outputs/**", "meta/health/**"]
+        self._ignore_globs = ignore_globs or list(DEFAULT_WIKI_IGNORE_GLOBS)
         self._pending: dict[str, set[Path]] = {}
         self._pending_since: float | None = None
         self._last_index_time: float | None = None

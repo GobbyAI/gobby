@@ -35,6 +35,10 @@ pub struct SynthesisSource {
     pub title: String,
     pub path: PathBuf,
     pub chunks: Vec<String>,
+    /// Manifest-backed digest page already on disk for this source
+    /// (`knowledge/sources/<id>.md`). When set, synthesis links the article to
+    /// this page instead of writing a new title-slugged stub.
+    pub existing_page: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +51,16 @@ pub struct SynthesisInput {
     pub citations: Vec<String>,
     pub conflicting_claims: Vec<String>,
     pub missing_evidence: Vec<String>,
+    /// Body of the target page when recompiling an existing article: the
+    /// explainer prompt carries it so the model updates the page instead of
+    /// regenerating it from scratch (update-over-create).
+    pub existing_page_body: Option<String>,
+    /// Alternate titles rendered as frontmatter `aliases` (observed case
+    /// variants of an entity name).
+    pub aliases: Vec<String>,
+    /// Frontmatter tags appended after the standard `gwiki`/`compiled` pair
+    /// (e.g. the `entity` marker on entity concept pages).
+    pub extra_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

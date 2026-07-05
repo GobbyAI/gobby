@@ -12,8 +12,8 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     let created_paths = vault::initialize(&scope)?;
 
     obsidian::seed_app_json(scope.root())?;
-    if let Some(project_root) = scope.project_root() {
-        obsidian::ensure_gitignore_obsidian(project_root)?;
+    if scope.project_root().is_some() {
+        obsidian::ensure_gitignore_obsidian(scope.root())?;
     }
 
     if let Err(error) = registry::register_scope(scope.registry_path(), &scope) {

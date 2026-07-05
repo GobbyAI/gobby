@@ -1,67 +1,63 @@
-//! Architectural Mermaid diagrams for the codewiki architecture page.
+//! Architecture-page diagram evidence for the codewiki (#891, #17521).
 //!
-//! Leaf B of epic #886 (#891). Renders *topology* and *runtime-flow* diagrams
-//! from the deterministic [`SystemModel`] built by Leaf A
-//! ([`super::system_model::build_system_model`]) — crate↔crate↔service
-//! topology plus the standalone-vs-daemon runtime branch, and at least one
-//! runtime-flow sequence the model can express.
+//! Since #17521 this module is an *evidence supplier + validator*, not a
+//! composer: it reduces the deterministic [`SystemModel`] built by
+//! [`super::system_model::build_system_model`] to a [`DiagramEvidence`] graph
+//! — crate nodes, workspace-internal dependency edges, service boundaries
+//! with fixed dependency-strength labels, and the standalone-vs-daemon
+//! runtime branch — and hands it to the LLM composer in
+//! [`super::diagram_compose`]. The model picks the story; deterministic code
+//! verifies every drawn arrow against this evidence (unevidenced arrows are
+//! rejected), re-renders the syntax, and gates the block.
 //!
 //! These are *architectural* diagrams seeded strictly from workspace facts on
 //! disk, NOT the per-symbol FalkorDB call/import-edge dumps that commit #884
-//! deliberately removed. The model is the only source; nothing here reads the
-//! code graph or invents components absent from the model.
+//! deliberately removed. The model draws only what the evidence supplies;
+//! nothing here invents components absent from the model.
 //!
-//! Invariants (the #884 / #878 contract):
+//! Invariants (the #884 / #878 / #17521 contract):
 //!
-//! * **Valid-Mermaid gate.** Every block is checked by [`is_valid_mermaid`]
-//!   before it is emitted. A block that fails the gate is OMITTED; a broken or
-//!   unparseable ```` ```mermaid ```` fence is never written.
-//! * **Non-degrading.** A SystemModel too sparse to draw (no crates/edges from
-//!   a fully-partial model) yields no diagram, but that is *normal*, not
-//!   degradation. Omitting a diagram never sets `degraded` on the page;
-//!   `degraded:model-unavailable` stays reserved for genuine generation
-//!   fallback.
+//! * **Edge verification.** Every arrow in the emitted diagram matches a
+//!   supplied evidence edge — the diagram analog of citation grounding.
+//! * **Valid-Mermaid gate.** Every block passes the shared gobby-core
+//!   `is_valid_mermaid` gate before it is emitted; a broken fence is never
+//!   written.
+//! * **No disconnected islands.** The composer keeps only the largest
+//!   weakly-connected component, and the runtime-routing branch is anchored
+//!   to the ai-feature crate (or omitted) rather than left floating.
+//! * **Non-degrading.** A SystemModel too sparse to draw, an AI-off run, or a
+//!   composition that fails verification yields no diagram, and that is
+//!   *normal*, not degradation.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use super::diagram_compose::{DiagramEvidence, NodeShape, compose_flowchart};
 use super::system_model::{Edge, RuntimeMode, ServiceKind, SystemModel};
-
-/// Recognised Mermaid diagram headers the validator accepts. `graph` and
-/// `flowchart` are the two spellings of the flow diagram; `sequenceDiagram`
-/// drives the runtime-flow diagram.
-const VALID_HEADERS: [&str; 3] = ["flowchart", "graph", "sequenceDiagram"];
+use super::types::TextGenerator;
 
 /// Render the architecture diagram section for the page body: a leading prose
-/// note, then each well-formed diagram block. Returns `None` when the model is
-/// too sparse to draw anything *and* there is no diagram to show — the caller
-/// then simply omits the section. A returned string always ends with a
-/// trailing blank line and contains only validated fences.
-pub(crate) fn render_architecture_diagrams(model: &SystemModel) -> Option<String> {
-    let mut blocks: Vec<String> = Vec::new();
-
-    if let Some(topology) = render_topology_flowchart(model) {
-        blocks.push(topology);
-    }
-    if let Some(flow) = render_runtime_flow_sequence(model) {
-        blocks.push(flow);
-    }
-
-    // Every candidate block passes the gate before it reaches `blocks` (the
-    // renderers below validate their own output), but re-gate here as the
-    // single choke point so a future renderer cannot leak an invalid fence.
-    blocks.retain(|block| is_valid_mermaid(block));
-    if blocks.is_empty() {
-        return None;
-    }
+/// note, then the LLM-composed, edge-verified topology flowchart. Returns
+/// `None` when the model is too sparse to draw, no generator is available
+/// (AI off), or nothing survived verification — the caller then simply omits
+/// the section. A returned string always ends with a trailing blank line and
+/// contains only validated fences.
+pub(crate) fn render_architecture_diagrams(
+    model: &SystemModel,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> Option<String> {
+    let evidence = architecture_diagram_evidence(model);
+    let block = compose_flowchart(generate, &evidence, "the workspace architecture topology")?;
 
     let mut section = String::new();
     section.push_str("## Architecture Diagrams\n\n");
     section.push_str(
-        "These diagrams are derived from the workspace `Cargo.toml` topology — \
-member crates, their workspace-internal dependency edges, the service \
-boundaries their feature gates pull in, and the standalone-vs-daemon runtime \
-branch. They describe structure, not per-symbol call graphs.\n\n",
+        "This diagram is composed by the model from evidence derived from the \
+workspace `Cargo.toml` topology — member crates, their workspace-internal \
+dependency edges, the service boundaries their feature gates pull in, and the \
+standalone-vs-daemon runtime branch. Every arrow is verified against that \
+evidence before the diagram is emitted; it describes structure, not \
+per-symbol call graphs.\n\n",
     );
     section.push_str(
         "Solid edges are workspace-internal crate dependencies. Dotted edges are \
@@ -70,14 +66,99 @@ cannot run without it), **degraded-ok** (required product infrastructure with \
 degraded command behavior when the service is absent), **optional** (engaged \
 only when that routing is selected), and **always** (always-on transport).\n\n",
     );
-    for block in blocks {
-        section.push_str(&block);
-        if !section.ends_with('\n') {
-            section.push('\n');
-        }
+    section.push_str(&block);
+    if !section.ends_with('\n') {
         section.push('\n');
     }
+    section.push('\n');
     Some(section)
+}
+
+/// Reduce the workspace [`SystemModel`] to the evidence graph the composer may
+/// draw from: crates (binaries as stadiums), reached service boundaries
+/// (cylinders), crate→crate dependency edges, crate→service edges labelled
+/// with their fixed dependency strength, and the standalone-vs-daemon runtime
+/// branch anchored to the ai-feature crate. Everything is a workspace fact;
+/// nothing is invented.
+pub(crate) fn architecture_diagram_evidence(model: &SystemModel) -> DiagramEvidence {
+    let mut evidence = DiagramEvidence::default();
+
+    for krate in &model.crates {
+        let shape = if krate.is_binary && !krate.is_lib {
+            // Binaries read as runnable entry points.
+            NodeShape::Stadium
+        } else {
+            NodeShape::Box
+        };
+        evidence.push_node(node_id(&krate.name), krate.name.clone(), shape);
+    }
+
+    // Service boundary nodes (only the ones the model actually reaches).
+    for service in &model.services {
+        evidence.push_node(
+            service_node_id(service.kind),
+            service.name.clone(),
+            NodeShape::Cylinder,
+        );
+    }
+
+    // Crate -> crate dependency edges.
+    for Edge { from, to } in &model.edges {
+        evidence.push_edge(node_id(from), node_id(to), None, false);
+    }
+
+    // Crate -> service edges, attributed from each boundary's `pulled_in_by`
+    // provenance so the arrow originates from the crate that pulls it in.
+    // "workspace (...)" provenance has no crate node and is left unlinked (the
+    // node still shows when another crate reaches it).
+    let crate_names: BTreeSet<&str> = model.crates.iter().map(|c| c.name.as_str()).collect();
+    for service in &model.services {
+        for provenance in &service.pulled_in_by {
+            if let Some(name) = provenance_crate(provenance, &crate_names) {
+                evidence.push_edge(
+                    node_id(name),
+                    service_node_id(service.kind),
+                    Some(service_edge_label(service.kind).to_string()),
+                    true,
+                );
+            }
+        }
+    }
+
+    // Standalone-vs-daemon runtime branch, anchored to the crate that makes
+    // the routing decision (the ai-feature consumer) so the branch joins the
+    // crate topology instead of floating as a disconnected island. When no
+    // model crate pulls the `ai` feature there is nothing real to anchor to,
+    // so the fork is omitted rather than fabricated.
+    let standalone = has_mode(model, RuntimeMode::Standalone);
+    let daemon_attached = has_mode(model, RuntimeMode::DaemonAttached);
+    let routing_crate = ai_feature_crate(model).filter(|name| crate_names.contains(name));
+    if let Some(krate) = routing_crate
+        && (standalone || daemon_attached)
+    {
+        evidence.push_node("cli", "AI routing decision", NodeShape::Box);
+        evidence.push_edge(node_id(krate), "cli", None, false);
+        if standalone {
+            evidence.push_node("standalone", "Direct to datastores / API", NodeShape::Box);
+            evidence.push_edge("cli", "standalone", Some("standalone".to_string()), false);
+        }
+        if daemon_attached {
+            evidence.push_node("daemonmode", "Delegate to Gobby daemon", NodeShape::Box);
+            evidence.push_edge("cli", "daemonmode", Some("daemon".to_string()), false);
+            // The daemon-mode leaf delegates to the daemon service boundary
+            // when the model reaches one, closing the branch into the graph.
+            if model.services.iter().any(|s| s.kind == ServiceKind::Daemon) {
+                evidence.push_edge(
+                    "daemonmode",
+                    service_node_id(ServiceKind::Daemon),
+                    None,
+                    true,
+                );
+            }
+        }
+    }
+
+    evidence
 }
 
 /// Deterministic service matrix for the architecture page: one row per service
@@ -136,189 +217,6 @@ fn service_requirement(kind: ServiceKind) -> &'static str {
     }
 }
 
-/// Topology flowchart: crates as nodes, dependency edges as arrows, services
-/// as a styled boundary subgraph, plus the standalone/daemon runtime branch.
-/// Returns `None` when there are no crates to draw (a fully-partial model).
-fn render_topology_flowchart(model: &SystemModel) -> Option<String> {
-    if model.crates.is_empty() {
-        // Nothing to draw — normal for a fully-partial model, not degradation.
-        return None;
-    }
-
-    let mut body = String::from("flowchart TD\n");
-
-    // Crate nodes, in the model's deterministic (sorted) order.
-    body.push_str("    subgraph crates [\"Workspace crates\"]\n");
-    for krate in &model.crates {
-        let shape = if krate.is_binary && !krate.is_lib {
-            // Binaries get a stadium shape to read as runnable entry points.
-            ("([\"", "\"])")
-        } else {
-            ("[\"", "\"]")
-        };
-        let _ = writeln!(
-            body,
-            "        {}{}{}{}",
-            node_id(&krate.name),
-            shape.0,
-            mermaid_label(&krate.name),
-            shape.1
-        );
-    }
-    body.push_str("    end\n");
-
-    // Service boundary nodes (only the ones the model actually reaches).
-    if !model.services.is_empty() {
-        body.push_str("    subgraph services [\"Service boundaries\"]\n");
-        for service in &model.services {
-            let _ = writeln!(
-                body,
-                "        {}[(\"{}\")]",
-                service_node_id(service.kind),
-                mermaid_label(&service.name)
-            );
-        }
-        body.push_str("    end\n");
-    }
-
-    // Crate -> crate dependency edges.
-    for Edge { from, to } in &model.edges {
-        let _ = writeln!(body, "    {} --> {}", node_id(from), node_id(to));
-    }
-
-    // Crate -> service edges, attributed from each boundary's `pulled_in_by`
-    // provenance so the arrow originates from the crate that pulls it in. The
-    // always-on boundaries (daemon_url resolver, ghook inbox) that name a
-    // crate are linked too; "workspace (...)" provenance has no crate node and
-    // is left unlinked (the node still shows in the services subgraph).
-    let crate_names: BTreeSet<&str> = model.crates.iter().map(|c| c.name.as_str()).collect();
-    let mut service_edges: BTreeSet<(String, ServiceKind)> = BTreeSet::new();
-    for service in &model.services {
-        for provenance in &service.pulled_in_by {
-            if let Some(name) = provenance_crate(provenance, &crate_names) {
-                service_edges.insert((name.to_string(), service.kind));
-            }
-        }
-    }
-    for (krate, kind) in &service_edges {
-        let _ = writeln!(
-            body,
-            "    {} -.->|\"{}\"| {}",
-            node_id(krate),
-            service_edge_label(*kind),
-            service_node_id(*kind)
-        );
-    }
-
-    // Standalone-vs-daemon runtime branch. Both modes are always present in
-    // the model; draw the decision as a small annotated branch so the page
-    // shows the AI-routing fork without inventing components.
-    if has_mode(model, RuntimeMode::Standalone) || has_mode(model, RuntimeMode::DaemonAttached) {
-        body.push_str("    subgraph runtime [\"Runtime routing\"]\n");
-        body.push_str("        cli{{\"AI routing decision\"}}\n");
-        if has_mode(model, RuntimeMode::Standalone) {
-            body.push_str(
-                "        cli -->|standalone| standalone[\"Direct to datastores / API\"]\n",
-            );
-        }
-        if has_mode(model, RuntimeMode::DaemonAttached) {
-            body.push_str("        cli -->|daemon| daemonmode[\"Delegate to Gobby daemon\"]\n");
-        }
-        body.push_str("    end\n");
-    }
-
-    // Boundary styling so services read distinctly from crates.
-    body.push_str("    classDef service fill:#eef,stroke:#557,stroke-width:1px;\n");
-    for service in &model.services {
-        let _ = writeln!(body, "    class {} service;", service_node_id(service.kind));
-    }
-
-    let block = fence(&body);
-    is_valid_mermaid(&block).then_some(block)
-}
-
-/// Runtime-flow sequence diagram. Picks the most expressive flow the model can
-/// actually support:
-///
-/// * If the `ai` feature pulls in the daemon/embedding boundaries, render the
-///   AI-generation routing flow (CLI → gcore → daemon|embedding API).
-/// * Else if a ghook inbox boundary is present, render the enqueue-first hook
-///   transport (ghook → inbox → daemon).
-///
-/// Returns `None` when the model expresses neither flow, so no sequence is
-/// fabricated.
-fn render_runtime_flow_sequence(model: &SystemModel) -> Option<String> {
-    if let Some(block) = render_ai_generation_flow(model) {
-        return Some(block);
-    }
-    render_ghook_enqueue_flow(model)
-}
-
-/// AI-generation routing sequence, seeded from the `ai`-feature service
-/// boundaries (EmbeddingApi + Daemon). Only drawn when those boundaries exist.
-fn render_ai_generation_flow(model: &SystemModel) -> Option<String> {
-    let has_embedding = model
-        .services
-        .iter()
-        .any(|s| s.kind == ServiceKind::EmbeddingApi);
-    let has_daemon = model.services.iter().any(|s| s.kind == ServiceKind::Daemon);
-    if !has_embedding || !has_daemon {
-        return None;
-    }
-
-    // Name a concrete AI-feature consumer crate as the actor, falling back to
-    // a generic "CLI" only if the model somehow has no such crate.
-    let actor = ai_feature_crate(model).unwrap_or("CLI");
-
-    let mut body = String::from("sequenceDiagram\n");
-    let _ = writeln!(body, "    participant CLI as {}", mermaid_label(actor));
-    body.push_str("    participant Core as gobby-core (ai_context)\n");
-    body.push_str("    participant Daemon as Gobby daemon\n");
-    body.push_str("    participant API as Embedding API\n");
-    body.push_str("    CLI->>Core: resolve AiContext + routing decision\n");
-    body.push_str("    alt daemon-attached\n");
-    body.push_str("        Core->>Daemon: delegate generation\n");
-    body.push_str("        Daemon-->>Core: completion\n");
-    body.push_str("    else standalone (direct)\n");
-    body.push_str("        Core->>API: embed / complete (OpenAI-compatible)\n");
-    body.push_str("        API-->>Core: vectors / completion\n");
-    body.push_str("    end\n");
-    body.push_str("    Core-->>CLI: grounded result\n");
-
-    let block = fence(&body);
-    is_valid_mermaid(&block).then_some(block)
-}
-
-/// Enqueue-first hook transport sequence, seeded from the always-present
-/// `GhookInbox` boundary (ghook → inbox → daemon). Drawn only when that
-/// boundary is present in the model.
-fn render_ghook_enqueue_flow(model: &SystemModel) -> Option<String> {
-    let has_inbox = model
-        .services
-        .iter()
-        .any(|s| s.kind == ServiceKind::GhookInbox);
-    if !has_inbox {
-        return None;
-    }
-    let has_daemon = model.services.iter().any(|s| s.kind == ServiceKind::Daemon);
-
-    let mut body = String::from("sequenceDiagram\n");
-    body.push_str("    participant Hook as ghook\n");
-    body.push_str("    participant Inbox as ~/.gobby/hooks/inbox\n");
-    if has_daemon {
-        body.push_str("    participant Daemon as Gobby daemon\n");
-    }
-    body.push_str("    Hook->>Inbox: enqueue hook envelope\n");
-    body.push_str("    Inbox-->>Hook: durable (survives daemon down)\n");
-    if has_daemon {
-        body.push_str("    Hook->>Daemon: best-effort POST\n");
-        body.push_str("    Daemon-->>Hook: ack (optional)\n");
-    }
-
-    let block = fence(&body);
-    is_valid_mermaid(&block).then_some(block)
-}
-
 /// True when `mode` is one of the model's runtime modes.
 fn has_mode(model: &SystemModel, mode: RuntimeMode) -> bool {
     model.runtime_modes.contains(&mode)
@@ -374,7 +272,7 @@ fn service_node_id(kind: ServiceKind) -> &'static str {
 }
 
 /// Short, fixed edge label classifying how the workspace depends on a service
-/// boundary. Stitched onto the deterministic crate→service edges so the diagram
+/// boundary. Stitched onto the crate→service evidence edges so the diagram
 /// reads as an evaluator's dependency map, not just a wiring chart. The wording
 /// is hard-coded (never LLM-drawn): the PostgreSQL hub is `required`;
 /// FalkorDB/Qdrant/the embedding API are `degraded-ok` — required product
@@ -393,267 +291,12 @@ fn service_edge_label(kind: ServiceKind) -> &'static str {
     }
 }
 
-/// Escape a label for use inside a Mermaid `["..."]` node so brackets, quotes,
-/// and pipes cannot break the surrounding syntax.
-fn mermaid_label(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('"', "&quot;")
-        .replace('[', "&#91;")
-        .replace(']', "&#93;")
-        .replace('(', "&#40;")
-        .replace(')', "&#41;")
-        .replace('{', "&#123;")
-        .replace('}', "&#125;")
-        .replace('|', "&#124;")
-}
-
-/// Wrap a diagram body in a ```` ```mermaid ```` fence with a trailing newline.
-fn fence(body: &str) -> String {
-    let trimmed = body.trim_end_matches('\n');
-    format!("```mermaid\n{trimmed}\n```\n")
-}
-
-/// Hand-written well-formedness gate for a single ```` ```mermaid ```` block.
-///
-/// A block passes only when ALL of these hold:
-///
-/// * It opens with a ```` ```mermaid ```` fence line and closes with a ```` ``` ````
-///   fence line (the fence is balanced and properly closed).
-/// * The first non-empty line inside the fence is a recognised diagram header
-///   ([`VALID_HEADERS`]).
-/// * There is at least one content line after the header (the diagram is not
-///   empty).
-/// * No interior line opens another fence (no nested/un-terminated fences).
-/// * Bracket/paren/brace delimiters across the body are balanced, so no node
-///   shape is left half-open.
-///
-/// This is intentionally conservative: it rejects anything it cannot prove
-/// well-formed rather than risk emitting a fence a Markdown/Mermaid renderer
-/// would choke on.
-pub(crate) fn is_valid_mermaid(block: &str) -> bool {
-    let lines: Vec<&str> = block.lines().collect();
-    if lines.len() < 3 {
-        // Need at minimum: opening fence, a header, a closing fence.
-        return false;
-    }
-    if lines[0].trim() != "```mermaid" {
-        return false;
-    }
-    // Exactly one closing fence, and it is the last non-empty line.
-    let Some(close_idx) = lines.iter().rposition(|l| l.trim() == "```") else {
-        return false;
-    };
-    if close_idx == 0 {
-        return false;
-    }
-    // No stray fence markers between the open and the close.
-    if lines[1..close_idx]
-        .iter()
-        .any(|l| l.trim_start().starts_with("```"))
-    {
-        return false;
-    }
-    // Anything after the closing fence must be blank.
-    if lines[close_idx + 1..].iter().any(|l| !l.trim().is_empty()) {
-        return false;
-    }
-
-    let interior = &lines[1..close_idx];
-    let mut content = interior.iter().filter(|l| !l.trim().is_empty());
-    let Some(header) = content.next() else {
-        return false;
-    };
-    let Some(header_token) = header.split_whitespace().next() else {
-        return false;
-    };
-    if !VALID_HEADERS.contains(&header_token) {
-        return false;
-    }
-    // At least one content line beyond the header.
-    if content.next().is_none() {
-        return false;
-    }
-
-    // Delimiters across the interior must balance (cheap structural check that
-    // catches a half-open node like `a["b` or an unterminated subgraph node).
-    balanced_delimiters(interior)
-}
-
-/// True when `(`/`)`, `[`/`]`, and `{`/`}` are balanced across the lines, with
-/// quoted spans skipped so punctuation inside a `"..."` label does not count.
-fn balanced_delimiters(lines: &[&str]) -> bool {
-    let (mut paren, mut bracket, mut brace) = (0i32, 0i32, 0i32);
-    let mut in_quote = false;
-    for line in lines {
-        for ch in line.chars() {
-            if ch == '"' {
-                in_quote = !in_quote;
-                continue;
-            }
-            if in_quote {
-                continue;
-            }
-            match ch {
-                '(' => paren += 1,
-                ')' => paren -= 1,
-                '[' => bracket += 1,
-                ']' => bracket -= 1,
-                '{' => brace += 1,
-                '}' => brace -= 1,
-                _ => {}
-            }
-            if paren < 0 || bracket < 0 || brace < 0 {
-                return false;
-            }
-        }
-        // A label quote never spans lines in our generated diagrams.
-        if in_quote {
-            return false;
-        }
-    }
-    paren == 0 && bracket == 0 && brace == 0
-}
-
-/// One stage of a curated page's conceptual-behavior flow. `id` is the stable
-/// Mermaid node id, `label` is the subsystem name taken from the page's grounded
-/// evidence, and `role` is a short behavior phrase pulled from that subsystem's
-/// module/file summary (`None` when no summary was indexed).
-pub(crate) struct ConceptualFlowStep {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) role: Option<String>,
-}
-
-/// Render the *conceptual-flow* section for a curated concept/narrative page: a
-/// labelled `flowchart` chaining the page's member subsystems in behavior order.
-///
-/// This is the curated counterpart to [`render_architecture_diagrams`] — the
-/// concept/narrative-level "missing piece" of the wiki's C4 story. Where the
-/// architecture diagrams are seeded from the workspace `Cargo.toml` topology,
-/// this flow is grounded strictly in the page's own member-module/file
-/// summaries: every node is a real member and no per-symbol call/import edges
-/// are drawn, so it is a behavior sketch rather than the code-graph dump #884
-/// removed. A flow with fewer than two stages is omitted (`None`) — normal, not
-/// degradation, exactly like a too-sparse architecture model.
-///
-/// `ordered_from_docs` records whether the stage order came from a documented
-/// data-flow chain (so the caption stays honest about provenance); `degraded`
-/// is set when a stage is missing its grounded role phrase.
-pub(crate) fn render_conceptual_flow(
-    steps: &[ConceptualFlowStep],
-    ordered_from_docs: bool,
-    degraded: bool,
-) -> Option<String> {
-    if steps.len() < 2 {
-        return None;
-    }
-
-    let mut body = String::from("flowchart LR\n");
-    for step in steps {
-        let label = match step.role.as_deref() {
-            Some(role) if !role.is_empty() => format!("{} — {role}", step.label),
-            _ => step.label.clone(),
-        };
-        let _ = writeln!(body, "    {}[\"{}\"]", step.id, mermaid_label(&label));
-    }
-    for pair in steps.windows(2) {
-        let _ = writeln!(body, "    {} --> {}", pair[0].id, pair[1].id);
-    }
-
-    let block = fence(&body);
-    if !is_valid_mermaid(&block) {
-        // A label that somehow unbalances the fence is dropped rather than
-        // emitted broken — same valid-Mermaid contract as the architecture
-        // diagrams.
-        return None;
-    }
-
-    let mut section = String::from("## Conceptual flow\n\n");
-    let provenance = if ordered_from_docs {
-        "ordered by the data flow documented in the sources"
-    } else {
-        "in the order these subsystems are grouped on this page"
-    };
-    let _ = write!(
-        section,
-        "> _Conceptual flow_ — how this page's subsystems behave together, \
-{provenance}. Grounded in the member module/file summaries below; it is a \
-behavior sketch, not a per-symbol call or import graph.\n\n"
-    );
-    if degraded {
-        section.push_str(
-            "> _Degraded:_ one or more subsystems had no indexed summary, so it \
-appears by name only.\n\n",
-        );
-    }
-    section.push_str(&block);
-    if !section.ends_with('\n') {
-        section.push('\n');
-    }
-    section.push('\n');
-    Some(section)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::types::PromptTier;
     use super::*;
     use crate::commands::codewiki::system_model::{Crate, ServiceBoundary};
     use std::collections::BTreeMap;
-
-    fn step(id: &str, label: &str, role: Option<&str>) -> ConceptualFlowStep {
-        ConceptualFlowStep {
-            id: id.to_string(),
-            label: label.to_string(),
-            role: role.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn conceptual_flow_chains_members_with_roles_caption_and_degradation() {
-        let steps = vec![
-            step("s0", "walker", Some("discovers files")),
-            step("s1", "parser", Some("extracts the AST")),
-            step("s2", "indexer", None),
-        ];
-        let section = render_conceptual_flow(&steps, true, true).expect("flow section");
-
-        assert!(section.contains("## Conceptual flow"), "{section}");
-        assert!(section.contains("```mermaid"), "{section}");
-        assert!(section.contains("flowchart LR"), "{section}");
-        // Behavior-level, grounded, and explicitly not a code graph.
-        assert!(
-            section.contains("not a per-symbol call or import graph"),
-            "{section}"
-        );
-        // Role-bearing node carries its grounded behavior phrase; role-less node
-        // shows by name only and trips the degradation note.
-        assert!(
-            section.contains("s0[\"walker — discovers files\"]"),
-            "{section}"
-        );
-        assert!(section.contains("s2[\"indexer\"]"), "{section}");
-        assert!(section.contains("_Degraded:_"), "{section}");
-        // Edges chain the stages in order; documented-order provenance shown.
-        assert!(section.contains("s0 --> s1"), "{section}");
-        assert!(section.contains("s1 --> s2"), "{section}");
-        assert!(
-            section.contains("ordered by the data flow documented"),
-            "{section}"
-        );
-        // The emitted fence passes the same validity gate as every other block.
-        let fence = section
-            .split_once("```mermaid")
-            .map(|(_, rest)| format!("```mermaid{rest}"))
-            .map(|block| block.trim_end().to_string())
-            .expect("mermaid fence present");
-        assert!(is_valid_mermaid(&fence), "{fence}");
-    }
-
-    #[test]
-    fn conceptual_flow_omitted_below_two_stages() {
-        let steps = vec![step("s0", "only", None)];
-        assert!(render_conceptual_flow(&steps, false, false).is_none());
-    }
 
     /// A realistic three-binary + foundation model resembling the real
     /// workspace: gobby-code/gobby-wiki/gobby-hooks all depend on gobby-core,
@@ -725,80 +368,170 @@ mod tests {
         }
     }
 
+    /// Scripted composer that draws every supplied evidence edge — the
+    /// obedient-model baseline that exercises the full verify/normalize
+    /// pipeline.
+    fn draw_all_edges(evidence: &DiagramEvidence) -> String {
+        let mut body = String::from("flowchart TD\n");
+        for edge in &evidence.edges {
+            body.push_str(&format!("    {} --> {}\n", edge.from, edge.to));
+        }
+        body
+    }
+
+    fn compose_section(model: &SystemModel, responses: Vec<String>) -> Option<String> {
+        let mut responses = responses;
+        let mut generator = move |_prompt: &str, _system: &str, _tier: PromptTier| {
+            (!responses.is_empty()).then(|| responses.remove(0))
+        };
+        let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+        render_architecture_diagrams(model, &mut generate)
+    }
+
     #[test]
-    fn topology_diagram_contains_crate_nodes_and_dependency_edges() {
+    fn evidence_contains_crate_nodes_dependency_and_service_edges() {
         let model = sample_model();
-        let block = render_topology_flowchart(&model).expect("topology rendered for full model");
+        let evidence = architecture_diagram_evidence(&model);
 
-        // Well-formed per the validator.
-        assert!(is_valid_mermaid(&block), "topology must be valid:\n{block}");
-        assert!(block.starts_with("```mermaid\n"));
-        assert!(block.trim_end().ends_with("```"));
-
-        // Recognised flowchart header.
-        assert!(block.contains("flowchart TD"));
-
-        // Every crate name appears as a node label.
+        let ids: Vec<&str> = evidence.nodes.iter().map(|n| n.id.as_str()).collect();
         for name in ["gobby-code", "gobby-core", "gobby-wiki", "gobby-hooks"] {
             assert!(
-                block.contains(name),
-                "missing crate node `{name}`:\n{block}"
+                ids.contains(&node_id(name).as_str()),
+                "missing crate node {name}"
             );
         }
+        assert!(ids.contains(&"svc_postgres"));
 
-        // Dependency edge gobby-code -> gobby-core is drawn (by sanitized id).
-        let from = node_id("gobby-code");
-        let to = node_id("gobby-core");
+        // Dependency edge gobby-code -> gobby-core is evidenced, solid.
+        assert!(evidence.edges.iter().any(|edge| {
+            edge.from == node_id("gobby-code") && edge.to == node_id("gobby-core") && !edge.dotted
+        }));
+        // Service edges carry the fixed dependency-strength labels, dotted.
+        assert!(evidence.edges.iter().any(|edge| {
+            edge.from == node_id("gobby-code")
+                && edge.to == "svc_postgres"
+                && edge.dotted
+                && edge.label.as_deref() == Some("required")
+        }));
+        assert!(evidence.edges.iter().any(|edge| {
+            edge.to == "svc_embedding" && edge.label.as_deref() == Some("degraded-ok")
+        }));
+        // Runtime branch is anchored to the ai-feature crate and closes into
+        // the daemon boundary.
         assert!(
-            block.contains(&format!("{from} --> {to}")),
-            "missing edge gobby-code -> gobby-core:\n{block}"
-        );
-
-        // Service boundary nodes are present and styled distinctly.
-        assert!(block.contains("PostgreSQL hub"));
-        assert!(block.contains("classDef service"));
-
-        // The standalone-vs-daemon runtime branch is represented.
-        assert!(block.contains("standalone"));
-        assert!(block.contains("daemon"));
-    }
-
-    #[test]
-    fn service_edges_carry_fixed_dependency_strength_labels() {
-        let model = sample_model();
-        let block = render_topology_flowchart(&model).expect("topology rendered for full model");
-        assert!(
-            is_valid_mermaid(&block),
-            "labelled topology must stay valid:\n{block}"
-        );
-
-        let code = node_id("gobby-code");
-        // The PostgreSQL hub edge is hard-`required`; the embedding API edge is
-        // `degraded-ok`. Both labels are fixed, never LLM-drawn.
-        assert!(
-            block.contains(&format!(
-                "{code} -.->|\"required\"| {}",
-                service_node_id(ServiceKind::Postgres)
-            )),
-            "postgres edge must be labelled required:\n{block}"
+            evidence
+                .edges
+                .iter()
+                .any(|edge| edge.from == node_id("gobby-code") && edge.to == "cli")
         );
         assert!(
-            block.contains(&format!(
-                "{code} -.->|\"degraded-ok\"| {}",
-                service_node_id(ServiceKind::EmbeddingApi)
-            )),
-            "embedding edge must be labelled degraded-ok:\n{block}"
+            evidence
+                .edges
+                .iter()
+                .any(|edge| edge.from == "daemonmode" && edge.to == "svc_daemon")
         );
     }
 
     #[test]
-    fn diagram_section_caption_explains_required_but_degraded_framing() {
+    fn runtime_routing_omitted_without_an_ai_feature_crate() {
+        // With no crate pulling the `ai` feature there is nothing real to
+        // anchor the routing fork to, so it is not evidenced at all.
+        let mut model = sample_model();
+        model.features_by_crate.clear();
+        let evidence = architecture_diagram_evidence(&model);
+        assert!(evidence.nodes.iter().all(|node| node.id != "cli"));
+        assert!(evidence.edges.iter().all(|edge| edge.to != "cli"));
+    }
+
+    #[test]
+    fn composed_section_carries_caption_and_verified_topology() {
         let model = sample_model();
-        let section = render_architecture_diagrams(&model).expect("section for full model");
+        let evidence = architecture_diagram_evidence(&model);
+        let section =
+            compose_section(&model, vec![draw_all_edges(&evidence)]).expect("section rendered");
+
+        assert!(section.contains("## Architecture Diagrams"));
+        assert!(section.contains("composed by the model"));
         assert!(
             section.contains("required product infrastructure with degraded command behavior"),
             "caption must carry the required-but-degraded framing:\n{section}"
         );
+        // Crate labels and the canonical service edge styling survive
+        // normalization.
+        assert!(section.contains("gobby-code"));
+        assert!(section.contains("PostgreSQL hub"));
+        assert!(
+            section.contains(&format!(
+                "{} -.->|\"required\"| svc_postgres",
+                node_id("gobby-code")
+            )),
+            "postgres edge must be dotted and labelled required:\n{section}"
+        );
+        // Exactly one balanced fence.
+        assert_eq!(section.matches("```mermaid").count(), 1);
+        assert_eq!(section.matches("```").count(), 2);
+    }
+
+    #[test]
+    fn unevidenced_arrow_never_reaches_the_page() {
+        let model = sample_model();
+        // The model invents a reversed dependency; edge verification must
+        // reject it while keeping the evidenced remainder.
+        let mut drawing = draw_all_edges(&architecture_diagram_evidence(&model));
+        drawing.push_str(&format!(
+            "    {} --> {}\n",
+            node_id("gobby-core"),
+            node_id("gobby-code")
+        ));
+        let section =
+            compose_section(&model, vec![drawing.clone(), drawing]).expect("section rendered");
+        assert!(
+            !section.contains(&format!(
+                "{} --> {}",
+                node_id("gobby-core"),
+                node_id("gobby-code")
+            )),
+            "reversed dependency must be rejected:\n{section}"
+        );
+    }
+
+    #[test]
+    fn topology_output_has_no_disconnected_islands() {
+        // An isolated crate (no dependency edges, no service pulls) is real
+        // evidence but has no evidenced arrows; whatever the model draws, the
+        // emitted diagram never contains an island.
+        let mut model = sample_model();
+        model.crates.push(Crate {
+            name: "gobby-floater".to_string(),
+            path: "crates/floater".to_string(),
+            is_binary: false,
+            is_lib: true,
+        });
+        let evidence = architecture_diagram_evidence(&model);
+        let section =
+            compose_section(&model, vec![draw_all_edges(&evidence)]).expect("section rendered");
+        assert!(
+            !section.contains("gobby-floater"),
+            "edge-less crate must not appear as an island:\n{section}"
+        );
+    }
+
+    #[test]
+    fn no_generator_or_empty_model_draws_nothing_but_is_not_an_error() {
+        let model = sample_model();
+        let mut generate: Option<&mut TextGenerator<'_>> = None;
+        assert!(render_architecture_diagrams(&model, &mut generate).is_none());
+
+        let empty = SystemModel {
+            crates: Vec::new(),
+            edges: Vec::new(),
+            services: Vec::new(),
+            runtime_modes: vec![RuntimeMode::Standalone, RuntimeMode::DaemonAttached],
+            features_by_crate: BTreeMap::new(),
+            notes: vec!["cannot read workspace manifest".to_string()],
+        };
+        assert!(architecture_diagram_evidence(&empty).is_sparse());
+        assert!(compose_section(&empty, vec!["flowchart TD\n".to_string()]).is_none());
     }
 
     #[test]
@@ -824,121 +557,83 @@ mod tests {
         assert!(render_service_matrix(&model).is_none());
     }
 
+    /// RC4 gate (#17499): every Mermaid block the composition pipeline can
+    /// emit must pass the REAL Mermaid parser, not just the structural
+    /// `is_valid_mermaid` check. Runs `npx -y @mermaid-js/mermaid-cli` over
+    /// one markdown document holding representative composed blocks; mmdc
+    /// exits non-zero if any block fails to parse. Skips (with a note) only
+    /// when the CLI itself cannot be resolved, so offline environments do not
+    /// fail spuriously.
     #[test]
-    fn runtime_flow_sequence_is_valid_and_model_seeded() {
+    fn emitted_mermaid_blocks_pass_real_mermaid_parser() {
+        let probe = std::process::Command::new("npx")
+            .args(["-y", "@mermaid-js/mermaid-cli", "--version"])
+            .output();
+        match probe {
+            Ok(out) if out.status.success() => {}
+            _ => {
+                eprintln!("skipping: npx / @mermaid-js/mermaid-cli unavailable");
+                return;
+            }
+        }
+
+        let mut doc = String::new();
+
+        // Architecture section: the full evidence graph drawn by an obedient
+        // scripted model, normalized by the pipeline (all shapes, dotted
+        // labelled service edges, runtime branch).
         let model = sample_model();
-        let block = render_runtime_flow_sequence(&model).expect("ai flow for ai-feature model");
-        assert!(is_valid_mermaid(&block), "sequence must be valid:\n{block}");
-        assert!(block.contains("sequenceDiagram"));
-        // The AI-feature crate is the named actor.
-        assert!(block.contains("gobby-code"));
-        assert!(block.contains("Gobby daemon"));
-        assert!(block.contains("Embedding API"));
-    }
+        let evidence = architecture_diagram_evidence(&model);
+        let section =
+            compose_section(&model, vec![draw_all_edges(&evidence)]).expect("section rendered");
+        doc.push_str(&section);
 
-    #[test]
-    fn ghook_flow_used_when_no_ai_boundary() {
-        // A model with only the always-on inbox + daemon (no ai feature) falls
-        // back to the enqueue-first hook transport sequence.
-        let mut model = sample_model();
-        model.features_by_crate.clear();
-        model
-            .services
-            .retain(|s| s.kind == ServiceKind::GhookInbox || s.kind == ServiceKind::Daemon);
-        let block = render_runtime_flow_sequence(&model).expect("ghook flow present");
-        assert!(is_valid_mermaid(&block), "{block}");
-        assert!(block.contains("ghook"));
-        assert!(block.contains("inbox"));
-    }
-
-    #[test]
-    fn empty_model_draws_nothing_but_is_not_an_error() {
-        let model = SystemModel {
-            crates: Vec::new(),
-            edges: Vec::new(),
-            services: Vec::new(),
-            runtime_modes: vec![RuntimeMode::Standalone, RuntimeMode::DaemonAttached],
-            features_by_crate: BTreeMap::new(),
-            notes: vec!["cannot read workspace manifest".to_string()],
+        // A conceptual-flow style evidence graph with every escaped character
+        // class in its labels, composed through the same pipeline.
+        let mut nasty = DiagramEvidence::default();
+        nasty.push_node(
+            "s0",
+            "walker (fs) — discovers [candidate] files",
+            NodeShape::Box,
+        );
+        nasty.push_node(
+            "s1",
+            "parser {ts} — extracts the |AST| via \"tree-sitter\"",
+            NodeShape::Box,
+        );
+        nasty.push_node(
+            "s2",
+            "indexer #1 — writes hub rows \\ chunks",
+            NodeShape::Box,
+        );
+        nasty.push_edge("s0", "s1", None, false);
+        nasty.push_edge("s1", "s2", Some("hands off".to_string()), false);
+        let mut responses = vec!["flowchart LR\n    s0 --> s1\n    s1 --> s2\n".to_string()];
+        let mut generator = move |_prompt: &str, _system: &str, _tier: PromptTier| {
+            (!responses.is_empty()).then(|| responses.remove(0))
         };
-        // Topology omitted (no crates), runtime flow omitted (no boundaries),
-        // and the whole section is therefore absent — without any panic.
-        assert!(render_topology_flowchart(&model).is_none());
-        assert!(render_runtime_flow_sequence(&model).is_none());
-        assert!(render_architecture_diagrams(&model).is_none());
-    }
+        let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+        let flow =
+            compose_flowchart(&mut generate, &nasty, "escaped-label flow").expect("nasty flow");
+        doc.push('\n');
+        doc.push_str(&flow);
 
-    #[test]
-    fn section_render_includes_prose_and_only_valid_fences() {
-        let model = sample_model();
-        let section = render_architecture_diagrams(&model).expect("section rendered");
-        assert!(section.contains("## Architecture Diagrams"));
-        assert!(section.contains("derived from the workspace"));
-        // Every mermaid fence in the section is balanced and individually valid.
-        let fences: Vec<&str> = section
-            .match_indices("```mermaid")
-            .map(|(_, s)| s)
-            .collect();
-        assert!(fences.len() >= 2, "expected topology + flow fences");
-        // Count of opening fences equals count of closing fences.
-        let opens = section.matches("```mermaid").count();
-        let total_fences = section.matches("```").count();
-        assert_eq!(total_fences, opens * 2, "every fence is closed:\n{section}");
-    }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("emitted.md");
+        let output = dir.path().join("emitted.out.md");
+        std::fs::write(&input, &doc).expect("write emitted blocks");
 
-    #[test]
-    fn validator_accepts_minimal_flowchart() {
-        let block = "```mermaid\nflowchart TD\n    a --> b\n```\n";
-        assert!(is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_accepts_sequence_diagram() {
-        let block = "```mermaid\nsequenceDiagram\n    A->>B: msg\n    B-->>A: reply\n```\n";
-        assert!(is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_unrecognized_header() {
-        let block = "```mermaid\nbananas\n    a --> b\n```\n";
-        assert!(!is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_valid_header_prefix() {
-        let block = "```mermaid\nflowcharting TD\n    a --> b\n```\n";
-        assert!(!is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_unclosed_fence() {
-        let block = "```mermaid\nflowchart TD\n    a --> b\n";
-        assert!(!is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_empty_diagram() {
-        // Header but no content line.
-        let block = "```mermaid\nflowchart TD\n```\n";
-        assert!(!is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_unbalanced_node_shape() {
-        // `a["b` leaves an open bracket — must be rejected.
-        let block = "```mermaid\nflowchart TD\n    a[\"b --> c\n```\n";
-        assert!(!is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_nested_fence() {
-        let block = "```mermaid\nflowchart TD\n```mermaid\n    a --> b\n```\n";
-        assert!(!is_valid_mermaid(block));
-    }
-
-    #[test]
-    fn validator_rejects_content_after_close() {
-        let block = "```mermaid\nflowchart TD\n    a --> b\n```\nstray text\n";
-        assert!(!is_valid_mermaid(block));
+        let run = std::process::Command::new("npx")
+            .args(["-y", "@mermaid-js/mermaid-cli", "-i"])
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .expect("run mmdc");
+        assert!(
+            run.status.success(),
+            "mmdc rejected an emitted block:\n--- stderr ---\n{}\n--- blocks ---\n{doc}",
+            String::from_utf8_lossy(&run.stderr)
+        );
     }
 }

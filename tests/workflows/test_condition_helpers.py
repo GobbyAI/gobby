@@ -637,3 +637,37 @@ class TestTouchesClaudeMemoryPath:
         }
 
         assert touches_claude_memory_path(event_data, {}) is False
+
+    def test_matches_user_level_auto_memory(self) -> None:
+        tool_input = {
+            "file_path": "/Users/josh/.claude/projects/-Users-josh-Projects-gobby/memory/MEMORY.md",
+        }
+
+        assert touches_claude_memory_path({}, tool_input) is True
+
+    def test_matches_user_level_auto_memory_directory(self) -> None:
+        tool_input = {"path": "/Users/josh/.claude/projects/-Users-josh-Projects-gobby/memory"}
+
+        assert touches_claude_memory_path({}, tool_input) is True
+
+    def test_skips_repo_memory_source_inside_claude_worktree(self) -> None:
+        # Regression (#17585): a repo checked out under .claude/worktrees/
+        # contains both ".claude/" and "src/gobby/memory/" in one path.
+        tool_input = {
+            "file_path": (
+                "/Users/josh/Projects/gobby/.claude/worktrees/task-17495"
+                "/src/gobby/memory/dream/truth_digest.py"
+            ),
+        }
+
+        assert touches_claude_memory_path({}, tool_input) is False
+
+    def test_skips_session_transcript_beside_auto_memory(self) -> None:
+        tool_input = {
+            "file_path": (
+                "/Users/josh/.claude/projects/-Users-josh-Projects-gobby"
+                "/6426e431-97f9-4c78-8adc-81f648ce95ad.jsonl"
+            ),
+        }
+
+        assert touches_claude_memory_path({}, tool_input) is False

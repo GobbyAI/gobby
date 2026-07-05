@@ -137,7 +137,19 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
         ("ingest_url", "ingest-url", lambda: gateway.ingest_url(["https://example.com"])),
         ("collect", "collect", lambda: gateway.collect("inbox")),
-        ("compile", "compile", lambda: gateway.compile("/tmp/out.md")),
+        (
+            "compile",
+            "compile",
+            lambda: gateway.compile(
+                "Ownership Story",
+                kind="topic",
+                sources=["src-1"],
+                outline=["Intro"],
+                target="/tmp/out.md",
+                write_intent=True,
+                ai="direct",
+            ),
+        ),
         ("audit", "audit", gateway.audit),
         ("trust", "trust", gateway.trust),
         ("health", "health", gateway.health),
@@ -181,6 +193,16 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--token-budget" in _observed_flags(argv)
         if cli_name == "ask":
             assert {"--llm", "--ai", "--require-ai", "--token-budget"} <= _observed_flags(argv)
+        if cli_name == "compile":
+            assert {
+                "--kind",
+                "--source",
+                "--outline",
+                "--target",
+                "--write-intent",
+                "--ai",
+            } <= _observed_flags(argv)
+            assert argv[2] == "Ownership Story"
         if cli_name == "health":
             assert "--project" not in argv
         else:
@@ -307,7 +329,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
-    assert contract["contract_version"] == 7
+    assert contract["contract_version"] == 10
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )

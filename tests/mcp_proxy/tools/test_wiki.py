@@ -133,8 +133,31 @@ class FakeGateway:
         }
         return {"ok": True, "command": "ingest_url", "payload": payload, "stderr": "warn"}
 
-    async def compile(self, output: str | Path | None = None) -> dict[str, Any]:
-        self.calls.append(("compile", str(output) if output is not None else None))
+    async def compile(
+        self,
+        topic: str | None = None,
+        *,
+        kind: str | None = None,
+        sources: list[str] | None = None,
+        outline: list[str] | None = None,
+        target: str | Path | None = None,
+        write_intent: bool = False,
+        ai: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "compile",
+                {
+                    "topic": topic,
+                    "kind": kind,
+                    "sources": sources,
+                    "outline": outline,
+                    "target": str(target) if target is not None else None,
+                    "write_intent": write_intent,
+                    "ai": ai,
+                },
+            )
+        )
         return self._result("compile", {"command": "compile", "changed_paths": ["wiki/a.md"]})
 
     async def audit(self) -> dict[str, Any]:
@@ -280,6 +303,21 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     remove_schema = _schema("wiki_remove_source")
     assert remove_schema["required"] == ["id"]
     assert {"dry_run", "yes", "keep_asset"} <= set(remove_schema["properties"])
+
+    compile_schema = _schema("wiki_compile")
+    assert {
+        "compile_topic",
+        "kind",
+        "sources",
+        "outline",
+        "target",
+        "write_intent",
+        "ai",
+        "project",
+        "topic",
+    } <= set(compile_schema["properties"])
+    assert "output" not in compile_schema["properties"]
+    assert compile_schema["required"] == []
 
     trust_schema = _schema("wiki_trust")
     assert {"project", "topic"} <= set(trust_schema["properties"])
@@ -530,7 +568,7 @@ async def test_write_tools_delegate_to_coordinator() -> None:
     attach = await registry.call("wiki_attach", {"path": "/tmp/a.md"})
     ingest = await registry.call("wiki_ingest", {"path": "/tmp/b.md"})
     url_ingest = await registry.call("wiki_ingest", {"urls": ["https://example.test/a"]})
-    compile_result = await registry.call("wiki_compile", {"output": "/tmp/wiki.md"})
+    compile_result = await registry.call("wiki_compile", {"target": "/tmp/wiki.md"})
     audit = await registry.call("wiki_audit", {})
     removed = await registry.call("wiki_remove_source", {"id": "src-1", "yes": True})
 
@@ -556,3 +594,55 @@ async def test_write_tools_delegate_to_coordinator() -> None:
         "remove_source",
     ]
     assert all(gateway.index_calls == 0 for gateway in FakeGateway.instances)
+
+
+@pytest.mark.asyncio
+async def test_wiki_compile_passes_full_param_surface() -> None:
+    registry = _registry()
+
+    result = await registry.call(
+        "wiki_compile",
+        {
+            "compile_topic": "Hooks Overview",
+            "kind": "Topic",
+            "sources": ["src-1", "src-2"],
+            "outline": ["Intro"],
+            "target": "knowledge/topics/hooks.md",
+            "write_intent": True,
+            "ai": "direct",
+            "topic": "docs",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["scope"] == {"identity": "topic:docs", "project": None, "topic": "docs"}
+    assert FakeGateway.instances[-1].calls == [
+        (
+            "compile",
+            {
+                "topic": "Hooks Overview",
+                "kind": "topic",
+                "sources": ["src-1", "src-2"],
+                "outline": ["Intro"],
+                "target": "knowledge/topics/hooks.md",
+                "write_intent": True,
+                "ai": "direct",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_wiki_compile_rejects_unknown_kind_and_ai() -> None:
+    registry = _registry()
+
+    bad_kind = await registry.call("wiki_compile", {"kind": "article"})
+    assert bad_kind["ok"] is False
+    assert bad_kind["error"] == "kind must be one of concept, source, topic"
+
+    bad_ai = await registry.call("wiki_compile", {"ai": "cloud"})
+    assert bad_ai["ok"] is False
+    assert bad_ai["error"] == "ai must be one of auto, daemon, direct, off"
+    assert FakeGateway.instances == [] or all(
+        call[0] != "compile" for gateway in FakeGateway.instances for call in gateway.calls
+    )

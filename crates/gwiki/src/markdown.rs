@@ -34,38 +34,12 @@ pub enum MarkdownParseError {
     Io(std::io::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MarkdownFence {
-    marker: u8,
-    len: usize,
-}
-
-pub(crate) fn markdown_fence_start(line: &str) -> Option<MarkdownFence> {
-    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
-    if leading_spaces > 3 {
-        return None;
-    }
-    let trimmed = &line[leading_spaces..];
-    let marker = match trimmed.as_bytes().first().copied()? {
-        b'`' | b'~' => trimmed.as_bytes()[0],
-        _ => return None,
-    };
-    let len = trimmed.bytes().take_while(|byte| *byte == marker).count();
-    (len >= 3).then_some(MarkdownFence { marker, len })
-}
-
-pub(crate) fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
-    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
-    if leading_spaces > 3 {
-        return false;
-    }
-    let trimmed = &line[leading_spaces..];
-    let len = trimmed
-        .bytes()
-        .take_while(|byte| *byte == fence.marker)
-        .count();
-    len >= fence.len && trimmed[len..].trim().is_empty()
-}
+// Fence and heading primitives are shared with gcode through
+// `gobby_core::markdown` (#17514); re-export them on the crate-local path
+// every consumer already uses.
+pub(crate) use gobby_core::markdown::{
+    MarkdownFence, markdown_fence_closes, markdown_fence_start, parse_atx_heading,
+};
 
 /// Normalize generated Markdown so it satisfies the whitespace family of
 /// markdownlint rules without reflowing prose or altering meaningful content.
@@ -201,51 +175,6 @@ fn extract_headings(markdown: &str, body_start: usize) -> Vec<MarkdownHeading> {
     }
 
     headings
-}
-
-pub(crate) fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
-    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
-    if leading_spaces > 3 {
-        return None;
-    }
-
-    let line = &line[leading_spaces..];
-    let level = line.bytes().take_while(|byte| *byte == b'#').count();
-    if !(1..=6).contains(&level) {
-        return None;
-    }
-
-    let after_marks = &line[level..];
-    if !after_marks.is_empty() && !after_marks.chars().next().is_some_and(char::is_whitespace) {
-        return None;
-    }
-
-    let title = strip_atx_closing_sequence(after_marks.trim()).to_string();
-    Some((level as u8, title))
-}
-
-fn strip_atx_closing_sequence(title: &str) -> &str {
-    let mut hash_start = title.len();
-    let mut saw_hash = false;
-    for (index, ch) in title.char_indices().rev() {
-        if ch == '#' {
-            saw_hash = true;
-            hash_start = index;
-        } else {
-            break;
-        }
-    }
-    if saw_hash
-        && hash_start > 0
-        && title[..hash_start]
-            .chars()
-            .next_back()
-            .is_some_and(char::is_whitespace)
-    {
-        title[..hash_start].trim_end()
-    } else {
-        title
-    }
 }
 
 fn build_chunks(
@@ -402,18 +331,6 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&parsed.path).expect("read page"),
             markdown
-        );
-    }
-
-    #[test]
-    fn atx_heading_keeps_hash_without_preceding_space() {
-        assert_eq!(
-            parse_atx_heading("# C#").map(|(_, title)| title),
-            Some("C#".to_string())
-        );
-        assert_eq!(
-            parse_atx_heading("# Title ###").map(|(_, title)| title),
-            Some("Title".to_string())
         );
     }
 

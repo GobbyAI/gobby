@@ -14,8 +14,8 @@ fn standalone_summary_page_records_summary_mode_provenance() {
         bytes,
     };
 
-    let result =
-        ingest_session_wiki_file_without_index(temp.path(), snapshot).expect("ingest standalone");
+    let result = ingest_session_wiki_file_without_index(temp.path(), snapshot, None)
+        .expect("ingest standalone");
 
     let derived = fs::read_to_string(
         temp.path()
@@ -50,11 +50,13 @@ fn summarize_skips_archives_that_already_have_a_session_page() {
     let first = sync_session_transcript_archives(
         temp.path(),
         &mut store,
-        &archive_dir,
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-20T10:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-20T10:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
@@ -64,11 +66,13 @@ fn summarize_skips_archives_that_already_have_a_session_page() {
     let second = sync_session_transcript_archives(
         temp.path(),
         &mut store,
-        &archive_dir,
-        &wiki_dir,
-        None,
-        RawArchiveMode::Summarize,
-        "2026-06-20T10:06:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Summarize,
+            fetched_at: "2026-06-20T10:06:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");

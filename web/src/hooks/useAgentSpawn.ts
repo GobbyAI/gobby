@@ -19,7 +19,6 @@ export interface SpawnParams {
   branch_name?: string
   base_branch?: string
   timeout?: number
-  max_turns?: number
 }
 
 export interface SpawnResult {

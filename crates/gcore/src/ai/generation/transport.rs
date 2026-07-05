@@ -1,18 +1,16 @@
-//! [`ChatTransport`] implementations over OpenAI-compatible chat completions
-//! with tool calling, for both Lane B routes.
+//! Lane B chat generation over both routes.
 //!
-//! * [`DirectChatTransport`] targets OpenAI-compatible local servers (LM Studio,
-//!   vLLM, llama.cpp, and similar) that expose function/tool calling through the
-//!   standard chat schema. It is provider-neutral: the model/api_base/api_key
-//!   come from a resolved [`DirectGenerationTarget`], never a pinned vendor.
-//! * [`DaemonChatTransport`] forwards the same OpenAI-shaped request to the
-//!   daemon's `/api/llm/chat/completions` passthrough, sending a feature
-//!   `profile` (the daemon owns tool-capable provider/model selection) under
-//!   the local CLI token. No server-side loop or state.
-//!
-//! Both share the request serialization ([`message_to_json`]/[`tool_to_json`])
-//! and the response parser ([`parse_completion`]), so the tool loop is blind to
-//! which route produced a completion.
+//! * [`DirectChatTransport`] is a [`ChatTransport`] targeting OpenAI-compatible
+//!   local servers (LM Studio, vLLM, llama.cpp, and similar) that expose
+//!   function/tool calling through the standard chat schema. It is
+//!   provider-neutral: the model/api_base/api_key come from a resolved
+//!   [`DirectGenerationTarget`], never a pinned vendor. The caller runs the
+//!   local tool loop over it.
+//! * [`daemon_agentic_chat`] is the daemon route: one POST to the daemon's
+//!   agentic `/api/llm/chat/completions` endpoint (#17393), which runs its own
+//!   server-side investigation loop under the caller's [`ToolPolicy`] and
+//!   returns the finished narrative — never `tool_calls` for the caller to
+//!   execute.
 
 use reqwest::blocking::Client;
 use reqwest::header::AUTHORIZATION;
@@ -121,90 +119,14 @@ impl ChatTransport for DirectChatTransport<'_> {
     }
 }
 
-/// Daemon-route [`ChatTransport`]: forwards an OpenAI-shaped chat completion to
-/// the daemon's `/api/llm/chat/completions` passthrough (#17393).
-///
-/// The daemon owns tool-capable provider/model selection for the forwarded
-/// feature `profile` (Aggregate-tier Lane B forwards `feature_high`); this
-/// transport adds no server-side loop or state. Routing for the
-/// [`AiCapability::ToolChat`] capability reuses the `ai.text_generate` binding,
-/// so `project_id` and `reasoning_effort` come from that resolved binding.
-pub struct DaemonChatTransport<'a> {
-    context: &'a AiContext,
-    profile: String,
-    client: Client,
-    token: String,
-}
-
-impl<'a> DaemonChatTransport<'a> {
-    /// Build a daemon chat transport for a resolved feature `profile`. The local
-    /// CLI token is read now so a missing token fails fast before the loop runs.
-    pub fn new(context: &'a AiContext, profile: impl Into<String>) -> Result<Self, AiError> {
-        let profile = profile.into().trim().to_string();
-        if profile.is_empty() {
-            return Err(AiError::not_configured(
-                Some(AiCapability::TextGenerate.as_str().to_string()),
-                "daemon profile must not be blank",
-            ));
-        }
-        let client = daemon_client()?;
-        let token = read_local_cli_token()?;
-        Ok(Self {
-            context,
-            profile,
-            client,
-            token,
-        })
-    }
-}
-
-impl ChatTransport for DaemonChatTransport<'_> {
-    fn complete(&self, request: ChatCompletionRequest<'_>) -> Result<ChatCompletion, AiError> {
-        let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH);
-        let binding = self.context.binding(AiCapability::ToolChat);
-        let body = build_daemon_chat_body(
-            &self.profile,
-            self.context.project_id.as_deref(),
-            binding.reasoning_effort.as_deref(),
-            &request,
-        );
-
-        let _permit = self.context.limiter.acquire();
-        let value = retry_with_backoff(
-            || {
-                let http = with_local_token(
-                    self.client
-                        .post(&url)
-                        .timeout(timeout_for(AiCapability::ToolChat))
-                        .json(&body),
-                    &self.token,
-                );
-                parse_json_response(http.send().map_err(reqwest_error)?)
-            },
-            std::thread::sleep,
-        )?;
-
-        parse_completion(&value)
-    }
-
-    fn route(&self) -> &'static str {
-        "daemon"
-    }
-
-    fn profile(&self) -> Option<&str> {
-        Some(&self.profile)
-    }
-}
-
 /// Final result of a one-shot daemon-side agentic narrative generation call
-/// (CodeWiki Lane B daemon route).
+/// (the Lane B daemon route for codewiki and gwiki).
 ///
-/// Unlike [`DaemonChatTransport`] — single-turn tool-call passthrough that would
-/// re-prompt forever against an agentic endpoint which never returns
-/// `tool_calls` — the daemon runs its own Claude Agent SDK investigation loop
-/// (Read/Grep/Glob over the repo) server-side and returns the finished
-/// narrative plus investigation provenance. This CLI runs no local tool loop for
-/// this route.
+/// The daemon runs its own Claude Agent SDK investigation loop (executing only
+/// the policy-whitelisted tools over the project) server-side and returns the
+/// finished narrative plus investigation provenance. The CLI runs no local
+/// tool loop for this route — the agentic endpoint never returns `tool_calls`,
+/// so a single-turn passthrough transport would re-prompt forever.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DaemonAgenticResult {
     /// Final assistant narrative, if the daemon produced any.
@@ -244,8 +166,8 @@ pub struct ToolPolicy {
 /// whitelisted tools) and returns the finished narrative. A single POST — no
 /// `tools`/`tool_choice`/`model` are sent and the response is never re-prompted
 /// (it carries the final answer and `investigation` provenance, not `tool_calls`
-/// to execute locally). Token auth, retry, and the `ToolChat` timeout match
-/// [`DaemonChatTransport::complete`].
+/// to execute locally). The request runs under the local CLI token with retry
+/// and the `ToolChat` capability timeout.
 #[allow(clippy::too_many_arguments)]
 pub fn daemon_agentic_chat(
     context: &AiContext,
@@ -409,27 +331,6 @@ pub(crate) fn build_request_body(
         "reasoning_effort",
         target.reasoning_effort.as_deref(),
     );
-    Value::Object(body)
-}
-
-/// Build the daemon-route chat-completion body: the same OpenAI-shaped messages
-/// and tools, plus the feature `profile` the daemon resolves to a tool-capable
-/// provider/model, the active `project_id`, and an optional `reasoning_effort`
-/// pin. The daemon owns provider/model selection, so neither is sent here.
-pub(crate) fn build_daemon_chat_body(
-    profile: &str,
-    project_id: Option<&str>,
-    reasoning_effort: Option<&str>,
-    request: &ChatCompletionRequest<'_>,
-) -> Value {
-    let mut body = Map::new();
-    push_messages_and_tools(&mut body, request);
-    insert_trimmed(&mut body, "profile", Some(profile));
-    insert_trimmed(&mut body, "project_id", project_id);
-    if let Some(max_tokens) = request.max_tokens.filter(|value| *value > 0) {
-        body.insert("max_tokens".to_string(), Value::from(max_tokens));
-    }
-    insert_trimmed(&mut body, "reasoning_effort", reasoning_effort);
     Value::Object(body)
 }
 

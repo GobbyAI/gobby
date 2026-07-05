@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -104,12 +106,8 @@ class StopRegistry:
                 session_id=row["session_id"],
                 source=row["source"],
                 reason=row["reason"],
-                requested_at=datetime.fromisoformat(row["requested_at"]),
-                acknowledged_at=(
-                    datetime.fromisoformat(row["acknowledged_at"])
-                    if row["acknowledged_at"]
-                    else None
-                ),
+                requested_at=require_stored_datetime(row["requested_at"], "requested_at"),
+                acknowledged_at=parse_stored_datetime(row["acknowledged_at"]),
             )
 
             if signal.is_pending:
@@ -148,10 +146,8 @@ class StopRegistry:
             session_id=row["session_id"],
             source=row["source"],
             reason=row["reason"],
-            requested_at=datetime.fromisoformat(row["requested_at"]),
-            acknowledged_at=(
-                datetime.fromisoformat(row["acknowledged_at"]) if row["acknowledged_at"] else None
-            ),
+            requested_at=require_stored_datetime(row["requested_at"], "requested_at"),
+            acknowledged_at=parse_stored_datetime(row["acknowledged_at"]),
         )
 
     def has_pending_signal(self, session_id: str) -> bool:
@@ -249,7 +245,7 @@ class StopRegistry:
                 session_id=row["session_id"],
                 source=row["source"],
                 reason=row["reason"],
-                requested_at=datetime.fromisoformat(row["requested_at"]),
+                requested_at=require_stored_datetime(row["requested_at"], "requested_at"),
                 acknowledged_at=None,
             )
             for row in rows

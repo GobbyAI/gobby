@@ -148,7 +148,9 @@ fn core_file_filter_excludes_specs_mocks_and_test_prefixes() {
 #[test]
 fn core_file_filter_excludes_hidden_metadata_paths() {
     for file in [
+        "wiki/code/files/crates/gcode/src/cli.rs.md",
         "gobby-wiki/code/files/crates/gcode/src/cli.rs.md",
+        "gobby-wiki-001/code/files/crates/gcode/src/cli.rs.md",
         ".gobby/plans/goal.md",
         ".github/workflows/ci.yml",
         ".claude/settings.json",
@@ -158,6 +160,10 @@ fn core_file_filter_excludes_hidden_metadata_paths() {
     }
 
     assert!(is_core_file("crates/gcode/src/main.rs"));
+    assert!(
+        is_core_file("gobby-wikis/loader.rs"),
+        "only the vault dir itself is excluded, not similar prefixes"
+    );
 }
 
 #[test]

@@ -9,6 +9,7 @@ pub(crate) mod test_http;
 
 pub(crate) mod audit;
 pub(crate) mod benchmark;
+pub(crate) mod catalog;
 pub(crate) mod citations;
 pub(crate) mod code_graph;
 pub(crate) mod collect;
@@ -39,6 +40,7 @@ pub mod output;
 pub(crate) mod paths;
 pub(crate) mod progress;
 pub(crate) mod provenance;
+pub(crate) mod recap;
 pub(crate) mod registry;
 pub(crate) mod schema;
 pub(crate) mod scope;
@@ -49,6 +51,7 @@ pub mod sources;
 pub(crate) mod store;
 pub mod synthesis;
 pub(crate) mod transcribe;
+pub(crate) mod upkeep;
 pub(crate) mod vault;
 pub(crate) mod vector;
 pub(crate) mod video;
@@ -56,8 +59,8 @@ pub(crate) mod vision;
 
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget,
-    ReviewReportOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
-    SyncSessionsOptions,
+    RecapOptions, ReviewReportOptions, RunOptions, ScopeIdentity, ScopeKind, ScopeSelection,
+    SetupOptions, SyncSessionsOptions, UpkeepOptions,
 };
 pub use error::WikiError;
 pub use runner::run;

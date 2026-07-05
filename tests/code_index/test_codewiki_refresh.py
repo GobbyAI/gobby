@@ -75,11 +75,33 @@ async def test_refresh_runs_codewiki_indexes_changed_vault_docs(tmp_path: Path) 
         CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1", ai="daemon")
     )
 
-    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", None)]
+    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", None)]
     assert gwiki.ingested == []
     assert gwiki.index_count == 1
     assert result.changed_count == 2
     assert result.indexed is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_default_out_dir_honors_fallback_vault(tmp_path: Path) -> None:
+    """A non-vault wiki collision routes generation into the gobby-wiki vault."""
+    (tmp_path / "wiki").mkdir()
+    fallback = tmp_path / "gobby-wiki"
+    (fallback / "_gwiki").mkdir(parents=True)
+    (fallback / "_gwiki" / "scope.json").write_text("{}\n", encoding="utf-8")
+    gcode = FakeGcodeGateway({"changed_paths": ["repo.md"]})
+    gwiki = FakeGwikiGateway()
+    service = CodewikiRefreshService(
+        gcode_gateway_factory=lambda: gcode,
+        gwiki_gateway_factory=lambda _root: gwiki,
+    )
+
+    result = await service.refresh(
+        CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1", ai="daemon")
+    )
+
+    assert gcode.calls == [(tmp_path, fallback, "daemon", None)]
+    assert result.out_dir == fallback.resolve()
 
 
 @pytest.mark.asyncio
@@ -126,7 +148,7 @@ async def test_refresh_passes_scopes_to_gcode_gateway(tmp_path: Path) -> None:
         )
     )
 
-    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon", ["crates", "web", "src"])]
+    assert gcode.calls == [(tmp_path, tmp_path / "wiki", "daemon", ["crates", "web", "src"])]
     assert result.indexed is False
 
 

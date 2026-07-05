@@ -236,10 +236,10 @@ fn repo_audit_links(
 pub(crate) fn generate_hierarchical_docs_core(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
-    // Deterministic workspace system model (#891). Seeds the architecture
-    // page's model-derived Mermaid diagrams. The CLI runtime passes the real
-    // model built from the project root; test/AI-off entry points pass `None`
-    // to omit the diagram section.
+    // Deterministic workspace system model (#891, #17521). Supplies the
+    // evidence graph the architecture page's LLM-composed diagram is verified
+    // against. The CLI runtime passes the real model built from the project
+    // root; test/AI-off entry points pass `None` to omit the diagram section.
     system_model: Option<&SystemModel>,
     // Deterministic feature catalog (#888), built from the pinned CLI contract
     // JSONs + dispatch resolver. The CLI runtime passes the real catalog; the
@@ -408,6 +408,7 @@ pub(crate) fn generate_hierarchical_docs_core(
         &file_docs,
         &module_docs,
         &input.leading_chunks,
+        &input.graph_edges,
         generate,
         verify,
         reuse,

@@ -99,41 +99,140 @@ fn has_required_curated_sections_matches_exact_h2_titles_only() {
     ));
 }
 
+/// Drive `curated_flow_diagram` with a scripted composer. Each response is
+/// consumed in order; an exhausted script returns `None` (generation skipped).
+#[allow(clippy::too_many_arguments)]
+fn compose_flow(
+    responses: &[&str],
+    member_modules: &[String],
+    member_files: &[String],
+    modules: &[ModuleDoc],
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> Option<String> {
+    let mut responses: Vec<String> = responses.iter().map(|s| s.to_string()).collect();
+    let mut generator = move |_prompt: &str, system: &str, _tier: PromptTier| {
+        assert_eq!(system, prompts::FLOW_DIAGRAM_SYSTEM);
+        (!responses.is_empty()).then(|| responses.remove(0))
+    };
+    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+    curated_flow_diagram(
+        member_modules,
+        member_files,
+        &module_lookup(modules),
+        &file_lookup(files),
+        &BTreeMap::new(),
+        graph_edges,
+        &mut generate,
+    )
+}
+
 #[test]
-fn chains_member_modules_grounded_in_summaries() {
+fn composes_flow_when_a_data_flow_is_documented() {
+    let modules = [
+        module_doc(
+            "walker",
+            "Discovers candidate files. Pipeline: walker -> parser.",
+        ),
+        module_doc("parser", "Extracts the AST via tree-sitter."),
+    ];
+    let member_modules = vec!["walker".to_string(), "parser".to_string()];
+
+    let section = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
+        &member_modules,
+        &[],
+        &modules,
+        &[],
+        &[],
+    )
+    .expect("flow drawn for two documented members");
+
+    assert!(section.contains("## Conceptual flow"), "{section}");
+    assert!(section.contains("flowchart LR"), "{section}");
+    // Node labels come from the evidence (member name + grounded role), not
+    // from whatever the model wrote.
+    assert!(
+        section.contains("s0[\"walker — Discovers candidate files\"]"),
+        "{section}"
+    );
+    assert!(
+        section.contains("s1[\"parser — Extracts the AST via tree-sitter\"]"),
+        "{section}"
+    );
+    assert!(section.contains("s0 --> s1"), "{section}");
+    // The caption states the evidence contract.
+    assert!(
+        section.contains("composed by the model from supplied evidence only"),
+        "{section}"
+    );
+    assert!(
+        section.contains("verified against that evidence"),
+        "{section}"
+    );
+}
+
+#[test]
+fn suppressed_without_any_evidenced_edges() {
+    // Two grounded members but no `A -> B` chain and no code-index edges:
+    // any diagram would fabricate a flow, so the composer is never invoked.
     let modules = [
         module_doc("walker", "Discovers candidate files. Walks the tree."),
         module_doc("parser", "Extracts the AST via tree-sitter."),
     ];
     let member_modules = vec!["walker".to_string(), "parser".to_string()];
 
-    let flow = curated_flow_diagram(
+    let flow = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
         &member_modules,
         &[],
-        &module_lookup(&modules),
-        &file_lookup(&[]),
-        &BTreeMap::new(),
+        &modules,
+        &[],
+        &[],
     );
-    let section = flow.expect("flow drawn for two members");
 
-    assert!(section.contains("## Conceptual flow"), "{section}");
-    assert!(section.contains("flowchart LR"), "{section}");
-    assert!(
-        section.contains("walker — Discovers candidate files"),
-        "{section}"
-    );
-    assert!(
-        section.contains("parser — Extracts the AST via tree-sitter"),
-        "{section}"
-    );
-    assert!(
-        section.contains("in the order these subsystems are grouped"),
-        "{section}"
-    );
+    assert!(flow.is_none(), "{flow:?}");
 }
 
 #[test]
-fn orders_by_documented_data_flow_when_present() {
+fn unevidenced_arrow_to_an_unchained_member_is_rejected() {
+    // The documented chain names walker and parser only; the model also draws
+    // an arrow into chunker, which matches no evidence edge — rejected on the
+    // repair attempt and dropped deterministically.
+    let modules = [
+        module_doc("walker", "Discovers files. Flow: walker -> parser."),
+        module_doc("parser", "Extracts the AST."),
+        module_doc("chunker", "Splits content for search."),
+    ];
+    let member_modules = vec![
+        "walker".to_string(),
+        "parser".to_string(),
+        "chunker".to_string(),
+    ];
+
+    let overdrawn = "flowchart LR\n    s0 --> s1\n    s1 --> s2\n";
+    let section = compose_flow(
+        &[overdrawn, overdrawn],
+        &member_modules,
+        &[],
+        &modules,
+        &[],
+        &[],
+    )
+    .expect("flow drawn for the documented pair");
+
+    assert!(section.contains("s0[\"walker"), "{section}");
+    assert!(section.contains("s1[\"parser"), "{section}");
+    assert!(!section.contains("chunker"), "{section}");
+    assert!(section.contains("s0 --> s1"), "{section}");
+    assert!(!section.contains("s1 --> s2"), "{section}");
+}
+
+#[test]
+fn documented_chain_supplies_edges_in_documented_order() {
+    // Members arrive indexer-first, but the documented pipeline evidences
+    // walker (s1) -> parser (s2) -> chunker (s3) -> indexer (s0); the model
+    // may draw exactly that chain and nothing else.
     let modules = [
         module_doc(
             "indexer",
@@ -150,42 +249,77 @@ fn orders_by_documented_data_flow_when_present() {
         "chunker".to_string(),
     ];
 
-    let flow = curated_flow_diagram(
+    let section = compose_flow(
+        &["flowchart LR\n    s1 --> s2\n    s2 --> s3\n    s3 --> s0\n"],
         &member_modules,
         &[],
-        &module_lookup(&modules),
-        &file_lookup(&[]),
-        &BTreeMap::new(),
-    );
-    let section = flow.expect("flow drawn");
+        &modules,
+        &[],
+        &[],
+    )
+    .expect("flow drawn");
 
     assert!(
-        section.contains("ordered by the data flow documented"),
+        section.contains("s1[\"walker — Discovers files\"]"),
         "{section}"
     );
+    assert!(section.contains("s1 --> s2"), "{section}");
+    assert!(section.contains("s2 --> s3"), "{section}");
+    assert!(section.contains("s3 --> s0"), "{section}");
+}
+
+#[test]
+fn code_index_edges_evidence_a_flow_without_a_documented_chain() {
+    // No documented `A -> B` chain anywhere, but the code index shows a real
+    // cross-member call edge — that is evidence enough, and the arrow carries
+    // the `calls` label.
+    let modules = [
+        module_doc("walker", "Discovers candidate files."),
+        module_doc("parser", "Extracts the AST."),
+    ];
+    let mut walker_file = file_doc("src/walker.rs", "Walks the tree.");
+    walker_file.module = "walker".to_string();
+    walker_file.component_ids = vec!["comp_walker".to_string()];
+    let mut parser_file = file_doc("src/parser.rs", "Parses files.");
+    parser_file.module = "parser".to_string();
+    parser_file.component_ids = vec!["comp_parser".to_string()];
+    let files = [walker_file, parser_file];
+    let member_modules = vec!["walker".to_string(), "parser".to_string()];
+    let graph_edges = [CodewikiGraphEdge::call("comp_walker", "comp_parser")];
+
+    let section = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
+        &member_modules,
+        &[],
+        &modules,
+        &files,
+        &graph_edges,
+    )
+    .expect("flow drawn from code-index evidence");
+
     assert!(
-        section.contains("s0[\"walker — Discovers files\"]"),
-        "{section}"
+        section.contains("s0 -->|\"calls\"| s1"),
+        "call edge must carry its label: {section}"
     );
-    assert!(section.contains("s3[\"indexer"), "indexer last: {section}");
 }
 
 #[test]
 fn marks_degraded_when_a_member_summary_is_missing() {
     let modules = [
-        module_doc("walker", "Discovers files."),
+        module_doc("walker", "Discovers files. Flow: walker -> parser."),
         module_doc("parser", ""),
     ];
     let member_modules = vec!["walker".to_string(), "parser".to_string()];
 
-    let flow = curated_flow_diagram(
+    let section = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
         &member_modules,
         &[],
-        &module_lookup(&modules),
-        &file_lookup(&[]),
-        &BTreeMap::new(),
-    );
-    let section = flow.expect("flow drawn");
+        &modules,
+        &[],
+        &[],
+    )
+    .expect("flow drawn");
 
     assert!(section.contains("_Degraded:_"), "{section}");
     assert!(
@@ -197,12 +331,35 @@ fn marks_degraded_when_a_member_summary_is_missing() {
 #[test]
 fn omitted_for_a_single_member() {
     let modules = [module_doc("walker", "Discovers files.")];
-    let flow = curated_flow_diagram(
+    let flow = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
         &["walker".to_string()],
+        &[],
+        &modules,
+        &[],
+        &[],
+    );
+    assert!(flow.is_none());
+}
+
+#[test]
+fn omitted_when_no_generator_is_available() {
+    // AI off: documented evidence exists, but with no composer there is no
+    // diagram — deterministic chaining would bypass the LLM-composed contract.
+    let modules = [
+        module_doc("walker", "Discovers files. Flow: walker -> parser."),
+        module_doc("parser", "Extracts the AST."),
+    ];
+    let member_modules = vec!["walker".to_string(), "parser".to_string()];
+    let mut generate: Option<&mut TextGenerator<'_>> = None;
+    let flow = curated_flow_diagram(
+        &member_modules,
         &[],
         &module_lookup(&modules),
         &file_lookup(&[]),
         &BTreeMap::new(),
+        &[],
+        &mut generate,
     );
     assert!(flow.is_none());
 }
@@ -210,23 +367,60 @@ fn omitted_for_a_single_member() {
 #[test]
 fn falls_back_to_files_without_enough_modules() {
     let files = [
-        file_doc("src/bm25.rs", "Runs BM25 keyword search."),
+        file_doc(
+            "src/bm25.rs",
+            "Runs BM25 keyword search. Flow: bm25 -> rrf.",
+        ),
         file_doc("src/rrf.rs", "Fuses ranked results."),
     ];
     let member_files = vec!["src/bm25.rs".to_string(), "src/rrf.rs".to_string()];
 
-    let flow = curated_flow_diagram(
+    let section = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
         &[],
         &member_files,
-        &module_lookup(&[]),
-        &file_lookup(&files),
-        &BTreeMap::new(),
-    );
-    let section = flow.expect("flow drawn from files");
+        &[],
+        &files,
+        &[],
+    )
+    .expect("flow drawn from files");
 
     assert!(
         section.contains("bm25 — Runs BM25 keyword search"),
         "{section}"
     );
     assert!(section.contains("rrf — Fuses ranked results"), "{section}");
+}
+
+#[test]
+fn role_phrase_keeps_short_clause_whole() {
+    assert_eq!(
+        role_phrase("Discovers candidate files. Walks the tree."),
+        Some("Discovers candidate files".to_string())
+    );
+    // Commas inside a clause that fits the cap survive untouched.
+    assert_eq!(
+        role_phrase("Runs BM25, RRF, and graph boost."),
+        Some("Runs BM25, RRF, and graph boost".to_string())
+    );
+}
+
+#[test]
+fn role_phrase_clips_overlong_clause_at_a_comma_not_mid_thought() {
+    let summary = "Coordinates the build pipeline stages, resolving symbols and emitting page bodies \
+for every indexed module.";
+    assert_eq!(
+        role_phrase(summary),
+        Some("Coordinates the build pipeline stages".to_string())
+    );
+}
+
+#[test]
+fn role_phrase_drops_overlong_clause_without_a_boundary() {
+    // Eleven words, no comma: truncating would leave a mid-thought fragment,
+    // so the stage falls back to name-only (degraded) instead.
+    let summary =
+        "Coordinates every build pipeline stage while resolving symbols across all modules";
+    assert_eq!(role_phrase(summary), None);
+    assert_eq!(role_phrase(""), None);
 }

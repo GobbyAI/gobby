@@ -17,6 +17,7 @@ pub(super) fn render_curated_navigation_docs(
     lane: &'static str,
     plan_observability: &GenerationObservability,
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
+    graph_edges: &[CodewikiGraphEdge],
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
@@ -123,6 +124,8 @@ pub(super) fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
             leading_chunks,
+            graph_edges,
+            generate,
         );
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
@@ -164,6 +167,8 @@ pub(super) fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
             leading_chunks,
+            graph_edges,
+            generate,
         );
         docs.push(BuiltDoc {
             path: narrative_doc_path(&page.slug),

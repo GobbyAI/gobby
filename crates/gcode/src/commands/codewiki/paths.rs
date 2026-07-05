@@ -77,10 +77,21 @@ pub(crate) fn is_core_file(file: &str) -> bool {
     {
         return false;
     }
+    // Vault-dir self-exclusion: codewiki must never document its own generated
+    // wiki output. This is a pure string predicate with no project root in
+    // scope, so it matches every name the shared resolver can produce
+    // (`wiki`, `gobby-wiki`, `gobby-wiki-001`, ...).
     if Path::new(file)
         .components()
         .next()
-        .is_some_and(|component| component.as_os_str() == "gobby-wiki")
+        .is_some_and(|component| {
+            let name = component.as_os_str().to_string_lossy();
+            name == gobby_core::vault::DEFAULT_VAULT_DIR
+                || name == gobby_core::vault::FALLBACK_VAULT_DIR
+                || name
+                    .strip_prefix(gobby_core::vault::FALLBACK_VAULT_DIR)
+                    .is_some_and(|rest| rest.starts_with('-'))
+        })
     {
         return false;
     }

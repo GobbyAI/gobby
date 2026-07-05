@@ -176,7 +176,6 @@ async def spawn_agent_impl(
     reasoning_required: bool | None = None,
     # Limits
     timeout: float | None = None,
-    max_turns: int | None = None,
     # Context
     parent_session_id: str | None = None,
     project_path: str | None = None,

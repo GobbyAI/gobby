@@ -1,15 +1,31 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::frontmatter::parse_frontmatter;
+use crate::links::canonical_target_key;
 use crate::provenance::ProvenanceGraph;
+use crate::search::SearchScope;
+use crate::search::semantic::{SemanticSearchBackend, SemanticSearchRequest};
 use crate::support::scope::scope_includes_page;
+use crate::support::services::RuntimeServices;
+use crate::support::text::degradation_label;
 use crate::{ScopeIdentity, WikiError, audit, health, lint};
 
 const LIBRARIAN_DIR: &str = "meta/librarian";
+
+/// Cosine similarity at or above which two knowledge pages count as
+/// near-duplicates.
+const NEAR_DUPLICATE_COSINE: f64 = 0.90;
+/// Semantic hits requested per probed knowledge page.
+const NEAR_DUPLICATE_SEARCH_LIMIT: usize = 8;
+/// Query text drawn from the head of each page body for near-duplicate
+/// probing.
+const NEAR_DUPLICATE_QUERY_CHARS: usize = 600;
+/// Minimum mentions before an unresolved link target forms a cluster.
+const LINK_CLUSTER_MIN_MENTIONS: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
@@ -26,6 +42,18 @@ impl Options {
             shared_code_graph_available: false,
             semantic_available: false,
             model_available: false,
+        }
+    }
+
+    /// Build options from live service probes. PostgreSQL stays a hard
+    /// requirement for probed runs; the optional flags reflect what the
+    /// resolver actually found.
+    pub(crate) fn probed(services: &RuntimeServices, model_available: bool) -> Self {
+        Self {
+            require_postgres_index: true,
+            shared_code_graph_available: services.shared_code_graph_available(),
+            semantic_available: services.semantic_available(),
+            model_available,
         }
     }
 }
@@ -99,10 +127,17 @@ pub struct DependencyClassification {
     pub multimodal: &'static str,
 }
 
+/// Live semantic search access for near-duplicate detection.
+pub struct SemanticProbe<'a> {
+    pub backend: &'a mut dyn SemanticSearchBackend,
+    pub search_scope: SearchScope,
+}
+
 pub fn run(
     vault_root: &Path,
     scope: ScopeIdentity,
     options: Options,
+    semantic: Option<SemanticProbe<'_>>,
 ) -> Result<ProposalsReport, WikiError> {
     let _postgres_index = if options.require_postgres_index {
         Some(crate::support::postgres::require_postgres_index(
@@ -140,6 +175,16 @@ pub fn run(
     } else {
         Vec::new()
     };
+    let semantic_scan = if options.semantic_available {
+        match semantic {
+            Some(probe) => semantic_gap_scan(&pages, &lint_report.broken_links, probe),
+            None => SemanticGapScan::failed(
+                "semantic services resolved as available but no semantic backend was supplied",
+            ),
+        }
+    } else {
+        SemanticGapScan::unavailable()
+    };
 
     let mut checks = vec![
         available_check("stale_pages", stale_pages.clone()),
@@ -153,12 +198,7 @@ pub fn run(
         "shared code graph is unavailable; skipped outdated codewiki detection",
         outdated_codewiki.clone(),
     ));
-    checks.push(optional_check(
-        "semantic_gaps",
-        options.semantic_available,
-        "Qdrant or embeddings are unavailable; skipped semantic gap detection",
-        Vec::new(),
-    ));
+    checks.push(semantic_gaps_check(&options, &semantic_scan));
     checks.push(optional_check(
         "patch_suggestions",
         options.model_available,
@@ -173,6 +213,7 @@ pub fn run(
         &broken_links,
         &weak_provenance,
         &outdated_codewiki,
+        &semantic_scan,
     );
     let suggested_patch_diffs = suggested_patch_diffs(&stale_pages, &missing_citations);
     let artifacts = artifacts();
@@ -252,6 +293,178 @@ fn optional_check(
     }
 }
 
+/// A knowledge-page pair whose semantic similarity crossed
+/// [`NEAR_DUPLICATE_COSINE`]; paths are ordered so each pair is unique.
+#[derive(Debug, Clone, PartialEq)]
+struct NearDuplicatePair {
+    left: PathBuf,
+    right: PathBuf,
+    score: f64,
+}
+
+/// An unresolved link target mentioned at least
+/// [`LINK_CLUSTER_MIN_MENTIONS`] times with no page behind it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UnresolvedLinkCluster {
+    target: String,
+    mentions: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SemanticGapScan {
+    near_duplicates: Vec<NearDuplicatePair>,
+    unresolved_clusters: Vec<UnresolvedLinkCluster>,
+    failure: Option<String>,
+}
+
+impl SemanticGapScan {
+    fn unavailable() -> Self {
+        Self::default()
+    }
+
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            failure: Some(message.into()),
+            ..Self::default()
+        }
+    }
+
+    fn items(&self) -> Vec<PathBuf> {
+        unique_paths(
+            self.near_duplicates
+                .iter()
+                .flat_map(|pair| [pair.left.clone(), pair.right.clone()])
+                .chain(
+                    self.unresolved_clusters
+                        .iter()
+                        .map(|cluster| PathBuf::from(&cluster.target)),
+                ),
+        )
+    }
+}
+
+fn semantic_gaps_check(options: &Options, scan: &SemanticGapScan) -> CheckReport {
+    if !options.semantic_available {
+        return optional_check(
+            "semantic_gaps",
+            false,
+            "Qdrant or embeddings are unavailable; skipped semantic gap detection",
+            Vec::new(),
+        );
+    }
+    if let Some(failure) = &scan.failure {
+        return CheckReport {
+            name: "semantic_gaps",
+            available: false,
+            note: Some(failure.clone()),
+            items: Vec::new(),
+        };
+    }
+    available_check("semantic_gaps", scan.items())
+}
+
+fn semantic_gap_scan(
+    pages: &[lint::WikiPage],
+    broken_links: &[lint::LinkIssue],
+    probe: SemanticProbe<'_>,
+) -> SemanticGapScan {
+    match near_duplicate_pairs(pages, probe) {
+        Ok(near_duplicates) => SemanticGapScan {
+            near_duplicates,
+            unresolved_clusters: unresolved_link_clusters(broken_links),
+            failure: None,
+        },
+        Err(failure) => SemanticGapScan::failed(failure),
+    }
+}
+
+fn near_duplicate_pairs(
+    pages: &[lint::WikiPage],
+    probe: SemanticProbe<'_>,
+) -> Result<Vec<NearDuplicatePair>, String> {
+    let SemanticProbe {
+        backend,
+        search_scope,
+    } = probe;
+    let mut best_scores: BTreeMap<(PathBuf, PathBuf), f64> = BTreeMap::new();
+    for page in pages.iter().filter(|page| is_knowledge_page(page)) {
+        let query = near_duplicate_query(page);
+        if query.is_empty() {
+            continue;
+        }
+        let outcome = backend
+            .search_semantic(SemanticSearchRequest {
+                query,
+                scope: search_scope.clone(),
+                limit: NEAR_DUPLICATE_SEARCH_LIMIT,
+            })
+            .map_err(|error| format!("semantic gap detection failed: {error}"))?;
+        if let Some(degradation) = outcome.degradation {
+            return Err(format!(
+                "semantic gap detection degraded: {}",
+                degradation_label(&degradation)
+            ));
+        }
+        for hit in outcome.hits {
+            if hit.score < NEAR_DUPLICATE_COSINE
+                || hit.path == page.relative_path
+                || !hit.path.starts_with("knowledge")
+            {
+                continue;
+            }
+            let pair = if hit.path < page.relative_path {
+                (hit.path.clone(), page.relative_path.clone())
+            } else {
+                (page.relative_path.clone(), hit.path.clone())
+            };
+            let entry = best_scores.entry(pair).or_insert(hit.score);
+            if hit.score > *entry {
+                *entry = hit.score;
+            }
+        }
+    }
+    Ok(best_scores
+        .into_iter()
+        .map(|((left, right), score)| NearDuplicatePair { left, right, score })
+        .collect())
+}
+
+fn is_knowledge_page(page: &lint::WikiPage) -> bool {
+    page.relative_path.starts_with("knowledge")
+}
+
+fn near_duplicate_query(page: &lint::WikiPage) -> String {
+    let body = parse_frontmatter(&page.markdown)
+        .map(|parsed| parsed.body)
+        .unwrap_or(page.markdown.as_str());
+    let trimmed = body.trim();
+    match trimmed.char_indices().nth(NEAR_DUPLICATE_QUERY_CHARS) {
+        Some((index, _)) => trimmed[..index].to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+fn unresolved_link_clusters(broken_links: &[lint::LinkIssue]) -> Vec<UnresolvedLinkCluster> {
+    let mut clusters: BTreeMap<String, UnresolvedLinkCluster> = BTreeMap::new();
+    for issue in broken_links {
+        let key = canonical_target_key(&issue.target);
+        if key.is_empty() {
+            continue;
+        }
+        clusters
+            .entry(key)
+            .and_modify(|cluster| cluster.mentions += 1)
+            .or_insert_with(|| UnresolvedLinkCluster {
+                target: issue.target.clone(),
+                mentions: 1,
+            });
+    }
+    clusters
+        .into_values()
+        .filter(|cluster| cluster.mentions >= LINK_CLUSTER_MIN_MENTIONS)
+        .collect()
+}
+
 fn weak_provenance_pages(pages: &[lint::WikiPage], provenance: &ProvenanceGraph) -> Vec<PathBuf> {
     let mut paths = pages
         .iter()
@@ -309,6 +522,7 @@ fn suggested_tasks(
     broken_links: &[PathBuf],
     weak_provenance: &[PathBuf],
     outdated_codewiki: &[PathBuf],
+    semantic: &SemanticGapScan,
 ) -> Vec<SuggestedTask> {
     let mut tasks = Vec::new();
     push_task(
@@ -350,6 +564,52 @@ fn suggested_tasks(
         "Refresh outdated codewiki pages",
         "Codewiki pages are stale; regenerate or accept a reviewed patch.",
         outdated_codewiki,
+    );
+    let near_duplicate_pairs = semantic
+        .near_duplicates
+        .iter()
+        .map(|pair| {
+            format!(
+                "{} ~ {} ({:.2})",
+                pair.left.display(),
+                pair.right.display(),
+                pair.score
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    push_task(
+        &mut tasks,
+        !semantic.near_duplicates.is_empty(),
+        "Merge or disambiguate near-duplicate pages",
+        &format!(
+            "Knowledge page pairs with cosine similarity >= {NEAR_DUPLICATE_COSINE}: {near_duplicate_pairs}"
+        ),
+        &unique_paths(
+            semantic
+                .near_duplicates
+                .iter()
+                .flat_map(|pair| [pair.left.clone(), pair.right.clone()]),
+        ),
+    );
+    let cluster_summary = semantic
+        .unresolved_clusters
+        .iter()
+        .map(|cluster| format!("{} ({} mentions)", cluster.target, cluster.mentions))
+        .collect::<Vec<_>>()
+        .join(", ");
+    push_task(
+        &mut tasks,
+        !semantic.unresolved_clusters.is_empty(),
+        "Create pages for repeatedly mentioned link targets",
+        &format!(
+            "Unresolved link targets mentioned at least {LINK_CLUSTER_MIN_MENTIONS} times with no page behind them: {cluster_summary}"
+        ),
+        &semantic
+            .unresolved_clusters
+            .iter()
+            .map(|cluster| PathBuf::from(&cluster.target))
+            .collect::<Vec<_>>(),
     );
     tasks
 }
@@ -464,6 +724,8 @@ fn write_text(vault_root: &Path, relative: &Path, text: &str) -> Result<(), Wiki
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use gobby_core::config::{EmbeddingConfig, FalkorConfig, QdrantConfig};
+
     use crate::ScopeIdentity;
     use crate::markdown::parse_markdown;
     use crate::sources::{SourceDraft, SourceManifest};
@@ -505,6 +767,7 @@ mod tests {
                 shared_code_graph_available: true,
                 ..Options::offline()
             },
+            None,
         )
         .expect("librarian runs");
 
@@ -583,6 +846,7 @@ mod tests {
                 shared_code_graph_available: true,
                 ..Options::offline()
             },
+            None,
         )
         .expect("librarian runs");
 
@@ -600,8 +864,8 @@ mod tests {
             "---\ntitle: Page\n---\n# Page\nSupported enough. [source](https://example.com)\n",
         );
 
-        let report =
-            run(root, ScopeIdentity::topic("ops"), Options::offline()).expect("librarian runs");
+        let report = run(root, ScopeIdentity::topic("ops"), Options::offline(), None)
+            .expect("librarian runs");
 
         assert!(report.check("stale_pages").available);
         assert!(report.check("missing_citations").available);
@@ -626,8 +890,8 @@ mod tests {
             "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
         );
 
-        let report =
-            run(root, ScopeIdentity::topic("ops"), Options::offline()).expect("librarian runs");
+        let report = run(root, ScopeIdentity::topic("ops"), Options::offline(), None)
+            .expect("librarian runs");
 
         let check = report.check("outdated_codewiki");
         assert!(!check.available);
@@ -656,6 +920,254 @@ mod tests {
     }
 
     #[test]
+    fn librarian_probed_options_reflect_runtime_services() {
+        let services = RuntimeServices {
+            postgres_configured: true,
+            falkor: Some(FalkorConfig {
+                host: "localhost".to_string(),
+                port: 6379,
+                password: None,
+            }),
+            qdrant: Some(QdrantConfig {
+                url: Some("http://localhost:6333".to_string()),
+                api_key: None,
+            }),
+            embedding: Some(EmbeddingConfig {
+                api_base: "http://localhost:1234/v1".to_string(),
+                model: "embed-model".to_string(),
+                api_key: None,
+                query_prefix: None,
+                timeout_seconds: 30,
+            }),
+            semantic_embedding: None,
+        };
+
+        assert_eq!(
+            Options::probed(&services, true),
+            Options {
+                require_postgres_index: true,
+                shared_code_graph_available: true,
+                semantic_available: true,
+                model_available: true,
+            }
+        );
+        assert_eq!(
+            Options::probed(&RuntimeServices::detached(), false),
+            Options {
+                require_postgres_index: true,
+                ..Options::offline()
+            }
+        );
+    }
+
+    #[test]
+    fn librarian_semantic_gaps_report_near_duplicates_and_link_clusters() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/topics/async-rust.md",
+            "# Async Rust\nSee [[Widget Factory]] twice: [[Widget Factory]] and once [[Solo Target]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/topics/rust-async.md",
+            "# Rust Async\nNearly the same content about async Rust.\n",
+        );
+
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/topics/rust-async.md", 0.95),
+                semantic_hit("code/files/dup.md", 0.99),
+                semantic_hit("knowledge/topics/other.md", 0.50),
+            ],
+        };
+        let report = run(
+            root,
+            ScopeIdentity::topic("ops"),
+            Options {
+                semantic_available: true,
+                ..Options::offline()
+            },
+            Some(SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            }),
+        )
+        .expect("librarian runs");
+
+        let check = report.check("semantic_gaps");
+        assert!(check.available);
+        assert!(check.note.is_none());
+        assert_eq!(
+            check.items,
+            vec![
+                PathBuf::from("Widget Factory"),
+                PathBuf::from("knowledge/topics/async-rust.md"),
+                PathBuf::from("knowledge/topics/rust-async.md"),
+            ]
+        );
+        let merge_task = report
+            .suggested_tasks
+            .iter()
+            .find(|task| task.title.contains("near-duplicate"))
+            .expect("near-duplicate task");
+        assert!(
+            merge_task.description.contains("rust-async.md"),
+            "{merge_task:?}"
+        );
+        assert!(merge_task.description.contains("0.95"), "{merge_task:?}");
+        let create_task = report
+            .suggested_tasks
+            .iter()
+            .find(|task| task.title.contains("repeatedly mentioned"))
+            .expect("link cluster task");
+        assert!(
+            create_task
+                .description
+                .contains("Widget Factory (2 mentions)"),
+            "{create_task:?}"
+        );
+        assert!(
+            !create_task.description.contains("Solo Target"),
+            "single mentions must not cluster: {create_task:?}"
+        );
+    }
+
+    #[test]
+    fn librarian_semantic_gaps_fail_closed_without_backend_or_on_degradation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/topics/page.md",
+            "# Page\nSee [[Widget Factory]] and [[Widget Factory]].\n",
+        );
+        let options = Options {
+            semantic_available: true,
+            ..Options::offline()
+        };
+
+        let report =
+            run(root, ScopeIdentity::topic("ops"), options.clone(), None).expect("librarian runs");
+        let check = report.check("semantic_gaps");
+        assert!(!check.available);
+        assert!(check.items.is_empty());
+        assert!(
+            check
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("no semantic backend")),
+            "{check:?}"
+        );
+
+        let mut degraded_backend = DegradedSemanticBackend;
+        let report = run(
+            root,
+            ScopeIdentity::topic("ops"),
+            options,
+            Some(SemanticProbe {
+                backend: &mut degraded_backend,
+                search_scope: SearchScope::topic("ops"),
+            }),
+        )
+        .expect("librarian runs");
+        let check = report.check("semantic_gaps");
+        assert!(!check.available);
+        assert!(check.items.is_empty());
+        assert!(
+            check
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("degraded")),
+            "{check:?}"
+        );
+    }
+
+    #[test]
+    fn unresolved_link_clusters_fold_case_and_require_multiple_mentions() {
+        let issues = vec![
+            link_issue("a.md", "Widget Factory"),
+            link_issue("b.md", "widget factory"),
+            link_issue("a.md", "Solo"),
+        ];
+
+        assert_eq!(
+            unresolved_link_clusters(&issues),
+            vec![UnresolvedLinkCluster {
+                target: "Widget Factory".to_string(),
+                mentions: 2,
+            }]
+        );
+    }
+
+    struct FixedSemanticBackend {
+        hits: Vec<crate::search::WikiSearchResult>,
+    }
+
+    impl SemanticSearchBackend for FixedSemanticBackend {
+        fn search_semantic(
+            &mut self,
+            _request: SemanticSearchRequest,
+        ) -> Result<crate::search::semantic::SemanticSearchOutcome, crate::search::SearchError>
+        {
+            Ok(crate::search::semantic::SemanticSearchOutcome {
+                hits: self.hits.clone(),
+                degradation: None,
+            })
+        }
+    }
+
+    struct DegradedSemanticBackend;
+
+    impl SemanticSearchBackend for DegradedSemanticBackend {
+        fn search_semantic(
+            &mut self,
+            _request: SemanticSearchRequest,
+        ) -> Result<crate::search::semantic::SemanticSearchOutcome, crate::search::SearchError>
+        {
+            Ok(crate::search::semantic::SemanticSearchOutcome {
+                hits: Vec::new(),
+                degradation: Some(gobby_core::degradation::DegradationKind::PartialData {
+                    component: "semantic".to_string(),
+                    message: "qdrant unreachable".to_string(),
+                }),
+            })
+        }
+    }
+
+    fn semantic_hit(path: &str, score: f64) -> crate::search::WikiSearchResult {
+        crate::search::WikiSearchResult {
+            id: path.to_string(),
+            title: None,
+            scope: SearchScope::topic("ops"),
+            path: PathBuf::from(path),
+            source_path: PathBuf::from(path),
+            hit_kind: crate::search::SearchHitKind::Document,
+            snippet: String::new(),
+            score,
+            sources: Vec::new(),
+            explanations: Vec::new(),
+            chunk: None,
+            provenance: crate::search::SearchProvenance {
+                document_path: PathBuf::from(path),
+                source_path: PathBuf::from(path),
+                source_kind: "document".to_string(),
+                content_hash: None,
+            },
+        }
+    }
+
+    fn link_issue(path: &str, target: &str) -> lint::LinkIssue {
+        lint::LinkIssue {
+            path: PathBuf::from(path),
+            line: 1,
+            target: target.to_string(),
+            kind: "wikilink".to_string(),
+        }
+    }
+
+    #[test]
     #[serial_test::serial]
     fn librarian_requires_configured_postgres_index() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -667,7 +1179,7 @@ mod tests {
         );
         let _database_url = EnvGuard::set("GWIKI_DATABASE_URL", "postgresql://127.0.0.1:1/gwiki");
 
-        let error = run(root, ScopeIdentity::topic("ops"), Options::default())
+        let error = run(root, ScopeIdentity::topic("ops"), Options::default(), None)
             .expect_err("PostgreSQL is required");
 
         assert!(

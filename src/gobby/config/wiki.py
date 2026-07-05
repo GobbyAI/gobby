@@ -4,6 +4,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
+DEFAULT_WIKI_IGNORE_GLOBS: tuple[str, ...] = (
+    "outputs/**",
+    "meta/health/**",
+    "meta/librarian/**",
+    "meta/upkeep/**",
+    "_meta/**",
+)
+
 
 class WikiRootConfig(BaseModel):
     """One wiki root watched by the daemon."""
@@ -42,7 +50,7 @@ class WikiConfig(BaseModel):
         description="Seconds between filesystem scans.",
     )
     ignore_globs: list[str] = Field(
-        default_factory=lambda: ["outputs/**", "meta/health/**"],
+        default_factory=lambda: list(DEFAULT_WIKI_IGNORE_GLOBS),
         description="Root-relative file globs ignored by the watcher.",
     )
     codewiki_on_commit: bool = Field(

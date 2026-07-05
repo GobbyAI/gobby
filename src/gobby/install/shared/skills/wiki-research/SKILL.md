@@ -1,0 +1,131 @@
+---
+name: wiki-research
+description: Run one wiki research pass — scope a question against the repo and vault, discover and curate sources, ingest with dedup, write accepted notes, compile a cited topic page, and optionally file investigation tasks.
+version: "1.0.0"
+category: methodology
+internal: true
+triggers: wiki research, research question, standing query, research pipeline
+metadata:
+  gobby:
+    audience: agent
+    depth: 1
+---
+
+# wiki-research — One Research Pass Into the Vault
+
+Use this skill when spawned to answer a research question into the wiki. One
+run = one question = one cited topic page. Inputs arrive with the question:
+`max_sources` (discovery stop), `max_items` (curation cap), `create_tasks`
+(whether findings become gobby-tasks), and optionally an explicit output
+contract. **Explicit output-contract instructions in the question override the
+default note template in step 6.**
+
+All wiki tools live on the `gobby-wiki` MCP server (`wiki_ask`, `wiki_search`,
+`wiki_list_sources`, `wiki_ingest`, `wiki_compile`). Discover them through
+progressive discovery before first use.
+
+## 1. Context bootstrap
+
+Scope relevance before searching the web:
+
+- `gcode repo-outline` plus the repo README — this works even while the
+  vault's synthesis layer is empty.
+- `wiki_ask(query=<question>)` when the vault has content — use its answer and
+  evidence to learn what the wiki already covers and where the gaps are.
+
+Write down (for yourself) what would make a source relevant to gobby. Every
+curation decision in step 3 references this scope.
+
+## 2. Discovery
+
+Derive 3–5 search angles from the question (synonyms, adjacent systems,
+competing implementations, canonical docs).
+
+- Time-windowed "everything new since X" queries: prefer structured indexes —
+  RSS/Atom feeds, new-listing pages, public APIs — fetched with `WebFetch`.
+  They enumerate completely; search engines do not.
+- Everything else: `WebSearch` fan-out across the angles, then `WebFetch` the
+  promising hits.
+
+Stop discovering when you reach `max_sources` candidates. Do not curate during
+discovery; collect first.
+
+## 3. Curate
+
+Cut the candidate list to at most `max_items`. Record a one-line keep or
+discard reason for every candidate — the run report (step 9) includes them.
+Keep reasons must tie back to the step-1 relevance scope, not to novelty.
+
+## 4. Pre-ingest dedup
+
+Before ingesting, check every kept URL against the vault:
+
+- `wiki_list_sources` — match on location/canonical URL.
+- `wiki_search(query=<url or title>)` — catch prior ingests under a different
+  location.
+
+Already-present sources are reused, not re-ingested: cite their existing raw
+path in step 6 and note the dedup hit in the run report.
+
+## 5. Ingest
+
+`wiki_ingest` with the deduplicated URL batch. Per-URL failures do not stop
+the run: record each as a `gap:` line in the affected item's note (step 6) and
+continue with what ingested.
+
+## 6. Accepted notes (one per kept item)
+
+Write one note file per item in the accepted-note contract parsed by compile
+(`citation:` / `gap:` / `conflict:` line prefixes; `conflicting claim:` and
+`missing evidence:` are accepted aliases). Default template:
+
+```markdown
+## Summary
+
+<what the source says, grounded, few sentences>
+
+## How this improves gobby
+
+<the concrete connection to gobby's architecture or roadmap>
+
+## Investigation prompt
+
+<the follow-up an engineer should run down>
+
+citation: <raw/<source-id>.md path from ingest>
+citation: <original URL>
+gap: <anything the source leaves unanswered, if any>
+conflict: <claim that contradicts another kept source, if any>
+```
+
+Then `wiki_ingest` with the note file paths so the notes become vault sources
+too. Skip this template only when the question carries its own output
+contract.
+
+## 7. Compile the topic page
+
+`wiki_compile` with — always — an explicit `topic` and the full source list
+(every kept source plus every note). Never rely on an existing research
+checkpoint to supply sources: an explicit topic + source list replaces the
+checkpoint's accepted notes, so an implicit call can hijack or be hijacked by
+unrelated checkpoint state. Use `kind=topic`, target
+`knowledge/topics/<slug>.md` where `<slug>` is the kebab-cased question topic.
+
+## 8. Investigation tasks (only when `create_tasks`)
+
+One `create_task` on `gobby-tasks` per kept item: title from the finding,
+description = the item's investigation prompt plus its `citation:` lines,
+label `wiki-research`. No tasks for discarded candidates.
+
+## 9. Run report
+
+Write a run report page under `outputs/` covering: the question, angles
+searched, candidates found, keep/discard reasons, dedup hits, ingest failures,
+compiled page path, and tasks filed. Append one line to the vault's `log.md`
+recording the run and linking the report and topic page.
+
+## 10. Finish
+
+Close your claimed task (`close_task` with the commit when repo files changed,
+or the appropriate no-commit reason when only vault data changed), then call
+`end_agent_run`. Never leave the run open after the report is written.

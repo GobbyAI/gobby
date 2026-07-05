@@ -284,7 +284,8 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
     )
     stale = mutexes.get_mutex(task.id)
     assert stale is not None
-    assert datetime.fromisoformat(stale.lease_until) < datetime.now(UTC)
+    assert stale.lease_until is not None
+    assert stale.lease_until < datetime.now(UTC)
 
     monitor = AgentLifecycleMonitor(
         agent_run_manager=agent_run_manager,
@@ -299,7 +300,8 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
     assert refreshed is not None
     assert refreshed.run_id == run.id
     assert refreshed.lease_holder == "dispatcher"
-    assert datetime.fromisoformat(refreshed.lease_until) > before_refresh
+    assert refreshed.lease_until is not None
+    assert refreshed.lease_until > before_refresh
 
 
 @pytest.mark.asyncio
@@ -343,7 +345,8 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
     assert restored is not None
     assert restored.run_id == run.id
     assert restored.lease_holder == "dispatcher"
-    assert datetime.fromisoformat(restored.lease_until) > before_restore
+    assert restored.lease_until is not None
+    assert restored.lease_until > before_restore
 
 
 @pytest.mark.asyncio

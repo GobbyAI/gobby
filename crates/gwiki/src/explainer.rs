@@ -20,6 +20,10 @@ pub const EXPLAINER_PROMPT_TOKEN_BUDGET: usize = 12_000;
 /// Per-source excerpt bound entering the prompt.
 pub const EXPLAINER_SOURCE_EXCERPT_MAX_CHARS: usize = 2_400;
 
+/// Bound on the existing page body carried into an update-mode prompt, sized
+/// so the current content never crowds the source excerpts out of the budget.
+pub const EXPLAINER_EXISTING_BODY_MAX_CHARS: usize = 6_000;
+
 /// Conservative ~4 chars/token estimate, rounded up.
 pub fn estimate_tokens(chars: usize) -> usize {
     chars.div_ceil(4)
@@ -131,6 +135,14 @@ pub fn build_explainer_prompt(vault_root: &Path, input: &SynthesisInput) -> Expl
             user.push_str(heading);
             user.push('\n');
         }
+    }
+    if let Some(body) = &input.existing_page_body {
+        user.push_str(
+            "\nCurrent page content — update it rather than starting over: preserve \
+             claims whose citations are still valid and fold in the new sources.\n",
+        );
+        user.push_str(&bounded_excerpt(body, EXPLAINER_EXISTING_BODY_MAX_CHARS));
+        user.push('\n');
     }
     user.push_str("\nSource excerpts:\n");
 
@@ -346,6 +358,9 @@ mod tests {
             citations: vec![],
             conflicting_claims: vec![],
             missing_evidence: vec![],
+            existing_page_body: None,
+            aliases: vec![],
+            extra_tags: vec![],
         }
     }
 
@@ -354,6 +369,7 @@ mod tests {
             title: title.to_string(),
             path: PathBuf::from(path),
             chunks: vec![chunk.to_string()],
+            existing_page: None,
         }
     }
 
@@ -377,6 +393,38 @@ mod tests {
         assert!(prompt.user.contains("Compile turns accepted notes"));
         assert!(prompt.tokens_estimated > 0);
         assert_eq!(prompt.truncated_sources, 0);
+    }
+
+    #[test]
+    fn explainer_prompt_renders_existing_body_as_bounded_update_section() {
+        let mut input = input_with_sources(vec![source(
+            "Compile Notes",
+            "raw/research/compile.md",
+            "Compile turns accepted notes into grounded articles.",
+        )]);
+        input.existing_page_body = Some(format!(
+            "## Overview\n\nExisting claim. [source: raw/research/compile.md]\n{}",
+            "padding ".repeat(EXPLAINER_EXISTING_BODY_MAX_CHARS)
+        ));
+
+        let prompt = build_explainer_prompt(Path::new("/vault"), &input);
+
+        let update_at = prompt
+            .user
+            .find("Current page content")
+            .expect("update section rendered");
+        let sources_at = prompt
+            .user
+            .find("Source excerpts:")
+            .expect("source excerpts rendered");
+        assert!(update_at < sources_at, "{}", prompt.user);
+        assert!(prompt.user.contains("Existing claim."));
+        assert!(prompt.user.contains("preserve"));
+        assert!(prompt.user.contains("fold in the new sources"));
+        // The body is bounded before entering the prompt, so the oversized
+        // padding is truncated with the excerpt ellipsis.
+        assert!(prompt.user.contains('…'));
+        assert!(prompt.user.chars().count() < EXPLAINER_EXISTING_BODY_MAX_CHARS + 2_000);
     }
 
     #[test]

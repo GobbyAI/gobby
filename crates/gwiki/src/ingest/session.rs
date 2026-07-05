@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 mod codex;
+mod connections;
 mod daemon_wiki;
 mod derived;
 mod droid;
@@ -15,6 +16,7 @@ mod redaction;
 mod summarize;
 
 use codex::CODEX_SESSION_ADAPTER;
+pub(crate) use connections::ConnectionsEnricher;
 use daemon_wiki::{DaemonWikiPage, render_session_wiki_markdown};
 use derived::write_session_derived_markdown;
 use droid::DROID_SESSION_ADAPTER;
@@ -144,9 +146,17 @@ pub(crate) fn ingest_session_file_without_index(
 pub(crate) fn ingest_session_wiki_file_without_index(
     vault_root: &Path,
     snapshot: SessionWikiFileSnapshot,
+    enricher: Option<&ConnectionsEnricher>,
 ) -> Result<IngestResult, WikiError> {
     let text = text_from_utf8_lossy(&snapshot.bytes);
-    let page = DaemonWikiPage::parse(&text);
+    let mut page = DaemonWikiPage::parse(&text);
+    // Connections enrichment keeps digests wikilinked regardless of the
+    // upstream summary format; the daemon handoff prompt stays untouched.
+    if let Some(enricher) = enricher
+        && let Some(enriched) = enricher.enrich_body(page.body())
+    {
+        page.set_body(enriched);
+    }
 
     // Canonical, content-stable session location shared with the raw fallback,
     // so a fresh synthesis can supersede a previously raw-parsed page.

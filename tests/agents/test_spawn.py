@@ -38,6 +38,13 @@ def _make_session_manager(
 class TestPrepareTerminalSpawnMetadata:
     """Tests for agent_run_id persistence in prepare_terminal_spawn."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_agent_run_storage(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # These tests pin the pickup-metadata contract, not run storage.
+        # The real LocalAgentRunManager would decode AgentRun rows from the
+        # mocked db, and datetime normalization rejects Mock values.
+        monkeypatch.setattr("gobby.storage.agents.LocalAgentRunManager", MagicMock())
+
     def test_calls_update_terminal_pickup_metadata(self) -> None:
         """prepare_terminal_spawn persists agent_run_id to session record."""
         sm = _make_session_manager()

@@ -6,15 +6,19 @@ import subprocess  # nosec B404 - scoped git commands, no shell
 from pathlib import Path
 from typing import Any
 
+from gobby.utils.wiki_vault import resolve_vault_dir
+
 logger = logging.getLogger(__name__)
 
-GOBBY_WIKI_DIR = "gobby-wiki"
 WIKI_BRANCH = "wiki"
 GITIGNORE_START = "# >>> GOBBY WIKI START >>>"
 GITIGNORE_END = "# <<< GOBBY WIKI END <<<"
-GITIGNORE_BLOCK = f"""{GITIGNORE_START}
+
+
+def _gitignore_block(vault_dir: str) -> str:
+    return f"""{GITIGNORE_START}
 # Gobby local wiki vault; pre-push publishes it to branch `wiki`.
-{GOBBY_WIKI_DIR}/
+{vault_dir}/
 {GITIGNORE_END}
 """
 
@@ -27,6 +31,7 @@ def default_wiki_setup_result() -> dict[str, Any]:
         "gitignore_status": "unknown",
         "worktree_path": None,
         "branch": WIKI_BRANCH,
+        "vault_dir": None,
         "warnings": [],
         "tracked_files": [],
     }
@@ -37,7 +42,7 @@ def setup_wiki_branch(
     *,
     require_project_root: bool = False,
 ) -> dict[str, Any]:
-    """Prepare branch-local ``gobby-wiki/`` publishing for a Git repository."""
+    """Prepare branch-local wiki vault publishing for a Git repository."""
     result = default_wiki_setup_result()
     repo_candidate = project_path.resolve()
     git_root = _git_toplevel(repo_candidate)
@@ -53,18 +58,28 @@ def setup_wiki_branch(
         )
         return result
 
-    gitignore_status, gitignore_warning = _ensure_gitignore_block(git_root)
+    vault_path = resolve_vault_dir(git_root)
+    if vault_path is None:
+        result["warnings"].append(
+            f"Wiki setup skipped: no usable wiki vault directory under {git_root}; "
+            "every candidate is occupied by a non-vault path."
+        )
+        return result
+    vault_dir = vault_path.name
+    result["vault_dir"] = vault_dir
+
+    gitignore_status, gitignore_warning = _ensure_gitignore_block(git_root, vault_dir)
     result["gitignore_status"] = gitignore_status
     result["gitignore_updated"] = gitignore_status == "updated"
     if gitignore_warning:
         result["warnings"].append(gitignore_warning)
 
-    tracked_files = _tracked_wiki_files(git_root)
+    tracked_files = _tracked_wiki_files(git_root, vault_dir)
     result["tracked_files"] = tracked_files
     if tracked_files:
         result["warnings"].append(
-            f"{GOBBY_WIKI_DIR}/ has tracked files. Leave them as-is for now; "
-            f"to make the vault branch-local, run: git rm --cached -r {GOBBY_WIKI_DIR}"
+            f"{vault_dir}/ has tracked files. Leave them as-is for now; "
+            f"to make the vault branch-local, run: git rm --cached -r {vault_dir}"
         )
 
     worktree_path = _wiki_worktree_path(git_root)
@@ -72,9 +87,8 @@ def setup_wiki_branch(
     if not _ensure_wiki_worktree(git_root, worktree_path, result["warnings"]):
         return result
 
-    wiki_source = git_root / GOBBY_WIKI_DIR
-    if wiki_source.is_dir():
-        _mirror_wiki_vault(wiki_source, worktree_path, result["warnings"])
+    if vault_path.is_dir():
+        _mirror_wiki_vault(vault_path, worktree_path, result["warnings"])
 
     result["success"] = True
     return result
@@ -101,7 +115,7 @@ def _git_toplevel(project_path: Path) -> Path | None:
     return Path(root).resolve() if root else None
 
 
-def _ensure_gitignore_block(repo_path: Path) -> tuple[str, str | None]:
+def _ensure_gitignore_block(repo_path: Path, vault_dir: str) -> tuple[str, str | None]:
     gitignore_path = repo_path / ".gitignore"
     try:
         original = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
@@ -110,7 +124,7 @@ def _ensure_gitignore_block(repo_path: Path) -> tuple[str, str | None]:
         logger.warning(warning)
         return "failed", warning
 
-    updated = _replace_gitignore_block(original)
+    updated = _replace_gitignore_block(original, vault_dir)
     if updated == original:
         return "unchanged", None
 
@@ -123,8 +137,8 @@ def _ensure_gitignore_block(repo_path: Path) -> tuple[str, str | None]:
     return "updated", None
 
 
-def _replace_gitignore_block(content: str) -> str:
-    block = GITIGNORE_BLOCK.rstrip() + "\n"
+def _replace_gitignore_block(content: str, vault_dir: str) -> str:
+    block = _gitignore_block(vault_dir).rstrip() + "\n"
     start = content.find(GITIGNORE_START)
     end = content.find(GITIGNORE_END)
     if start != -1 and end != -1 and end > start:
@@ -140,8 +154,8 @@ def _replace_gitignore_block(content: str) -> str:
     return f"{prefix}\n\n{block}" if prefix else block
 
 
-def _tracked_wiki_files(repo_path: Path) -> list[str]:
-    proc = _run_git(repo_path, "ls-files", "--", GOBBY_WIKI_DIR)
+def _tracked_wiki_files(repo_path: Path, vault_dir: str) -> list[str]:
+    proc = _run_git(repo_path, "ls-files", "--", vault_dir)
     if proc.returncode != 0:
         return []
     return [line for line in proc.stdout.splitlines() if line]

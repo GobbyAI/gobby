@@ -5,9 +5,9 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 7
+`contract_version`: 10
 
-Version 7 covers the daemon-consumed surface:
+Version 10 covers the daemon-consumed surface:
 
 - `contract`
 - `index`
@@ -17,6 +17,7 @@ Version 7 covers the daemon-consumed surface:
 - `refresh`
 - `ingest-file`
 - `ingest-url`
+- `sync-sessions`
 - `collect`
 - `compile`
 - `audit`
@@ -25,6 +26,8 @@ Version 7 covers the daemon-consumed surface:
 - `benchmark`
 - `health`
 - `librarian`
+- `upkeep`
+- `recap`
 - `review-report`
 - `citation-quality`
 - `sources`
@@ -32,6 +35,28 @@ Version 7 covers the daemon-consumed surface:
 - `status`
 - `trust`
 - `remove-source`
+
+Version 10 adds the `recap` surface: `gwiki recap [--date YYYY-MM-DD]
+[--ai auto|daemon|direct|off]` writes the day's session recap page at
+`recaps/YYYY-MM-DD.md`. Days attribute by UTC: each session digest's
+`session_started_at` frontmatter wins, falling back to the manifest record's
+`fetched_at`. Synthesis is one bounded single-shot completion — never an agent
+tool loop — and rerunning the same day updates the existing page, folding its
+current body into the prompt. A day with no sessions writes no page and is not
+an error. `--date` defaults to today (UTC).
+
+Version 9 adds the `upkeep` synthesis conductor: `gwiki upkeep [--max-pages N]
+[--min-mentions N] [--max-sources-per-page N] [--dry-run]
+[--ai auto|daemon|direct|off]` drains pending sources into entity concept
+pages. Unresolved wiki-link targets mentioned by at least `--min-mentions`
+digests form clusters; each run synthesizes up to `--max-pages` concept pages
+from at most `--max-sources-per-page` accepted sources apiece, then reconciles
+compile status. `--dry-run` plans the run without writing to the vault.
+
+Version 8 adds a `hint` key to `search` and `ask` payloads, registers the
+`benchmark` surface in the machine-readable contract, and gives `librarian` an
+`--ai auto|daemon|direct|off` routing flag backing its service-probed patch
+suggestions.
 
 Version 5 makes `search` the agent retrieval primitive and rebuilds `ask` as a
 thin bounded-evidence layer over it. `search` results carry bounded
@@ -82,12 +107,15 @@ Version 3 added code-grounded payload fields to `ask` and `graph-context`.
 `graph-context` returns `code_edges` and `code_citations` alongside `context`,
 `source_bundle`, `trust`, `freshness`, `audit`, `warnings`, and `degradation`.
 
-The `ask`, `graph-context`, `benchmark`, `librarian`, `review-report`, and
-`citation-quality` entries pin their dependency and degradation rows in the
-machine-readable contract. `ask` treats model synthesis, semantic vectors, and
-the FalkorDB graph boost as optional signals, and can degrade to
-retrieval-only hits with grounded citations. `librarian` keeps deterministic
-upkeep proposals available while skipping unavailable checks. `review-report`
+The `ask`, `graph-context`, `benchmark`, `librarian`, `upkeep`, `recap`,
+`review-report`, and `citation-quality` entries pin their dependency and
+degradation rows in the machine-readable contract. `ask` treats model
+synthesis, semantic vectors, and the FalkorDB graph boost as optional signals,
+and can degrade to retrieval-only hits with grounded citations. `librarian`
+keeps deterministic upkeep proposals available while skipping unavailable
+checks. `upkeep` records per-page synthesis failures and continues the run;
+with AI off it writes structural skeleton pages. `recap` keeps its
+deterministic session listing when synthesis is off or fails. `review-report`
 can emit a report without the risky-shift section when graph analytics are
 unavailable. `citation-quality` can skip unavailable quality sections
 independently.
@@ -147,6 +175,8 @@ silently.
 | `ask` | PostgreSQL | model synthesis, Qdrant+embeddings, FalkorDB graph boost | none - not used | model off emits retrieval-only hits with grounded citations; signal loss falls back to BM25-only evidence | `degraded`, `degraded_sources[]`, `truncated`, `truncated_components[]` on answer |
 | `compile` | canonical Markdown vault, research session | model synthesis (daemon text lane or direct OpenAI-compatible endpoint) | none - not used | explainer failure keeps the deterministic skeleton with degradation markers; AI off compiles the structural article without markers | `ai.status`/`ai.error` in payload; page frontmatter `degraded`/`degraded_sources[]` |
 | `librarian` | PostgreSQL, vault | FalkorDB/code graph, Qdrant+embeddings, model | none - not used | each check skipped independently with a note | per-check `available` in proposals report |
+| `upkeep` | vault | Qdrant+embeddings, model synthesis | none - not used | missing semantic backend skips near-duplicate checks with a note; AI off writes structural skeleton pages; per-page failures are recorded and the run continues | `notes[]`, `clusters[].error`, `ai` |
+| `recap` | vault | model synthesis | none - not used | AI off or failed still writes the deterministic session listing with a fallback overview; a day with no sessions writes no page and is not an error | `synthesis`, `notes[]`, `ai` |
 | `review-report` | PostgreSQL, change set | FalkorDB/code graph and analytics | none - not used | report without risky-shift section | `degraded`, `degraded_sources[]` on report |
 | `citation-quality` | PostgreSQL | credibility signals, model contradiction detection | none - not used | per-section skipped with a note | per-section `available` |
 
@@ -169,10 +199,18 @@ Both the CLI and daemon tests load this contract. New daemon-facing flags or JSO
 keys should update this document, the JSON contract, and the corresponding drift
 tests in the same change.
 
-The pinned `ask`, `graph-context`, `benchmark`, `librarian`, `review-report`, and
-`citation-quality` command entries record their classification rows with
-top-level `hard_dependencies`, `optional_dependencies`, `multimodal`, and
-`degradation` fields so daemon consumers can detect dependency and degradation
-drift directly from the contract JSON.
+The pinned `ask`, `graph-context`, `benchmark`, `librarian`, `upkeep`, `recap`,
+`review-report`, and `citation-quality` command entries record their
+classification rows with top-level `hard_dependencies`, `optional_dependencies`,
+`multimodal`, and `degradation` fields so daemon consumers can detect dependency
+and degradation drift directly from the contract JSON.
 
-_Last verified: 2026-06-14_
+`trust` distinguishes curated from digest red links:
+`link_summary.curated_broken_link_count` counts broken links on pages outside
+`knowledge/sources/`, and only those gate `attention_required`. One-off
+`[[Entity]]` red links inside session digests sit below the upkeep clustering
+threshold by design — they keep the `broken_links` degradation label and the
+total `broken_link_count`, classify the vault as `degraded`, and are
+enumerated by `librarian`.
+
+_Last verified: 2026-07-05_

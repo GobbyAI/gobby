@@ -1,12 +1,7 @@
-#[cfg(feature = "ai")]
-use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiConfigSource, AiContext};
 #[cfg(test)]
 use gobby_core::config::QdrantConfig;
-use gobby_core::config::{
-    AiCapability, AiRouting, resolve_embedding_config, resolve_falkordb_config,
-    resolve_qdrant_config,
-};
+use gobby_core::config::{resolve_falkordb_config, resolve_qdrant_config};
 use gobby_core::token_budget;
 
 use crate::output::{SearchOutput, SearchResultOutput, SearchResultType};
@@ -107,7 +102,7 @@ fn run_search_attached(
                 detail: format!("failed to resolve AI config for gwiki search: {error}"),
             })?;
         let ai_context = AiContext::resolve(None, &mut source);
-        resolve_semantic_embedding(&ai_context, &mut source)
+        crate::support::services::resolve_semantic_embedding(&ai_context, &mut source)
     };
     let qdrant = {
         let primary = search_support::PostgresConfigSource { conn: &mut conn };
@@ -177,69 +172,6 @@ fn required_search_config(service: &'static str) -> WikiError {
         detail: format!(
             "gwiki search requires {service}; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
         ),
-    }
-}
-
-fn resolve_semantic_embedding(
-    context: &AiContext,
-    source: &mut impl gobby_core::config::ConfigSource,
-) -> Option<wiki_search::semantic::SemanticEmbedding> {
-    match effective_embedding_route(context) {
-        AiRouting::Off => None,
-        AiRouting::Daemon => {
-            #[cfg(feature = "ai")]
-            {
-                Some(wiki_search::semantic::SemanticEmbedding::Daemon(Box::new(
-                    context.clone(),
-                )))
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                None
-            }
-        }
-        AiRouting::Direct => {
-            resolve_embedding_config(source).map(wiki_search::semantic::SemanticEmbedding::Direct)
-        }
-        AiRouting::Auto => {
-            #[cfg(feature = "ai")]
-            {
-                Some(wiki_search::semantic::SemanticEmbedding::Daemon(Box::new(
-                    context.clone(),
-                )))
-            }
-            #[cfg(not(feature = "ai"))]
-            {
-                resolve_embedding_config(source)
-                    .map(wiki_search::semantic::SemanticEmbedding::Direct)
-            }
-        }
-    }
-}
-
-fn effective_embedding_route(context: &AiContext) -> AiRouting {
-    #[cfg(feature = "ai")]
-    {
-        effective_route(context, AiCapability::Embed)
-    }
-    #[cfg(not(feature = "ai"))]
-    {
-        match context.binding(AiCapability::Embed).routing {
-            AiRouting::Off => AiRouting::Off,
-            AiRouting::Direct => AiRouting::Direct,
-            AiRouting::Daemon => {
-                eprintln!(
-                    "warning: gwiki was built without ai support; daemon-backed embeddings are disabled"
-                );
-                AiRouting::Off
-            }
-            AiRouting::Auto => {
-                eprintln!(
-                    "warning: gwiki was built without ai support; auto embedding route cannot use the daemon"
-                );
-                AiRouting::Auto
-            }
-        }
     }
 }
 

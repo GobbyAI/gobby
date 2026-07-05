@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use postgres::Client;
@@ -6,7 +6,9 @@ use postgres::Client;
 use crate::WikiError;
 use crate::graph::{
     WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget, WikiGraphSource,
+    document_target_map,
 };
+use crate::links::canonical_target_key;
 use crate::search::SearchScope;
 use crate::support::text::slugify;
 
@@ -36,10 +38,7 @@ pub(crate) fn load_wiki_graph_facts(
         })
         .collect::<Vec<_>>();
 
-    let document_paths = documents
-        .iter()
-        .map(|document| document.path.clone())
-        .collect::<BTreeSet<_>>();
+    let document_targets = document_target_map(documents.iter().map(|document| &document.path));
     let slug_targets = slug_target_map(&documents);
 
     let link_rows = conn
@@ -58,7 +57,7 @@ pub(crate) fn load_wiki_graph_facts(
         .filter_map(|row| {
             let source_path = PathBuf::from(row.get::<_, String>("path"));
             let raw_target = row.get::<_, String>("target_path");
-            resolve_graph_target(&raw_target, &source_path, &document_paths, &slug_targets).map(
+            resolve_graph_target(&raw_target, &source_path, &document_targets, &slug_targets).map(
                 |target| WikiGraphLink {
                     scope: scope.clone(),
                     source_path,
@@ -100,7 +99,7 @@ pub(crate) fn load_wiki_graph_facts(
 pub(super) fn resolve_graph_target(
     raw_target: &str,
     source_path: &Path,
-    document_paths: &BTreeSet<PathBuf>,
+    document_targets: &BTreeMap<String, PathBuf>,
     slug_targets: &BTreeMap<String, PathBuf>,
 ) -> Option<WikiGraphLinkTarget> {
     let trimmed = raw_target.trim();
@@ -118,9 +117,8 @@ pub(super) fn resolve_graph_target(
     }
 
     let lookup = resolve_relative_graph_path(&normalized, source_path);
-    let direct = PathBuf::from(&lookup);
-    if document_paths.contains(&direct) {
-        return Some(WikiGraphLinkTarget::Resolved(direct));
+    if let Some(path) = document_targets.get(&canonical_target_key(&lookup)) {
+        return Some(WikiGraphLinkTarget::Resolved(path.clone()));
     }
 
     let target_slug = slugify(lookup.strip_suffix(".md").unwrap_or(&lookup));

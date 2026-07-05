@@ -184,7 +184,7 @@ result = spawn_agent(
 schema does not accept per-call sandbox parameters; the exposed parameters are
 for the prompt, agent selection, isolation, branch/workspace selection,
 workflow, provider/model overrides, reasoning, timeout, parent session,
-project path, task linkage (`task_id`), turn limits (`max_turns`), and
+project path, task linkage (`task_id`), and
 completion notification (`notify_parent_on_completion`).
 
 Sandbox policy is independent from agent lifecycle. A spawned agent that has

@@ -241,8 +241,27 @@ def _is_tdd_test_path(path: str) -> bool:
 
 
 def _is_claude_memory_path(path: str) -> bool:
-    normalized = _normalize_condition_path(path).rstrip("/")
-    return ".claude/" in normalized and ("/memory/" in normalized or normalized.endswith("/memory"))
+    """Match only Claude Code's file-based memory layouts.
+
+    Blocked layouts are a ``memory`` directory directly under ``.claude/``
+    (project-local) or under ``.claude/projects/<slug>/`` (user-level
+    auto-memory). Independent substring checks are not enough: a repo checked
+    out under ``.claude/worktrees/`` puts arbitrary source such as
+    ``src/gobby/memory/`` beneath ``.claude/``, and those paths must not match.
+    """
+    parts = [part for part in _normalize_condition_path(path).split("/") if part]
+    for index, part in enumerate(parts):
+        if part != ".claude":
+            continue
+        if index + 1 < len(parts) and parts[index + 1] == "memory":
+            return True
+        if (
+            index + 3 < len(parts)
+            and parts[index + 1] == "projects"
+            and parts[index + 3] == "memory"
+        ):
+            return True
+    return False
 
 
 def _is_task_commit_guard_file(path: str) -> bool:

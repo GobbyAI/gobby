@@ -32,6 +32,7 @@ CONTEXT_HANDOFF_RULES = {
     "inject-previous-session-summary",
     "inject-compact-handoff",
     "inject-task-context-on-start",
+    "inject-wiki-overview",
     "prepare-clear-handoff",
     "preserve-context-on-compact",
     "nudge-compact-on-context-pressure",
@@ -207,6 +208,57 @@ class TestInjectCompactHandoff:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "compact" in body.when
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# inject-wiki-overview
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestInjectWikiOverview:
+    """Inject the project wiki overview at session start (#17520)."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("inject-wiki-overview")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "session_start"
+        assert body.effects[0].type == "inject_context"
+        assert body.effects[0].template is not None
+        assert "Project Wiki" in body.effects[0].template
+        assert "gobby:injected-context:begin" in body.effects[0].template
+
+    def test_has_when_condition(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("inject-wiki-overview")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "wiki_overview" in body.when
+
+    @pytest.mark.asyncio
+    async def test_injects_overview_when_variable_seeded(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"source": "startup"},
+        )
+
+        seeded = await engine.evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"wiki_overview": "Totals: 22 concepts · 196 sources"},
+        )
+        assert seeded.context is not None
+        assert "Project Wiki" in seeded.context
+        assert "Totals: 22 concepts · 196 sources" in seeded.context
+
+        unseeded = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+        assert not (unseeded.context and "Project Wiki" in unseeded.context)
 
 
 # ═══════════════════════════════════════════════════════════════════════

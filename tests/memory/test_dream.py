@@ -1049,7 +1049,12 @@ def _project_row(project_id: str, repo_path: Path | None) -> dict[str, Any]:
 
 
 def _write_truth_digest(repo_path: Path, payload: dict[str, Any]) -> Path:
-    digest_path = repo_path / "gobby-wiki" / "_meta" / "truth_digest.json"
+    vault = repo_path / "wiki"
+    marker = vault / "_gwiki" / "scope.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    if not marker.exists():
+        marker.write_text("{}\n", encoding="utf-8")
+    digest_path = vault / "_meta" / "truth_digest.json"
     digest_path.parent.mkdir(parents=True, exist_ok=True)
     digest_path.write_text(json.dumps(payload), encoding="utf-8")
     return digest_path
@@ -1622,7 +1627,10 @@ def test_build_project_truth_digest_missing_or_invalid_returns_empty(tmp_path: P
     assert build_project_truth_digest(str(tmp_path / "missing")) == ""
 
     repo_path = tmp_path / "repo"
-    digest_path = repo_path / "gobby-wiki" / "_meta" / "truth_digest.json"
+    marker = repo_path / "wiki" / "_gwiki" / "scope.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}\n", encoding="utf-8")
+    digest_path = repo_path / "wiki" / "_meta" / "truth_digest.json"
     digest_path.parent.mkdir(parents=True)
     digest_path.write_text("{invalid", encoding="utf-8")
 
@@ -1634,7 +1642,7 @@ def test_build_project_truth_digest_matches_real_gobby_cli_artifact_shape(
 ) -> None:
     """Pin the consumer to the REAL gobby-cli ``truth_digest.json`` field names.
 
-    The fixture is a trimmed copy of a real ``gobby-wiki/_meta/truth_digest.json``
+    The fixture is a trimmed copy of a real vault ``_meta/truth_digest.json``
     emitted by the gobby-cli codewiki build (stack reduced to two entries and the
     long ``summary``/``degradation`` strings shortened so every consumed field
     renders inside the digest bound). It deliberately preserves the producer's

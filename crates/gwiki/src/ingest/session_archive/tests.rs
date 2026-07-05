@@ -24,11 +24,13 @@ fn sync_session_archives_ingests_gzip_and_indexes_once() {
     let report = sync_session_transcript_archives(
         temp.path(),
         &mut store,
-        &archive_dir,
-        &temp.path().join("session_wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-16T20:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &temp.path().join("session_wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-16T20:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync archives");
@@ -62,11 +64,13 @@ fn sync_session_archives_treats_missing_archive_dir_as_empty() {
     let report = sync_session_transcript_archives(
         temp.path(),
         &mut store,
-        &temp.path().join("missing-session-transcripts"),
-        &temp.path().join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-16T20:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &temp.path().join("missing-session-transcripts"),
+            wiki_dir: &temp.path().join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-16T20:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync missing archive dir");
@@ -94,11 +98,13 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
     let first = sync_session_transcript_archives(
         temp.path(),
         &mut store,
-        &archive_dir,
-        &temp.path().join("session_wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-16T20:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &temp.path().join("session_wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-16T20:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
@@ -108,11 +114,13 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
     let second = sync_session_transcript_archives(
         temp.path(),
         &mut second_store,
-        &archive_dir,
-        &temp.path().join("session_wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-16T20:06:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &temp.path().join("session_wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-16T20:06:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
@@ -140,11 +148,13 @@ fn sync_session_archives_reports_bad_gzip_without_blocking_good_archives() {
     let report = sync_session_transcript_archives(
         temp.path(),
         &mut store,
-        &archive_dir,
-        &temp.path().join("session_wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-16T20:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &temp.path().join("session_wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-16T20:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync archives");
@@ -216,11 +226,13 @@ fn synthesis_first_ingests_wiki_page() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
@@ -270,11 +282,13 @@ fn raw_archive_without_synthesis_uses_session_location() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &archive_dir,
-        &vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-24T00:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-24T00:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
@@ -310,11 +324,13 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &archive_dir,
-        &vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
@@ -341,11 +357,13 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
     let initial = sync_session_transcript_archives(
         preserve_vault,
         &mut store,
-        &preserve_archive_dir,
-        &preserve_vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-24T00:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &preserve_archive_dir,
+            wiki_dir: &preserve_vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-24T00:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("initial sync");
@@ -356,11 +374,13 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
     let rerun = sync_session_transcript_archives(
         preserve_vault,
         &mut rerun_store,
-        &preserve_archive_dir,
-        &preserve_vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:06:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &preserve_archive_dir,
+            wiki_dir: &preserve_vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:06:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("rerun sync");
@@ -414,11 +434,13 @@ fn synthesis_suppresses_matching_raw_archive() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &archive_dir,
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
@@ -467,11 +489,13 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
@@ -489,11 +513,13 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
     let second = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T01:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T01:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
@@ -538,11 +564,13 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
@@ -566,11 +594,13 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
     let second = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T01:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T01:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
@@ -625,11 +655,13 @@ fn synthesis_supersedes_legacy_raw_location_page() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
@@ -665,11 +697,13 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("first sync");
@@ -699,11 +733,13 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
     let second = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T01:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T01:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("second sync");
@@ -758,11 +794,13 @@ fn limit_does_not_false_delete_uncapped_sessions() {
     let initial = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("initial sync");
@@ -775,11 +813,13 @@ fn limit_does_not_false_delete_uncapped_sessions() {
     let capped = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        Some(1),
-        RawArchiveMode::Skip,
-        "2026-06-24T01:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: Some(1),
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T01:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("capped sync");
@@ -812,11 +852,13 @@ fn empty_discovery_preserves_existing_manifest_sessions() {
     let first = sync_session_transcript_archives(
         vault,
         &mut store,
-        &archive_dir,
-        &vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-24T00:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-24T00:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("initial sync");
@@ -827,11 +869,13 @@ fn empty_discovery_preserves_existing_manifest_sessions() {
     let second = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-session-transcripts"),
-        &vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T01:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-session-transcripts"),
+            wiki_dir: &vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T01:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("empty discovery sync");
@@ -868,11 +912,13 @@ fn same_content_at_two_session_locations_ingests_twice() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &archive_dir,
-        &vault.join("missing-session-wiki"),
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-24T00:05:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &archive_dir,
+            wiki_dir: &vault.join("missing-session-wiki"),
+            limit: None,
+            raw_mode: RawArchiveMode::Skeleton,
+            fetched_at: "2026-06-24T00:05:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");
@@ -933,11 +979,13 @@ fn legacy_raw_entry_sharing_hash_is_superseded_by_id() {
     let report = sync_session_transcript_archives(
         vault,
         &mut store,
-        &vault.join("missing-archives"),
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skip,
-        "2026-06-24T00:00:00Z",
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
         &mut crate::progress::ProgressOptions::default(),
     )
     .expect("sync");

@@ -161,6 +161,79 @@ async def test_search_passes_token_budget(monkeypatch: pytest.MonkeyPatch) -> No
     ]
 
 
+async def test_compile_builds_full_arg_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"command": "compile", "status": "written"}
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().compile(
+        "Hooks Overview",
+        kind="topic",
+        sources=["src-1", "src-2"],
+        outline=["Intro", "Details"],
+        target="knowledge/topics/hooks.md",
+        write_intent=True,
+        ai="direct",
+    )
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "compile",
+            "Hooks Overview",
+            "--kind",
+            "topic",
+            "--source",
+            "src-1",
+            "--source",
+            "src-2",
+            "--outline",
+            "Intro",
+            "--outline",
+            "Details",
+            "--target",
+            "knowledge/topics/hooks.md",
+            "--write-intent",
+            "--ai",
+            "direct",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
+
+
+async def test_compile_without_arguments_emits_bare_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {"command": "compile", "status": "written"}
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().compile()
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "compile",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
+
+
+async def test_compile_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="kind must be one of concept, source, topic"):
+        await _gateway().compile("Hooks Overview", kind="article")
+
+
 async def test_sync_sessions_passes_archive_dir_and_limit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

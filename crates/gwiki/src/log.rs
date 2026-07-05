@@ -2,10 +2,17 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::sources::SourceRecord;
 use crate::{ScopeIdentity, WikiError};
 
+/// Log action names written by production call sites.
+pub const ACTION_SOURCE_INGESTED: &str = "source_ingested";
+pub const ACTION_PAGE_CREATED: &str = "page_created";
+pub const ACTION_PAGE_UPDATED: &str = "page_updated";
+pub const ACTION_UPKEEP_COMPLETED: &str = "upkeep_completed";
+pub const ACTION_RECAP_COMPLETED: &str = "recap_completed";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct LogEntry {
     pub timestamp: String,
     pub scope: ScopeIdentity,
@@ -21,7 +28,40 @@ pub struct LogWriteReport {
     pub global_log: Option<PathBuf>,
 }
 
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
+/// Entry for a source accepted into the manifest. `raw_path` is the
+/// vault-relative digest path from [`crate::ingest::IngestResult`].
+pub fn source_ingested_entry(
+    timestamp: &str,
+    scope: &ScopeIdentity,
+    record: &SourceRecord,
+    raw_path: &Path,
+) -> LogEntry {
+    LogEntry {
+        timestamp: timestamp.to_string(),
+        scope: scope.clone(),
+        action: ACTION_SOURCE_INGESTED.to_string(),
+        summary: format!("{} {}", record.id, record.location),
+        artifacts: vec![raw_path.to_path_buf()],
+    }
+}
+
+/// Append one `source_ingested` line per accepted ingest to the vault log.
+pub fn append_sources_ingested<'a>(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    timestamp: &str,
+    results: impl IntoIterator<Item = &'a crate::ingest::IngestResult>,
+) -> Result<(), WikiError> {
+    for result in results {
+        append_logs(
+            vault_root,
+            None,
+            &source_ingested_entry(timestamp, scope, &result.record, &result.raw_path),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn append_logs(
     scope_root: &Path,
     global_hub_root: Option<&Path>,
@@ -90,21 +130,32 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
 }
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
+// One entry per line so the log stays greppable (`grep page_created log.md`).
 fn render_entry(entry: &LogEntry) -> String {
     let mut rendered = format!(
-        "## {} - {}\nScope: {}\n\n{}\n",
-        entry.timestamp, entry.action, entry.scope, entry.summary
+        "- {} [{}] {}: {}",
+        single_line(&entry.timestamp),
+        entry.scope,
+        single_line(&entry.action),
+        single_line(&entry.summary),
     );
     if !entry.artifacts.is_empty() {
-        rendered.push_str("\nArtifacts:\n");
-        for artifact in &entry.artifacts {
-            rendered.push_str("- ");
-            rendered.push_str(&artifact.display().to_string());
-            rendered.push('\n');
-        }
+        let artifacts = entry
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        rendered.push_str(" (artifacts: ");
+        rendered.push_str(&single_line(&artifacts));
+        rendered.push(')');
     }
     rendered.push('\n');
     rendered
+}
+
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
@@ -216,13 +267,60 @@ mod tests {
         assert_eq!(report.global_log, Some(hub_root.join("log.md")));
 
         let scope_log = fs::read_to_string(scope_root.join("log.md")).expect("scope log");
-        assert!(scope_log.contains("## 2026-05-29T19:00:00Z - query"));
-        assert!(scope_log.contains("Scope: topic:rust"));
-        assert!(scope_log.contains("Answered ownership question"));
-        assert!(scope_log.contains("outputs/query-ownership.md"));
+        assert_eq!(
+            scope_log,
+            "# Log\n\n- 2026-05-29T19:00:00Z [topic:rust] query: Answered ownership question \
+             (artifacts: outputs/query-ownership.md)\n"
+        );
 
         let global_log = fs::read_to_string(hub_root.join("log.md")).expect("global log");
         assert_eq!(global_log, scope_log);
+    }
+
+    #[test]
+    fn renders_entries_as_single_greppable_lines() {
+        let entry = LogEntry {
+            timestamp: "unix-ms:1751500000000".to_string(),
+            scope: ScopeIdentity::project("/repo"),
+            action: ACTION_PAGE_CREATED.to_string(),
+            summary: "Gcode\nmulti  line summary".to_string(),
+            artifacts: vec!["knowledge/topics/gcode.md".into()],
+        };
+
+        let rendered = render_entry(&entry);
+
+        assert_eq!(
+            rendered,
+            "- unix-ms:1751500000000 [project:/repo] page_created: Gcode multi line summary \
+             (artifacts: knowledge/topics/gcode.md)\n"
+        );
+        assert_eq!(rendered.matches('\n').count(), 1);
+    }
+
+    #[test]
+    fn source_ingested_entry_carries_record_identity_and_raw_path() {
+        let record = crate::sources::SourceManifest::register(
+            tempfile::tempdir().expect("tempdir").path(),
+            crate::sources::SourceDraft::new(
+                "https://example.com/post",
+                crate::sources::SourceKind::Url,
+                "unix-ms:1751500000000",
+                b"body".to_vec(),
+            ),
+        )
+        .expect("record registered");
+
+        let entry = source_ingested_entry(
+            "unix-ms:1751500000001",
+            &ScopeIdentity::topic("research"),
+            &record,
+            Path::new("raw/some-source.md"),
+        );
+
+        assert_eq!(entry.action, ACTION_SOURCE_INGESTED);
+        assert!(entry.summary.contains(&record.id));
+        assert!(entry.summary.contains("https://example.com/post"));
+        assert_eq!(entry.artifacts, vec![PathBuf::from("raw/some-source.md")]);
     }
 
     #[test]

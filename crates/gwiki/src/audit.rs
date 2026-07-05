@@ -127,11 +127,25 @@ pub fn run_with_options(
         .into_iter()
         .filter(|page| scope_includes_page(&scope, &page.relative_path))
         .collect::<Vec<_>>();
-    let source_context = Arc::new(source_context(vault_root)?);
+    let manifest = SourceManifest::read(vault_root)?;
+    let manifest_hashes = manifest
+        .entries
+        .iter()
+        .map(|entry| entry.content_hash.clone())
+        .collect::<BTreeSet<_>>();
+    let source_context = Arc::new(source_context(manifest));
     let provenance = load_provenance(vault_root)?;
     let unsupported_claims = pages
         .iter()
-        .flat_map(|page| claims::unsupported_claims(page, &provenance, &source_context, &options))
+        .flat_map(|page| {
+            claims::unsupported_claims(
+                page,
+                &provenance,
+                &source_context,
+                &manifest_hashes,
+                &options,
+            )
+        })
         .collect();
 
     Ok(AuditReport {
@@ -143,9 +157,8 @@ pub fn run_with_options(
     })
 }
 
-fn source_context(vault_root: &Path) -> Result<Vec<AuditSourceContext>, WikiError> {
-    let manifest = SourceManifest::read(vault_root)?;
-    Ok(manifest
+fn source_context(manifest: SourceManifest) -> Vec<AuditSourceContext> {
+    manifest
         .entries
         .into_iter()
         .map(|entry| AuditSourceContext {
@@ -154,7 +167,7 @@ fn source_context(vault_root: &Path) -> Result<Vec<AuditSourceContext>, WikiErro
             citation: entry.citation,
             location: Some(entry.location),
         })
-        .collect())
+        .collect()
 }
 
 fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {

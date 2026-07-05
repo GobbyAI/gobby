@@ -47,7 +47,13 @@ export interface WikiIngestRequest {
 }
 
 export interface WikiCompileRequest {
-  output?: string;
+  compile_topic?: string;
+  kind?: "source" | "concept" | "topic";
+  sources?: string[];
+  outline?: string[];
+  target?: string;
+  write_intent?: boolean;
+  ai?: "auto" | "daemon" | "direct" | "off";
 }
 
 interface UseWikiOptions {

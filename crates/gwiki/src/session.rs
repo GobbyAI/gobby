@@ -38,6 +38,13 @@ impl ResearchScope {
         }
     }
 
+    pub fn identity(&self) -> crate::ScopeIdentity {
+        match self {
+            Self::Project { project_id, .. } => crate::ScopeIdentity::project(project_id.clone()),
+            Self::Topic { name, .. } => crate::ScopeIdentity::topic(name.clone()),
+        }
+    }
+
     fn set_root(&mut self, new_root: PathBuf) {
         match self {
             Self::Project { root, .. } | Self::Topic { root, .. } => *root = new_root,

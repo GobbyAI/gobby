@@ -42,7 +42,15 @@ pub fn source_record_matches_path(entry: &SourceRecord, vault_root: &Path, path:
         .map(|path| normalize_path_text(&path.to_string_lossy()))
         .unwrap_or_else(|_| absolute.clone());
 
-    location == relative || location == absolute
+    if location == relative || location == absolute {
+        return true;
+    }
+    // The record's canonical raw asset (`raw/<id>.md`) also identifies the
+    // source: selecting a source by id resolves to that path, not to
+    // `location` (which may be a URL or an off-vault file path).
+    crate::paths::raw_source_path(&entry.id)
+        .map(|raw| normalize_path_text(&raw.to_string_lossy()))
+        .is_ok_and(|raw| raw == relative || raw == absolute)
 }
 
 fn render_source_citation(entry: &SourceRecord) -> String {

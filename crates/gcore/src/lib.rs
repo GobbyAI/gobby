@@ -24,6 +24,7 @@ pub mod markdown;
 pub mod progress;
 pub mod setup;
 pub mod token_budget;
+pub mod vault;
 
 /// Return Gobby home, respecting `GOBBY_HOME` when set.
 pub fn gobby_home() -> anyhow::Result<std::path::PathBuf> {

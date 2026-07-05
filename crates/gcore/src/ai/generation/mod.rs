@@ -25,9 +25,7 @@ pub use tool_loop::{
     ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopObservability,
     ToolLoopOutcome, ToolSchema, run_tool_loop,
 };
-pub use transport::{
-    DaemonAgenticResult, DaemonChatTransport, DirectChatTransport, ToolPolicy, daemon_agentic_chat,
-};
+pub use transport::{DaemonAgenticResult, DirectChatTransport, ToolPolicy, daemon_agentic_chat};
 
 #[cfg(test)]
 mod tests;

@@ -121,8 +121,31 @@ class FakeGateway:
             "collect", payload={"command": "collect", "changed_paths": ["raw/a.md"]}
         )
 
-    async def compile(self, output: str | Path | None = None) -> dict[str, Any]:
-        self.calls.append(("compile", str(output) if output is not None else None))
+    async def compile(
+        self,
+        topic: str | None = None,
+        *,
+        kind: str | None = None,
+        sources: list[str] | None = None,
+        outline: list[str] | None = None,
+        target: str | Path | None = None,
+        write_intent: bool = False,
+        ai: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "compile",
+                {
+                    "topic": topic,
+                    "kind": kind,
+                    "sources": sources,
+                    "outline": outline,
+                    "target": str(target) if target is not None else None,
+                    "write_intent": write_intent,
+                    "ai": ai,
+                },
+            )
+        )
         return self._result(
             "compile", payload={"command": "compile", "changed_paths": ["wiki/a.md"]}
         )
@@ -478,6 +501,45 @@ def test_research_route_is_removed(client: TestClient) -> None:
     assert response.status_code in (404, 405)
 
 
+def test_compile_route_passes_full_param_surface(client: TestClient) -> None:
+    response = client.post(
+        "/api/wiki/compile",
+        json={
+            "compile_topic": "Hooks Overview",
+            "kind": "Topic",
+            "sources": ["src-1", "src-2"],
+            "outline": ["Intro"],
+            "target": "knowledge/topics/hooks.md",
+            "write_intent": True,
+            "ai": "direct",
+        },
+    )
+
+    assert response.status_code == 200
+    assert FakeGateway.instances[-1].calls[0] == (
+        "compile",
+        {
+            "topic": "Hooks Overview",
+            "kind": "topic",
+            "sources": ["src-1", "src-2"],
+            "outline": ["Intro"],
+            "target": "knowledge/topics/hooks.md",
+            "write_intent": True,
+            "ai": "direct",
+        },
+    )
+
+
+def test_compile_route_rejects_unknown_kind_and_ai(client: TestClient) -> None:
+    bad_kind = client.post("/api/wiki/compile", json={"kind": "article"})
+    assert bad_kind.status_code == 400
+    assert bad_kind.json()["detail"] == "kind must be one of concept, source, topic"
+
+    bad_ai = client.post("/api/wiki/compile", json={"ai": "cloud"})
+    assert bad_ai.status_code == 400
+    assert bad_ai.json()["detail"] == "ai must be one of auto, daemon, direct, off"
+
+
 def test_write_routes_delegate_to_coordinator(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -490,7 +552,7 @@ def test_write_routes_delegate_to_coordinator(
         ("post", "/api/wiki/attach", {"files": {"file": ("note.md", b"# Note", "text/markdown")}}),
         ("post", "/api/wiki/ingest", {"json": {"path": "notes/a.md"}}),
         ("post", "/api/wiki/collect", {"json": {"query": "hooks"}}),
-        ("post", "/api/wiki/compile", {"json": {"output": "out.md"}}),
+        ("post", "/api/wiki/compile", {"json": {"target": "out.md"}}),
         ("post", "/api/wiki/remove-source", {"json": {"id": "src-1", "yes": True}}),
     ]
 
