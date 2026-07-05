@@ -146,7 +146,16 @@ fn resolve_project_from_root(project_root: &Path) -> Result<ResolvedScope, WikiE
         }
     })?;
     let project_id = validate_project_id(&project_id)?;
-    let root = project_root.join("gobby-wiki");
+    let root = gobby_core::vault::resolve_vault_dir(&project_root).ok_or_else(|| {
+        WikiError::InvalidScope {
+            detail: format!(
+                "no usable wiki vault directory under {}: `{}` and every `{}` fallback is occupied by a non-vault path",
+                project_root.display(),
+                gobby_core::vault::DEFAULT_VAULT_DIR,
+                gobby_core::vault::FALLBACK_VAULT_DIR,
+            ),
+        }
+    })?;
 
     Ok(ResolvedScope::project(project_id, project_root, root))
 }
@@ -300,15 +309,79 @@ mod tests {
         let canonical_project = project.canonicalize().expect("canonicalize project root");
 
         assert_eq!(scope.identity(), "project:project-123");
-        assert_eq!(scope.root(), canonical_project.join("gobby-wiki"));
+        assert_eq!(scope.root(), canonical_project.join("wiki"));
         assert_eq!(
             fs::read_to_string(gcode_json).expect("read gcode json"),
             original_gcode_json
         );
         assert!(
-            !project.join("gobby-wiki").exists(),
+            !project.join("wiki").exists(),
             "resolution must not initialize the vault"
         );
+    }
+
+    #[test]
+    fn project_scope_falls_back_when_wiki_is_occupied_by_non_vault() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project = tmp.path().join("project");
+        fs::create_dir_all(project.join(".gobby")).expect("create .gobby");
+        fs::write(
+            project.join(".gobby").join("gcode.json"),
+            r#"{
+  "id": "project-123",
+  "name": "demo"
+}
+"#,
+        )
+        .expect("write gcode json");
+        fs::create_dir_all(project.join("wiki")).expect("create non-vault wiki collision");
+
+        let mut config = TestConfig::with(
+            "wiki.hub_path",
+            tmp.path().join("hub").display().to_string(),
+        );
+        let scope = resolve_with_source(
+            &crate::ScopeSelection::project(&project),
+            &project,
+            &mut config,
+        )
+        .expect("project scope resolves");
+        let canonical_project = project.canonicalize().expect("canonicalize project root");
+
+        assert_eq!(scope.root(), canonical_project.join("gobby-wiki"));
+    }
+
+    #[test]
+    fn project_scope_prefers_existing_wiki_vault() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project = tmp.path().join("project");
+        fs::create_dir_all(project.join(".gobby")).expect("create .gobby");
+        fs::write(
+            project.join(".gobby").join("gcode.json"),
+            r#"{
+  "id": "project-123",
+  "name": "demo"
+}
+"#,
+        )
+        .expect("write gcode json");
+        let state_dir = project.join("wiki").join(gobby_core::vault::STATE_ROOT);
+        fs::create_dir_all(&state_dir).expect("create vault state dir");
+        fs::write(state_dir.join(gobby_core::vault::SCOPE_FILE), "{}\n").expect("mark vault");
+
+        let mut config = TestConfig::with(
+            "wiki.hub_path",
+            tmp.path().join("hub").display().to_string(),
+        );
+        let scope = resolve_with_source(
+            &crate::ScopeSelection::project(&project),
+            &project,
+            &mut config,
+        )
+        .expect("project scope resolves");
+        let canonical_project = project.canonicalize().expect("canonicalize project root");
+
+        assert_eq!(scope.root(), canonical_project.join("wiki"));
     }
 
     #[test]
@@ -336,7 +409,7 @@ mod tests {
         let project = project.canonicalize().expect("canonicalize project root");
 
         assert_eq!(scope.project_root(), Some(project.as_path()));
-        assert_eq!(scope.root(), project.join("gobby-wiki"));
+        assert_eq!(scope.root(), project.join("wiki"));
         assert!(scope.root().is_absolute());
     }
 }

@@ -3,9 +3,8 @@
 //!
 //! Both gcode (codewiki output) and gwiki (vault owner) address the same
 //! on-disk vault, so the layout facts live here where neither crate can
-//! drift from the other. gwiki's `vault.rs` still carries its own copy of
-//! the state-root constant until the Rust adoption pass (#17512) points it
-//! here; the Python daemon adopts through #17513.
+//! drift from the other. gwiki re-exports these constants from its
+//! `vault.rs`; the Python daemon adopts through #17513.
 //!
 //! `~/wiki` as the *topic hub* default is a different concept owned by
 //! gwiki's scope resolution and is unaffected by this module.

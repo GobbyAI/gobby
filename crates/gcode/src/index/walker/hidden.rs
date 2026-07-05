@@ -1,13 +1,24 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
+use gobby_core::vault::resolve_vault_dir;
+
 const GCODE_CONFIG_PATH: &str = ".gobby/gcode.json";
 const DEFAULT_HIDDEN_ALLOWLIST_PATTERNS: &[&str] = &[
     ".gobby/plans/**/*.md",
-    "gobby-wiki/**/*.md",
     ".github/workflows/**/*.yml",
     ".github/workflows/**/*.yaml",
 ];
+
+/// Directory name of the wiki vault resolved for `root` (`wiki`, or a
+/// `gobby-wiki` collision fallback). Resolution costs a handful of `stat`s per
+/// call, in line with the per-path config probing this module already does.
+fn vault_dir_name(root: &Path) -> Option<String> {
+    resolve_vault_dir(root)?
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HiddenPathAllowlist {
@@ -20,6 +31,9 @@ impl HiddenPathAllowlist {
             .iter()
             .map(|pattern| (*pattern).to_string())
             .collect::<Vec<_>>();
+        if let Some(vault) = vault_dir_name(root) {
+            patterns.push(format!("{vault}/**/*.md"));
+        }
         patterns.extend(read_project_hidden_allowlist(root));
         Self::from_patterns(patterns)
     }
@@ -134,7 +148,10 @@ pub(super) fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool 
         return true;
     }
 
-    if components.len() >= 2 && components[0] == "gobby-wiki" && path_has_extension(path, &["md"]) {
+    if components.len() >= 2
+        && path_has_extension(path, &["md"])
+        && vault_dir_name(root).as_deref() == Some(components[0])
+    {
         return true;
     }
 
@@ -154,7 +171,10 @@ pub(super) fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
         })
         .collect::<Vec<_>>();
 
-    if components.first().copied() != Some("gobby-wiki") {
+    let Some(vault) = vault_dir_name(root) else {
+        return false;
+    };
+    if components.first().copied() != Some(vault.as_str()) {
         return false;
     }
 
@@ -168,7 +188,10 @@ pub(super) fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
         return true;
     }
 
-    if components.len() == 3 && components[1] == "_gwiki" && path_has_extension(path, &["json"]) {
+    if components.len() == 3
+        && components[1] == gobby_core::vault::STATE_ROOT
+        && path_has_extension(path, &["json"])
+    {
         return true;
     }
 

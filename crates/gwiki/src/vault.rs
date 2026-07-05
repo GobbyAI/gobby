@@ -14,10 +14,10 @@ pub const CODE_ROOT: &str = "code";
 pub const KNOWLEDGE_ROOT: &str = "knowledge";
 pub const SHARED_META_ROOT: &str = "_meta";
 
-/// Per-vault control/state dir (scope file, research checkpoint, locks, compile
-/// bundles). Underscore-prefixed, not dot-prefixed, so CodeRabbit's minimatch
-/// `path_filters` can exclude it (its globstar skips dot segments).
-pub const STATE_ROOT: &str = "_gwiki";
+/// Per-vault control/state dir and scope-file name. Owned by
+/// `gobby_core::vault` so gcode's walker and gwiki address the same layout;
+/// re-exported here for gwiki-internal callers.
+pub use gobby_core::vault::{SCOPE_FILE, STATE_ROOT};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
@@ -85,7 +85,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
     }
     let identity = scope.identity();
     let root_path = root.display().to_string();
-    let scope_file = root.join(STATE_ROOT).join("scope.json");
+    let scope_file = root.join(STATE_ROOT).join(SCOPE_FILE);
     let scope_json = serde_json::to_string_pretty(&ScopeFile {
         identity: &identity,
         root: &root_path,
@@ -98,7 +98,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
     let scope_file_created = !scope_file.exists();
     write_scope_file_atomically(scope_file.as_path(), format!("{scope_json}\n").as_bytes())?;
     if scope_file_created {
-        created.files.push(format!("{STATE_ROOT}/scope.json"));
+        created.files.push(format!("{STATE_ROOT}/{SCOPE_FILE}"));
     }
     Ok(created)
 }
@@ -226,7 +226,7 @@ fn temp_sibling_path(path: &Path) -> std::path::PathBuf {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("scope.json");
+        .unwrap_or(SCOPE_FILE);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -317,7 +317,7 @@ mod tests {
             temp.path().join("wikis.json"),
         );
         initialize(&scope).expect("initialize once");
-        let scope_file = root.join(STATE_ROOT).join("scope.json");
+        let scope_file = root.join(STATE_ROOT).join(SCOPE_FILE);
         std::fs::write(&scope_file, "stale").expect("write stale scope");
 
         let created = initialize(&scope).expect("initialize twice");
@@ -325,7 +325,11 @@ mod tests {
         let contents = std::fs::read_to_string(scope_file).expect("read scope");
         assert!(contents.contains("topic:rust"));
         assert!(!contents.contains("stale"));
-        assert!(!created.files.contains(&format!("{STATE_ROOT}/scope.json")));
+        assert!(
+            !created
+                .files
+                .contains(&format!("{STATE_ROOT}/{SCOPE_FILE}"))
+        );
     }
 
     #[test]
