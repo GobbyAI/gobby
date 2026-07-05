@@ -721,7 +721,7 @@ mod tests {
             let source = SourceManifest::register(
                 root,
                 SourceDraft::url(
-                    &format!(
+                    format!(
                         "session:0000{index:04}-4238-48bf-9edd-07ce27e3c481-{index:04}-long-id"
                     ),
                     "2026-05-29T12:00:00Z",

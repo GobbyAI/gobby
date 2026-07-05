@@ -28,8 +28,12 @@ pub fn normalize_markdown(input: &str) -> String {
     output
 }
 
-#[derive(Debug, Clone, Copy)]
-struct MarkdownFence {
+/// An open fenced-code marker: the fence byte (`` ` `` or `~`) and its run
+/// length. Produced by [`markdown_fence_start`] and consumed by
+/// [`markdown_fence_closes`] so fence-aware line scanners in every engine
+/// share one definition of "inside a code fence".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarkdownFence {
     marker: u8,
     len: usize,
 }
@@ -112,13 +116,17 @@ fn normalize_body(body: &str) -> String {
     out.join("\n")
 }
 
-fn push_blank(out: &mut Vec<String>) {
+/// Append a blank line unless the output already ends with one (or is empty).
+pub fn push_blank(out: &mut Vec<String>) {
     if out.last().is_some_and(|line| !line.is_empty()) {
         out.push(String::new());
     }
 }
 
-fn frontmatter_body_start(markdown: &str) -> Option<usize> {
+/// Byte offset where the document body starts after a leading YAML (`---`) or
+/// TOML (`+++`) frontmatter block, or `None` when the document does not open
+/// with a properly closed frontmatter block.
+pub fn frontmatter_body_start(markdown: &str) -> Option<usize> {
     delimiter_content_start(markdown, "---")
         .and_then(|content_start| find_closing_delimiter(markdown, "---", content_start))
         .or_else(|| {
@@ -171,7 +179,9 @@ fn find_closing_delimiter(
     None
 }
 
-fn markdown_fence_start(line: &str) -> Option<MarkdownFence> {
+/// Parse a fenced-code opening line (up to three leading spaces, then three or
+/// more backticks or tildes) into its [`MarkdownFence`] marker.
+pub fn markdown_fence_start(line: &str) -> Option<MarkdownFence> {
     let leading_spaces = line.len() - line.trim_start_matches(' ').len();
     if leading_spaces > 3 {
         return None;
@@ -185,7 +195,9 @@ fn markdown_fence_start(line: &str) -> Option<MarkdownFence> {
     (len >= 3).then_some(MarkdownFence { marker, len })
 }
 
-fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
+/// True when `line` closes the open `fence`: the same marker byte repeated at
+/// least as many times, with nothing but whitespace after the run.
+pub fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
     let leading_spaces = line.len() - line.trim_start_matches(' ').len();
     if leading_spaces > 3 {
         return false;
@@ -198,7 +210,10 @@ fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
     len >= fence.len && trimmed[len..].trim().is_empty()
 }
 
-fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
+/// Parse an ATX heading line into `(level, title)`: up to three leading
+/// spaces, one to six `#` marks, then whitespace (or end of line). The title
+/// may be empty; a trailing closing hash sequence (`## Title ##`) is stripped.
+pub fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
     let leading_spaces = line.len() - line.trim_start_matches(' ').len();
     if leading_spaces > 3 {
         return None;
@@ -245,7 +260,7 @@ fn strip_atx_closing_sequence(title: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_markdown;
+    use super::{normalize_markdown, parse_atx_heading};
 
     #[test]
     fn markdown_collapses_multiple_blank_lines_outside_fences() {
@@ -301,5 +316,17 @@ mod tests {
         let input = "---\ntitle: A\n---\n\n# A\n\n\n```text\nx\n\n\n```\n\nBody\n";
         let once = normalize_markdown(input);
         assert_eq!(normalize_markdown(&once), once);
+    }
+
+    #[test]
+    fn atx_heading_keeps_hash_without_preceding_space() {
+        assert_eq!(
+            parse_atx_heading("# C#").map(|(_, title)| title),
+            Some("C#".to_string())
+        );
+        assert_eq!(
+            parse_atx_heading("# Title ###").map(|(_, title)| title),
+            Some("Title".to_string())
+        );
     }
 }

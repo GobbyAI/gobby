@@ -1,12 +1,10 @@
 use std::collections::BTreeMap;
 
-const LINE_LIMIT: usize = 80;
+use gobby_core::markdown::{
+    frontmatter_body_start, markdown_fence_closes, markdown_fence_start, push_blank,
+};
 
-#[derive(Clone, Copy)]
-struct MarkdownFence {
-    marker: u8,
-    len: usize,
-}
+const LINE_LIMIT: usize = 80;
 
 enum Segment {
     Outside(Vec<String>),
@@ -513,6 +511,10 @@ fn escape_asterisk_math(text: &str) -> String {
     out
 }
 
+/// Strict ATX-heading parse for the heading demotion/dedup pass. Deliberately
+/// tighter than `gobby_core::markdown::parse_atx_heading`: it requires a
+/// literal space after the marks and a non-empty title, so only headings the
+/// dedup pass can act on are recognised.
 fn parse_atx_heading(line: &str) -> Option<(u8, String)> {
     let trimmed = line.trim_start();
     let level = trimmed.bytes().take_while(|byte| *byte == b'#').count();
@@ -542,67 +544,6 @@ fn strip_atx_closing_sequence(title: &str) -> &str {
         stripped[..hash_start].trim_end()
     } else {
         stripped
-    }
-}
-
-fn markdown_fence_start(line: &str) -> Option<MarkdownFence> {
-    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
-    if leading_spaces > 3 {
-        return None;
-    }
-    let trimmed = &line[leading_spaces..];
-    let marker = match trimmed.as_bytes().first().copied()? {
-        b'`' | b'~' => trimmed.as_bytes()[0],
-        _ => return None,
-    };
-    let len = trimmed.bytes().take_while(|byte| *byte == marker).count();
-    (len >= 3).then_some(MarkdownFence { marker, len })
-}
-
-fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
-    let leading_spaces = line.len() - line.trim_start_matches(' ').len();
-    if leading_spaces > 3 {
-        return false;
-    }
-    let trimmed = &line[leading_spaces..];
-    let len = trimmed
-        .bytes()
-        .take_while(|byte| *byte == fence.marker)
-        .count();
-    len >= fence.len && trimmed[len..].trim().is_empty()
-}
-
-fn frontmatter_body_start(markdown: &str) -> Option<usize> {
-    delimiter_content_start(markdown, "---")
-        .and_then(|content_start| find_closing_delimiter(markdown, "---", content_start))
-        .or_else(|| {
-            delimiter_content_start(markdown, "+++")
-                .and_then(|content_start| find_closing_delimiter(markdown, "+++", content_start))
-        })
-}
-
-fn delimiter_content_start(markdown: &str, marker: &str) -> Option<usize> {
-    markdown
-        .strip_prefix(marker)?
-        .strip_prefix('\n')
-        .map(|rest| markdown.len() - rest.len())
-}
-
-fn find_closing_delimiter(markdown: &str, marker: &str, content_start: usize) -> Option<usize> {
-    let mut offset = content_start;
-    for line in markdown[content_start..].split_inclusive('\n') {
-        let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
-        if trimmed == marker {
-            return Some(offset + line.len());
-        }
-        offset += line.len();
-    }
-    None
-}
-
-fn push_blank(out: &mut Vec<String>) {
-    if out.last().is_some_and(|line| !line.is_empty()) {
-        out.push(String::new());
     }
 }
 

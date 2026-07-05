@@ -8,8 +8,17 @@
 //!
 //! `~/wiki` as the *topic hub* default is a different concept owned by
 //! gwiki's scope resolution and is unaffected by this module.
+//!
+//! The submodules host the shared vault quality core (#17514): [`links`]
+//! (wikilink extraction and target normalization), [`mermaid`] (the single
+//! Mermaid-validity gate), and [`lint`] (vault-generic checks over pages,
+//! parameterized over a [`lint::CitationValidator`]).
 
 use std::path::{Path, PathBuf};
+
+pub mod links;
+pub mod lint;
+pub mod mermaid;
 
 /// Per-vault control/state dir (scope file, research checkpoint, locks,
 /// compile bundles). Underscore-prefixed, not dot-prefixed, so CodeRabbit's
