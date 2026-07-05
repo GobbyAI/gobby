@@ -451,6 +451,19 @@ fn truncate_chars(value: &str, limit: usize) -> String {
         .collect::<String>()
         .trim_end()
         .to_string();
+    // Never cut inside a wikilink: an unterminated `[[` swallows following
+    // markdown when linted or rendered. Drop the partial link entirely and
+    // land the ellipsis after the last complete link or word.
+    if let Some(open) = truncated.rfind("[[")
+        && !truncated[open..].contains("]]")
+    {
+        truncated.truncate(open);
+        truncated = truncated
+            .trim_end()
+            .trim_end_matches([',', ';', ':'])
+            .trim_end()
+            .to_string();
+    }
     if !truncated.is_empty() {
         truncated.push('…');
     }
@@ -637,6 +650,39 @@ mod tests {
             "Gcode".chars().count() + 3 + one_liner.chars().count() <= ONE_LINER_MAX_CHARS,
             "{concept_line}"
         );
+    }
+
+    #[test]
+    fn one_liner_truncation_never_cuts_inside_a_wikilink() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // First body line is a long link list (the concept-page `Sources:`
+        // shape) whose budget cut lands mid-link.
+        let sources_line = (1..=8)
+            .map(|index| {
+                format!("[[knowledge/sources/src-{index:02}-very-long-digest-path-{index:02}|Session {index:02}]]")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        write_page(
+            root,
+            "knowledge/concepts/gcode.md",
+            &page("Gcode", &format!("Sources: {sources_line}")),
+        );
+
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate");
+
+        let index = fs::read_to_string(root.join("_index.md")).expect("_index.md");
+        let concept_line = index
+            .lines()
+            .find(|line| line.starts_with("- ") && line.contains("knowledge/concepts/gcode"))
+            .expect("concept listed");
+        assert_eq!(
+            concept_line.matches("[[").count(),
+            concept_line.matches("]]").count(),
+            "unterminated wikilink in catalog entry: {concept_line}"
+        );
+        assert!(concept_line.ends_with('…'), "{concept_line}");
     }
 
     #[test]
