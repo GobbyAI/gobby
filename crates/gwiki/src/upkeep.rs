@@ -25,7 +25,7 @@ use serde::Serialize;
 
 use crate::compile::{CompileRequest, WikiCompileOptions, compile_to_wiki_with_options, select};
 use crate::explainer::ExplainerGenerator;
-use crate::links::canonical_target_key;
+use crate::links::{canonical_target_key, is_entity_key};
 use crate::search::SearchScope;
 use crate::search::semantic::{SemanticSearchBackend, SemanticSearchRequest};
 use crate::session::{ResearchScope, ResearchSession};
@@ -221,8 +221,12 @@ pub fn run(
         let Some(&source_index) = digest_records.get(&issue.path) else {
             continue;
         };
+        // Path-shaped targets (file paths, digest links) never mint entity
+        // pages — librarian classifies them as repair debt or compile-pending
+        // convergence (#17652). Their mentioning digests reconcile as
+        // reviewed-no-synthesis below.
         let key = canonical_target_key(&issue.target);
-        if key.is_empty() {
+        if !is_entity_key(&key) {
             continue;
         }
         let accumulator = accumulators.entry(key).or_default();
@@ -1144,6 +1148,66 @@ mod tests {
         assert_eq!(
             cluster.page_path.as_deref(),
             Some(Path::new("knowledge/concepts/postgresql.md"))
+        );
+    }
+
+    #[test]
+    fn upkeep_skips_path_shaped_targets_while_entity_targets_still_cluster() {
+        // Path-shaped targets ([[code/files/foo.md]], [[knowledge/sources/...]])
+        // must not form clusters: slugify would flatten '/' into '-' and mint
+        // junk pages like knowledge/concepts/code-files-foo-md.md (#17652).
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(
+            root,
+            "src-a",
+            "See [[code/files/foo.md]] and [[FalkorDB]].\n",
+        );
+        seed_source(
+            root,
+            "src-b",
+            "Also [[code/files/foo.md]] plus [[FalkorDB]].\n",
+        );
+        // Mentions only a digest-shaped target with no live manifest record:
+        // never clusters, reconciles as reviewed-no-synthesis.
+        seed_source(root, "src-c", "Digest link [[knowledge/sources/src-zz]].\n");
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        assert_eq!(
+            report.clusters.len(),
+            1,
+            "path-shaped targets must not form clusters"
+        );
+        let cluster = &report.clusters[0];
+        assert_eq!(cluster.target, "FalkorDB");
+        assert_eq!(cluster.source_ids, vec!["src-a", "src-b"]);
+        assert_eq!(report.pages_created, 1);
+        assert!(
+            !root
+                .join("knowledge/concepts/code-files-foo-md.md")
+                .exists(),
+            "path-shaped target must not mint a junk entity page"
+        );
+        assert!(
+            !root
+                .join("knowledge/concepts/knowledge-sources-src-zz.md")
+                .exists(),
+            "digest-shaped target must not mint a junk entity page"
+        );
+        assert!(root.join("knowledge/concepts/falkordb.md").exists());
+        assert_eq!(
+            report.reconciled_no_synthesis,
+            vec!["src-c"],
+            "a digest mentioning only path-shaped targets reconciles as reviewed-no-synthesis"
         );
     }
 

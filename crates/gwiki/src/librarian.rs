@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::frontmatter::parse_frontmatter;
-use crate::links::canonical_target_key;
+use crate::links::{canonical_target_key, is_entity_key};
 use crate::paths::derived_markdown_path;
 use crate::provenance::ProvenanceGraph;
 use crate::search::SearchScope;
@@ -566,12 +566,6 @@ fn broken_links_check(scan: &BrokenLinkScan) -> CheckReport {
     let mut check = available_check("broken_links", scan.repair_pages.clone());
     check.note = scan.pending_note();
     check
-}
-
-/// Entity-shaped keys (no path separator) are what upkeep clusters into
-/// entity pages; path-shaped targets can never converge that way.
-fn is_entity_key(key: &str) -> bool {
-    !key.is_empty() && !key.contains('/')
 }
 
 /// Manifest id behind a `knowledge/sources/...` target key, if the key is
