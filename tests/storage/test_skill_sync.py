@@ -253,6 +253,76 @@ class TestSyncBundledSkills:
         # Metadata should not have been overwritten with gobby metadata
         assert skill.metadata is None or "gobby" not in (skill.metadata or {})
 
+    def test_sync_purges_project_rows_sourced_from_bundled_templates(
+        self, db: HubDatabase, skill_manager: LocalSkillManager
+    ) -> None:
+        """Stale project-scoped copies of bundled templates are healed on sync (#17606)."""
+        import uuid as _uuid
+
+        from gobby.skills.sync import sync_bundled_skills
+
+        project_id = str(_uuid.uuid4())
+        stale_id = str(_uuid.uuid4())
+        legit_id = str(_uuid.uuid4())
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, created_at, updated_at) "
+                "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (project_id, "purge-test-project"),
+            )
+            # Pre-guard poison row: worktree checkout of a bundled template
+            conn.execute(
+                "INSERT INTO skills (id, name, description, content, source_path, "
+                "source_type, project_id, source, enabled, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (
+                    stale_id,
+                    "wiki-research",
+                    "Stale worktree copy",
+                    "# Stale template content",
+                    "/repo/.claude/worktrees/task-17495/src/gobby/install/shared/"
+                    "skills/wiki-research/SKILL.md",
+                    "local",
+                    project_id,
+                    "project",
+                ),
+            )
+            # Legit project skill: must survive the purge
+            conn.execute(
+                "INSERT INTO skills (id, name, description, content, source_path, "
+                "source_type, project_id, source, enabled, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (
+                    legit_id,
+                    "my-skill",
+                    "Legit project skill",
+                    "# Mine",
+                    "/repo/.gobby/skills/my-skill/SKILL.md",
+                    "local",
+                    project_id,
+                    "project",
+                ),
+            )
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is True
+        assert result["purged_project_overrides"] == 1
+        stale = skill_manager.get_by_name(
+            "wiki-research", project_id=project_id, include_deleted=True
+        )
+        assert stale is not None
+        assert stale.deleted_at is not None
+        legit = skill_manager.get_by_name("my-skill", project_id=project_id)
+        assert legit is not None
+        assert legit.deleted_at is None
+        # Resolution now lands on the freshly synced installed row
+        resolved = skill_manager.get_by_name("wiki-research", project_id=project_id)
+        assert resolved is not None
+        assert resolved.source == "installed"
+
 
 class TestSoftDelete:
     """Test soft delete and restore."""

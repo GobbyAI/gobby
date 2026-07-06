@@ -857,3 +857,182 @@ class TestChangeEvent:
                 skill_name="test-skill",
             )
             assert event.event_type == event_type
+
+
+class TestBundledTemplateProjectSkillGuards:
+    """Project-scoped rows must never source from bundled template trees (#17606)."""
+
+    WORKTREE_TEMPLATE_PATH = (
+        "/repo/.claude/worktrees/task-17495/src/gobby/install/shared/skills/wiki-research/SKILL.md"
+    )
+    INSTALLED_TEMPLATE_PATH = "/repo/src/gobby/install/shared/skills/wiki-research/SKILL.md"
+
+    @pytest.fixture
+    def project_id(self, db) -> str:
+        """Create a project row and return its ID."""
+        pid = str(uuid.uuid4())
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, created_at, updated_at) "
+                "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (pid, f"guard-project-{pid[:8]}"),
+            )
+        return pid
+
+    def _insert_stale_project_row(self, db, name: str, project_id: str, source_path: str) -> str:
+        """Insert a pre-guard project-scoped row directly, bypassing create_skill."""
+        skill_id = str(uuid.uuid4())
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO skills (id, name, description, content, source_path, "
+                "source_type, project_id, source, enabled, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (
+                    skill_id,
+                    name,
+                    "Stale worktree copy",
+                    "# Stale template content",
+                    source_path,
+                    "local",
+                    project_id,
+                    "project",
+                ),
+            )
+        return skill_id
+
+    def test_is_bundled_template_path_matches_template_trees(self) -> None:
+        """Worktree, repo, site-packages, and relative template paths all match."""
+        from gobby.storage.skills import is_bundled_template_path
+
+        assert is_bundled_template_path(self.WORKTREE_TEMPLATE_PATH)
+        assert is_bundled_template_path(self.INSTALLED_TEMPLATE_PATH)
+        assert is_bundled_template_path(
+            "/venv/lib/python3.13/site-packages/gobby/install/shared/skills/memory/SKILL.md"
+        )
+        assert is_bundled_template_path("src/gobby/install/shared/skills/python/SKILL.md")
+
+    def test_is_bundled_template_path_rejects_user_skill_paths(self) -> None:
+        """User and project skill locations are not template trees."""
+        from gobby.storage.skills import is_bundled_template_path
+
+        assert not is_bundled_template_path(None)
+        assert not is_bundled_template_path("")
+        assert not is_bundled_template_path("/home/user/.gobby/skills/my-skill/SKILL.md")
+        assert not is_bundled_template_path("/repo/.gobby/skills/my-skill/SKILL.md")
+        assert not is_bundled_template_path("/repo/gobby/install/skills/x/SKILL.md")
+        assert not is_bundled_template_path("https://github.com/owner/repo")
+
+    def test_create_skill_rejects_project_scoped_bundled_template(
+        self, skill_manager, project_id: str
+    ) -> None:
+        """Project-scoped creation from a bundled template path fails loud."""
+        with pytest.raises(ValueError, match="bundled skill templates"):
+            skill_manager.create_skill(
+                name="wiki-research",
+                description="Stale worktree copy",
+                content="# Stale",
+                source_path=self.WORKTREE_TEMPLATE_PATH,
+                source_type="local",
+                project_id=project_id,
+            )
+
+    def test_create_skill_allows_installed_scope_bundled_template(self, skill_manager) -> None:
+        """Bundled sync's installed-scope rows keep working."""
+        skill = skill_manager.create_skill(
+            name="wiki-research",
+            description="Bundled skill",
+            content="# Bundled",
+            source_path=self.INSTALLED_TEMPLATE_PATH,
+            source_type="filesystem",
+            project_id=None,
+        )
+        assert skill.source == "installed"
+
+    def test_move_to_project_rejects_bundled_template_source(
+        self, skill_manager, project_id: str
+    ) -> None:
+        """Moving a bundled-synced row to project scope would shadow it — refuse."""
+        skill = skill_manager.create_skill(
+            name="wiki-research",
+            description="Bundled skill",
+            content="# Bundled",
+            source_path=self.INSTALLED_TEMPLATE_PATH,
+            source_type="filesystem",
+        )
+        with pytest.raises(ValueError, match="bundled skill templates"):
+            skill_manager.move_to_project(skill.id, project_id)
+
+    def test_move_to_project_allows_non_template_skill(
+        self, skill_manager, project_id: str
+    ) -> None:
+        """Normal user skills still move to project scope."""
+        skill = skill_manager.create_skill(
+            name="my-skill",
+            description="User skill",
+            content="# Mine",
+            source_path="/home/user/skills/my-skill/SKILL.md",
+            source_type="local",
+        )
+        moved = skill_manager.move_to_project(skill.id, project_id)
+        assert moved.project_id == project_id
+        assert moved.source == "project"
+
+    def test_get_by_name_skips_stale_project_template_row(
+        self, db, skill_manager, project_id: str
+    ) -> None:
+        """Resolution with a stale project-scoped duplicate returns the installed row."""
+        installed = skill_manager.create_skill(
+            name="wiki-research",
+            description="Fresh bundled skill",
+            content="# Fresh template content",
+            source_path=self.INSTALLED_TEMPLATE_PATH,
+            source_type="filesystem",
+        )
+        self._insert_stale_project_row(db, "wiki-research", project_id, self.WORKTREE_TEMPLATE_PATH)
+
+        resolved = skill_manager.get_by_name("wiki-research", project_id=project_id)
+
+        assert resolved is not None
+        assert resolved.id == installed.id
+        assert resolved.source == "installed"
+        assert resolved.content == "# Fresh template content"
+
+    def test_get_by_name_bookkeeping_still_sees_stale_row(
+        self, db, skill_manager, project_id: str
+    ) -> None:
+        """Deleted-inclusive queries (dup checks, restore) still see the stale row."""
+        stale_id = self._insert_stale_project_row(
+            db, "wiki-research", project_id, self.WORKTREE_TEMPLATE_PATH
+        )
+
+        row = skill_manager.get_by_name(
+            "wiki-research", project_id=project_id, include_deleted=True
+        )
+
+        assert row is not None
+        assert row.id == stale_id
+
+    def test_get_by_name_still_resolves_legit_project_skill(
+        self, skill_manager, project_id: str
+    ) -> None:
+        """Project rows with non-template sources keep shadowing installed rows."""
+        skill_manager.create_skill(
+            name="my-skill",
+            description="Installed variant",
+            content="# Installed",
+        )
+        project_skill = skill_manager.create_skill(
+            name="my-skill",
+            description="Project variant",
+            content="# Project",
+            source_path="/repo/.gobby/skills/my-skill/SKILL.md",
+            source_type="local",
+            project_id=project_id,
+        )
+
+        resolved = skill_manager.get_by_name("my-skill", project_id=project_id)
+
+        assert resolved is not None
+        assert resolved.id == project_skill.id
+        assert resolved.source == "project"

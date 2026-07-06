@@ -242,6 +242,49 @@ class TestInstallSkillTool:
         assert skill is not None
 
     @pytest.mark.asyncio
+    async def test_install_skill_rejects_project_scoped_bundled_template(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        tmp_path: Path,
+    ) -> None:
+        """Project-scoped install from a worktree bundled-template tree fails loud (#17606)."""
+        import uuid
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        project_id = str(uuid.uuid4())
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, created_at, updated_at) "
+                "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (project_id, "template-guard-project"),
+            )
+
+        # Simulate a worktree checkout of the bundled skill templates
+        template_dir = (
+            tmp_path / ".claude/worktrees/task-1/src/gobby/install/shared/skills/test-skill"
+        )
+        template_dir.mkdir(parents=True)
+        (template_dir / "SKILL.md").write_text("""---
+name: test-skill
+description: Bundled template checked out in a worktree
+version: "1.0.0"
+---
+
+# Test Skill
+""")
+
+        registry = create_skills_registry(db, project_id=project_id)
+        tool = registry.get_tool("install_skill")
+
+        result = await tool(source=str(template_dir), project_scoped=True)
+
+        assert result["success"] is False
+        assert "bundled skill templates" in result["error"]
+        assert storage.get_by_name("test-skill", project_id=project_id) is None
+
+    @pytest.mark.asyncio
     async def test_install_skill_source_not_found(
         self,
         db: HubDatabase,

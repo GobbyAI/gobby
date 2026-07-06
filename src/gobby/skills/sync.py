@@ -255,11 +255,19 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
             logger.info(f"Soft-deleted orphaned bundled skill: {skill.name}")
             result["orphaned"] += 1
 
+    # Heal project-scoped rows sourced from bundled template trees: they
+    # shadow the installed rows synced above with stale template content
+    # (#17606). Creation is blocked in storage; this purges pre-existing rows.
+    purged = storage.purge_bundled_template_project_skills()
+    result["purged_project_overrides"] = len(purged)
+
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
         f"Skill sync complete: {result['synced']} synced, "
         f"{result['updated']} updated, {result['skipped']} skipped, "
-        f"{result['orphaned']} orphaned, {total} total"
+        f"{result['orphaned']} orphaned, "
+        f"{result['purged_project_overrides']} project overrides purged, "
+        f"{total} total"
     )
 
     return result

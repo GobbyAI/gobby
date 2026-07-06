@@ -8,6 +8,10 @@ import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.storage.skills._bundled import (
+    BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR,
+    is_bundled_template_path,
+)
 from gobby.storage.skills._models import Skill, SkillSourceType
 from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.datetime import utc_now
@@ -126,6 +130,8 @@ class SkillMetadataMixin:
         # Auto-set source to 'project' for project-scoped skills
         if project_id is not None:
             source = "project"
+            if is_bundled_template_path(source_path):
+                raise ValueError(f"Skill '{name}': {BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR}")
 
         now = utc_now()
         skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
@@ -270,6 +276,20 @@ class SkillMetadataMixin:
                 f"SELECT * FROM skills WHERE {where} AND project_id = %s",  # nosec B608
                 (*params, project_id),
             )
+            # Live resolution never serves a project row sourced from a
+            # bundled template tree: it is a stale shadow of the
+            # bundled-synced installed row (#17606). Deleted-inclusive
+            # queries are bookkeeping (dup checks, restore) and still see it.
+            if (
+                row is not None
+                and not include_deleted
+                and is_bundled_template_path(row.get("source_path"))
+            ):
+                logger.warning(
+                    f"Ignoring project-scoped skill '{name}' sourced from "
+                    f"bundled template path {row.get('source_path')}"
+                )
+                row = None
             # If not found and include_global, try global
             if row is None and include_global:
                 row = self._fetchone(
@@ -506,10 +526,43 @@ class SkillMetadataMixin:
             The updated Skill
 
         Raises:
-            ValueError: If skill not found.
+            ValueError: If skill not found, or if the skill is sourced from a
+                bundled template tree (project scope would shadow the
+                bundled-synced installed row).
         """
-        self.get_skill(skill_id)
+        skill = self.get_skill(skill_id)
+        if is_bundled_template_path(skill.source_path):
+            raise ValueError(f"Skill '{skill.name}': {BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR}")
         return self.update_skill(skill_id, source="project", project_id=project_id)
+
+    def purge_bundled_template_project_skills(self) -> list[Skill]:
+        """Soft-delete project-scoped rows sourced from bundled template trees.
+
+        Such rows shadow bundled-synced installed rows with stale template
+        content and should never exist (#17606); creation is blocked, but rows
+        written before that guard (or by older daemons) are healed here on
+        bundled sync.
+
+        Returns:
+            The skills that were soft-deleted.
+        """
+        rows = self._fetchall(
+            "SELECT * FROM skills WHERE project_id IS NOT NULL "
+            "AND deleted_at IS NULL AND source_path IS NOT NULL"
+        )
+        purged: list[Skill] = []
+        for row in rows:
+            skill = Skill.from_row(row)
+            if not is_bundled_template_path(skill.source_path):
+                continue
+            if self.delete_skill(skill.id):
+                logger.warning(
+                    f"Purged project-scoped skill '{skill.name}' "
+                    f"(project {skill.project_id}) sourced from bundled "
+                    f"template path {skill.source_path}"
+                )
+                purged.append(skill)
+        return purged
 
     def move_to_installed(self, skill_id: str) -> Skill:
         """Move a project-scoped skill back to installed scope.
