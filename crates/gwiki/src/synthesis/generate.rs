@@ -20,7 +20,7 @@ pub fn synthesize_article(
 ) -> Result<SynthesizedPage, WikiError> {
     let path = target_page.unwrap_or_else(|| {
         let directory = vault_root.join(input.target_kind.directory());
-        let slug = slugify_unique(&input.topic, |slug| {
+        let slug = slugify_unique(&input.topic, input.target_kind.reserved_suffix(), |slug| {
             directory.join(format!("{slug}.md")).exists()
         });
         directory.join(format!("{slug}.md"))

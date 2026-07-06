@@ -187,6 +187,13 @@ pub fn run(
     timestamp: &str,
 ) -> Result<UpkeepReport, WikiError> {
     let vault_root = research_scope.root().to_path_buf();
+    let mut notes: Vec<String> = Vec::new();
+
+    // Rename pages whose filenames collide with agent instruction files
+    // (claude.md == CLAUDE.md on case-insensitive filesystems, #17645) before
+    // lint runs, so clustering and page matching see the migrated layout.
+    migrate_reserved_pages(&vault_root, options.dry_run, &mut notes)?;
+
     let manifest = SourceManifest::read(&vault_root)?;
     let records: Vec<SourceRecord> = manifest.entries.clone();
     let pending_indices: BTreeSet<usize> = records
@@ -284,7 +291,6 @@ pub fn run(
         .map(|page| (page.relative_path.clone(), page_match_keys(page)))
         .collect();
 
-    let mut notes: Vec<String> = Vec::new();
     let mut clusters: Vec<ClusterOutcome> = Vec::new();
     let mut pages_created = 0usize;
     let mut pages_updated = 0usize;
@@ -459,6 +465,206 @@ pub fn run(
     }
 
     Ok(report)
+}
+
+/// Directories upkeep scans for pages whose filenames collide with agent
+/// instruction files, mapped to the slug suffix writers now apply (#17645).
+const RESERVED_MIGRATION_DIRS: &[(&str, &str)] = &[
+    ("knowledge/concepts", "concept"),
+    ("knowledge/topics", "topic"),
+    ("knowledge/sources", "source"),
+];
+
+/// Rename vault pages whose filename stem case-insensitively matches an agent
+/// instruction filename (`claude.md` == `CLAUDE.md` on APFS), then retarget
+/// path-form links across the vault. Titles and aliases are untouched, so
+/// title-addressed links like `[[Claude]]` keep resolving. Dry runs only
+/// report what would change.
+fn migrate_reserved_pages(
+    vault_root: &Path,
+    dry_run: bool,
+    notes: &mut Vec<String>,
+) -> Result<(), WikiError> {
+    use gobby_core::vault::reserved::is_reserved_instruction_stem;
+
+    let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for (directory, suffix) in RESERVED_MIGRATION_DIRS {
+        let absolute = vault_root.join(directory);
+        let Ok(entries) = fs::read_dir(&absolute) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if !is_reserved_instruction_stem(stem) {
+                continue;
+            }
+            let base = format!("{}-{suffix}", stem.to_ascii_lowercase());
+            let Some(new_stem) = (1usize..=99)
+                .map(|index| {
+                    if index == 1 {
+                        base.clone()
+                    } else {
+                        format!("{base}-{index}")
+                    }
+                })
+                .find(|candidate| !absolute.join(format!("{candidate}.md")).exists())
+            else {
+                notes.push(format!(
+                    "reserved-slug migration: no free name for {directory}/{stem}.md; left in place"
+                ));
+                continue;
+            };
+            renames.push((
+                PathBuf::from(directory).join(format!("{stem}.md")),
+                PathBuf::from(directory).join(format!("{new_stem}.md")),
+            ));
+        }
+    }
+    if renames.is_empty() {
+        return Ok(());
+    }
+
+    if dry_run {
+        for (old, new) in &renames {
+            notes.push(format!(
+                "reserved-slug migration (dry run): would rename {} -> {}",
+                old.display(),
+                new.display()
+            ));
+        }
+        return Ok(());
+    }
+
+    for (old, new) in &renames {
+        fs::rename(vault_root.join(old), vault_root.join(new)).map_err(|error| WikiError::Io {
+            action: "rename reserved-slug page",
+            path: Some(vault_root.join(old)),
+            source: error,
+        })?;
+        notes.push(format!(
+            "reserved-slug migration: renamed {} -> {} (agent instruction filename collision)",
+            old.display(),
+            new.display()
+        ));
+    }
+    let rewritten = retarget_renamed_links(vault_root, &renames)?;
+    if rewritten > 0 {
+        notes.push(format!(
+            "reserved-slug migration: retargeted {rewritten} path-form links"
+        ));
+    }
+    Ok(())
+}
+
+/// Rewrite path-form wikilinks and markdown links that point at renamed pages.
+/// Returns the number of links rewritten.
+fn retarget_renamed_links(
+    vault_root: &Path,
+    renames: &[(PathBuf, PathBuf)],
+) -> Result<usize, WikiError> {
+    use crate::links::{LinkKind, extract_links};
+
+    // Old canonical target key (with and without the .md suffix) -> new
+    // extensionless vault path.
+    let mut targets: BTreeMap<String, String> = BTreeMap::new();
+    for (old, new) in renames {
+        let old_page = old.to_string_lossy().replace('\\', "/");
+        let old_stemless = old.with_extension("").to_string_lossy().replace('\\', "/");
+        let new_stemless = new.with_extension("").to_string_lossy().replace('\\', "/");
+        targets.insert(canonical_target_key(&old_page), new_stemless.clone());
+        targets.insert(canonical_target_key(&old_stemless), new_stemless);
+    }
+
+    let mut markdown_files: Vec<PathBuf> = Vec::new();
+    collect_retarget_files(vault_root, vault_root, &mut markdown_files)?;
+    markdown_files.sort();
+
+    let mut rewritten = 0usize;
+    for path in markdown_files {
+        let Ok(markdown) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let links = extract_links(&markdown, std::iter::empty::<&str>());
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        for link in &links {
+            let Some(new_target) = targets.get(&canonical_target_key(&link.normalized_target))
+            else {
+                continue;
+            };
+            let keeps_extension = link.target.to_ascii_lowercase().ends_with(".md");
+            let destination = if keeps_extension {
+                format!("{new_target}.md")
+            } else {
+                new_target.clone()
+            };
+            let anchor = link
+                .anchor
+                .as_deref()
+                .map(|anchor| format!("#{anchor}"))
+                .unwrap_or_default();
+            let replacement = match link.kind {
+                LinkKind::Wikilink => match link.alias.as_deref() {
+                    Some(alias) => format!("[[{destination}{anchor}|{alias}]]"),
+                    None => format!("[[{destination}{anchor}]]"),
+                },
+                LinkKind::Markdown => format!(
+                    "[{}]({destination}{anchor})",
+                    link.alias.as_deref().unwrap_or(new_target)
+                ),
+            };
+            edits.push((link.byte_start, link.byte_end, replacement));
+        }
+        if edits.is_empty() {
+            continue;
+        }
+        let mut updated = markdown.clone();
+        for (byte_start, byte_end, replacement) in edits.into_iter().rev() {
+            updated.replace_range(byte_start..byte_end, &replacement);
+            rewritten += 1;
+        }
+        fs::write(&path, updated).map_err(|error| WikiError::Io {
+            action: "retarget renamed page links",
+            path: Some(path.clone()),
+            source: error,
+        })?;
+    }
+    Ok(rewritten)
+}
+
+/// Collect vault markdown files eligible for link retargeting, skipping raw
+/// captures (verbatim source data), vault state, and hidden directories.
+fn collect_retarget_files(
+    vault_root: &Path,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), WikiError> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            let is_vault_top_level = directory == vault_root;
+            if name.starts_with('.')
+                || (is_vault_top_level && (name == "raw" || name == gobby_core::vault::STATE_ROOT))
+            {
+                continue;
+            }
+            collect_retarget_files(vault_root, &path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// Synthesize one cluster through the compile pipeline against an ephemeral
@@ -967,6 +1173,102 @@ mod tests {
         assert_eq!(report.clusters[0].action, "planned_create");
         assert_eq!(report.pending_after, report.pending_before);
         assert!(report.reconciled_no_synthesis.is_empty() || report.pending_after == 2);
+    }
+
+    #[test]
+    fn upkeep_migrates_reserved_instruction_filename_pages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a", "No entity mentions here.\n");
+        write_file(
+            root,
+            "knowledge/concepts/claude.md",
+            "---\ntitle: \"Claude\"\n---\n\n# Claude\n\nBody.\n",
+        );
+        // A page the catalog does not regenerate, holding both link forms.
+        write_file(
+            root,
+            "knowledge/topics/tour.md",
+            "---\ntitle: \"Tour\"\n---\n\nSee [[knowledge/concepts/claude|Claude]] and \
+             [Claude](knowledge/concepts/claude.md).\n",
+        );
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        assert!(
+            !root.join("knowledge/concepts/claude.md").exists(),
+            "reserved filename must be renamed"
+        );
+        assert!(root.join("knowledge/concepts/claude-concept.md").exists());
+        let migrated = fs::read_to_string(root.join("knowledge/concepts/claude-concept.md"))
+            .expect("migrated page");
+        assert!(migrated.contains("title: \"Claude\""), "{migrated}");
+        let tour = fs::read_to_string(root.join("knowledge/topics/tour.md")).expect("tour");
+        assert!(
+            tour.contains("[[knowledge/concepts/claude-concept|Claude]]"),
+            "{tour}"
+        );
+        assert!(
+            tour.contains("[Claude](knowledge/concepts/claude-concept.md)"),
+            "{tour}"
+        );
+        let index = fs::read_to_string(root.join("knowledge/INDEX.md")).expect("index");
+        assert!(
+            index.contains("knowledge/concepts/claude-concept"),
+            "{index}"
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("claude-concept")),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    #[test]
+    fn upkeep_dry_run_only_reports_reserved_filename_migration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a", "No entity mentions here.\n");
+        write_file(
+            root,
+            "knowledge/concepts/gemini.md",
+            "---\ntitle: \"Gemini\"\n---\n\n# Gemini\n\nBody.\n",
+        );
+        let before = snapshot(root);
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options {
+                dry_run: true,
+                ..Options::default()
+            },
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("dry run");
+
+        assert_eq!(snapshot(root), before, "dry run must not write vault bytes");
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("would rename") && note.contains("gemini")),
+            "{:?}",
+            report.notes
+        );
     }
 
     #[test]

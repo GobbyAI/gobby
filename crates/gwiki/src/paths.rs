@@ -18,6 +18,15 @@ pub(crate) fn validate_source_id(id: &str) -> Result<&str, WikiError> {
             message: format!("unsafe source id `{id}`"),
         });
     }
+    // Source ids become `raw/<id>.md` and `knowledge/sources/<id>.md`
+    // filenames, so an id like `claude` would shadow CLAUDE.md instruction
+    // lookup on case-insensitive filesystems (#17645).
+    if gobby_core::vault::reserved::is_reserved_instruction_stem(id) {
+        return Err(WikiError::InvalidInput {
+            field: "source_id",
+            message: format!("source id `{id}` collides with an agent instruction filename"),
+        });
+    }
     Ok(id)
 }
 
@@ -52,6 +61,19 @@ mod tests {
             let error = raw_source_path(id).expect_err("unsafe source id rejected");
             assert_eq!(error.code(), "invalid_input");
         }
+    }
+
+    #[test]
+    fn source_paths_reject_agent_instruction_filename_ids() {
+        for id in ["claude", "CLAUDE", "agents", "Gemini", "qwen"] {
+            let error = raw_source_path(id).expect_err("reserved source id rejected");
+            assert_eq!(error.code(), "invalid_input");
+        }
+        // Generated ids keep their prefixes and stay valid.
+        assert_eq!(
+            raw_source_path("note-claude-md").expect("prefixed id"),
+            PathBuf::from("raw/note-claude-md.md")
+        );
     }
 
     #[test]

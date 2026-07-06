@@ -84,10 +84,61 @@ fn synthesized_page_write_classifies_create_and_overwrite_atomically() {
 
 #[test]
 fn slugify_unique_falls_back_after_bounded_suffixes() {
-    let slug = slugify_unique("Collision", |_| true);
+    let slug = slugify_unique("Collision", "concept", |_| true);
 
     assert!(slug.starts_with("collision-"));
     assert!(slug.len() > "collision-".len());
+}
+
+#[test]
+fn slugify_unique_deconflicts_agent_instruction_filenames() {
+    assert_eq!(
+        slugify_unique("Claude", "concept", |_| false),
+        "claude-concept"
+    );
+    assert_eq!(slugify_unique("AGENTS", "topic", |_| false), "agents-topic");
+    assert_eq!(slugify_unique("Gcode", "concept", |_| false), "gcode");
+}
+
+#[test]
+fn reserved_instruction_title_never_becomes_instruction_filename() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let input = empty_input("Claude", ArticleKind::Concept);
+
+    let article = synthesize_article(temp.path(), &input, None, &ExplainerGeneration::Skipped)
+        .expect("article synthesized");
+
+    assert_eq!(
+        article.path,
+        temp.path().join("knowledge/concepts/claude-concept.md")
+    );
+    // Title-addressed resolution still works: the page keeps title `Claude`,
+    // and lint lookup keys derived from that title cover `[[Claude]]`.
+    let parsed = crate::frontmatter::parse_frontmatter(&article.markdown).expect("frontmatter");
+    assert_eq!(parsed.metadata.title.as_deref(), Some("Claude"));
+    let keys = gobby_core::vault::lint::page_targets(
+        std::path::Path::new("knowledge/concepts/claude-concept.md"),
+        parsed.metadata.title.as_deref(),
+        &parsed.metadata.aliases,
+    );
+    assert!(keys.contains(&crate::links::canonical_target_key("Claude")));
+}
+
+#[test]
+fn explicit_reserved_target_page_is_refused() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir_all(temp.path().join("knowledge/concepts")).expect("create concepts dir");
+    let input = empty_input("Claude", ArticleKind::Concept);
+
+    let error = synthesize_article(
+        temp.path(),
+        &input,
+        Some(temp.path().join("knowledge/concepts/claude.md")),
+        &ExplainerGeneration::Skipped,
+    )
+    .expect_err("reserved target page refused");
+
+    assert_eq!(error.code(), "invalid_input");
 }
 
 #[test]

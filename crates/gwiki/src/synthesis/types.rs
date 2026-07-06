@@ -28,6 +28,16 @@ impl ArticleKind {
             Self::Topic => "topic",
         }
     }
+
+    /// Slug suffix applied when a page title collides with an agent
+    /// instruction filename (`Claude` -> `claude-concept`, see #17645).
+    pub fn reserved_suffix(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Concept => "concept",
+            Self::Topic => "topic",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

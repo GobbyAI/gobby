@@ -5,4 +5,4 @@
 //! re-exports the pieces gwiki consumes under the crate-local path every
 //! consumer already uses.
 
-pub use gobby_core::vault::links::{WikiLink, canonical_target_key, extract_links};
+pub use gobby_core::vault::links::{LinkKind, WikiLink, canonical_target_key, extract_links};

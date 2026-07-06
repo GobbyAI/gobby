@@ -54,5 +54,23 @@ pub(super) fn slugify(value: &str) -> String {
             previous_dash = true;
         }
     }
-    slug.trim_matches('-').to_string()
+    let slug = slug.trim_matches('-');
+    // A module or concept named e.g. `claude` would emit `claude.md`, which
+    // shadows CLAUDE.md instruction lookup on case-insensitive filesystems
+    // (#17645). Every slugify caller shares the deconflicted form, so
+    // slug-to-title spine matching stays consistent.
+    gobby_core::vault::reserved::deconflict_reserved_slug(slug, "concept")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slugify;
+
+    #[test]
+    fn slugify_deconflicts_agent_instruction_filenames() {
+        assert_eq!(slugify("Claude"), "claude-concept");
+        assert_eq!(slugify("AGENTS"), "agents-concept");
+        assert_eq!(slugify("Gemini"), "gemini-concept");
+        assert_eq!(slugify("Core Logic Engine"), "core-logic-engine");
+    }
 }

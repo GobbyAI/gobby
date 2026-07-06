@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 pub mod links;
 pub mod lint;
 pub mod mermaid;
+pub mod reserved;
 
 /// Per-vault control/state dir (scope file, research checkpoint, locks,
 /// compile bundles). Underscore-prefixed, not dot-prefixed, so CodeRabbit's

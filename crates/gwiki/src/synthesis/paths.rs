@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+use gobby_core::vault::reserved::{deconflict_reserved_slug, is_reserved_instruction_stem};
 use serde_json::Value;
 
 use crate::WikiError;
@@ -42,6 +43,17 @@ pub fn ensure_synthesized_path_inside_vault(
         )
     }) {
         return Err(synthesized_path_outside_vault(field));
+    }
+    if let Some(stem) = relative.file_stem().and_then(|stem| stem.to_str())
+        && is_reserved_instruction_stem(stem)
+    {
+        return Err(WikiError::InvalidInput {
+            field,
+            message: format!(
+                "page filename `{stem}.md` collides with an agent instruction \
+                 filename on case-insensitive filesystems"
+            ),
+        });
     }
     Ok(())
 }
@@ -128,8 +140,15 @@ pub fn slugify(title: &str) -> String {
     }
 }
 
-pub fn slugify_unique(title: &str, mut exists: impl FnMut(&str) -> bool) -> String {
-    let base = slugify(title);
+/// Derive a unique page slug for `title`. `reserved_suffix` is appended when
+/// the slug would collide with an agent instruction filename (#17645) — pass
+/// [`ArticleKind::reserved_suffix`] for the page's kind.
+pub fn slugify_unique(
+    title: &str,
+    reserved_suffix: &str,
+    mut exists: impl FnMut(&str) -> bool,
+) -> String {
+    let base = deconflict_reserved_slug(&slugify(title), reserved_suffix);
     if !exists(&base) {
         return base;
     }
@@ -170,16 +189,20 @@ pub(super) fn source_page_paths(
                 return existing.clone();
             }
             let identity = relative_path(vault_root, &source.path);
-            let slug = slugify_unique(&source.title, |slug| {
-                if reserved.contains(slug) {
-                    return true;
-                }
-                let candidate = directory.join(format!("{slug}.md"));
-                // A page already emitted for this same source is not a
-                // collision: recompiles update it in place instead of
-                // minting a slug-suffixed sibling.
-                candidate.exists() && !page_matches_source_identity(&candidate, &identity)
-            });
+            let slug = slugify_unique(
+                &source.title,
+                ArticleKind::Source.reserved_suffix(),
+                |slug| {
+                    if reserved.contains(slug) {
+                        return true;
+                    }
+                    let candidate = directory.join(format!("{slug}.md"));
+                    // A page already emitted for this same source is not a
+                    // collision: recompiles update it in place instead of
+                    // minting a slug-suffixed sibling.
+                    candidate.exists() && !page_matches_source_identity(&candidate, &identity)
+                },
+            );
             reserved.insert(slug.clone());
             directory.join(format!("{slug}.md"))
         })
