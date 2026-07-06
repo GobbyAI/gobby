@@ -6,9 +6,11 @@ use serde_json::{Value, json};
 
 use crate::frontmatter::parse_frontmatter;
 use crate::links::canonical_target_key;
+use crate::paths::derived_markdown_path;
 use crate::provenance::ProvenanceGraph;
 use crate::search::SearchScope;
 use crate::search::semantic::{SemanticSearchBackend, SemanticSearchRequest};
+use crate::sources::SourceManifest;
 use crate::support::scope::scope_includes_page;
 use crate::support::services::RuntimeServices;
 use crate::support::text::degradation_label;
@@ -163,12 +165,20 @@ pub fn run(
             .iter()
             .map(|claim| claim.path.clone()),
     );
-    let broken_links = unique_paths(
-        lint_report
-            .broken_links
-            .iter()
-            .map(|issue| issue.path.clone()),
-    );
+    // Broken digest links are mostly upkeep's convergence fuel, not repair
+    // debt — proposing repair for them invites mass de-linking that would
+    // destroy upkeep's work queue (#17640). Classify them the way upkeep
+    // consumes them and only forward genuinely dead links.
+    let manifest = SourceManifest::read(vault_root)?;
+    let mut digest_pages = BTreeSet::new();
+    let mut manifest_ids = BTreeSet::new();
+    for record in &manifest.entries {
+        digest_pages.insert(derived_markdown_path(record)?);
+        manifest_ids.insert(record.id.to_lowercase());
+    }
+    let broken_link_scan =
+        classify_broken_links(&lint_report.broken_links, &digest_pages, &manifest_ids);
+    let broken_links = broken_link_scan.repair_pages.clone();
     let weak_provenance = weak_provenance_pages(&pages, &provenance);
     let outdated_codewiki = if options.shared_code_graph_available {
         outdated_codewiki_pages(&pages)
@@ -189,7 +199,7 @@ pub fn run(
     let mut checks = vec![
         available_check("stale_pages", stale_pages.clone()),
         available_check("missing_citations", missing_citations.clone()),
-        available_check("broken_links", broken_links.clone()),
+        broken_links_check(&broken_link_scan),
         available_check("weak_provenance", weak_provenance.clone()),
     ];
     checks.push(optional_check(
@@ -514,6 +524,111 @@ fn unresolved_link_clusters(broken_links: &[lint::LinkIssue]) -> Vec<UnresolvedL
         .collect()
 }
 
+/// Split of lint's broken links into genuinely dead links (repair debt) and
+/// pending mentions that upkeep or compile converge on without repair
+/// (#17640).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct BrokenLinkScan {
+    /// Pages carrying at least one genuinely dead link.
+    repair_pages: Vec<PathBuf>,
+    /// Entity targets with enough digest mentions for an upkeep cluster.
+    pending_clusters: usize,
+    /// Digest mentions of entity targets still below the cluster threshold.
+    pending_singleton_mentions: usize,
+    /// Links to registered source digests that are not compiled yet.
+    pending_compile_mentions: usize,
+}
+
+impl BrokenLinkScan {
+    fn pending_note(&self) -> Option<String> {
+        (self.pending_clusters > 0
+            || self.pending_singleton_mentions > 0
+            || self.pending_compile_mentions > 0)
+            .then(|| {
+                format!(
+                    "excluded self-healing links — pending synthesis: {} cluster(s), \
+                     {} singleton mention(s); pending compile: {} digest link(s)",
+                    self.pending_clusters,
+                    self.pending_singleton_mentions,
+                    self.pending_compile_mentions
+                )
+            })
+    }
+}
+
+fn broken_links_check(scan: &BrokenLinkScan) -> CheckReport {
+    let mut check = available_check("broken_links", scan.repair_pages.clone());
+    check.note = scan.pending_note();
+    check
+}
+
+/// Entity-shaped keys (no path separator) are what upkeep clusters into
+/// entity pages; path-shaped targets can never converge that way.
+fn is_entity_key(key: &str) -> bool {
+    !key.is_empty() && !key.contains('/')
+}
+
+/// Manifest id behind a `knowledge/sources/...` target key, if the key is
+/// digest-shaped.
+fn source_digest_id(key: &str) -> Option<&str> {
+    let rest = key.strip_prefix("knowledge/sources/")?;
+    let id = rest.strip_suffix(".md").unwrap_or(rest);
+    (!id.is_empty() && !id.contains('/')).then_some(id)
+}
+
+/// Classify lint's broken links the way upkeep will consume them: entity
+/// mentions on digest pages seed upkeep clusters (`upkeep::run` counts the
+/// same mentions), so they — and every other mention of a target some digest
+/// sustains — are self-healing synthesis fuel, not repair debt. Links to
+/// registered but uncompiled source digests materialize on compile. Only
+/// genuinely dead links remain: purged or never-registered digest targets,
+/// path-shaped targets no entity page can satisfy, and entity mentions no
+/// digest ever made.
+fn classify_broken_links(
+    broken_links: &[lint::LinkIssue],
+    digest_pages: &BTreeSet<PathBuf>,
+    manifest_ids: &BTreeSet<String>,
+) -> BrokenLinkScan {
+    let mut digest_mentions: BTreeMap<String, usize> = BTreeMap::new();
+    for issue in broken_links {
+        if !digest_pages.contains(&issue.path) {
+            continue;
+        }
+        let key = canonical_target_key(&issue.target);
+        if is_entity_key(&key) {
+            *digest_mentions.entry(key).or_default() += 1;
+        }
+    }
+
+    let mut scan = BrokenLinkScan::default();
+    let mut repair_pages: BTreeSet<PathBuf> = BTreeSet::new();
+    for issue in broken_links {
+        let key = canonical_target_key(&issue.target);
+        if let Some(id) = source_digest_id(&key) {
+            if manifest_ids.contains(id) {
+                scan.pending_compile_mentions += 1;
+            } else {
+                repair_pages.insert(issue.path.clone());
+            }
+            continue;
+        }
+        if is_entity_key(&key) && digest_mentions.contains_key(&key) {
+            continue;
+        }
+        repair_pages.insert(issue.path.clone());
+    }
+
+    for mentions in digest_mentions.values() {
+        if *mentions >= crate::upkeep::DEFAULT_MIN_MENTIONS {
+            scan.pending_clusters += 1;
+        } else {
+            scan.pending_singleton_mentions += mentions;
+        }
+    }
+    scan.repair_pages = repair_pages.into_iter().collect();
+    scan
+}
+
 fn weak_provenance_pages(pages: &[lint::WikiPage], provenance: &ProvenanceGraph) -> Vec<PathBuf> {
     let mut paths = pages
         .iter()
@@ -597,7 +712,9 @@ fn suggested_tasks(
         &mut tasks,
         !broken_links.is_empty(),
         "Repair broken wiki links",
-        "Broken links should be retargeted or removed after human review.",
+        "Genuinely dead links (purged digest targets, path-shaped targets, or entity \
+         mentions no digest sustains) should be retargeted or removed after human \
+         review. Pending entity mentions that upkeep converges on are excluded.",
         broken_links,
     );
     push_task(
@@ -1130,6 +1247,128 @@ mod tests {
                 .as_deref()
                 .is_some_and(|note| note.contains("degraded")),
             "{check:?}"
+        );
+    }
+
+    #[test]
+    fn broken_link_classification_excludes_upkeep_convergent_mentions() {
+        let digest_pages: BTreeSet<PathBuf> = [
+            PathBuf::from("knowledge/sources/src-aaaa.md"),
+            PathBuf::from("knowledge/sources/src-bbbb.md"),
+        ]
+        .into();
+        let manifest_ids: BTreeSet<String> =
+            ["src-aaaa".to_string(), "src-bbbb".to_string()].into();
+        let issues = vec![
+            // Case-variant digest mentions of one entity form a cluster.
+            link_issue("knowledge/sources/src-aaaa.md", "Gobby"),
+            link_issue("knowledge/sources/src-bbbb.md", "gobby"),
+            // A lone digest mention stays convergence signal, not repair debt.
+            link_issue("knowledge/sources/src-aaaa.md", "FalkorDB"),
+            // Non-digest mentions of a digest-sustained entity self-heal too.
+            link_issue("knowledge/concepts/overview.md", "Gobby"),
+            // Registered but uncompiled digest target materializes on compile.
+            link_issue(
+                "knowledge/concepts/overview.md",
+                "knowledge/sources/src-bbbb",
+            ),
+        ];
+
+        let scan = classify_broken_links(&issues, &digest_pages, &manifest_ids);
+
+        assert_eq!(scan.repair_pages, Vec::<PathBuf>::new());
+        assert_eq!(scan.pending_clusters, 1);
+        assert_eq!(scan.pending_singleton_mentions, 1);
+        assert_eq!(scan.pending_compile_mentions, 1);
+        let note = scan.pending_note().expect("pending note");
+        assert!(note.contains("pending synthesis: 1 cluster(s), 1 singleton mention(s)"));
+        assert!(note.contains("pending compile: 1 digest link(s)"));
+    }
+
+    #[test]
+    fn broken_link_classification_keeps_dead_links_as_repair_debt() {
+        let digest_pages: BTreeSet<PathBuf> =
+            [PathBuf::from("knowledge/sources/src-aaaa.md")].into();
+        let manifest_ids: BTreeSet<String> = ["src-aaaa".to_string()].into();
+        let issues = vec![
+            // Digest target with no manifest record behind it (purged row).
+            link_issue(
+                "knowledge/topics/overview.md",
+                "knowledge/sources/src-gone.md",
+            ),
+            // Path-shaped target can never become an entity page, even when a
+            // digest mentions it.
+            link_issue("knowledge/sources/src-aaaa.md", "code/files/foo.md"),
+            // Entity mention no digest sustains has no convergence path.
+            link_issue("knowledge/concepts/overview.md", "Orphan"),
+        ];
+
+        let scan = classify_broken_links(&issues, &digest_pages, &manifest_ids);
+
+        assert_eq!(
+            scan.repair_pages,
+            vec![
+                PathBuf::from("knowledge/concepts/overview.md"),
+                PathBuf::from("knowledge/sources/src-aaaa.md"),
+                PathBuf::from("knowledge/topics/overview.md"),
+            ]
+        );
+        assert_eq!(scan.pending_clusters, 0);
+        assert_eq!(scan.pending_singleton_mentions, 0);
+        assert_eq!(scan.pending_compile_mentions, 0);
+        assert_eq!(scan.pending_note(), None);
+    }
+
+    #[test]
+    fn librarian_excludes_digest_entity_mentions_from_repair_proposals() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let first = SourceManifest::register(
+            root,
+            SourceDraft::url("https://example.com/one", "2026-07-01T00:00:00Z", "one"),
+        )
+        .expect("register first source");
+        let second = SourceManifest::register(
+            root,
+            SourceDraft::url("https://example.com/two", "2026-07-01T00:00:00Z", "two"),
+        )
+        .expect("register second source");
+        write_page(
+            root,
+            &format!("knowledge/sources/{}.md", first.id),
+            "# One\nMentions [[PendingEntity]].\n",
+        );
+        write_page(
+            root,
+            &format!("knowledge/sources/{}.md", second.id),
+            "# Two\nMentions [[pendingentity]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/topics/dead.md",
+            "# Dead\nSee [[knowledge/sources/src-0000000000000000-gone]].\n",
+        );
+
+        let report = run(
+            root,
+            ScopeIdentity::project("project-1"),
+            Options::offline(),
+            None,
+        )
+        .expect("librarian runs");
+
+        let check = report.check("broken_links");
+        assert_eq!(check.items, vec![PathBuf::from("knowledge/topics/dead.md")]);
+        let note = check.note.as_deref().expect("pending note");
+        assert!(note.contains("pending synthesis: 1 cluster(s)"));
+        let repair = report
+            .suggested_tasks
+            .iter()
+            .find(|task| task.title == "Repair broken wiki links")
+            .expect("repair task proposed for the dead link");
+        assert_eq!(
+            repair.paths,
+            vec![PathBuf::from("knowledge/topics/dead.md")]
         );
     }
 
