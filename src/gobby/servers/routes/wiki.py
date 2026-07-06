@@ -9,6 +9,8 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 from gobby.gwiki_gateway import (
     COMPILE_KINDS,
+    GENERATION_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
@@ -79,6 +81,14 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         ask_query = _one_query(q, query)
         ai_value = _normalize_ai(ai) if ai is not None else None
+        # AI-routed asks run an LLM completion; give the subprocess the
+        # generation guard instead of the interactive one.
+        ai_may_generate = llm or (ai_value is not None and ai_value != "off")
+        timeout_seconds = (
+            GENERATION_GWIKI_TIMEOUT_SECONDS
+            if ai_may_generate
+            else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+        )
         try:
             return await _read(
                 server,
@@ -90,6 +100,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
                     ai=ai_value,
                     require_ai=require_ai,
                 ),
+                timeout_seconds=timeout_seconds,
             )
         except ValueError as exc:
             raise HTTPException(400, detail=str(exc) or "Invalid wiki ask request") from exc
@@ -193,6 +204,8 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         write_intent = bool(request.get("write_intent", False))
         ai_value = _optional_string(request.get("ai"))
         ai = _normalize_ai(ai_value) if ai_value is not None else None
+        # Compile defaults to AI routing inside gwiki and its synthesis scales
+        # with vault size, so it always gets the generation guard.
         return await _write_call(
             server,
             project,
@@ -206,6 +219,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
                 write_intent=write_intent,
                 ai=ai,
             ),
+            timeout_seconds=GENERATION_GWIKI_TIMEOUT_SECONDS,
         )
 
     @router.post("/audit")
@@ -249,8 +263,9 @@ async def _read(
     project: str | None,
     topic: str | None,
     call: GatewayCall,
+    timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    gateway = await _gateway(server, project, topic)
+    gateway = await _gateway(server, project, topic, timeout_seconds=timeout_seconds)
     return await _map_gateway_errors(lambda: call(gateway))
 
 
@@ -259,8 +274,9 @@ async def _write_call(
     project: str | None,
     topic: str | None,
     call: GatewayCall,
+    timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    gateway = await _gateway(server, project, topic)
+    gateway = await _gateway(server, project, topic, timeout_seconds=timeout_seconds)
     result = await _map_gateway_errors(lambda: call(gateway))
     return await _write(gateway, result)
 
@@ -287,17 +303,28 @@ async def _resolve_scope(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
+async def _gateway(
+    server: HTTPServer,
+    project: str | None,
+    topic: str | None,
+    timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+) -> GwikiGateway:
     # Keep server in the helper signature for route factory compatibility.
-    return _gateway_from_scope(await _resolve_scope(server, project, topic))
+    return _gateway_from_scope(
+        await _resolve_scope(server, project, topic),
+        timeout_seconds=timeout_seconds,
+    )
 
 
-def _gateway_from_scope(resolved: ResolvedWikiScope) -> GwikiGateway:
+def _gateway_from_scope(
+    resolved: ResolvedWikiScope,
+    timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+) -> GwikiGateway:
     return GwikiGateway(
         binary=None,
         project_root=resolved.project_root,
         topic=resolved.topic,
-        timeout_seconds=30.0,
+        timeout_seconds=timeout_seconds,
     )
 
 

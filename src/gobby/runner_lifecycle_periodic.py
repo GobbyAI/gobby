@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.wiki import WikiConfig, WikiRootConfig
-from gobby.gwiki_gateway import GwikiGateway
+from gobby.gwiki_gateway import INTERACTIVE_GWIKI_TIMEOUT_SECONDS, GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 from gobby.wiki.watcher import WikiWatcher, WikiWatchScope
@@ -69,7 +69,7 @@ def _wiki_gateway_for_local_scope(
             binary=None,
             project_root=str(root.path) if root is not None and scope == "project" else None,
             topic=_wiki_topic_name(scope),
-            timeout_seconds=30.0,
+            timeout_seconds=INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
         )
 
     return gateway

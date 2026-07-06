@@ -32,6 +32,12 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     "compact_self",
     "recall_review_context",
     "rebuild_knowledge_graph",
+    # Generation-backed gwiki calls: daemon-side synthesis scales with vault
+    # size and cannot fit the default 30s request timeout (#17593). The
+    # daemon's gwiki subprocess guard (GENERATION_GWIKI_TIMEOUT_SECONDS) sits
+    # 30s below this HTTP cap so structured timeout envelopes still arrive.
+    "wiki_ask",
+    "wiki_compile",
 )
 CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)

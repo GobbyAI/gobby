@@ -10,6 +10,15 @@ from gobby.utils.native_bin import resolve_native_bin
 
 COMPILE_KINDS = frozenset({"source", "concept", "topic"})
 
+# Subprocess kill guards for gwiki calls. Generation-backed commands
+# (compile, AI-routed ask) run LLM synthesis that scales with vault size and
+# cannot fit the interactive bound; they get the generation guard. The
+# generation guard must stay below the MCP wrapper's 300s extended HTTP
+# timeout (MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS) so gwiki's structured
+# timeout envelope reaches the caller before the transport gives up.
+INTERACTIVE_GWIKI_TIMEOUT_SECONDS = 30.0
+GENERATION_GWIKI_TIMEOUT_SECONDS = 270.0
+
 
 class GwikiGatewayError(RuntimeError):
     """Base error for Gwiki gateway failures."""
@@ -68,7 +77,7 @@ class GwikiGateway:
         binary: str | None = None,
         project_root: str | Path | None = None,
         topic: str | None = None,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     ) -> None:
         self._binary = binary
         self._binary_lock = asyncio.Lock()

@@ -40,7 +40,19 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "compact_self",
         "recall_review_context",
         "rebuild_knowledge_graph",
+        "wiki_ask",
+        "wiki_compile",
     )
+
+
+def test_generation_gwiki_timeout_sits_below_extended_http_cap() -> None:
+    """The daemon-side gwiki generation guard must fire before the wrapper's
+    extended HTTP timeout so callers get gwiki's structured timeout envelope
+    instead of a transport-level REQUEST_TIMEOUT (#17593)."""
+    from gobby.gwiki_gateway import GENERATION_GWIKI_TIMEOUT_SECONDS
+    from gobby.mcp_proxy import wait_tools
+
+    assert GENERATION_GWIKI_TIMEOUT_SECONDS < wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
 
 
 def test_wait_tool_source_stale_result_detects_changed_file(tmp_path: Path) -> None:

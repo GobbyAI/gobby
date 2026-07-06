@@ -9,7 +9,11 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.gwiki_gateway import GwikiCommandError
+from gobby.gwiki_gateway import (
+    GENERATION_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    GwikiCommandError,
+)
 from gobby.servers.routes import wiki as wiki_routes
 from gobby.servers.routes.wiki import _stage_upload, create_wiki_router
 from gobby.storage.projects import LocalProjectManager
@@ -538,6 +542,23 @@ def test_compile_route_rejects_unknown_kind_and_ai(client: TestClient) -> None:
     bad_ai = client.post("/api/wiki/compile", json={"ai": "cloud"})
     assert bad_ai.status_code == 400
     assert bad_ai.json()["detail"] == "ai must be one of auto, daemon, direct, off"
+
+
+def test_compile_route_uses_generation_gateway_timeout(client: TestClient) -> None:
+    response = client.post("/api/wiki/compile", json={"ai": "daemon"})
+
+    assert response.status_code == 200
+    assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
+
+
+def test_ask_route_gateway_timeout_tracks_ai_routing(client: TestClient) -> None:
+    generative = client.get("/api/wiki/ask", params={"q": "hooks?", "ai": "daemon"})
+    assert generative.status_code == 200
+    assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
+
+    retrieval_only = client.get("/api/wiki/ask", params={"q": "hooks?"})
+    assert retrieval_only.status_code == 200
+    assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_GWIKI_TIMEOUT_SECONDS
 
 
 def test_write_routes_delegate_to_coordinator(

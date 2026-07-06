@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.gwiki_gateway import (
     COMPILE_KINDS,
+    GENERATION_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
@@ -28,7 +30,7 @@ class GwikiGatewayFactory(Protocol):
         binary: str | None = None,
         project_root: str | Path | None = None,
         topic: str | None = None,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     ) -> GwikiGateway: ...
 
 
@@ -58,6 +60,7 @@ def create_wiki_registry(
     async def gateway(
         project: str | None = None,
         topic: str | None = None,
+        timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     ) -> tuple[GwikiGateway, ResolvedWikiScope]:
         resolved = await resolve_wiki_scope(
             db,
@@ -69,14 +72,17 @@ def create_wiki_registry(
             binary=None,
             project_root=resolved.project_root,
             topic=resolved.topic,
-            timeout_seconds=30.0,
+            timeout_seconds=timeout_seconds,
         )
         return gwiki, resolved
 
     async def read_call(
-        project: str | None, topic: str | None, call: GatewayCall
+        project: str | None,
+        topic: str | None,
+        call: GatewayCall,
+        timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
-        gwiki, scope = await gateway(project, topic)
+        gwiki, scope = await gateway(project, topic, timeout_seconds=timeout_seconds)
         result = await _map_gateway_errors(lambda: call(gwiki))
         return _structured_result(result, scope=scope)
 
@@ -84,8 +90,9 @@ def create_wiki_registry(
         project: str | None,
         topic: str | None,
         call: GatewayCall,
+        timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
-        gwiki, scope = await gateway(project, topic)
+        gwiki, scope = await gateway(project, topic, timeout_seconds=timeout_seconds)
         result = await _map_gateway_errors(lambda: call(gwiki))
         handled = await update_coordinator_cls(gwiki).handle_write_result(result)
         return _structured_result(handled, scope=scope)
@@ -129,6 +136,14 @@ def create_wiki_registry(
         token_budget: int | None = None,
     ) -> dict[str, Any]:
         ai_value = _normalize_ai(ai) if ai is not None else None
+        # AI-routed asks run an LLM completion; give the subprocess the
+        # generation guard instead of the interactive one.
+        ai_may_generate = llm or (ai_value is not None and ai_value != "off")
+        timeout_seconds = (
+            GENERATION_GWIKI_TIMEOUT_SECONDS
+            if ai_may_generate
+            else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+        )
         return await _guard(
             lambda: read_call(
                 project,
@@ -140,6 +155,7 @@ def create_wiki_registry(
                     require_ai=require_ai,
                     token_budget=token_budget,
                 ),
+                timeout_seconds=timeout_seconds,
             )
         )
 
@@ -226,6 +242,8 @@ def create_wiki_registry(
         async def run() -> dict[str, Any]:
             kind_value = _normalize_kind(kind)
             ai_value = _normalize_ai(ai) if ai is not None else None
+            # Compile defaults to AI routing inside gwiki and its synthesis
+            # scales with vault size, so it always gets the generation guard.
             return await write_call(
                 project,
                 topic,
@@ -238,6 +256,7 @@ def create_wiki_registry(
                     write_intent=write_intent,
                     ai=ai_value,
                 ),
+                timeout_seconds=GENERATION_GWIKI_TIMEOUT_SECONDS,
             )
 
         return await _guard(run)

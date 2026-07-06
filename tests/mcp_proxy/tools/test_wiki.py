@@ -6,7 +6,11 @@ from typing import Any
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.gwiki_gateway import GwikiCommandError
+from gobby.gwiki_gateway import (
+    GENERATION_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    GwikiCommandError,
+)
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.wiki import create_wiki_registry
@@ -646,3 +650,45 @@ async def test_wiki_compile_rejects_unknown_kind_and_ai() -> None:
     assert FakeGateway.instances == [] or all(
         call[0] != "compile" for gateway in FakeGateway.instances for call in gateway.calls
     )
+
+
+@pytest.mark.asyncio
+async def test_wiki_compile_uses_generation_gateway_timeout() -> None:
+    registry = _registry()
+
+    result = await registry.call("wiki_compile", {"ai": "daemon"})
+
+    assert result["success"] is True
+    assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "expected_timeout"),
+    [
+        ({"query": "q", "ai": "daemon"}, GENERATION_GWIKI_TIMEOUT_SECONDS),
+        ({"query": "q", "ai": "auto"}, GENERATION_GWIKI_TIMEOUT_SECONDS),
+        ({"query": "q", "llm": True}, GENERATION_GWIKI_TIMEOUT_SECONDS),
+        ({"query": "q", "ai": "off"}, INTERACTIVE_GWIKI_TIMEOUT_SECONDS),
+        ({"query": "q"}, INTERACTIVE_GWIKI_TIMEOUT_SECONDS),
+    ],
+)
+async def test_wiki_ask_gateway_timeout_tracks_ai_routing(
+    arguments: dict[str, Any], expected_timeout: float
+) -> None:
+    registry = _registry()
+
+    result = await registry.call("wiki_ask", arguments)
+
+    assert result["success"] is True
+    assert FakeGateway.instances[-1].timeout_seconds == expected_timeout
+
+
+@pytest.mark.asyncio
+async def test_wiki_search_keeps_interactive_gateway_timeout() -> None:
+    registry = _registry()
+
+    result = await registry.call("wiki_search", {"query": "hooks"})
+
+    assert result["success"] is True
+    assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_GWIKI_TIMEOUT_SECONDS
