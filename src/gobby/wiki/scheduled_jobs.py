@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.gwiki_gateway import GwikiGateway
 from gobby.scheduler.executor import CronHandler
@@ -22,7 +23,15 @@ WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
 WIKI_AUDIT_INTERVAL_SECONDS = 24 * 60 * 60
 WIKI_SYNC_SESSIONS_INTERVAL_SECONDS = 24 * 60 * 60
+WIKI_UPKEEP_INTERVAL_SECONDS = 24 * 60 * 60
+WIKI_LIBRARIAN_INTERVAL_SECONDS = 24 * 60 * 60
+# Recaps run just after UTC midnight for the day that just ended; gwiki recap
+# attributes sessions to UTC days, so the schedule stays in UTC.
+WIKI_RECAP_SCHEDULE_CRON = "10 0 * * *"
 WIKI_HEALTH_HISTORY_SAMPLE_SIZE = 10
+WIKI_LIBRARIAN_TASK_LABEL_PREFIX = "wiki-librarian"
+_LIBRARIAN_DEDUP_LOOKUP_LIMIT = 20
+_LIBRARIAN_FILED_TITLE_SAMPLE_SIZE = 10
 
 _HEALTH_HISTORY_LIST_FIELDS = (
     "broken_links",
@@ -55,9 +64,36 @@ class WikiGatewayProtocol(Protocol):
         limit: int | None = None,
     ) -> dict[str, Any]: ...
 
+    async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]: ...
+
+    async def librarian(self) -> dict[str, Any]: ...
+
+    async def recap(self, *, date: str | None = None) -> dict[str, Any]: ...
+
 
 class CronRegistrationProtocol(Protocol):
     def register_handler(self, name: str, handler: CronHandler) -> None: ...
+
+
+class LibrarianTaskManagerProtocol(Protocol):
+    def list_tasks(
+        self,
+        *,
+        project_id: str | None = ...,
+        closed: bool | None = ...,
+        title_like: str | None = ...,
+        limit: int = ...,
+    ) -> list[Any]: ...
+
+    def create_task(
+        self,
+        project_id: str,
+        title: str,
+        description: str | None = None,
+        *,
+        labels: list[str] | None = None,
+        category: str | None = None,
+    ) -> object: ...
 
 
 GatewayFactory = Callable[[ResolvedWikiScope], WikiGatewayProtocol]
@@ -141,6 +177,92 @@ def create_wiki_sync_sessions_handler(
     return sync_sessions_handler
 
 
+def create_wiki_upkeep_handler(
+    *,
+    gateway: WikiGatewayProtocol,
+    coordinator: WikiUpdateCoordinator,
+    scope: str,
+) -> CronHandler:
+    async def upkeep_handler(job: CronJob) -> str:
+        result = await gateway.upkeep()
+        coordinated = await coordinator.handle_write_result(result)
+        return _history_output(
+            purpose="Drain pending wiki sources into concept pages",
+            scope=scope,
+            command="upkeep",
+            gwiki_result=coordinated,
+            changed_paths=_upkeep_changed_paths(coordinated),
+        )
+
+    return upkeep_handler
+
+
+def create_wiki_librarian_handler(
+    *,
+    gateway: WikiGatewayProtocol,
+    scope: str,
+    task_manager: LibrarianTaskManagerProtocol | None,
+    fallback_project_id: str,
+) -> CronHandler:
+    """Build the librarian cron handler.
+
+    Librarian is read-only for the WikiUpdateCoordinator boundary: it emits
+    proposals and writes only watcher-ignored ``meta/librarian/**`` artifacts,
+    never canonical wiki content, so its result skips handle_write_result.
+    Suggested tasks are filed into gobby-tasks instead.
+    """
+
+    async def librarian_handler(job: CronJob) -> str:
+        result = await gateway.librarian()
+        coordinated = dict(result)
+        coordinated["task_filing"] = _file_librarian_tasks(
+            task_manager=task_manager,
+            scope=scope,
+            fallback_project_id=fallback_project_id,
+            suggested=_payload(result).get("suggested_tasks"),
+        )
+        return _history_output(
+            purpose="File wiki librarian proposals as tasks",
+            scope=scope,
+            command="librarian",
+            gwiki_result=coordinated,
+        )
+
+    return librarian_handler
+
+
+def create_wiki_recap_handler(
+    *,
+    gateway: WikiGatewayProtocol,
+    coordinator: WikiUpdateCoordinator,
+    scope: str,
+) -> CronHandler:
+    """Build the nightly recap cron handler.
+
+    Session digests come from sync-sessions, whose 24h interval job carries no
+    ordering guarantee against this schedule; a presync keeps the recap of the
+    just-finished UTC day complete.
+    """
+
+    async def recap_handler(job: CronJob) -> str:
+        presync = await coordinator.handle_write_result(await gateway.sync_sessions())
+        result = await gateway.recap(date=_previous_utc_day())
+        coordinated = await coordinator.handle_write_result(result)
+        coordinated["presync"] = {
+            "command": "sync-sessions",
+            "status": _status(presync, _payload(presync)),
+        }
+        return _history_output(
+            purpose="Write the nightly session recap page",
+            scope=scope,
+            command="recap",
+            gwiki_result=coordinated,
+            changed_paths=_changed_paths(coordinated),
+        )
+
+    return recap_handler
+
+
 async def register_wiki_cron_jobs(
     *,
     cron_storage: CronJobStorage,
@@ -149,22 +271,28 @@ async def register_wiki_cron_jobs(
     db: HubDatabase | None = None,
     scopes: Iterable[str] | None = None,
     gateway_factory: GatewayFactory | None = None,
+    task_manager: LibrarianTaskManagerProtocol | None = None,
 ) -> int:
     """Register wiki cron handlers and reconcile one cron row per scope and command."""
     if gateway_factory is None and db is None:
         raise ValueError("register_wiki_cron_jobs requires db when gateway_factory is not provided")
     reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
+    purge_legacy_wiki_research_jobs(cron_storage)
+    if task_manager is None and db is not None:
+        from gobby.storage.tasks import LocalTaskManager
+
+        task_manager = LocalTaskManager(db)
     registered = 0
     for scope in _configured_scopes(scopes, project_id):
         gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
-        _retire_system_research_job(cron_storage, scope)
-        for command, purpose, interval, handler in (
+        for command, purpose, interval, cron_expr, handler in (
             (
                 "refresh",
                 "Scheduled wiki source refresh",
                 WIKI_REFRESH_INTERVAL_SECONDS,
+                None,
                 create_wiki_refresh_handler(
                     gateway=gateway,
                     coordinator=coordinator,
@@ -175,12 +303,14 @@ async def register_wiki_cron_jobs(
                 "health",
                 "Scheduled wiki health checks",
                 WIKI_HEALTH_INTERVAL_SECONDS,
+                None,
                 create_wiki_health_handler(gateway=gateway, scope=scope),
             ),
             (
                 "audit",
                 "Scheduled wiki audit",
                 WIKI_AUDIT_INTERVAL_SECONDS,
+                None,
                 create_wiki_audit_handler(
                     gateway=gateway,
                     coordinator=coordinator,
@@ -191,7 +321,42 @@ async def register_wiki_cron_jobs(
                 "sync-sessions",
                 "Scheduled wiki session transcript sync",
                 WIKI_SYNC_SESSIONS_INTERVAL_SECONDS,
+                None,
                 create_wiki_sync_sessions_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope=scope,
+                ),
+            ),
+            (
+                "upkeep",
+                "Scheduled wiki upkeep page drain",
+                WIKI_UPKEEP_INTERVAL_SECONDS,
+                None,
+                create_wiki_upkeep_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope=scope,
+                ),
+            ),
+            (
+                "librarian",
+                "Scheduled wiki librarian proposals",
+                WIKI_LIBRARIAN_INTERVAL_SECONDS,
+                None,
+                create_wiki_librarian_handler(
+                    gateway=gateway,
+                    scope=scope,
+                    task_manager=task_manager,
+                    fallback_project_id=project_id,
+                ),
+            ),
+            (
+                "recap",
+                "Nightly wiki session recap",
+                None,
+                WIKI_RECAP_SCHEDULE_CRON,
+                create_wiki_recap_handler(
                     gateway=gateway,
                     coordinator=coordinator,
                     scope=scope,
@@ -208,6 +373,7 @@ async def register_wiki_cron_jobs(
                 handler_name=handler_name,
                 purpose=purpose,
                 interval_seconds=interval,
+                cron_expr=cron_expr,
             )
             registered += 1
 
@@ -260,8 +426,12 @@ def _ensure_wiki_cron_job(
     scope: str,
     handler_name: str,
     purpose: str,
-    interval_seconds: int,
+    interval_seconds: int | None = None,
+    cron_expr: str | None = None,
 ) -> None:
+    if (interval_seconds is None) == (cron_expr is None):
+        raise ValueError("provide exactly one of interval_seconds or cron_expr")
+    schedule_type: Literal["cron", "interval"] = "cron" if cron_expr else "interval"
     job_name = wiki_job_name(command, scope)
     action_config = {
         "handler": handler_name,
@@ -276,7 +446,8 @@ def _ensure_wiki_cron_job(
             project_id=project_id,
             name=job_name,
             description=description,
-            schedule_type="interval",
+            schedule_type=schedule_type,
+            cron_expr=cron_expr,
             interval_seconds=interval_seconds,
             action_type="handler",
             action_config=action_config,
@@ -289,8 +460,8 @@ def _ensure_wiki_cron_job(
         cron_storage.update_job(
             existing.id,
             description=description,
-            schedule_type="interval",
-            cron_expr=None,
+            schedule_type=schedule_type,
+            cron_expr=cron_expr,
             interval_seconds=interval_seconds,
             run_at=None,
             action_type="handler",
@@ -305,27 +476,16 @@ def _ensure_wiki_cron_job(
             action_type="handler",
             action_config=action_config,
             description=description,
-            schedule_type="interval",
+            schedule_type=schedule_type,
+            cron_expr=cron_expr,
             interval_seconds=interval_seconds,
         )
 
 
-def _retire_system_research_job(
-    cron_storage: CronJobStorage,
-    scope: str,
-) -> None:
-    """Disable any research cron row; `gwiki research` no longer exists."""
-    existing = cron_storage.get_job_by_name(wiki_job_name("research", scope))
-    if existing is None:
-        return
-    if existing.is_system:
-        cron_storage.reconcile_system_job_identity(
-            existing.id,
-            enabled=False,
-            next_run_at=None,
-        )
-    elif existing.enabled:
-        cron_storage.update_job(existing.id, enabled=False)
+def purge_legacy_wiki_research_jobs(cron_storage: CronJobStorage) -> int:
+    """Hard-delete every legacy wiki research cron row; `gwiki research` no
+    longer exists, so system and operator rows alike are unrunnable."""
+    return cron_storage.delete_retired_jobs_by_name_prefix(wiki_job_name("research", ""))
 
 
 def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[str]:
@@ -352,9 +512,7 @@ def reconcile_stale_wiki_cron_scopes(
 
     repaired = 0
     canonical_scope = project_scope(legacy_scope)
-    # "research" stays here so legacy rows for the removed command still get
-    # migrated to canonical names, where registration retires them.
-    for command in (*WIKI_CRON_COMMANDS, "research"):
+    for command in WIKI_CRON_COMMANDS:
         legacy = cron_storage.get_job_by_name(wiki_job_name(command, legacy_scope))
         if legacy is None:
             continue
@@ -438,8 +596,9 @@ def _visible_result(result: dict[str, Any], payload: dict[str, Any]) -> dict[str
         "payload": payload,
         "stderr": result.get("stderr", ""),
     }
-    if "index_handoff" in result:
-        visible["index_handoff"] = result["index_handoff"]
+    for passthrough in ("index_handoff", "task_filing", "presync"):
+        if passthrough in result:
+            visible[passthrough] = result[passthrough]
     return visible
 
 
@@ -484,10 +643,118 @@ def _refresh_changed_paths(result: dict[str, Any]) -> list[str]:
 
 
 def _changed_paths(result: dict[str, Any]) -> list[str]:
-    value = _payload(result).get("changed_paths")
-    if not isinstance(value, list):
-        return []
-    return [path for path in value if isinstance(path, str)]
+    payload = _payload(result)
+    value = payload.get("changed_paths")
+    paths = [path for path in value if isinstance(path, str)] if isinstance(value, list) else []
+    page_path = payload.get("page_path")
+    if isinstance(page_path, str) and page_path and page_path not in paths:
+        paths.append(page_path)
+    return paths
+
+
+def _upkeep_changed_paths(result: dict[str, Any]) -> list[str]:
+    """Page paths written by upkeep clusters; planned/failed clusters wrote nothing."""
+    paths: list[str] = []
+    clusters = _payload(result).get("clusters")
+    if not isinstance(clusters, list):
+        return paths
+    for entry in clusters:
+        if not isinstance(entry, dict) or entry.get("action") not in ("created", "updated"):
+            continue
+        page_path = entry.get("page_path")
+        if isinstance(page_path, str) and page_path and page_path not in paths:
+            paths.append(page_path)
+    return paths
+
+
+def _previous_utc_day() -> str:
+    return (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _file_librarian_tasks(
+    *,
+    task_manager: LibrarianTaskManagerProtocol | None,
+    scope: str,
+    fallback_project_id: str,
+    suggested: Any,
+) -> dict[str, Any]:
+    entries = (
+        [entry for entry in suggested if isinstance(entry, dict)]
+        if isinstance(suggested, list)
+        else []
+    )
+    if not entries:
+        return {"status": "no_suggestions", "filed": 0, "deduplicated": 0}
+    if task_manager is None:
+        return {
+            "status": "unavailable",
+            "reason": "task manager not configured",
+            "suggested": len(entries),
+            "filed": 0,
+            "deduplicated": 0,
+        }
+
+    project_id = _scope_project_id(scope, fallback_project_id)
+    label = f"{WIKI_LIBRARIAN_TASK_LABEL_PREFIX}:{scope}"
+    filed_titles: list[str] = []
+    deduplicated = 0
+    seen_titles: set[str] = set()
+    for entry in entries:
+        title = str(entry.get("title") or "").strip()
+        if not title:
+            continue
+        title_key = title.casefold()
+        if title_key in seen_titles or _has_open_task_titled(task_manager, project_id, title):
+            deduplicated += 1
+            continue
+        seen_titles.add(title_key)
+        task_manager.create_task(
+            project_id,
+            title,
+            _librarian_task_description(entry),
+            labels=[label],
+            category="docs",
+        )
+        filed_titles.append(title)
+    return {
+        "status": "completed",
+        "filed": len(filed_titles),
+        "deduplicated": deduplicated,
+        "titles": filed_titles[:_LIBRARIAN_FILED_TITLE_SAMPLE_SIZE],
+    }
+
+
+def _has_open_task_titled(
+    task_manager: LibrarianTaskManagerProtocol,
+    project_id: str,
+    title: str,
+) -> bool:
+    candidates = task_manager.list_tasks(
+        project_id=project_id,
+        closed=False,
+        title_like=title,
+        limit=_LIBRARIAN_DEDUP_LOOKUP_LIMIT,
+    )
+    title_key = title.casefold()
+    return any(
+        str(getattr(candidate, "title", "")).strip().casefold() == title_key
+        for candidate in candidates
+    )
+
+
+def _librarian_task_description(entry: dict[str, Any]) -> str | None:
+    description = str(entry.get("description") or "").strip()
+    paths = entry.get("paths")
+    path_lines = (
+        [str(path) for path in paths if isinstance(path, str) and path]
+        if isinstance(paths, list)
+        else []
+    )
+    if path_lines:
+        listing = "\n".join(f"- {path}" for path in path_lines)
+        affected = f"Affected paths:\n{listing}"
+        return f"{description}\n\n{affected}" if description else affected
+    return description or None
 
 
 def _payload(result: dict[str, Any]) -> dict[str, Any]:
@@ -500,6 +767,17 @@ def _status(result: dict[str, Any], payload: dict[str, Any]) -> str:
     if isinstance(status, str) and status:
         return status
     return "completed" if result.get("ok") else "failed"
+
+
+def _scope_project_id(scope: str, fallback_project_id: str) -> str:
+    """Project scopes file tasks into their own project; topic scopes (for
+    example ``topic:sessions`` for cross-project sessions) file into the
+    registering project."""
+    if scope.startswith("project:"):
+        candidate = scope.removeprefix("project:").strip()
+        if candidate:
+            return candidate
+    return fallback_project_id
 
 
 def _scopes_from_config_value(value: object) -> list[str]:

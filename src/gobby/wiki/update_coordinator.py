@@ -33,6 +33,8 @@ EXPLICIT_WRITE_COMMANDS = frozenset(
         "compile",
         "remove-source",
         "refresh",
+        "upkeep",
+        "recap",
     }
 )
 CLI_INDEXED_BATCH_COMMANDS = frozenset({"ingest-url", "refresh"})
@@ -196,10 +198,27 @@ def _changed_paths(payload: dict[str, Any]) -> list[str]:
     _extend_paths(paths, payload.get("changed_paths"))
     _extend_paths(paths, payload.get("written_paths"))
     _extend_paths(paths, payload.get("raw_path"))
+    _extend_paths(paths, payload.get("page_path"))
     _extend_paths(paths, _nested_raw_path(payload.get("source")))
     _extend_entry_paths(paths, payload.get("accepted"))
     _extend_entry_paths(paths, payload.get("refreshed"), changed_only=True)
+    _extend_cluster_paths(paths, payload.get("clusters"))
     return list(dict.fromkeys(paths))
+
+
+_WRITTEN_CLUSTER_ACTIONS = frozenset({"created", "updated"})
+
+
+def _extend_cluster_paths(paths: list[str], entries: Any) -> None:
+    """Collect upkeep cluster page paths; planned/failed clusters wrote nothing."""
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("action") not in _WRITTEN_CLUSTER_ACTIONS:
+            continue
+        _extend_paths(paths, entry.get("page_path"))
 
 
 def _extend_entry_paths(

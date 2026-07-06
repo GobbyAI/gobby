@@ -76,6 +76,77 @@ async def test_explicit_write_indexes_changed_paths() -> None:
     }
 
 
+async def test_upkeep_write_indexes_written_cluster_pages() -> None:
+    gateway = RecordingGateway()
+    coordinator = WikiUpdateCoordinator(gateway)
+
+    result = await coordinator.handle_write_result(
+        _result(
+            "upkeep",
+            {
+                "clusters": [
+                    {"action": "created", "page_path": "knowledge/concepts/a.md"},
+                    {"action": "updated", "page_path": "knowledge/concepts/b.md"},
+                    {"action": "planned_create", "page_path": "knowledge/concepts/skip.md"},
+                    {"action": "failed", "error": "boom"},
+                ],
+            },
+        )
+    )
+
+    assert gateway.index_calls == 1
+    assert result["index_handoff"]["status"] == "indexed"
+    assert result["index_handoff"]["changed_paths"] == [
+        "knowledge/concepts/a.md",
+        "knowledge/concepts/b.md",
+    ]
+
+
+async def test_upkeep_dry_run_skips_index() -> None:
+    gateway = RecordingGateway()
+    coordinator = WikiUpdateCoordinator(gateway)
+
+    result = await coordinator.handle_write_result(
+        _result(
+            "upkeep",
+            {
+                "dry_run": True,
+                "clusters": [
+                    {"action": "planned_create", "page_path": "knowledge/concepts/skip.md"}
+                ],
+            },
+        )
+    )
+
+    assert gateway.index_calls == 0
+    assert result["index_handoff"] == {"status": "skipped", "reason": "index_not_required"}
+
+
+async def test_recap_write_indexes_page_path() -> None:
+    gateway = RecordingGateway()
+    coordinator = WikiUpdateCoordinator(gateway)
+
+    result = await coordinator.handle_write_result(
+        _result("recap", {"page_path": "recaps/2026-07-04.md", "page_action": "created"})
+    )
+
+    assert gateway.index_calls == 1
+    assert result["index_handoff"]["status"] == "indexed"
+    assert result["index_handoff"]["changed_paths"] == ["recaps/2026-07-04.md"]
+
+
+async def test_recap_without_page_skips_index() -> None:
+    gateway = RecordingGateway()
+    coordinator = WikiUpdateCoordinator(gateway)
+
+    result = await coordinator.handle_write_result(
+        _result("recap", {"sessions_selected": 0, "synthesis": "skipped"})
+    )
+
+    assert gateway.index_calls == 0
+    assert result["index_handoff"] == {"status": "skipped", "reason": "index_not_required"}
+
+
 async def test_local_changes_index_each_changed_scope() -> None:
     index_scopes: list[str] = []
 

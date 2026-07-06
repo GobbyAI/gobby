@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,15 +12,30 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
+    WIKI_RECAP_SCHEDULE_CRON,
     _create_gateway,
+    _previous_utc_day,
     configured_wiki_cron_scopes,
     create_wiki_audit_handler,
     create_wiki_health_handler,
+    create_wiki_librarian_handler,
+    create_wiki_recap_handler,
     create_wiki_refresh_handler,
     create_wiki_sync_sessions_handler,
+    create_wiki_upkeep_handler,
     register_wiki_cron_jobs,
 )
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
+
+WIKI_JOB_COMMANDS = (
+    "audit",
+    "health",
+    "librarian",
+    "recap",
+    "refresh",
+    "sync-sessions",
+    "upkeep",
+)
 
 PROJECT_ID = "proj-wiki"
 pytestmark = pytest.mark.unit
@@ -84,6 +100,115 @@ class RecordingGateway:
     async def index(self) -> dict[str, Any]:
         self.index_calls += 1
         return _result("index", {"status": "indexed"})
+
+    async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]:
+        self.calls.append(("upkeep", {"dry_run": dry_run}))
+        return _result(
+            "upkeep",
+            {
+                "status": "completed",
+                "command": "upkeep",
+                "dry_run": dry_run,
+                "pages_created": 1,
+                "pages_updated": 1,
+                "clusters": [
+                    {"action": "created", "page_path": "knowledge/concepts/falkordb.md"},
+                    {"action": "updated", "page_path": "knowledge/concepts/qdrant.md"},
+                    {"action": "planned_create", "page_path": "knowledge/concepts/planned.md"},
+                    {"action": "failed", "error": "synthesis timeout"},
+                ],
+            },
+        )
+
+    async def librarian(self) -> dict[str, Any]:
+        self.calls.append(("librarian", {}))
+        return _result(
+            "librarian",
+            {
+                "command": "librarian",
+                "checks": [{"name": "broken_links", "available": True, "items": []}],
+                "suggested_tasks": [
+                    {
+                        "title": "Fix broken wikilink in gcode page",
+                        "description": "Target missing.",
+                        "paths": ["knowledge/concepts/gcode.md"],
+                    },
+                    {
+                        "title": "Merge duplicate concept pages",
+                        "description": "Two pages cover FalkorDB.",
+                        "paths": [],
+                    },
+                    {
+                        "title": "Fix broken wikilink in gcode page",
+                        "description": "Duplicate suggestion in the same run.",
+                        "paths": [],
+                    },
+                ],
+                "artifacts": {"report": "meta/librarian/latest.md"},
+            },
+        )
+
+    async def recap(self, *, date: str | None = None) -> dict[str, Any]:
+        self.calls.append(("recap", {"date": date}))
+        return _result(
+            "recap",
+            {
+                "status": "completed",
+                "command": "recap",
+                "date": date,
+                "sessions_selected": 2,
+                "page_path": f"recaps/{date}.md",
+                "page_action": "created",
+            },
+        )
+
+
+class RecordingTaskManager:
+    def __init__(self, open_titles_by_project: dict[str, list[str]] | None = None) -> None:
+        self.open_titles_by_project = open_titles_by_project or {}
+        self.created: list[dict[str, Any]] = []
+        self.list_calls: list[dict[str, Any]] = []
+
+    def list_tasks(
+        self,
+        *,
+        project_id: str | None = None,
+        closed: bool | None = None,
+        title_like: str | None = None,
+        limit: int = 50,
+    ) -> list[Any]:
+        self.list_calls.append(
+            {
+                "project_id": project_id,
+                "closed": closed,
+                "title_like": title_like,
+                "limit": limit,
+            }
+        )
+        titles = self.open_titles_by_project.get(project_id or "", [])
+        matching = [title for title in titles if title_like is None or title_like in title]
+        return [SimpleNamespace(title=title) for title in matching]
+
+    def create_task(
+        self,
+        project_id: str,
+        title: str,
+        description: str | None = None,
+        *,
+        labels: list[str] | None = None,
+        category: str | None = None,
+    ) -> object:
+        self.created.append(
+            {
+                "project_id": project_id,
+                "title": title,
+                "description": description,
+                "labels": labels,
+                "category": category,
+            }
+        )
+        self.open_titles_by_project.setdefault(project_id, []).append(title)
+        return SimpleNamespace(title=title)
 
 
 class LargeHealthGateway(RecordingGateway):
@@ -245,6 +370,36 @@ async def test_scheduled_jobs_use_gateway() -> None:
         ),
     ]
 
+    handlers.extend(
+        [
+            (
+                "upkeep",
+                create_wiki_upkeep_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope="project:alpha",
+                ),
+            ),
+            (
+                "librarian",
+                create_wiki_librarian_handler(
+                    gateway=gateway,
+                    scope="project:alpha",
+                    task_manager=RecordingTaskManager(),
+                    fallback_project_id=PROJECT_ID,
+                ),
+            ),
+            (
+                "recap",
+                create_wiki_recap_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope="project:alpha",
+                ),
+            ),
+        ]
+    )
+
     for command, handler in handlers:
         output = json.loads(await handler(_job(command)))
         assert output["command"] == command
@@ -254,6 +409,10 @@ async def test_scheduled_jobs_use_gateway() -> None:
         "health",
         "audit",
         "sync-sessions",
+        "upkeep",
+        "librarian",
+        "sync-sessions",
+        "recap",
     ]
 
 
@@ -279,26 +438,26 @@ async def test_wiki_cron_handlers_registered(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    expected_handlers = {
-        "wiki:refresh:project:alpha",
-        "wiki:health:project:alpha",
-        "wiki:audit:project:alpha",
-        "wiki:sync-sessions:project:alpha",
-    }
+    expected_handlers = {f"wiki:{command}:project:alpha" for command in WIKI_JOB_COMMANDS}
     assert set(executor.handlers) == expected_handlers
-    assert created == 4
-    assert repeated == 4
+    assert created == 7
+    assert repeated == 7
 
     jobs = cron_storage.list_jobs(project_id=project_id)
     assert sorted(job.name for job in jobs) == [
-        "gobby:wiki-audit:project:alpha",
-        "gobby:wiki-health:project:alpha",
-        "gobby:wiki-refresh:project:alpha",
-        "gobby:wiki-sync-sessions:project:alpha",
+        f"gobby:wiki-{command}:project:alpha" for command in WIKI_JOB_COMMANDS
     ]
     assert all(job.action_type == "handler" for job in jobs)
     assert all(job.is_system for job in jobs)
+    assert all(job.enabled for job in jobs)
     assert cron_storage.get_job_by_name("gobby:wiki-research:project:alpha") is None
+
+    recap_job = cron_storage.get_job_by_name("gobby:wiki-recap:project:alpha")
+    assert recap_job is not None
+    assert recap_job.schedule_type == "cron"
+    assert recap_job.cron_expr == WIKI_RECAP_SCHEDULE_CRON
+    interval_jobs = [job for job in jobs if job.name != recap_job.name]
+    assert all(job.schedule_type == "interval" for job in interval_jobs)
 
 
 @pytest.mark.asyncio
@@ -324,7 +483,7 @@ async def test_create_gateway_requires_db_without_gateway_factory() -> None:
 
 
 @pytest.mark.asyncio
-async def test_system_research_jobs_are_retired(
+async def test_system_research_jobs_are_hard_deleted(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -350,14 +509,17 @@ async def test_system_research_jobs_are_retired(
             gateway_factory=lambda _scope: RecordingGateway(),
         )
 
-    retired = cron_storage.get_job(existing.id)
-    assert retired is not None
-    assert retired.enabled is False
-    assert retired.next_run_at is None
+    assert cron_storage.get_job(existing.id) is None
+    remaining = [
+        job
+        for job in cron_storage.list_jobs(project_id=project_id)
+        if job.name.startswith("gobby:wiki-research:")
+    ]
+    assert remaining == []
 
 
 @pytest.mark.asyncio
-async def test_query_backed_research_jobs_are_retired(
+async def test_query_backed_research_jobs_are_hard_deleted(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -386,9 +548,7 @@ async def test_query_backed_research_jobs_are_retired(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    retired = cron_storage.get_job(query_job.id)
-    assert retired is not None
-    assert retired.enabled is False
+    assert cron_storage.get_job(query_job.id) is None
     assert "wiki:research:project:alpha" not in executor.handlers
 
 
@@ -413,10 +573,7 @@ async def test_default_wiki_cron_scope_resolves_project_root(
     assert {scope.identity for scope in resolved_scopes} == {f"project:{project_id}"}
     assert {scope.project_root for scope in resolved_scopes} == {Path("/tmp/wiki").resolve()}
     assert sorted(job.name for job in cron_storage.list_jobs(project_id=project_id)) == [
-        f"gobby:wiki-audit:project:{project_id}",
-        f"gobby:wiki-health:project:{project_id}",
-        f"gobby:wiki-refresh:project:{project_id}",
-        f"gobby:wiki-sync-sessions:project:{project_id}",
+        f"gobby:wiki-{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
     ]
 
 
@@ -474,10 +631,7 @@ async def test_wiki_cron_registration_reconciles_bare_uuid_rows(
     assert disabled_refresh.next_run_at is None
     assert cron_storage.get_job(canonical_refresh.id) is not None
     assert cron_storage.get_job_by_name(f"gobby:wiki-research:{project_id}") is None
-    retired_research = cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}")
-    assert retired_research is not None
-    assert retired_research.enabled is False
-    assert retired_research.next_run_at is None
+    assert cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}") is None
 
 
 @pytest.mark.asyncio
@@ -518,3 +672,149 @@ async def test_audit_job_routes_through_gateway_audit() -> None:
     assert output["command"] == "audit"
     assert output["changed_paths"] == ["audits/wiki-audit.md"]
     assert output["result"]["gwiki"]["command"] == "audit"
+
+
+@pytest.mark.asyncio
+async def test_upkeep_job_routes_through_write_coordinator() -> None:
+    gateway = RecordingGateway()
+    coordinator = RecordingCoordinator()
+    handler = create_wiki_upkeep_handler(
+        gateway=gateway,
+        coordinator=coordinator,
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("upkeep")))
+
+    assert gateway.calls == [("upkeep", {"dry_run": False})]
+    assert len(coordinator.results) == 1
+    assert coordinator.results[0]["command"] == "upkeep"
+    assert output["command"] == "upkeep"
+    # Only clusters that actually wrote pages count; planned/failed are excluded.
+    assert output["changed_paths"] == [
+        "knowledge/concepts/falkordb.md",
+        "knowledge/concepts/qdrant.md",
+    ]
+    assert output["result"]["index_handoff"] == {"status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_recap_job_presyncs_sessions_and_routes_through_write_coordinator() -> None:
+    gateway = RecordingGateway()
+    coordinator = RecordingCoordinator()
+    handler = create_wiki_recap_handler(
+        gateway=gateway,
+        coordinator=coordinator,
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("recap")))
+
+    expected_date = _previous_utc_day()
+    assert [call[0] for call in gateway.calls] == ["sync-sessions", "recap"]
+    assert gateway.calls[1] == ("recap", {"date": expected_date})
+    assert [result["command"] for result in coordinator.results] == ["sync_sessions", "recap"]
+    assert output["command"] == "recap"
+    assert output["changed_paths"] == [f"recaps/{expected_date}.md"]
+    assert output["result"]["presync"] == {"command": "sync-sessions", "status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_librarian_job_files_deduped_tasks_without_write_coordinator() -> None:
+    gateway = RecordingGateway()
+    task_manager = RecordingTaskManager(
+        open_titles_by_project={"alpha": ["Merge duplicate concept pages"]}
+    )
+    handler = create_wiki_librarian_handler(
+        gateway=gateway,
+        scope="project:alpha",
+        task_manager=task_manager,
+        fallback_project_id=PROJECT_ID,
+    )
+
+    output = json.loads(await handler(_job("librarian")))
+
+    assert gateway.calls == [("librarian", {})]
+    # Librarian is read-only for the coordinator boundary: it only writes
+    # watcher-ignored meta/librarian artifacts, so no index handoff runs.
+    assert gateway.index_calls == 0
+    assert "index_handoff" not in output["result"]
+
+    assert [task["title"] for task in task_manager.created] == ["Fix broken wikilink in gcode page"]
+    created = task_manager.created[0]
+    assert created["project_id"] == "alpha"
+    assert created["labels"] == ["wiki-librarian:project:alpha"]
+    assert created["category"] == "docs"
+    assert "knowledge/concepts/gcode.md" in created["description"]
+
+    filing = output["result"]["task_filing"]
+    assert filing["status"] == "completed"
+    assert filing["filed"] == 1
+    assert filing["deduplicated"] == 2
+    assert filing["titles"] == ["Fix broken wikilink in gcode page"]
+
+
+@pytest.mark.asyncio
+async def test_librarian_job_reports_unavailable_task_manager() -> None:
+    gateway = RecordingGateway()
+    handler = create_wiki_librarian_handler(
+        gateway=gateway,
+        scope="project:alpha",
+        task_manager=None,
+        fallback_project_id=PROJECT_ID,
+    )
+
+    output = json.loads(await handler(_job("librarian")))
+
+    filing = output["result"]["task_filing"]
+    assert filing["status"] == "unavailable"
+    assert filing["filed"] == 0
+    assert filing["suggested"] == 3
+
+
+@pytest.mark.asyncio
+async def test_multi_scope_registration_files_per_scope_tasks(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    executor = RecordingExecutor(handlers={})
+    task_manager = RecordingTaskManager()
+    gateways: dict[str, RecordingGateway] = {}
+
+    def gateway_factory(scope: Any) -> RecordingGateway:
+        gateway = RecordingGateway()
+        gateways[scope.identity if hasattr(scope, "identity") else str(scope)] = gateway
+        return gateway
+
+    created = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=["project:alpha", "topic:sessions"],
+        gateway_factory=gateway_factory,
+        task_manager=task_manager,
+    )
+
+    assert created == 14
+    job_names = sorted(job.name for job in cron_storage.list_jobs(project_id=project_id))
+    assert job_names == sorted(
+        [f"gobby:wiki-{command}:project:alpha" for command in WIKI_JOB_COMMANDS]
+        + [f"gobby:wiki-{command}:topic:sessions" for command in WIKI_JOB_COMMANDS]
+    )
+
+    for scope in ("project:alpha", "topic:sessions"):
+        output = json.loads(await executor.handlers[f"wiki:librarian:{scope}"](_job("librarian")))
+        assert output["scope"] == scope
+        assert output["result"]["task_filing"]["filed"] >= 1
+
+    by_label = {task["labels"][0]: task for task in task_manager.created}
+    alpha_task = by_label["wiki-librarian:project:alpha"]
+    sessions_task = by_label["wiki-librarian:topic:sessions"]
+    # Project scopes file into their own project; topic scopes fall back to
+    # the registering project (cross-project sessions -> topic:sessions).
+    assert alpha_task["project_id"] == "alpha"
+    assert sessions_task["project_id"] == project_id
+    assert {task["category"] for task in task_manager.created} == {"docs"}
+
+    for scope, gateway in gateways.items():
+        assert ("librarian", {}) in gateway.calls, scope

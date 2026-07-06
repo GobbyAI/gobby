@@ -234,6 +234,21 @@ class GwikiGateway:
             args.extend(["--limit", str(limit)])
         return await self._run_json("sync_sessions", args)
 
+    async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]:
+        args = ["upkeep"]
+        if dry_run:
+            args.append("--dry-run")
+        return await self._run_json("upkeep", args)
+
+    async def librarian(self) -> dict[str, Any]:
+        return await self._run_json("librarian", ["librarian"])
+
+    async def recap(self, *, date: str | None = None) -> dict[str, Any]:
+        args = ["recap"]
+        if date is not None:
+            args.extend(["--date", date])
+        return await self._run_json("recap", args)
+
     async def _run_json(
         self,
         command_name: str,
