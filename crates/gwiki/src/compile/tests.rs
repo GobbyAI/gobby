@@ -858,6 +858,41 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
 }
 
 #[test]
+fn compile_drops_alias_equal_to_title_and_keeps_case_variants() {
+    // Observed case variants become frontmatter aliases, but the variant
+    // identical to the page title is pure redundancy — the title is already a
+    // resolution key — and every upkeep pass would rewrite it (#17642).
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Accepted compile evidence.").expect("note written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let outcome = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Gcode".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+        WikiCompileOptions {
+            target_kind: ArticleKind::Concept,
+            aliases: vec!["Gcode".to_string(), "gcode".to_string()],
+            ..WikiCompileOptions::default()
+        },
+        None,
+    )
+    .expect("wiki article compiled");
+
+    let page = std::fs::read_to_string(&outcome.article_path).expect("article written");
+    let parsed = crate::frontmatter::parse_frontmatter(&page).expect("frontmatter parses");
+    assert_eq!(parsed.metadata.title.as_deref(), Some("Gcode"));
+    assert_eq!(parsed.metadata.aliases, vec!["gcode"]);
+}
+
+#[test]
 fn compile_without_generator_stays_structural_without_degradation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

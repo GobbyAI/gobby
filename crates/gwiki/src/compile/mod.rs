@@ -195,7 +195,16 @@ pub fn compile_to_wiki_with_options(
         conflicting_claims: handoff.bundle.conflicting_claims.clone(),
         missing_evidence: handoff.bundle.missing_evidence.clone(),
         existing_page_body: existing_target_page_body(&article_page)?,
-        aliases: options.aliases.clone(),
+        // A variant identical to the page title is dropped: the title is
+        // already a resolution key (gobby_core::vault::lint::page_targets), so
+        // a title-equal alias is pure redundancy that every upkeep/compile
+        // pass would otherwise rewrite (#17642).
+        aliases: options
+            .aliases
+            .iter()
+            .filter(|alias| alias.trim() != handoff.bundle.topic.trim())
+            .cloned()
+            .collect(),
         extra_tags: options.extra_tags.clone(),
     };
     let explainer_prompt = build_explainer_prompt(vault_root, &input);

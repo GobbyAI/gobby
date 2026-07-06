@@ -421,22 +421,27 @@ fn is_backlink_source_exempt(path: &Path) -> bool {
 }
 
 fn duplicate_aliases(pages: &[LintPage<'_>]) -> Vec<DuplicateAlias> {
-    let mut aliases: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
+    let mut aliases: BTreeMap<String, (String, BTreeSet<PathBuf>)> = BTreeMap::new();
     for page in pages {
         for alias in page.aliases {
             let display_alias = alias.trim().to_string();
             aliases
                 .entry(display_alias.to_ascii_lowercase())
-                .or_insert_with(|| (display_alias, Vec::new()))
+                .or_insert_with(|| (display_alias, BTreeSet::new()))
                 .1
-                .push(page.relative_path.to_path_buf());
+                .insert(page.relative_path.to_path_buf());
         }
     }
     aliases
         .into_iter()
-        .filter_map(|(_, (alias, mut paths))| {
-            paths.sort();
-            (paths.len() > 1).then_some(DuplicateAlias { alias, paths })
+        .filter_map(|(_, (alias, paths))| {
+            // An alias is ambiguous only when distinct pages claim it. Multiple
+            // case variants on one page all fold to that single page, so they
+            // never make the page ambiguous with itself (#17642).
+            (paths.len() > 1).then(|| DuplicateAlias {
+                alias,
+                paths: paths.into_iter().collect(),
+            })
         })
         .collect()
 }
@@ -723,6 +728,29 @@ mod tests {
                 PathBuf::from("knowledge/concepts/b.md"),
             ]
         );
+    }
+
+    #[test]
+    fn same_page_alias_variants_are_not_ambiguous() {
+        // Entity pages carry observed case variants as aliases, one of which
+        // can equal the title. Every variant folds to the same page, so the
+        // page is never ambiguous with itself (#17642).
+        let mut page = owned_page(
+            "knowledge/concepts/gcode.md",
+            "---\ntitle: gcode\n---\n# gcode\nSee [[Other]].\n",
+            &[],
+        );
+        page.aliases = vec!["gcode".to_string(), "Gcode".to_string()];
+        let other = owned_page(
+            "knowledge/concepts/other.md",
+            "---\ntitle: Other\n---\n# Other\nSee [[gcode]].\n",
+            &[],
+        );
+        let pages = vec![page, other];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert_eq!(outcome.duplicate_aliases, Vec::new());
     }
 
     #[test]
