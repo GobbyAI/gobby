@@ -46,6 +46,7 @@ def state_from_row(
         completed_commit_sha=row["completed_commit_sha"],
         work_attempt_count=int(row["work_attempt_count"]),
         review_round_count=int(row["review_round_count"]),
+        retry_neutral_failure_count=int(row_value(row, "retry_neutral_failure_count") or 0),
         max_work_attempts=row["max_work_attempts"],
         max_review_rounds=row["max_review_rounds"],
         artifact_refs=_coerce_artifact_refs(row["artifact_refs"]),

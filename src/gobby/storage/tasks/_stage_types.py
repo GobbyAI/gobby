@@ -118,6 +118,7 @@ class StageState:
     display_name: str | None = None
     display_label: str | None = None
     category: str | None = None
+    retry_neutral_failure_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

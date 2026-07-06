@@ -21,6 +21,15 @@ from gobby.utils.sql import sql_placeholders
 
 logger = logging.getLogger(__name__)
 
+# Persistent bound on the holistic_qa cited retry-neutral dispatch cycle. Each
+# cited retry-neutral spawn failure (epic integration workspace could not be
+# built) increments retry_neutral_failure_count on the holistic_qa stage row.
+# Unlike work_attempt_count, this counter is never reset or decremented by the
+# retry-neutral path (reset_holistic_failure_targets / decrement_work_attempt do
+# not touch it), so a deterministic-persistent workspace failure escalates the
+# epic instead of looping forever.
+MAX_HOLISTIC_WORKSPACE_FAILURES = 3
+
 
 def _session_uuid_or_none(session_id: str | None) -> str | None:
     if not is_session_uuid(session_id):
@@ -173,9 +182,11 @@ class StageStateTransitions:
                         now=now,
                         holder=holder,
                         reset_cited_work_attempts=retry_neutral_cited_failure,
+                        preserve_cited_escalation=retry_neutral_cited_failure,
                     )
                     if retry_neutral_cited_failure:
                         self.decrement_work_attempt(conn, task_id, stage_name, now=now)
+                        self.increment_retry_neutral_failure(conn, task_id, stage_name, now=now)
                 if to_state == "done" and terminal_after_done(conn, task_id, stage_name):
                     _close_task_in_txn(
                         conn,
@@ -198,9 +209,20 @@ class StageStateTransitions:
             if (
                 verb == "fail_stage"
                 and not retry_neutral_cited_failure
+                # >= here (post-fail, count reflects completed attempts) is the
+                # storage counterpart to the dispatcher's > cap check in
+                # _rule_state._stage_work_exhausted (pre-dispatch, count includes
+                # the in-flight attempt). Both bound work to `cap` attempts; the
+                # operators differ only by that one-increment lifecycle offset.
+                # See gobby-#17668.
                 and updated.work_attempt_count >= self.effective_cap(updated, "work")
             ):
                 self.escalate_stage_failure(task_id, f"{stage_name}_work_failed:max")
+            if (
+                retry_neutral_cited_failure
+                and updated.retry_neutral_failure_count >= MAX_HOLISTIC_WORKSPACE_FAILURES
+            ):
+                self.escalate_stage_failure(task_id, "holistic_workspace_failed:max")
             if verb == "fail_stage" and needs_human:
                 self.escalate_stage_failure(
                     task_id,
@@ -302,6 +324,7 @@ class StageStateTransitions:
         now: datetime | str,
         holder: str,
         reset_cited_work_attempts: bool = False,
+        preserve_cited_escalation: bool = False,
     ) -> None:
         cited_ids = tuple(dict.fromkeys(cited_subtasks))
         if not cited_ids:
@@ -345,6 +368,7 @@ class StageStateTransitions:
                 now=now,
                 holder=holder,
                 reset_work_attempts=reset_cited_work_attempts,
+                preserve_escalation=preserve_cited_escalation,
             )
         self.reactivate_cited_worktrees(conn, cited_ids, now=now)
 
@@ -363,6 +387,32 @@ class StageStateTransitions:
                        WHEN work_attempt_count > 0 THEN work_attempt_count - 1
                        ELSE 0
                    END,
+                   updated_at = %s
+             WHERE task_id = %s AND stage_name = %s
+            """,
+            (now, task_id, stage_name),
+        )
+
+    def increment_retry_neutral_failure(
+        self,
+        conn: Transaction,
+        task_id: str,
+        stage_name: str,
+        *,
+        now: datetime | str,
+    ) -> None:
+        """Bump the persistent retry-neutral failure counter for a stage row.
+
+        This counter is deliberately never decremented or reset by the
+        retry-neutral path (``reset_task_from_stage`` and
+        ``decrement_work_attempt`` do not touch it), so a deterministic-
+        persistent workspace failure eventually crosses its escalation cap
+        instead of looping forever.
+        """
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET retry_neutral_failure_count = retry_neutral_failure_count + 1,
                    updated_at = %s
              WHERE task_id = %s AND stage_name = %s
             """,
@@ -478,6 +528,7 @@ class StageStateTransitions:
         now: datetime | str,
         holder: str,
         reset_work_attempts: bool = False,
+        preserve_escalation: bool = False,
     ) -> None:
         stages = conn.execute(
             """
@@ -502,16 +553,16 @@ class StageStateTransitions:
                    closed_reason = NULL,
                    closed_in_session_id = NULL,
                    closed_commit_sha = NULL,
-                   escalated_at = NULL,
-                   escalation_reason = NULL,
-                   is_escalated = FALSE,
+                   escalated_at = CASE WHEN %s THEN escalated_at ELSE NULL END,
+                   escalation_reason = CASE WHEN %s THEN escalation_reason ELSE NULL END,
+                   is_escalated = CASE WHEN %s THEN is_escalated ELSE FALSE END,
                    claimed_by_session_id = NULL,
                    validation_fail_count = 0,
                    dispatch_failure_count = 0,
                    updated_at = %s
              WHERE id = %s
             """,
-            (now, task_id),
+            (preserve_escalation, preserve_escalation, preserve_escalation, now, task_id),
         )
         conn.execute(
             """

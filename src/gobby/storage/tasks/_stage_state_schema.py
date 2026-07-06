@@ -38,6 +38,10 @@ class StageStateSchema:
             "max_review_rounds": (
                 "ALTER TABLE task_stage_states ADD COLUMN max_review_rounds INTEGER"
             ),
+            "retry_neutral_failure_count": (
+                "ALTER TABLE task_stage_states ADD COLUMN retry_neutral_failure_count "
+                "INTEGER NOT NULL DEFAULT 0"
+            ),
         }
         with self.db.transaction() as conn:
             for column, sql in additions.items():
@@ -81,6 +85,7 @@ class StageStateSchema:
                     completed_commit_sha TEXT,
                     work_attempt_count INTEGER NOT NULL DEFAULT 0,
                     review_round_count INTEGER NOT NULL DEFAULT 0,
+                    retry_neutral_failure_count INTEGER NOT NULL DEFAULT 0,
                     max_work_attempts INTEGER,
                     max_review_rounds INTEGER,
                     artifact_refs JSONB,
@@ -102,12 +107,13 @@ class StageStateSchema:
                         entered_at, entered_by_session_id, entered_by_actor, completed_at,
                         completed_by_session_id, completed_by_actor, completed_commit_sha,
                         work_attempt_count,
-                        review_round_count, max_work_attempts, max_review_rounds,
+                        review_round_count, retry_neutral_failure_count,
+                        max_work_attempts, max_review_rounds,
                         artifact_refs, notes, updated_at
                     )
                     VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -126,6 +132,7 @@ class StageStateSchema:
                         row.get("completed_commit_sha"),
                         work_attempt_count or 0,
                         row.get("review_round_count", 0) or 0,
+                        row.get("retry_neutral_failure_count", 0) or 0,
                         row.get("max_work_attempts"),
                         row.get("max_review_rounds"),
                         row.get("artifact_refs"),

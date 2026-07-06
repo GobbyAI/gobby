@@ -2054,6 +2054,7 @@ CREATE TABLE task_stage_states (
                 completed_commit_sha TEXT,
                 work_attempt_count INTEGER NOT NULL DEFAULT 0,
                 review_round_count INTEGER NOT NULL DEFAULT 0,
+                retry_neutral_failure_count INTEGER NOT NULL DEFAULT 0,
                 max_work_attempts INTEGER,
                 max_review_rounds INTEGER,
                 artifact_refs JSONB,

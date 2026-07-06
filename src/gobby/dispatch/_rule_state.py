@@ -93,6 +93,19 @@ def _previous_stage_done(task: object, stage: object) -> bool:
 
 def _stage_work_exhausted(stage: object, context: object) -> bool:
     cap = _stage_cap(stage, context, "max_work_attempts", "default_max_work_attempts")
+    # Intentionally strict > (NOT >=), and this is the same cap-attempt bound the
+    # storage layer enforces with >= — the operators differ only because the two
+    # checks run at different lifecycle points (gobby-#17668):
+    #   * start_stage increments work_attempt_count when a stage enters
+    #     in_progress, BEFORE this rule dispatches that attempt's agent. So at
+    #     count == cap the cap-th attempt is still in flight and must run;
+    #     the dispatcher only stops once count > cap.
+    #   * StageStateTransitions.transition escalates with
+    #     work_attempt_count >= effective_cap AFTER an attempt's fail_stage,
+    #     where count reflects completed attempts.
+    # Both therefore allow exactly `cap` attempts. Switching this to >= would
+    # escalate before the final attempt ran (cap-1 effective attempts) and break
+    # the tested "fires/allows at cap" dispatch contract.
     return cap is not None and int(_field(stage, "work_attempt_count", 0) or 0) > cap
 
 

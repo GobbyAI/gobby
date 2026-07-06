@@ -41,6 +41,14 @@ RegisterBackgroundTask = Callable[[asyncio.Task[Any]], object]
 EscalateTask = Callable[..., bool]
 StageStatesManagerFactory = Callable[..., Any]
 
+# Consecutive-retry ceiling for the internal stage-pipeline mutex race. Each
+# retry-neutral restore increments retry_neutral_failure_count on the stage row;
+# a successful attach resets it to 0 (see start_pipeline_action). If a pipeline
+# stage cannot attach after this many consecutive retry-neutral restores the
+# task escalates instead of spinning on the assumption that the mutex lease will
+# eventually expire.
+MAX_PIPELINE_RETRY_NEUTRAL_RESTORES = 3
+
 
 async def start_pipeline_action(
     action: StartPipelineAction,
@@ -112,6 +120,7 @@ async def start_pipeline_action(
         return escalate_pipeline_dispatch(
             action, mutex, db, f"pipeline_attach_failed:unexpected:{exc}"
         )
+    reset_stage_pipeline_retry_neutral(db, action.task_id, action.stage_name)
     task: asyncio.Task[Any] = asyncio.create_task(
         execute_pipeline_background(
             executor,
@@ -149,10 +158,21 @@ def retry_neutral_pipeline_dispatch(
     db: HubDatabase,
     reason: str,
     *,
-    restore_stage_pipeline_retry: Callable[..., bool],
+    restore_stage_pipeline_retry: Callable[..., int],
+    escalate_task: EscalateTask,
+    ceiling: int = MAX_PIPELINE_RETRY_NEUTRAL_RESTORES,
 ) -> dict[str, object]:
     mutex.release()
-    restore_stage_pipeline_retry(db, action.task_id, action.stage_name, reason=reason)
+    failure_count = restore_stage_pipeline_retry(
+        db, action.task_id, action.stage_name, reason=reason
+    )
+    if failure_count >= ceiling:
+        escalate_task(
+            db=db,
+            task_id=action.task_id,
+            reason=f"stage_pipeline_dispatch_retry_neutral:max:{reason}",
+        )
+        return {"success": False, "error": reason, "retry_neutral": False, "escalated": True}
     return {"success": False, "error": reason, "retry_neutral": True}
 
 
@@ -163,13 +183,20 @@ def restore_stage_pipeline_retry(
     *,
     reason: str,
     stage_states_manager: StageStatesManagerFactory,
-) -> bool:
+) -> int:
+    """Restore a stage after a retry-neutral pipeline attach failure.
+
+    Returns the new persistent ``retry_neutral_failure_count`` for the stage
+    (0 when no restore happened). work_attempt_count is decremented so the retry
+    is attempt-neutral, but the retry-neutral failure counter is incremented so a
+    caller can escalate once consecutive restores cross a ceiling.
+    """
     stage = stage_states_manager(db=db, services=None).get(task_id, stage_name)
     if stage is None or stage.state != "in_progress":
-        return False
+        return 0
     now = datetime.now(UTC).isoformat()
     with db.transaction() as conn:
-        cursor = conn.execute(
+        row = conn.execute(
             """
             UPDATE task_stage_states
                SET state = 'ready',
@@ -182,14 +209,17 @@ def restore_stage_pipeline_retry(
                        WHEN work_attempt_count > 0 THEN work_attempt_count - 1
                        ELSE 0
                    END,
+                   retry_neutral_failure_count = retry_neutral_failure_count + 1,
                    updated_at = %s
              WHERE task_id = %s
                AND stage_name = %s
                AND state = 'in_progress'
+         RETURNING retry_neutral_failure_count
             """,
             (now, task_id, stage_name),
-        )
-        restored = cursor.rowcount > 0
+        ).fetchone()
+        failure_count = int(row["retry_neutral_failure_count"]) if row is not None else 0
+        restored = row is not None
     if restored:
         TaskLifecycleEventManager(db).record_lifecycle_event(
             task_id,
@@ -198,7 +228,29 @@ def restore_stage_pipeline_retry(
             f"stage_pipeline_dispatch_retry_neutral:{reason}",
             by_actor="dispatcher",
         )
-    return restored
+    return failure_count
+
+
+def reset_stage_pipeline_retry_neutral(db: HubDatabase, task_id: str, stage_name: str) -> None:
+    """Clear the retry-neutral failure counter after a successful pipeline attach.
+
+    A successful attach means the mutex contention that drove prior restores has
+    cleared, so the consecutive-restore ceiling resets. Only writes when the
+    counter is non-zero to avoid churn on the common path.
+    """
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE task_stage_states
+               SET retry_neutral_failure_count = 0,
+                   updated_at = %s
+             WHERE task_id = %s
+               AND stage_name = %s
+               AND retry_neutral_failure_count <> 0
+            """,
+            (now, task_id, stage_name),
+        )
 
 
 def render_dispatch_inputs(

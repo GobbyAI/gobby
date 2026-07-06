@@ -535,6 +535,7 @@ def _retry_neutral_pipeline_dispatch(
         db,
         reason,
         restore_stage_pipeline_retry=_restore_stage_pipeline_retry,
+        escalate_task=escalate_task,
     )
 
 
@@ -544,7 +545,7 @@ def _restore_stage_pipeline_retry(
     stage_name: str,
     *,
     reason: str,
-) -> bool:
+) -> int:
     return _stage_pipeline.restore_stage_pipeline_retry(
         db,
         task_id,
