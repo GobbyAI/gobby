@@ -37,7 +37,6 @@ def _agent_row(
         surfaces=surfaces or ["spawn"],
         role="Builder",
         timeout=120.0,
-        max_turns=8,
         enabled=enabled,
     )
     return WorkflowDefinitionRow(
@@ -146,7 +145,7 @@ class TestAgentDefinitionsShow:
         data = json.loads(result.output)
         assert data["name"] == "developer"
         assert data["surfaces"] == ["spawn", "persona"]
-        assert data["max_turns"] == 8
+        assert "max_turns" not in data
 
     @patch("gobby.cli.agents.get_agent_run_manager")
     @patch("gobby.cli.agents.get_agent_definition_manager")

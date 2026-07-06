@@ -50,7 +50,6 @@ function agentDefinition(overrides: Record<string, unknown> = {}) {
       isolation: "worktree",
       base_branch: "inherit",
       timeout: 0,
-      max_turns: 0,
       workflows: {
         variables: { EXISTING: "value" },
       },

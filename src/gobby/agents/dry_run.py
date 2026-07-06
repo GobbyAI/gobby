@@ -151,7 +151,6 @@ async def evaluate_spawn(
                 "isolation": eff_isolation,
                 "model": agent_body.model,
                 "timeout": agent_body.timeout,
-                "max_turns": agent_body.max_turns,
             },
         )
     )

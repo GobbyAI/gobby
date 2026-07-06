@@ -62,10 +62,6 @@ class AgentConfig:
     model: str | None = None
     """Optional model override."""
 
-    # Execution limits
-    max_turns: int = 10
-    """Maximum number of turns."""
-
     timeout: float = 120.0
     """Execution timeout in seconds."""
 

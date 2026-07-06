@@ -49,7 +49,7 @@ class TestWikiResearcherIdentity:
         with AGENT_PATH.open() as f:
             raw = yaml.safe_load(f)
         assert "max_turns" not in raw
-        assert agent.max_turns == 0
+        assert "max_turns" not in AgentDefinitionBody.model_fields
 
     def test_methodology_skill_declared(self, agent: AgentDefinitionBody) -> None:
         assert agent.skills.get("methodology") == ["wiki-research"]

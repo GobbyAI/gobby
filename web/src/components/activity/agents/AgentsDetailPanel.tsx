@@ -204,12 +204,6 @@ export function AgentsDetailPanel({
             value={String(form.timeout)}
             onChange={(value) => setFormField("timeout", Number(value) || 0)}
           />
-          <TextField
-            label="Max turns"
-            ariaLabel="Max turns"
-            value={String(form.max_turns)}
-            onChange={(value) => setFormField("max_turns", Number(value) || 0)}
-          />
           <SelectField
             label="Pipeline"
             ariaLabel="Pipeline"

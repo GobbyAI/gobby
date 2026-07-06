@@ -12,7 +12,6 @@ provider: claude
 model: opus
 isolation: inherit
 timeout: 1800
-max_turns: 80
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 

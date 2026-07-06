@@ -344,12 +344,11 @@ class AgentDefinitionBody(BaseModel):
         default=None,
         description="Auth token for the endpoint. Supports ${ENV_VAR} pattern for env var expansion.",
     )
-    model_config = ConfigDict(extra="ignore")  # Tolerate stale YAML with mode: field
+    model_config = ConfigDict(extra="ignore")  # Tolerate stale YAML with removed fields
 
     isolation: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
-    max_turns: int = 0
     # Orchestration
     workflows: AgentWorkflows = Field(default_factory=AgentWorkflows)
     enabled: bool = True

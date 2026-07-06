@@ -6,6 +6,7 @@ create_http_server() with a real LocalWorkflowDefinitionManager backed by temp_d
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -267,7 +268,6 @@ class TestCreateDefinition:
                 "isolation": "worktree",
                 "base_branch": "develop",
                 "timeout": 300.0,
-                "max_turns": 20,
             },
         )
         assert response.status_code == 200
@@ -369,6 +369,24 @@ class TestUpdateDefinition:
         assert definition.model == "opus"
         assert definition.timeout == 600.0
         assert definition.surfaces == ["spawn", "persona"]
+
+    def test_update_scrubs_stale_max_turns(
+        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        row = agent_manager.create(
+            name="stale-limit",
+            definition_json=json.dumps(
+                {"name": "stale-limit", "description": "Old row", "max_turns": 20}
+            ),
+            workflow_type="agent",
+            description="Old row",
+        )
+
+        response = client.put(f"/api/agents/definitions/{row.id}", json={"timeout": 600.0})
+
+        assert response.status_code == 200
+        definition_json = response.json()["definition"]["definition_json"]
+        assert "max_turns" not in json.loads(definition_json)
 
 
 # ---------------------------------------------------------------------------

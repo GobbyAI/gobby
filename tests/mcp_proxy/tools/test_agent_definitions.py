@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from gobby.mcp_proxy.tools.workflows._agents import (
@@ -116,7 +118,6 @@ class TestGetAgentDefinition:
             personality="calm",
             instructions="read first",
             timeout=300.0,
-            max_turns=20,
         )
         result = get_agent_definition(mgr, "detailed")
         agent = result["agent"]
@@ -125,7 +126,7 @@ class TestGetAgentDefinition:
         assert agent["personality"] == "calm"
         assert agent["instructions"] == "read first"
         assert agent["timeout"] == 300.0
-        assert agent["max_turns"] == 20
+        assert "max_turns" not in agent
 
     def test_ignores_non_agent_type(self, temp_db: HubDatabase) -> None:
         """get_agent_definition should not return rules even if name matches."""
@@ -160,11 +161,24 @@ class TestCreateAgentDefinition:
                 "provider": "codex",
                 "model": "gpt-5.4",
                 "timeout": 300.0,
-                "max_turns": 20,
             },
         )
         assert result["success"] is True
         assert result["agent"]["provider"] == "codex"
+
+    def test_stale_max_turns_input_is_not_persisted(self, temp_db: HubDatabase) -> None:
+        mgr = _setup(temp_db)
+        result = create_agent_definition(
+            mgr,
+            "stale-limit-agent",
+            {"description": "Old payload", "max_turns": 20},
+        )
+        row = mgr.get_by_name("stale-limit-agent")
+
+        assert result["success"] is True
+        assert "max_turns" not in result["agent"]
+        assert row is not None
+        assert "max_turns" not in json.loads(row.definition_json)
 
     def test_duplicate_fails(self, temp_db: HubDatabase) -> None:
         mgr = _setup(temp_db)

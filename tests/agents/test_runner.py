@@ -89,7 +89,6 @@ class TestAgentConfig:
         assert config.worktree_id is None
         assert config.provider == "claude"
         assert config.model is None
-        assert config.max_turns == 10
         assert config.timeout == 120.0
 
     def test_get_effective_workflow_returns_workflow(self) -> None:

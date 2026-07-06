@@ -67,7 +67,6 @@ export interface AgentFormData {
   isolation: string
   base_branch: string
   timeout: number
-  max_turns: number
   pipeline: string
   fallback_agent: string
 }
@@ -90,7 +89,6 @@ export interface AgentItemForPanel {
     isolation: string | null
     base_branch: string
     timeout: number
-    max_turns: number
     default_workflow: string | null
     sandbox: Record<string, unknown> | null
     workflows: {
@@ -336,7 +334,6 @@ export function AgentEditForm({
             <MetaRow label="Isolation"><span>{rd.isolation || 'none'}</span></MetaRow>
             <MetaRow label="Base branch"><span>{rd.base_branch}</span></MetaRow>
             <MetaRow label="Timeout"><span>{rd.timeout}s</span></MetaRow>
-            <MetaRow label="Max turns"><span>{String(rd.max_turns)}</span></MetaRow>
             {rd.default_workflow && (
               <MetaRow label="Default workflow"><span>{rd.default_workflow}</span></MetaRow>
             )}
@@ -740,16 +737,6 @@ export function AgentEditForm({
                 min={0}
                 value={form.timeout}
                 onChange={e => set('timeout', Number(e.target.value))}
-              />
-            </MetaRow>
-
-            <MetaRow label="Max turns">
-              <input
-                className={AGENT_EDIT_INPUT_CLS}
-                type="number"
-                min={0}
-                value={form.max_turns}
-                onChange={e => set('max_turns', Number(e.target.value))}
               />
             </MetaRow>
           </div>

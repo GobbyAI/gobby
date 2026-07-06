@@ -60,7 +60,6 @@ class TestAgentDefinitionBodyModel:
         assert body.isolation == "inherit"
         assert body.base_branch == "inherit"
         assert body.timeout == 0
-        assert body.max_turns == 0
         assert body.workflows.rules == []
         assert body.workflows.pipeline is None
         assert body.workflows.variables == {}
@@ -85,7 +84,6 @@ class TestAgentDefinitionBodyModel:
             isolation="worktree",
             base_branch="develop",
             timeout=300.0,
-            max_turns=20,
             workflows=AgentWorkflows(rules=["no-code-writing", "require-tests"]),
             enabled=False,
         )
@@ -100,7 +98,6 @@ class TestAgentDefinitionBodyModel:
         assert body.isolation == "worktree"
         assert body.base_branch == "develop"
         assert body.timeout == 300.0
-        assert body.max_turns == 20
         assert body.workflows.rules == ["no-code-writing", "require-tests"]
         assert body.enabled is False
 
@@ -109,10 +106,11 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 27, f"Expected 27 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 26, f"Expected 26 fields, got {len(fields)}: {list(fields.keys())}"
         assert "surfaces" in fields
         assert "reasoning_required" in fields
         assert "fallback_agent" in fields
+        assert "max_turns" not in fields
         assert "steps" in fields
         assert "step_variables" in fields
         assert "exit_condition" in fields
@@ -232,7 +230,6 @@ class TestAgentDefinitionBodySerialization:
             isolation="worktree",
             base_branch="main",
             timeout=120.0,
-            max_turns=15,
             workflows=AgentWorkflows(rules=["require-task-before-edit", "require-commit"]),
             enabled=True,
         )
@@ -251,7 +248,6 @@ class TestAgentDefinitionBodySerialization:
         assert restored.isolation == original.isolation
         assert restored.base_branch == original.base_branch
         assert restored.timeout == original.timeout
-        assert restored.max_turns == original.max_turns
         assert restored.workflows.rules == original.workflows.rules
         assert restored.enabled == original.enabled
 
@@ -369,7 +365,6 @@ class TestAgentDefinitionStorage:
             isolation="worktree",
             base_branch="develop",
             timeout=300.0,
-            max_turns=20,
             workflows=AgentWorkflows(rules=["no-code-writing"]),
             enabled=True,
         )
@@ -392,7 +387,6 @@ class TestAgentDefinitionStorage:
         assert restored.isolation == original.isolation
         assert restored.base_branch == original.base_branch
         assert restored.timeout == original.timeout
-        assert restored.max_turns == original.max_turns
         assert restored.workflows.rules == original.workflows.rules
         assert restored.enabled == original.enabled
 

@@ -69,7 +69,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `api_base` / `api_token` | Optional custom model endpoint configuration |
 | `isolation` | `none`, `worktree`, `clone`, or `inherit` |
 | `base_branch` | Branch used for new isolation, or `inherit` |
-| `timeout` / `max_turns` | Runtime limits; `0` means unlimited |
+| `timeout` | Runtime limit in seconds; `0` means unlimited |
 | `workflows` | Rule, skill, variable, and pipeline selectors |
 | `skills` | Metadata for baseline and allow-listed skill families |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
@@ -127,7 +127,6 @@ surfaces: [spawn, persona]
 provider: inherit
 isolation: inherit
 timeout: 1200
-max_turns: 0
 
 role: >
   You write and verify Gobby documentation against the local source tree.

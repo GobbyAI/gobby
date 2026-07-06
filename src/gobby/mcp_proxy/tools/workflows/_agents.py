@@ -43,19 +43,20 @@ def _agent_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
 
 def _agent_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
     """Build a detailed dict for an agent definition row, including full definition."""
-    body = json.loads(row.definition_json)
+    raw_body = json.loads(row.definition_json)
+    raw_body.setdefault("name", row.name)
+    body = AgentDefinitionBody.model_validate(raw_body).model_dump(mode="json")
     return {
         "id": row.id,
         "name": row.name,
         "description": row.description,
         "provider": body.get("provider"),
         "model": body.get("model"),
-        "mode": body.get("mode"),
+        "mode": raw_body.get("mode"),
         "isolation": body.get("isolation"),
         "surfaces": body.get("surfaces", ["spawn"]),
         "base_branch": body.get("base_branch"),
         "timeout": body.get("timeout"),
-        "max_turns": body.get("max_turns"),
         "role": body.get("role"),
         "goal": body.get("goal"),
         "personality": body.get("personality"),
@@ -156,9 +157,10 @@ def create_agent_definition(
 
     # Validate with Pydantic
     try:
-        AgentDefinitionBody.model_validate(definition)
+        body = AgentDefinitionBody.model_validate(definition)
     except Exception as e:
         return {"success": False, "error": f"Validation failed: {e}"}
+    validated_definition = body.model_dump(mode="json")
 
     # Check for duplicate name
     existing = def_manager.get_by_name(name)
@@ -167,10 +169,10 @@ def create_agent_definition(
 
     row = def_manager.create(
         name=name,
-        definition_json=json.dumps(definition),
+        definition_json=json.dumps(validated_definition),
         workflow_type="agent",
-        description=definition.get("description"),
-        enabled=definition.get("enabled", True),
+        description=validated_definition.get("description"),
+        enabled=validated_definition.get("enabled", True),
         source="installed",
         tags=["user"],
     )

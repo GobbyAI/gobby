@@ -31,7 +31,6 @@ export interface AgentDefInfo {
     isolation: string | null;
     base_branch: string;
     timeout: number;
-    max_turns: number;
     default_workflow: string | null;
     sandbox: Record<string, unknown> | null;
     workflows: {
@@ -95,7 +94,6 @@ export const DEFAULT_AGENT_FORM: AgentFormData = {
   isolation: "inherit",
   base_branch: "inherit",
   timeout: 0,
-  max_turns: 0,
   pipeline: "",
 };
 
@@ -237,7 +235,6 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
       isolation: definition.isolation ?? "inherit",
       base_branch: definition.base_branch,
       timeout: definition.timeout,
-      max_turns: definition.max_turns,
       pipeline: typeof workflows.pipeline === "string" ? workflows.pipeline : "",
     },
     enabled: agent.enabled,

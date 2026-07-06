@@ -30,7 +30,6 @@ class TestLoadAgentBody:
             isolation="worktree",
             base_branch="main",
             timeout=120.0,
-            max_turns=15,
             workflows=AgentWorkflows(rules=["require-task-before-edit", "require-commit"]),
         )
         manager.create(

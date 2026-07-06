@@ -57,7 +57,6 @@ class CreateAgentDefinitionRequest(BaseModel):
     isolation: str | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
-    max_turns: int = 0
     default_workflow: str | None = None
     sandbox_config: dict[str, Any] | None = None
     workflows: dict[str, Any] | None = None
@@ -96,7 +95,6 @@ class UpdateAgentDefinitionRequest(BaseModel):
     isolation: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    max_turns: int | None = None
     default_workflow: str | None = None
     sandbox_config: dict[str, Any] | None = None
     workflows: dict[str, Any] | None = None
@@ -331,7 +329,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 isolation=request.isolation,
                 base_branch=request.base_branch,
                 timeout=request.timeout,
-                max_turns=request.max_turns,
                 enabled=request.enabled,
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
@@ -362,6 +359,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         try:
             import json as _json
 
+            from gobby.workflows.definitions import AgentDefinitionBody
+
             manager = _get_manager()
             fields = request.model_dump(exclude_unset=True)
             if not fields:
@@ -370,6 +369,18 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             # Load existing definition_json and apply updates
             row = manager.get(definition_id)
             body_dict: dict[str, Any] = _json.loads(row.definition_json)
+            preserved_extra_fields = {
+                "default_workflow",
+                "default_variables",
+                "lifecycle_variables",
+                "mode",
+                "sandbox",
+            }
+            body_dict = {
+                key: value
+                for key, value in body_dict.items()
+                if key in AgentDefinitionBody.model_fields or key in preserved_extra_fields
+            }
 
             # Map body-level fields
             for key in (
@@ -390,7 +401,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 "isolation",
                 "base_branch",
                 "timeout",
-                "max_turns",
                 "default_workflow",
             ):
                 if key in fields:

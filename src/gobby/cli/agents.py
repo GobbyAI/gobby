@@ -115,7 +115,6 @@ def _agent_definition_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
         **_agent_definition_summary(row),
         "base_branch": body.base_branch,
         "timeout": body.timeout,
-        "max_turns": body.max_turns,
         "role": body.role,
         "goal": body.goal,
         "personality": body.personality,
@@ -406,8 +405,6 @@ def show_agent_definition(name: str, json_format: bool) -> None:
         click.echo(f"Project: {detail['project_id']}")
     if detail.get("timeout"):
         click.echo(f"Timeout: {detail['timeout']}")
-    if detail.get("max_turns"):
-        click.echo(f"Max Turns: {detail['max_turns']}")
     if detail.get("role"):
         click.echo(f"\nRole:\n{detail['role']}")
     if detail.get("goal"):

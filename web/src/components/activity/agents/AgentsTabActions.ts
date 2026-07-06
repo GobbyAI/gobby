@@ -48,7 +48,6 @@ export function buildAgentDefinitionBody(
     isolation: draft.form.isolation,
     base_branch: draft.form.base_branch,
     timeout: requireNonNegativeNumber(draft.form.timeout, "Timeout"),
-    max_turns: requireNonNegativeNumber(draft.form.max_turns, "Max turns"),
     enabled: draft.enabled,
     tags: draft.tags,
     workflows: workflowPayload(draft),
