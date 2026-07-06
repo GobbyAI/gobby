@@ -423,10 +423,59 @@ fn near_duplicate_pairs(
             }
         }
     }
+    let pages_by_path: BTreeMap<&Path, &lint::WikiPage> = pages
+        .iter()
+        .map(|page| (page.relative_path.as_path(), page))
+        .collect();
     Ok(best_scores
         .into_iter()
+        .filter(|((left, right), _)| !expected_similarity_pair(left, right, &pages_by_path))
         .map(|((left, right), score)| NearDuplicatePair { left, right, score })
         .collect())
+}
+
+/// True for pairs whose high similarity is structural rather than a merge
+/// signal (#17643): a synthesis is expected to score near the source digests
+/// it cites, and session digests are distinct manifest records that must not
+/// merge even when adjacent sessions worked the same topic. Pages missing
+/// from the lookup (stale semantic index) keep their pairs.
+fn expected_similarity_pair(
+    left: &Path,
+    right: &Path,
+    pages_by_path: &BTreeMap<&Path, &lint::WikiPage>,
+) -> bool {
+    let left_page = pages_by_path.get(left).copied();
+    let right_page = pages_by_path.get(right).copied();
+    if left_page.is_some_and(is_session_digest) && right_page.is_some_and(is_session_digest) {
+        return true;
+    }
+    cites_source_digest(left_page, right) || cites_source_digest(right_page, left)
+}
+
+/// A source digest recording a coding session (`source_kind: session`).
+fn is_session_digest(page: &lint::WikiPage) -> bool {
+    page.parsed.frontmatter.source_kind == Some(crate::models::WikiSourceKind::Session)
+}
+
+/// True when `citing` links to the source digest at `source` — the `Sources:`
+/// line every synthesized page carries for each of its input digests.
+fn cites_source_digest(citing: Option<&lint::WikiPage>, source: &Path) -> bool {
+    if !source.starts_with("knowledge/sources") {
+        return false;
+    }
+    let Some(page) = citing else {
+        return false;
+    };
+    // Wikilink targets name the page without its `.md` file extension; match
+    // both spellings so markdown-style links to the file also count.
+    let source_keys = [
+        canonical_target_key(&source.display().to_string()),
+        canonical_target_key(&source.with_extension("").display().to_string()),
+    ];
+    page.parsed
+        .links
+        .iter()
+        .any(|link| source_keys.contains(&canonical_target_key(&link.normalized_target)))
 }
 
 fn is_knowledge_page(page: &lint::WikiPage) -> bool {
@@ -1101,6 +1150,136 @@ mod tests {
         );
     }
 
+    #[test]
+    fn near_duplicates_skip_sources_cited_by_the_synthesis() {
+        let concept = knowledge_page(
+            "knowledge/concepts/gcode.md",
+            "---\ntitle: gcode\nsource_kind: concept\n---\n# gcode\n\nSources: [[knowledge/sources/src-1-session-aaa|Session: aaa]]\n\ngcode is the code index CLI.\n",
+        );
+        let digest = knowledge_page(
+            "knowledge/sources/src-1-session-aaa.md",
+            "---\nsource_kind: session\n---\n# Session: aaa\n\ngcode is the code index CLI.\n",
+        );
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/concepts/gcode.md", 0.95),
+                semantic_hit("knowledge/sources/src-1-session-aaa.md", 0.95),
+            ],
+        };
+
+        let pairs = near_duplicate_pairs(
+            &[concept, digest],
+            SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            },
+        )
+        .expect("scan succeeds");
+
+        assert_eq!(pairs, Vec::new());
+    }
+
+    #[test]
+    fn near_duplicates_skip_session_digest_pairs() {
+        let first = knowledge_page(
+            "knowledge/sources/src-1-session-aaa.md",
+            "---\nsource_kind: session\n---\n# Session: aaa\n\nWorked the wiki upkeep pipeline.\n",
+        );
+        let second = knowledge_page(
+            "knowledge/sources/src-2-session-bbb.md",
+            "---\nsource_kind: session\n---\n# Session: bbb\n\nContinued the wiki upkeep pipeline.\n",
+        );
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/sources/src-1-session-aaa.md", 0.92),
+                semantic_hit("knowledge/sources/src-2-session-bbb.md", 0.92),
+            ],
+        };
+
+        let pairs = near_duplicate_pairs(
+            &[first, second],
+            SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            },
+        )
+        .expect("scan succeeds");
+
+        assert_eq!(pairs, Vec::new());
+    }
+
+    #[test]
+    fn near_duplicates_keep_concept_pairs() {
+        let left = knowledge_page(
+            "knowledge/concepts/gobby-core.md",
+            "---\nsource_kind: concept\n---\n# gobby-core\n\nShared Rust library crate.\n",
+        );
+        let right = knowledge_page(
+            "knowledge/concepts/gcore.md",
+            "---\nsource_kind: concept\n---\n# gcore\n\nShared Rust library crate.\n",
+        );
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/concepts/gobby-core.md", 0.93),
+                semantic_hit("knowledge/concepts/gcore.md", 0.93),
+            ],
+        };
+
+        let pairs = near_duplicate_pairs(
+            &[left, right],
+            SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            },
+        )
+        .expect("scan succeeds");
+
+        assert_eq!(
+            pairs,
+            vec![NearDuplicatePair {
+                left: PathBuf::from("knowledge/concepts/gcore.md"),
+                right: PathBuf::from("knowledge/concepts/gobby-core.md"),
+                score: 0.93,
+            }]
+        );
+    }
+
+    #[test]
+    fn near_duplicates_keep_source_pairs_the_synthesis_does_not_cite() {
+        let concept = knowledge_page(
+            "knowledge/concepts/gcode.md",
+            "---\nsource_kind: concept\n---\n# gcode\n\nSources: [[knowledge/sources/src-9-session-zzz|Session: zzz]]\n\ngcode is the code index CLI.\n",
+        );
+        let digest = knowledge_page(
+            "knowledge/sources/src-1-session-aaa.md",
+            "---\nsource_kind: session\n---\n# Session: aaa\n\ngcode is the code index CLI.\n",
+        );
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/concepts/gcode.md", 0.94),
+                semantic_hit("knowledge/sources/src-1-session-aaa.md", 0.94),
+            ],
+        };
+
+        let pairs = near_duplicate_pairs(
+            &[concept, digest],
+            SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            },
+        )
+        .expect("scan succeeds");
+
+        assert_eq!(
+            pairs,
+            vec![NearDuplicatePair {
+                left: PathBuf::from("knowledge/concepts/gcode.md"),
+                right: PathBuf::from("knowledge/sources/src-1-session-aaa.md"),
+                score: 0.94,
+            }]
+        );
+    }
+
     struct FixedSemanticBackend {
         hits: Vec<crate::search::WikiSearchResult>,
     }
@@ -1194,6 +1373,18 @@ mod tests {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
         std::fs::write(path, markdown).expect("write page");
+    }
+
+    fn knowledge_page(relative: &str, markdown: &str) -> lint::WikiPage {
+        let relative_path = PathBuf::from(relative);
+        lint::WikiPage {
+            path: relative_path.clone(),
+            relative_path: relative_path.clone(),
+            parsed: parse_markdown(relative_path, markdown, Vec::<String>::new())
+                .expect("parse test page"),
+            markdown: markdown.to_string(),
+            has_frontmatter: markdown.starts_with("---"),
+        }
     }
 
     fn codewiki_page(relative: &str, stale: bool) -> lint::WikiPage {

@@ -445,6 +445,7 @@ fn parse_source_kind(value: &str) -> Option<WikiSourceKind> {
         "concept" => Some(WikiSourceKind::Concept),
         "topic" => Some(WikiSourceKind::Topic),
         "inbox" => Some(WikiSourceKind::Inbox),
+        "session" => Some(WikiSourceKind::Session),
         _ => None,
     }
 }

@@ -58,6 +58,7 @@ pub enum WikiSourceKind {
     Concept,
     Topic,
     Inbox,
+    Session,
 }
 
 impl WikiSourceKind {
@@ -68,6 +69,7 @@ impl WikiSourceKind {
             Self::Concept => "concept",
             Self::Topic => "topic",
             Self::Inbox => "inbox",
+            Self::Session => "session",
         }
     }
 }
