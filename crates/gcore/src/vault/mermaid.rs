@@ -209,6 +209,26 @@ fn normalize_alnum(text: &str) -> String {
         .collect()
 }
 
+/// Escape a label for use inside a Mermaid `["..."]` node so brackets, quotes,
+/// and pipes cannot break the surrounding syntax. Uses Mermaid's native
+/// `#NN;` entity codes (decoded by the Mermaid lexer itself), NOT HTML
+/// `&#NN;` entities — those only decode with `htmlLabels` enabled and render
+/// as literal `&#40;` garbage when it is off. `#` is escaped first so source
+/// text cannot forge an entity. Mermaid quoted strings have no backslash
+/// escape, so `\"` is never a valid way to embed a quote.
+pub fn escape_label(text: &str) -> String {
+    text.replace('#', "#35;")
+        .replace('\\', "#92;")
+        .replace('"', "#quot;")
+        .replace('[', "#91;")
+        .replace(']', "#93;")
+        .replace('(', "#40;")
+        .replace(')', "#41;")
+        .replace('{', "#123;")
+        .replace('}', "#125;")
+        .replace('|', "#124;")
+}
+
 /// A node label is grounded when at least one of its meaningful words - an
 /// alphanumeric run of three or more characters - appears in the page's grounding
 /// corpus. This is deliberately lenient: the generator already omits any diagram
@@ -321,6 +341,30 @@ mod tests {
                 "parser — builds AST".to_string(),
                 "PostgreSQL hub".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn escape_label_replaces_specials_with_entity_codes() {
+        assert_eq!(
+            escape_label(r#"Say "hi" \ [draft] (v2) {x} a|b #1"#),
+            "Say #quot;hi#quot; #92; #91;draft#93; #40;v2#41; #123;x#125; a#124;b #35;1"
+        );
+    }
+
+    #[test]
+    fn escape_label_cannot_be_forged_from_source_text() {
+        // A literal `#quot;` in the source must not survive as an entity.
+        assert_eq!(escape_label("#quot;"), "#35;quot;");
+        assert_eq!(escape_label("#91;"), "#35;91;");
+    }
+
+    #[test]
+    fn escape_label_leaves_no_raw_special_characters() {
+        let escaped = escape_label("a\"b\\c[d]e(f)g{h}i|j#k");
+        assert!(
+            !escaped.contains(['"', '\\', '[', ']', '(', ')', '{', '}', '|']),
+            "raw special character survived: {escaped}"
         );
     }
 }

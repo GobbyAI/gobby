@@ -639,10 +639,7 @@ fn mermaid_node_id(id: &str) -> String {
 }
 
 fn mermaid_label(node: &GraphExportNode) -> String {
-    node.title
-        .as_deref()
-        .unwrap_or(&node.path)
-        .replace('"', "\\\"")
+    gobby_core::vault::mermaid::escape_label(node.title.as_deref().unwrap_or(&node.path))
 }
 
 #[cfg(test)]

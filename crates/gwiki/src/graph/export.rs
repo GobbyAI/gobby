@@ -347,4 +347,41 @@ mod tests {
                 && node.title.is_none()
         }));
     }
+
+    #[test]
+    fn render_graph_report_escapes_special_characters_in_labels() {
+        let scope = SearchScope::project("project-1");
+        let facts = WikiGraphFacts {
+            documents: vec![WikiGraphDocument {
+                scope: scope.clone(),
+                path: "knowledge/topics/quoted.md".into(),
+                title: Some("Say \"hi\" [draft] #1".to_string()),
+            }],
+            links: Vec::new(),
+            sources: Vec::new(),
+            code_edges: Vec::new(),
+        };
+
+        let export = facts
+            .export_graph(GraphExportOptions::available())
+            .expect("graph export");
+        let report = render_graph_report(&export);
+
+        // Entity codes, never backslash escapes: Mermaid quoted strings have no
+        // backslash escape, so a raw or `\"`-escaped quote breaks the block.
+        let node_id = mermaid_node_id(&document_id(
+            &scope,
+            &PathBuf::from("knowledge/topics/quoted.md"),
+        ));
+        assert!(report.contains(&format!(
+            "    {node_id}[\"Say #quot;hi#quot; #91;draft#93; #35;1\"]\n"
+        )));
+
+        let blocks = gobby_core::vault::mermaid::mermaid_blocks(&report);
+        assert_eq!(blocks.len(), 1);
+        assert!(!blocks[0].text.contains("\\\""));
+        assert!(gobby_core::vault::mermaid::is_valid_mermaid(
+            &blocks[0].text
+        ));
+    }
 }

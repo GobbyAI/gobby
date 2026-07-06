@@ -26,7 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use gobby_core::vault::mermaid::is_valid_mermaid;
+use gobby_core::vault::mermaid::{escape_label as mermaid_label, is_valid_mermaid};
 
 use super::types::TextGenerator;
 use super::{GenerationContent, ToolLoopGenerator, generate_aggregate, prompts};
@@ -524,25 +524,6 @@ fn normalize(verified: &VerifiedFlowchart, evidence: &DiagramEvidence) -> Option
 
     let block = fence(&body);
     is_valid_mermaid(&block).then_some(block)
-}
-
-/// Escape a label for use inside a Mermaid `["..."]` node so brackets, quotes,
-/// and pipes cannot break the surrounding syntax. Uses Mermaid's native
-/// `#NN;` entity codes (decoded by the Mermaid lexer itself), NOT HTML
-/// `&#NN;` entities — those only decode with `htmlLabels` enabled and render
-/// as literal `&#40;` garbage when it is off. `#` is escaped first so source
-/// text cannot forge an entity.
-pub(crate) fn mermaid_label(text: &str) -> String {
-    text.replace('#', "#35;")
-        .replace('\\', "#92;")
-        .replace('"', "#quot;")
-        .replace('[', "#91;")
-        .replace(']', "#93;")
-        .replace('(', "#40;")
-        .replace(')', "#41;")
-        .replace('{', "#123;")
-        .replace('}', "#125;")
-        .replace('|', "#124;")
 }
 
 /// Wrap a diagram body in a ```` ```mermaid ```` fence with a trailing newline.
