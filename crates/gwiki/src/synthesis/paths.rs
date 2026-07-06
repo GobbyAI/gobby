@@ -1,11 +1,20 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+use serde_json::Value;
+
 use crate::WikiError;
+use crate::frontmatter::parse_frontmatter;
 
 use super::types::{ArticleKind, SynthesisSource};
 
 const MAX_SLUG_TRIES: usize = 500;
+
+/// Frontmatter key on compile-emitted source stub pages recording the
+/// vault-relative raw source path they were synthesized from. Recompiles use
+/// it to resolve a source back to its existing page instead of minting a
+/// slug-suffixed sibling (#17596).
+pub(super) const SOURCE_PATH_FRONTMATTER_KEY: &str = "source_path";
 
 pub fn ensure_synthesized_path_inside_vault(
     vault_root: &Path,
@@ -160,13 +169,38 @@ pub(super) fn source_page_paths(
             if let Some(existing) = &source.existing_page {
                 return existing.clone();
             }
+            let identity = relative_path(vault_root, &source.path);
             let slug = slugify_unique(&source.title, |slug| {
-                reserved.contains(slug) || directory.join(format!("{slug}.md")).exists()
+                if reserved.contains(slug) {
+                    return true;
+                }
+                let candidate = directory.join(format!("{slug}.md"));
+                // A page already emitted for this same source is not a
+                // collision: recompiles update it in place instead of
+                // minting a slug-suffixed sibling.
+                candidate.exists() && !page_matches_source_identity(&candidate, &identity)
             });
             reserved.insert(slug.clone());
             directory.join(format!("{slug}.md"))
         })
         .collect()
+}
+
+/// True when the page at `page_path` is a compile-emitted stub for the source
+/// identified by `identity` (its vault-relative raw path). Unreadable or
+/// unparseable pages never match, so they keep colliding into fresh slugs.
+fn page_matches_source_identity(page_path: &Path, identity: &str) -> bool {
+    let Ok(markdown) = std::fs::read_to_string(page_path) else {
+        return false;
+    };
+    parse_frontmatter(&markdown).is_ok_and(|parsed| {
+        parsed
+            .metadata
+            .unknown
+            .get(SOURCE_PATH_FRONTMATTER_KEY)
+            .and_then(Value::as_str)
+            == Some(identity)
+    })
 }
 
 pub(super) fn source_links(

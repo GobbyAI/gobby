@@ -137,6 +137,141 @@ fn source_page_paths_reuse_existing_digest_pages() {
 }
 
 #[test]
+fn recompile_resolves_stub_for_same_source_identity_in_place() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let article_path = temp.path().join("knowledge/topics/hn-roundup.md");
+    let mut input = empty_input("HN Roundup", ArticleKind::Topic);
+    input.accepted_sources = vec![SynthesisSource {
+        title: "48631169".to_string(),
+        path: PathBuf::from("raw/src-hn-48631169.md"),
+        chunks: vec!["First extract.".to_string()],
+        existing_page: None,
+    }];
+
+    let first = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("first source pages synthesized");
+    assert_eq!(first.len(), 1);
+    assert_eq!(
+        first[0].path,
+        temp.path().join("knowledge/sources/48631169.md")
+    );
+    write_synthesized_page(
+        temp.path(),
+        &first[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("first stub written");
+
+    input.handoff_id = "handoff-2".to_string();
+    input.accepted_sources[0].chunks = vec!["Updated extract.".to_string()];
+    let second = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("recompiled source pages synthesized");
+
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].path, first[0].path);
+    write_synthesized_page(
+        temp.path(),
+        &second[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("stub updated in place");
+
+    let entries: Vec<String> = fs::read_dir(temp.path().join("knowledge/sources"))
+        .expect("sources dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, vec!["48631169.md".to_string()]);
+    let markdown =
+        fs::read_to_string(temp.path().join("knowledge/sources/48631169.md")).expect("stub read");
+    assert!(markdown.contains("Updated extract."), "{markdown}");
+    assert!(
+        markdown.contains("source_path: \"raw/src-hn-48631169.md\""),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn source_page_paths_suffix_only_for_different_source_identity() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let article_path = temp.path().join("knowledge/topics/hn-roundup.md");
+    let mut input = empty_input("HN Roundup", ArticleKind::Topic);
+    input.accepted_sources = vec![SynthesisSource {
+        title: "Release notes".to_string(),
+        path: PathBuf::from("raw/src-first.md"),
+        chunks: vec!["First extract.".to_string()],
+        existing_page: None,
+    }];
+    let first = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("first source pages synthesized");
+    write_synthesized_page(
+        temp.path(),
+        &first[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("first stub written");
+
+    // Same title, different raw source: a genuine collision keeps suffixing.
+    let sources = vec![SynthesisSource {
+        title: "Release notes".to_string(),
+        path: PathBuf::from("raw/src-second.md"),
+        chunks: Vec::new(),
+        existing_page: None,
+    }];
+
+    let paths = source_page_paths(temp.path(), &article_path, &sources);
+
+    assert_eq!(
+        paths[0],
+        temp.path().join("knowledge/sources/release-notes-2.md")
+    );
+}
+
+#[test]
+fn recompile_stub_merges_used_by_links_across_articles() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = SynthesisSource {
+        title: "Shared note".to_string(),
+        path: PathBuf::from("raw/src-shared.md"),
+        chunks: vec!["Shared extract.".to_string()],
+        existing_page: None,
+    };
+    let mut first_input = empty_input("First Topic", ArticleKind::Topic);
+    first_input.accepted_sources = vec![source.clone()];
+    let first_article = temp.path().join("knowledge/topics/first-topic.md");
+    let first = synthesize_source_pages(temp.path(), &first_input, &first_article)
+        .expect("first source pages synthesized");
+    write_synthesized_page(
+        temp.path(),
+        &first[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("first stub written");
+
+    let mut second_input = empty_input("Second Topic", ArticleKind::Topic);
+    second_input.accepted_sources = vec![source];
+    let second_article = temp.path().join("knowledge/topics/second-topic.md");
+    let second = synthesize_source_pages(temp.path(), &second_input, &second_article)
+        .expect("second source pages synthesized");
+
+    assert_eq!(second[0].path, first[0].path);
+    assert!(
+        second[0]
+            .markdown
+            .contains("- [[knowledge/topics/first-topic|First Topic]]"),
+        "{}",
+        second[0].markdown
+    );
+    assert!(
+        second[0]
+            .markdown
+            .contains("- [[knowledge/topics/second-topic|Second Topic]]"),
+        "{}",
+        second[0].markdown
+    );
+}
+
+#[test]
 fn synthesize_source_pages_skips_sources_with_existing_digest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let digest = temp.path().join("knowledge/sources/gwiki-source-1.md");

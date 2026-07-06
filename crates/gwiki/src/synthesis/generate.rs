@@ -48,6 +48,7 @@ pub fn synthesize_article(
             degraded_sources,
             aliases: &input.aliases,
             extra_tags: &input.extra_tags,
+            source_path: None,
         },
     );
     markdown.push_str("# ");
@@ -168,6 +169,13 @@ pub fn synthesize_source_pages(
             // path; the article links there instead of duplicating a stub.
             continue;
         }
+        let identity = relative_path(vault_root, &source.path);
+        // Recompiles resolve back to the stub written for this source; keep
+        // the "Used by" links other articles already recorded on it.
+        let mut used_by = existing_used_by_links(&path);
+        if !used_by.contains(&article_link) {
+            used_by.push(article_link.clone());
+        }
         let mut markdown = String::new();
         render_frontmatter(
             &mut markdown,
@@ -179,20 +187,17 @@ pub fn synthesize_source_pages(
                 degraded_sources: &[],
                 aliases: &[],
                 extra_tags: &[],
+                source_path: Some(&identity),
             },
         );
         markdown.push_str("# ");
         markdown.push_str(&source.title);
         markdown.push_str("\n\n");
         markdown.push_str("Source path: `");
-        markdown.push_str(&relative_path(vault_root, &source.path));
+        markdown.push_str(&identity);
         markdown.push_str("`\n\n");
         render_list_section(&mut markdown, "Extracts", &source.chunks);
-        render_list_section(
-            &mut markdown,
-            "Used by",
-            std::slice::from_ref(&article_link),
-        );
+        render_list_section(&mut markdown, "Used by", &used_by);
 
         pages.push(SynthesizedPage {
             path,
@@ -202,4 +207,32 @@ pub fn synthesize_source_pages(
         });
     }
     Ok(pages)
+}
+
+/// Bullet entries under the `## Used by` section of an existing source stub
+/// page, so a rewrite preserves links from other compiled articles. Missing
+/// or unreadable pages yield no entries.
+fn existing_used_by_links(page_path: &Path) -> Vec<String> {
+    let Ok(markdown) = std::fs::read_to_string(page_path) else {
+        return Vec::new();
+    };
+    let mut links = Vec::new();
+    let mut in_section = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            in_section = heading.trim() == "Used by";
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("- ") {
+            let value = value.trim();
+            if !value.is_empty() && value != "None recorded." {
+                links.push(value.to_string());
+            }
+        }
+    }
+    links
 }

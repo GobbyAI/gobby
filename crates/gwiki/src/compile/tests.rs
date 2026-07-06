@@ -414,6 +414,47 @@ fn compile_reuses_existing_source_digest_pages() {
 }
 
 #[test]
+fn recompile_updates_source_stub_pages_in_place() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "First compile evidence.\n").expect("note written");
+    let request = || CompileRequest {
+        topic: "Durable Compile".to_string(),
+        outline: vec!["Overview".to_string()],
+        target_page: Some(PathBuf::from("knowledge/topics/durable-compile.md")),
+        write_intent: true,
+    };
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    compile_to_wiki(&mut session, request()).expect("first compile succeeded");
+
+    std::fs::write(&note_path, "Recompiled evidence.\n").expect("note rewritten");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let outcome = compile_to_wiki(&mut session, request()).expect("recompile succeeded");
+
+    // The recompile resolves the stub written by the first compile and
+    // updates it in place — no slug-suffixed sibling pages (#17596).
+    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/sources"))
+        .expect("sources dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, vec!["compile-behavior.md".to_string()]);
+    assert_eq!(
+        outcome.source_paths,
+        vec![scope.root().join("knowledge/sources/compile-behavior.md")]
+    );
+    let stub = std::fs::read_to_string(scope.root().join("knowledge/sources/compile-behavior.md"))
+        .expect("stub read");
+    assert!(stub.contains("Recompiled evidence."), "{stub}");
+    assert!(
+        stub.contains("source_path: \"raw/research/compile.md\""),
+        "{stub}"
+    );
+}
+
+#[test]
 fn recompile_carries_existing_target_body_into_prompt() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

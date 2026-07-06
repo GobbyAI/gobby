@@ -8,6 +8,11 @@ pub(super) struct FrontmatterFields<'a> {
     pub degraded_sources: &'a [&'a str],
     pub aliases: &'a [String],
     pub extra_tags: &'a [String],
+    /// Vault-relative path of the raw source a compile-emitted stub page was
+    /// synthesized from (`raw/<src-id>.md`). Recompiles match on it to update
+    /// the existing page in place instead of minting a slug-suffixed sibling.
+    /// `None` on article pages.
+    pub source_path: Option<&'a str>,
 }
 
 pub(super) fn render_frontmatter(markdown: &mut String, fields: &FrontmatterFields<'_>) {
@@ -40,6 +45,11 @@ pub(super) fn render_frontmatter(markdown: &mut String, fields: &FrontmatterFiel
     markdown.push_str("synthesis_mode: ");
     markdown.push_str(&yaml_scalar(fields.synthesis_mode));
     markdown.push('\n');
+    if let Some(source_path) = fields.source_path {
+        markdown.push_str("source_path: ");
+        markdown.push_str(&yaml_scalar(source_path));
+        markdown.push('\n');
+    }
     if !fields.degraded_sources.is_empty() {
         markdown.push_str("degraded: true\n");
         markdown.push_str("degraded_sources:\n");
