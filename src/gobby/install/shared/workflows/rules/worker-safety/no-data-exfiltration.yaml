@@ -1,0 +1,58 @@
+tags: [worker-safety, enforcement, gobby]
+
+# Closes the exfiltration half of the prompt-injection taint path (gobby-#17671):
+# a spawned agent whose context carries untrusted text (e.g. a wiki-research
+# question) must not be able to upload local data to an attacker host or read
+# local credential stores. Regex command matching is defense-in-depth, not a
+# parser — the companion fix narrows the wiki-researcher's tool grants.
+
+rules:
+  no-curl-upload:
+    description: "Block curl data uploads to non-local hosts for spawned agents."
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "\\bcurl\\b[^|;&]*\\s(?:-[A-Za-z]*[dTF]\\b|--(?:data(?:-[a-z]+)?|form(?:-string)?|upload-file|json)\\b)"
+        command_not_pattern: "(?:^|[\\s'\"])(?:https?://)?(?:localhost|127\\.0\\.0\\.1|\\[::1\\]|0\\.0\\.0\\.0)(?::\\d+)?(?:[/\\s'\"]|$)"
+        reason: "Uploading data to external hosts is not allowed. Plain GET downloads and requests to localhost are permitted."
+
+  no-wget-upload:
+    description: "Block wget data uploads to non-local hosts for spawned agents."
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "\\bwget\\b[^|;&]*\\s--(?:post-(?:data|file)|body-(?:data|file))\\b"
+        command_not_pattern: "(?:^|[\\s'\"])(?:https?://)?(?:localhost|127\\.0\\.0\\.1|\\[::1\\]|0\\.0\\.0\\.0)(?::\\d+)?(?:[/\\s'\"]|$)"
+        reason: "Uploading data to external hosts is not allowed. Plain GET downloads and requests to localhost are permitted."
+
+  no-remote-copy:
+    description: "Block scp/sftp remote file copy for spawned agents."
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "(?:^|[\\s;&|(])(?:scp|sftp)\\s"
+        reason: "Remote file copy (scp/sftp) is not allowed."
+
+  no-secret-read:
+    description: "Block shell reads of local credential/secret paths for spawned agents."
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "\\.gobby/bootstrap\\.ya?ml|\\.ssh/|\\.aws/credentials|\\.netrc\\b|\\.config/gh/hosts\\.ya?ml|\\.npmrc\\b|\\.pypirc\\b"
+        reason: "Referencing local credential stores (bootstrap.yaml, .ssh, .aws, .netrc, gh hosts, .npmrc, .pypirc) is not allowed."

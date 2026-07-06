@@ -92,7 +92,11 @@ class TestWikiResearcherStepMachine:
         research = find_step(agent.steps or [], "research")
         assert research is not None
         assert research.allowed_mcp_tools == [
-            "gobby-wiki:*",
+            "gobby-wiki:wiki_ask",
+            "gobby-wiki:wiki_search",
+            "gobby-wiki:wiki_list_sources",
+            "gobby-wiki:wiki_ingest",
+            "gobby-wiki:wiki_compile",
             "gobby-tasks:*",
             "gobby-skills:get_skill",
             "gobby-agents:end_agent_run",
