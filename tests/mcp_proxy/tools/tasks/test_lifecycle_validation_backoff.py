@@ -32,13 +32,9 @@ class _StubValidator:
 
 
 class _Clock:
-    """Controllable stand-in for the module's ``datetime`` (only ``now`` is used)."""
+    """Controllable stand-in for the module's ``utc_now``."""
 
     current = datetime(2026, 1, 1, tzinfo=UTC)
-
-    @classmethod
-    def now(cls, tz: Any = None) -> datetime:
-        return cls.current
 
 
 def _make_leaf_task(manager: LocalTaskManager, project_id: str) -> Any:
@@ -93,7 +89,7 @@ async def test_real_verdict_after_window_clears_backoff(
     )
 
     _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
-    monkeypatch.setattr(lifecycle, "datetime", _Clock)
+    monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
 
     # Round 1: infra failure records backoff.
     await validate_leaf_task_with_llm(task, validator, "context", None, ctx, task.id, None)

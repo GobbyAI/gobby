@@ -307,6 +307,21 @@ class TestInconsistentVerdictReconciliation:
                 },
                 True,
             ),
+            (
+                # The #17636 incident: approval phrased against the task's own
+                # criteria list ("all three criteria"), not the literal words
+                # "validation criteria", stamped with an invalid verdict.
+                {
+                    "status": "invalid",
+                    "feedback": (
+                        "All three criteria are addressed: (1) the fix landed, "
+                        "(2) regression tests cover it, and (3) the binary was "
+                        "reinstalled, which is sufficient corroborating evidence."
+                    ),
+                    "blocking_reasons": ["missing 404 test"],
+                },
+                True,
+            ),
             ({"status": "valid", "blocking_reasons": []}, False),
             ({"status": "pending", "blocking_reasons": []}, False),  # only invalid targeted
         ],
@@ -371,6 +386,43 @@ class TestInconsistentVerdictReconciliation:
 
         assert result.status == "valid"
         assert result.feedback == "Confirmed complete."
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_incident_rationale_invalid_with_reasons_is_revalidated_once(
+        self,
+        config: TaskValidationConfig,
+        mock_llm: MagicMock,
+    ) -> None:
+        """The verbatim #17636 incident response must not spuriously fail the close."""
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": (
+                    "All three criteria are addressed: (1) the slug identity fix "
+                    "landed, (2) regression tests cover the recompile, and (3) the "
+                    "binary was reinstalled, which is sufficient corroborating "
+                    "evidence."
+                ),
+                "blocking_reasons": ["Diff evidence was partially omitted."],
+            },
+            {
+                "status": "valid",
+                "feedback": "Confirmed complete.",
+                "blocking_reasons": [],
+            },
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
         assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio

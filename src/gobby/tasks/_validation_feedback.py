@@ -125,12 +125,19 @@ _REQUIRED_FAILURE_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # "All three criteria are addressed", "all validation criteria were met":
+    # bare "criteria" with a bounded qualifier counts, because judges phrase the
+    # approving hallucination against the task's own criteria list, not always
+    # the literal words "validation criteria" (#17636). Qualifiers that imply an
+    # exception elsewhere ("other", "remaining") never count as approval, and an
+    # immediate contrastive tail ("except", "but", ...) disqualifies the match.
     re.compile(
         r"(?:(?=.*\b(?:fixed|resolved|verified|re-?tested)\b).*?)?"
         r"(?<!\bnot\s)\ball\s+"
-        r"(?:(?!(?:previous|previously|prior|unmet|unsatisfied)\b)\w+\s+){0,3}"
-        r"(?:validation\s+criteria|acceptance\s+criteria)\s+"
-        r"(?:are\s+|were\s+)?(?:satisfied|met|passed)\b",
+        r"(?:(?!(?:previous|previously|prior|unmet|unsatisfied|other|remaining)\b)\w+\s+){0,3}"
+        r"criteria\s+"
+        r"(?:are\s+|were\s+)?(?:satisfied|met|passed|addressed|covered)\b"
+        r"(?!\s*[,;:]?\s*(?:except|but|however|aside|save|unless)\b)",
         re.IGNORECASE,
     ),
 )

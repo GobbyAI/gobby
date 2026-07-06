@@ -116,6 +116,13 @@ def test_successful_validation_pattern_ignores_not_all_feedback(feedback: str) -
         "All validation criteria are satisfied.",
         "All acceptance criteria are met.",
         "All acceptance criteria passed.",
+        "Verified all criteria are satisfied.",
+        # The #17636 incident rationale: an unambiguous approval phrased against
+        # the task's own criteria list, returned alongside an invalid verdict.
+        "All three criteria are addressed: (1) the slug identity fix landed, "
+        "(2) regression tests cover the recompile, and (3) the binary was "
+        "reinstalled, which is sufficient corroborating evidence.",
+        "All 3 stated criteria are covered.",
     ],
 )
 def test_successful_validation_pattern_requires_explicit_verified_success(
@@ -142,12 +149,17 @@ def test_successful_validation_pattern_rejects_historical_or_mixed_criteria(
 @pytest.mark.parametrize(
     "feedback",
     [
-        "Verified all criteria are satisfied.",
+        "All other criteria are met.",
+        "All remaining criteria are satisfied.",
+        "All three criteria are addressed except the coverage gate.",
+        "All acceptance criteria are met, but the lint gate was not run.",
+        "Not all three criteria are addressed.",
     ],
 )
-def test_successful_validation_pattern_rejects_generic_or_unconfirmed_success(
+def test_successful_validation_pattern_rejects_partial_or_excepted_success(
     feedback: str,
 ) -> None:
+    """Approval that implies an exception elsewhere never counts as success."""
     assert matched_successful_validation_pattern(feedback) is None
 
 
