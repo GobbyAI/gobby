@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::graph::typed_query;
 
 const CODE_EDGE_REL_TYPES: &str = "['DEFINES', 'IMPORTS', 'CALLS']";
+const CODE_EDGE_REL_PATTERN: &str = "DEFINES|IMPORTS|CALLS";
 
 pub(super) fn report_node_type_case(alias: &str) -> String {
     format!(
@@ -53,32 +54,38 @@ pub(super) fn report_hotspots_query(
     node_class: &str,
     top_n: usize,
 ) -> (String, HashMap<String, String>) {
-    let predicate = match node_class {
-        "file" => "n:CodeFile",
-        "module" => "n:CodeModule",
-        _ => "n:CodeSymbol",
+    let label = match node_class {
+        "file" => "CodeFile",
+        "module" => "CodeModule",
+        _ => "CodeSymbol",
     };
     let limit = top_n.max(1);
     (
+        // Compute in/out degree with two edge-driven aggregations combined by
+        // node, instead of seeding every node and double-expanding it. The
+        // node-driven form carried all ~70k symbols (including zero-degree
+        // ones) through the second OPTIONAL MATCH and timed out server-side on
+        // large graphs; the edge-driven form only touches nodes that have
+        // edges and returns in well under a second (task #17679).
         format!(
-            "MATCH (n {{project: $project}}) \
-             WHERE {predicate} \
-             OPTIONAL MATCH (n)-[out]->(out_target {{project: $project}}) \
-             WHERE type(out) IN {CODE_EDGE_REL_TYPES} \
-               AND (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
-             WITH n, count(out) AS outgoing \
-             OPTIONAL MATCH (in_source {{project: $project}})-[inc]->(n) \
-             WHERE type(inc) IN {CODE_EDGE_REL_TYPES} \
-               AND (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
-             WITH n, outgoing, count(inc) AS incoming \
-             WITH n, outgoing, incoming, outgoing + incoming AS degree \
+            "CALL {{ \
+             MATCH (n:{label} {{project: $project}})-[out:{CODE_EDGE_REL_PATTERN}]->(out_target {{project: $project}}) \
+             WHERE (out_target:CodeFile OR out_target:CodeSymbol OR out_target:CodeModule OR out_target:UnresolvedCallee OR out_target:ExternalSymbol) \
+             RETURN n AS node, count(out) AS outgoing, 0 AS incoming \
+             UNION ALL \
+             MATCH (in_source {{project: $project}})-[inc:{CODE_EDGE_REL_PATTERN}]->(n:{label} {{project: $project}}) \
+             WHERE (in_source:CodeFile OR in_source:CodeSymbol OR in_source:CodeModule OR in_source:UnresolvedCallee OR in_source:ExternalSymbol) \
+             RETURN n AS node, 0 AS outgoing, count(inc) AS incoming \
+             }} \
+             WITH node, sum(outgoing) AS outgoing, sum(incoming) AS incoming \
+             WITH node, outgoing, incoming, outgoing + incoming AS degree \
              WHERE degree > 0 \
-             RETURN {} AS id, {} AS name, {} AS node_type, degree, incoming, outgoing, coalesce(n.file_path, n.path) AS file_path \
+             RETURN {} AS id, {} AS name, {} AS node_type, degree, incoming, outgoing, coalesce(node.file_path, node.path) AS file_path \
              ORDER BY degree DESC, name ASC, id ASC \
              LIMIT {limit}",
-            report_node_id_expr("n"),
-            report_node_name_expr("n"),
-            report_node_type_case("n")
+            report_node_id_expr("node"),
+            report_node_name_expr("node"),
+            report_node_type_case("node")
         ),
         typed_query::string_params(&[("project", project_id)]),
     )
@@ -141,4 +148,76 @@ pub(super) fn report_bridge_edges_query(project_id: &str) -> (String, HashMap<St
             .to_string(),
         typed_query::string_params(&[("project", project_id)]),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hotspots_query_uses_label_scoped_seed_and_typed_edges() {
+        let (query, params) = report_hotspots_query("proj-1", "symbol", 6);
+
+        // Seeds from the :CodeSymbol(project) index instead of scanning every
+        // project node and filtering by label afterwards, which forced a
+        // full-graph scan and timed out on large graphs (task #17679).
+        assert!(
+            query.contains("MATCH (n:CodeSymbol {project: $project})"),
+            "expected label-scoped seed, got: {query}"
+        );
+        assert!(
+            !query.contains("WHERE n:CodeSymbol"),
+            "label-less MATCH + WHERE label filter regressed: {query}"
+        );
+
+        // Traverses the DEFINES/IMPORTS/CALLS relationship-type matrices
+        // directly instead of expanding every edge and filtering by type().
+        assert!(
+            query.contains("-[out:DEFINES|IMPORTS|CALLS]->"),
+            "expected typed outgoing traversal, got: {query}"
+        );
+        assert!(
+            query.contains("-[inc:DEFINES|IMPORTS|CALLS]->"),
+            "expected typed incoming traversal, got: {query}"
+        );
+        assert!(
+            !query.contains("type(out) IN"),
+            "untyped-then-type()-filter anti-pattern regressed: {query}"
+        );
+        assert!(
+            !query.contains("type(inc) IN"),
+            "untyped incoming filter regressed: {query}"
+        );
+
+        // Degree is computed by two edge-driven aggregations combined per node,
+        // not by seeding every node and double-expanding it (which timed out).
+        assert!(
+            query.contains("CALL {") && query.contains("UNION ALL"),
+            "expected edge-driven CALL/UNION ALL aggregation, got: {query}"
+        );
+        assert!(
+            query.contains("sum(outgoing)") && query.contains("sum(incoming)"),
+            "expected per-node re-aggregation, got: {query}"
+        );
+        assert!(
+            !query.contains("OPTIONAL MATCH"),
+            "node-driven double-expansion regressed: {query}"
+        );
+
+        // top_n is still pushed down as the LIMIT.
+        assert!(
+            query.contains("LIMIT 6"),
+            "expected pushed-down limit, got: {query}"
+        );
+        assert!(params.contains_key("project"));
+    }
+
+    #[test]
+    fn hotspots_query_scopes_seed_label_by_node_class() {
+        let (file_query, _) = report_hotspots_query("proj-1", "file", 3);
+        assert!(file_query.contains("MATCH (n:CodeFile {project: $project})"));
+
+        let (module_query, _) = report_hotspots_query("proj-1", "module", 3);
+        assert!(module_query.contains("MATCH (n:CodeModule {project: $project})"));
+    }
 }
