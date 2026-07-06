@@ -188,13 +188,26 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     )
                     is_internal = raw_internal or normalized_internal
                     in_repo_edit = not file_path or repo_edit is not None
+                    # Gitignored paths (e.g. a gitignored wiki/ vault) can never
+                    # produce a commit, so they must stay out of the session/task
+                    # edit ledgers that arm commit-before-status gates.
+                    committable_edit = True
+                    if repo_edit is not None:
+                        from gobby.utils.git import is_path_gitignored
+
+                        committable_edit = not is_path_gitignored(
+                            repo_edit[1], os.fspath(repo_edit[0])
+                        )
 
                     if not is_internal and in_repo_edit:
                         # Track repo-relative file path in session variables
                         # (independent of task-claim gate — rules need this
                         # for per-session has_dirty_files scoping)
                         if file_path:
-                            self._track_session_edited_file(session_id, str(file_path), event.cwd)
+                            if committable_edit:
+                                self._track_session_edited_file(
+                                    session_id, str(file_path), event.cwd
+                                )
 
                             # Trigger incremental code index update
                             if self._code_index_trigger and repo_edit:
@@ -212,7 +225,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
                         # Check if session has any claimed tasks before marking had_edits
                         has_claimed_task = False
-                        if self._task_manager:
+                        if committable_edit and self._task_manager:
                             try:
                                 claimed_tasks = self._task_manager.list_tasks(
                                     claimed_by_session_id=session_id
@@ -269,7 +282,12 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         from gobby.utils.project_context import find_project_root
 
-        repo_root = find_project_root(search_start) or cwd_path or resolved_target.parent
+        # Without a project root or cwd there is no repo to attribute the edit
+        # to — fabricating one from the file's parent would attribute scratchpad
+        # and other out-of-repo writes as repo edits.
+        repo_root = find_project_root(search_start) or cwd_path
+        if repo_root is None:
+            return None
         repo_root = repo_root.resolve(strict=False)
         if not resolved_target.is_relative_to(repo_root):
             return None

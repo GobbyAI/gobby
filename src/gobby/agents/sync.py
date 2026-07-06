@@ -114,6 +114,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
         "synced": 0,
         "updated": 0,
         "skipped": 0,
+        "shadowed": 0,
         "errors": [],
     }
 
@@ -156,10 +157,26 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     result["skipped"] += 1
                     continue
 
+                if not _is_sync_managed_bundled_agent(existing):
+                    # A row sync doesn't own occupies the bundled name, so
+                    # template changes (including step allowlists) can never
+                    # reach the DB. Silent skipping here left stale agent
+                    # definitions live — fail loud instead.
+                    state = "soft-deleted " if existing.deleted_at is not None else ""
+                    error_msg = (
+                        f"Bundled agent '{name}' is shadowed by an unmanaged {state}row "
+                        f"(source={existing.source}, project_id={existing.project_id}, "
+                        f"tags={existing.tags}); bundled template changes will not sync. "
+                        "Rename or delete the row to restore sync management."
+                    )
+                    logger.error(error_msg)
+                    result["errors"].append(error_msg)
+                    result["shadowed"] += 1
+                    result["skipped"] += 1
+                    continue
+
                 if existing.deleted_at is not None:
-                    if _is_sync_managed_bundled_agent(existing) and not _definition_json_equal(
-                        existing.definition_json, body_json
-                    ):
+                    if not _definition_json_equal(existing.definition_json, body_json):
                         with db.transaction():
                             manager.restore(existing.id)
                             manager.update(
@@ -182,26 +199,24 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                     existing.definition_json,
                     existing.enabled,
                 )
-                if _is_sync_managed_bundled_agent(existing):
-                    update_fields = _build_agent_update_fields(
-                        existing,
-                        body=body,
-                        body_json=body_json,
-                        force_enable=force_enable,
-                    )
-                    if update_fields:
-                        manager.update(existing.id, **update_fields)
-                        _refresh_step_workflow(body, db)
-                        result["updated"] += 1
-                        logger.debug(
-                            "Updated bundled agent definition %s (%s)",
-                            existing.id,
-                            existing.description or body.description,
-                        )
-                        continue
-
-                if _is_sync_managed_bundled_agent(existing):
+                update_fields = _build_agent_update_fields(
+                    existing,
+                    body=body,
+                    body_json=body_json,
+                    force_enable=force_enable,
+                )
+                if update_fields:
+                    manager.update(existing.id, **update_fields)
                     _refresh_step_workflow(body, db)
+                    result["updated"] += 1
+                    logger.debug(
+                        "Updated bundled agent definition %s (%s)",
+                        existing.id,
+                        existing.description or body.description,
+                    )
+                    continue
+
+                _refresh_step_workflow(body, db)
                 result["skipped"] += 1
                 continue
 

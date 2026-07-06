@@ -20,6 +20,7 @@ from gobby.utils.git import (
     get_git_metadata,
     get_github_url,
     git_subprocess_env,
+    is_path_gitignored,
     is_valid_sha_format,
     normalize_commit_sha,
     run_git_command,
@@ -148,6 +149,31 @@ class TestRunGitCommand:
 
         assert result is not None
         assert ".git" in result
+
+
+class TestIsPathGitignored:
+    """Tests for is_path_gitignored function."""
+
+    @pytest.mark.integration
+    def test_ignored_path_returns_true(self, temp_dir: Path) -> None:
+        """A path matched by .gitignore reports as ignored."""
+        subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+        (temp_dir / ".gitignore").write_text("/wiki/\n")
+
+        assert is_path_gitignored("wiki/page.md", temp_dir) is True
+
+    @pytest.mark.integration
+    def test_tracked_path_returns_false(self, temp_dir: Path) -> None:
+        """A path not matched by .gitignore reports as not ignored."""
+        subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
+        (temp_dir / ".gitignore").write_text("/wiki/\n")
+
+        assert is_path_gitignored("src/main.py", temp_dir) is False
+
+    @pytest.mark.integration
+    def test_non_git_directory_returns_false(self, temp_dir: Path) -> None:
+        """check-ignore errors (non-git dirs) are treated as not ignored."""
+        assert is_path_gitignored("wiki/page.md", temp_dir) is False
 
 
 class TestGetGithubUrl:

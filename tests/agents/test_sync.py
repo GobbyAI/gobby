@@ -482,6 +482,76 @@ class TestSyncBundledAgents:
             assert result["synced"] == 0
 
     @pytest.mark.unit
+    def test_sync_reports_unmanaged_shadow_row_loudly(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
+        """A user-owned row occupying a bundled agent name is a loud sync error."""
+        db = temp_db
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "test-agent.yaml").write_text(
+            "name: test-agent\ndescription: Bundled template\nprovider: claude\nmode: interactive\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        user_row = mgr.create(
+            name="test-agent",
+            definition_json=json.dumps(
+                {"name": "test-agent", "provider": "claude", "mode": "interactive"}
+            ),
+            workflow_type="agent",
+            source="installed",
+            tags=["user"],
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["shadowed"] == 1
+        assert result["synced"] == 0
+        assert result["updated"] == 0
+        assert any("shadowed" in error for error in result["errors"])
+
+        # The user row is preserved untouched — sync must not clobber it.
+        row = mgr.get(user_row.id)
+        assert row is not None
+        assert row.tags == ["user"]
+        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        assert body.description is None
+
+    @pytest.mark.unit
+    def test_sync_reports_soft_deleted_unmanaged_shadow_row_loudly(
+        self, tmp_path: Path, temp_db: HubDatabase
+    ) -> None:
+        """A soft-deleted user row still shadows the bundled name and errors loudly."""
+        db = temp_db
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "test-agent.yaml").write_text(
+            "name: test-agent\ndescription: Bundled template\nprovider: claude\nmode: interactive\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        user_row = mgr.create(
+            name="test-agent",
+            definition_json=json.dumps(
+                {"name": "test-agent", "provider": "claude", "mode": "interactive"}
+            ),
+            workflow_type="agent",
+            source="installed",
+            tags=["user"],
+        )
+        mgr.delete(user_row.id)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["shadowed"] == 1
+        assert any("soft-deleted" in error for error in result["errors"])
+
+    @pytest.mark.unit
     def test_sync_soft_deletes_removed_bundled_agents(
         self, tmp_path: Path, temp_db: HubDatabase
     ) -> None:

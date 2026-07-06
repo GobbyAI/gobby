@@ -92,6 +92,16 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         return None
 
 
+def is_path_gitignored(path: str, cwd: str | Path) -> bool:
+    """Return True only when git definitively reports the path as ignored.
+
+    ``git check-ignore -q`` exits 0 for ignored paths; misses and errors
+    (including non-git directories) are treated as not ignored so callers
+    gating commit requirements stay conservative.
+    """
+    return run_git_command(["git", "check-ignore", "-q", path], cwd=cwd) is not None
+
+
 def _resolve_git_directory(cwd: str | Path | None) -> Path | None:
     candidate = Path.cwd() if cwd is None else Path(cwd).expanduser()
     try:

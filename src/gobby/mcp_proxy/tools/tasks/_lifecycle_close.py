@@ -48,12 +48,9 @@ def _has_committable_edits(paths: set[str], cwd: str) -> bool:
     if not paths:
         return False
 
-    from gobby.utils.git import run_git_command
+    from gobby.utils.git import is_path_gitignored
 
-    for path in sorted(paths):
-        if run_git_command(["git", "check-ignore", "-q", path], cwd=cwd) is None:
-            return True
-    return False
+    return any(not is_path_gitignored(path, cwd) for path in sorted(paths))
 
 
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:

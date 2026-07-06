@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -162,7 +162,7 @@ class TestToolHandlerEdgeCases:
             tool_result="1 passed",
         )
 
-    def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict) -> None:
+    def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict, tmp_path: Path) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
@@ -172,10 +172,11 @@ class TestToolHandlerEdgeCases:
             HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "Write",
-                "tool_input": {"file_path": "/path/to/regular/file.py"},
+                "tool_input": {"file_path": str(tmp_path / "regular" / "file.py")},
             },
             metadata={"_platform_session_id": "sess-123"},
         )
+        event.cwd = str(tmp_path)
 
         handlers.handle_after_tool(event)
 
@@ -205,6 +206,78 @@ class TestToolHandlerEdgeCases:
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 1
         assert mock_dependencies["session_storage"].mark_had_edits.call_args is not None
+
+    def test_after_tool_gitignored_edit_skips_tracking(
+        self, mock_dependencies: dict, tmp_path: Path
+    ) -> None:
+        """Gitignored paths stay out of edit ledgers and never mark had_edits."""
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(tmp_path / "wiki" / "page.md")},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+
+        with (
+            patch("gobby.utils.git.is_path_gitignored", return_value=True),
+            patch.object(handlers, "_track_session_edited_file") as track,
+        ):
+            handlers.handle_after_tool(event)
+
+        track.assert_not_called()
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+        mock_dependencies["task_manager"].list_tasks.assert_not_called()
+
+    def test_after_tool_non_ignored_edit_still_marks_had_edits(
+        self, mock_dependencies: dict, tmp_path: Path
+    ) -> None:
+        """Paths git does not ignore keep the existing tracking behavior."""
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(tmp_path / "src" / "main.py")},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(tmp_path)
+
+        with (
+            patch("gobby.utils.git.is_path_gitignored", return_value=False),
+            patch.object(handlers, "_track_session_edited_file") as track,
+        ):
+            handlers.handle_after_tool(event)
+
+        track.assert_called_once()
+        mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+
+    def test_after_tool_absolute_path_without_repo_context_not_tracked(
+        self, mock_dependencies: dict
+    ) -> None:
+        """Out-of-repo absolute paths without cwd are not attributed as repo edits."""
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/private/tmp/scratchpad/notes.md"},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with patch.object(handlers, "_track_session_edited_file") as track:
+            handlers.handle_after_tool(event)
+
+        track.assert_not_called()
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
     def test_after_tool_notifies_code_index_with_project_root_path(
         self, mock_dependencies: dict, tmp_path: Path
