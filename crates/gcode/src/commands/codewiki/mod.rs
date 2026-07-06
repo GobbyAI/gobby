@@ -141,6 +141,7 @@ mod repair;
 mod reuse;
 mod run;
 mod strict_markdown;
+mod stubs;
 mod system_model;
 mod text;
 mod tool_executor;

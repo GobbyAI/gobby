@@ -537,3 +537,214 @@ fn scoped_incremental_write_preserves_partial_ancestor_module() {
         "ancestor module was regenerated from partial scoped input"
     );
 }
+
+fn scoped_input_for(file: &str, symbol: &str) -> CodewikiInput {
+    CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![file.to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(file, symbol, "class", 1, "pub struct S;")],
+    }
+}
+
+fn scoped_write(
+    project_root: &std::path::Path,
+    out_dir: &std::path::Path,
+    file: &str,
+    symbol: &str,
+    scope: &str,
+) -> Vec<String> {
+    let doc_scope = DocPruneScope::from_scopes(&[scope.to_string()]);
+    let docs = generate_docs_for_scope(&scoped_input_for(file, symbol), &doc_scope);
+    write_incremental_doc_set_with_snapshot(project_root, out_dir, &docs, None, "off", doc_scope)
+        .expect("scoped write")
+}
+
+#[test]
+fn scoped_write_synthesizes_missing_ancestor_and_repo_stubs() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+    std::fs::write(
+        project.path().join("src/nested/leaf.rs"),
+        "pub struct Leaf;\n",
+    )
+    .expect("write leaf");
+    let out_dir = project.path().join("codewiki");
+
+    // A scoped run into an empty vault (#17639): the nested module page links
+    // `Parent: [[code/modules/src]]` and file pages/`src` link `code/repo`,
+    // none of which the scope filter lets the run generate directly.
+    let changed = scoped_write(
+        project.path(),
+        &out_dir,
+        "src/nested/leaf.rs",
+        "Leaf",
+        "src/nested",
+    );
+    assert!(changed.contains(&"code/modules/src.md".to_string()));
+    assert!(changed.contains(&"code/repo.md".to_string()));
+
+    let nested = std::fs::read_to_string(out_dir.join("code/modules/src/nested.md"))
+        .expect("nested module page");
+    assert!(nested.contains("Parent: [[code/modules/src|src]]"));
+    assert!(!nested.contains("stub: true"));
+
+    let ancestor =
+        std::fs::read_to_string(out_dir.join("code/modules/src.md")).expect("ancestor stub");
+    assert!(ancestor.contains("stub: true"));
+    assert!(ancestor.contains("Parent: [[code/repo|Repository Overview]]"));
+    assert!(ancestor.contains("[[code/modules/src/nested|src/nested]]"));
+
+    let repo = std::fs::read_to_string(out_dir.join("code/repo.md")).expect("repo stub");
+    assert!(repo.contains("stub: true"));
+    assert!(repo.contains("# Repository Overview"));
+    assert!(repo.contains("[[code/modules/src|src]]"));
+    assert!(
+        !repo.contains("code/narrative/"),
+        "a repo stub must not link narrative chapters that only a full run generates"
+    );
+}
+
+#[test]
+fn ancestor_stubs_refresh_as_new_scoped_children_appear() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("nested dir");
+    std::fs::create_dir_all(project.path().join("src/other")).expect("other dir");
+    std::fs::write(
+        project.path().join("src/nested/leaf.rs"),
+        "pub struct Leaf;\n",
+    )
+    .expect("write leaf");
+    std::fs::write(
+        project.path().join("src/other/thing.rs"),
+        "pub struct Thing;\n",
+    )
+    .expect("write thing");
+    let out_dir = project.path().join("codewiki");
+
+    scoped_write(
+        project.path(),
+        &out_dir,
+        "src/nested/leaf.rs",
+        "Leaf",
+        "src/nested",
+    );
+    let changed = scoped_write(
+        project.path(),
+        &out_dir,
+        "src/other/thing.rs",
+        "Thing",
+        "src/other",
+    );
+    assert!(
+        changed.contains(&"code/modules/src.md".to_string()),
+        "the ancestor stub must be re-synthesized when a sibling scope lands"
+    );
+
+    let ancestor =
+        std::fs::read_to_string(out_dir.join("code/modules/src.md")).expect("ancestor stub");
+    assert!(ancestor.contains("stub: true"));
+    assert!(ancestor.contains("[[code/modules/src/nested|src/nested]]"));
+    assert!(ancestor.contains("[[code/modules/src/other|src/other]]"));
+
+    // An unchanged repeat leaves the stubs alone: same disk state, same key.
+    let repeat = scoped_write(
+        project.path(),
+        &out_dir,
+        "src/other/thing.rs",
+        "Thing",
+        "src/other",
+    );
+    assert!(!repeat.contains(&"code/modules/src.md".to_string()));
+    assert!(!repeat.contains(&"code/repo.md".to_string()));
+}
+
+#[test]
+fn full_run_replaces_stubs_and_scoped_runs_never_replace_real_pages() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+    std::fs::write(
+        project.path().join("src/sibling.rs"),
+        "pub struct Sibling;\n",
+    )
+    .expect("write sibling");
+    std::fs::write(
+        project.path().join("src/nested/leaf.rs"),
+        "pub fn leaf() {}\n",
+    )
+    .expect("write leaf");
+    let out_dir = project.path().join("codewiki");
+
+    scoped_write(
+        project.path(),
+        &out_dir,
+        "src/nested/leaf.rs",
+        "leaf",
+        "src/nested",
+    );
+    assert!(
+        std::fs::read_to_string(out_dir.join("code/modules/src.md"))
+            .expect("ancestor stub")
+            .contains("stub: true")
+    );
+
+    // A full run replaces the stub ancestors with real generated pages.
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/sibling.rs".to_string(),
+            "src/nested/leaf.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol(
+                "src/sibling.rs",
+                "Sibling",
+                "class",
+                1,
+                "pub struct Sibling;",
+            ),
+            test_symbol("src/nested/leaf.rs", "leaf", "function", 1, "pub fn leaf()"),
+        ],
+    };
+    let full_docs = generate_hierarchical_docs(&input, None)
+        .into_iter()
+        .map(|(path, content)| BuiltDoc::healthy(path, content))
+        .collect::<Vec<_>>();
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &full_docs,
+        None,
+        "off",
+        DocPruneScope::unscoped(),
+    )
+    .expect("full write");
+    let ancestor =
+        std::fs::read_to_string(out_dir.join("code/modules/src.md")).expect("real ancestor");
+    assert!(!ancestor.contains("stub: true"));
+    assert!(ancestor.contains("src/sibling.rs"));
+    let repo = std::fs::read_to_string(out_dir.join("code/repo.md")).expect("real repo");
+    assert!(!repo.contains("stub: true"));
+
+    // A later scoped run must not demote the real pages back to stubs.
+    let repo_before = repo.clone();
+    let ancestor_before = ancestor.clone();
+    scoped_write(
+        project.path(),
+        &out_dir,
+        "src/nested/leaf.rs",
+        "leaf",
+        "src/nested",
+    );
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join("code/modules/src.md")).expect("ancestor after"),
+        ancestor_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join("code/repo.md")).expect("repo after"),
+        repo_before
+    );
+}

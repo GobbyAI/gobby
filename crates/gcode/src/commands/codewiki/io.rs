@@ -380,6 +380,19 @@ impl<'a> DocSink<'a> {
         write_codewiki_meta(self.out_dir, &meta)
     }
 
+    /// Deletes one stale page from disk and drops its meta entry.
+    fn remove_doc(&mut self, doc_path: &str) -> anyhow::Result<()> {
+        let target = safe_doc_path(self.out_dir, doc_path)?;
+        reject_symlinked_doc_path(self.out_dir, &target)?;
+        match std::fs::remove_file(&target) {
+            Ok(()) => prune_empty_doc_dirs(self.out_dir, &target)?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+        self.next_docs.remove(doc_path);
+        Ok(())
+    }
+
     /// Complete the run: delete docs the run no longer produced, then write
     /// the final meta log with the new index snapshot.
     pub(crate) fn finish(
@@ -397,26 +410,55 @@ impl<'a> DocSink<'a> {
         //      changed before the deterministic-slug scheme landed. The cache-
         //      only prune (1) can never see these, so a churned page used to
         //      linger as a broken-link / degraded orphan (#900).
+        // Synthesized breadcrumb stubs (#17639) are owned by this finish pass,
+        // not by generation, so "not regenerated this run" never marks them
+        // stale here; unrequired stubs are pruned after synthesis below.
         let mut stale = self
             .next_docs
-            .keys()
-            .filter(|key| !self.seen.contains(*key) && self.prune_scope.should_prune(key))
-            .cloned()
+            .iter()
+            .filter(|(key, meta)| {
+                !self.seen.contains(*key)
+                    && self.prune_scope.should_prune(key)
+                    && !super::stubs::is_stub_meta(Some(meta))
+            })
+            .map(|(key, _)| key.clone())
             .collect::<BTreeSet<_>>();
         for doc_path in collect_generated_doc_pages(self.out_dir)? {
-            if !self.seen.contains(&doc_path) && self.prune_scope.should_prune(&doc_path) {
+            if !self.seen.contains(&doc_path)
+                && self.prune_scope.should_prune(&doc_path)
+                && !super::stubs::is_stub_meta(self.next_docs.get(&doc_path))
+            {
                 stale.insert(doc_path);
             }
         }
         for stale_path in stale {
-            let target = safe_doc_path(self.out_dir, &stale_path)?;
-            reject_symlinked_doc_path(self.out_dir, &target)?;
-            match std::fs::remove_file(&target) {
-                Ok(()) => prune_empty_doc_dirs(self.out_dir, &target)?,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-            self.next_docs.remove(&stale_path);
+            self.remove_doc(&stale_path)?;
+        }
+        // Breadcrumb closure (#17639): a scoped run emits module pages whose
+        // Parent chain — and `code/repo.md` — can fall outside the scope
+        // filter and never exist on disk, leaving dangling generated links.
+        // Synthesize deterministic structural stubs for the missing ancestors
+        // from the post-prune page set (pruning first, so a stub is never
+        // parented on pages this run just reclaimed). Only missing pages and
+        // pages recorded as stubs are written; real pages are never replaced.
+        for doc in super::stubs::breadcrumb_stub_docs(self.out_dir, &self.next_docs)? {
+            self.persist(&doc)?;
+        }
+        // A stub the closure no longer requires (its subtree was reclaimed or
+        // replaced by real pages) was skipped by synthesis above; reclaim it
+        // now under the same scope gate as the ordinary prune.
+        let stale_stubs = self
+            .next_docs
+            .iter()
+            .filter(|(key, meta)| {
+                !self.seen.contains(*key)
+                    && self.prune_scope.should_prune(key)
+                    && super::stubs::is_stub_meta(Some(meta))
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for stale_path in stale_stubs {
+            self.remove_doc(&stale_path)?;
         }
         let meta = CodewikiMeta {
             docs: self.next_docs,
@@ -641,13 +683,13 @@ pub(crate) fn collect_generated_doc_pages(out_dir: &Path) -> anyhow::Result<Vec<
     Ok(pages)
 }
 
-fn scoped_file_doc(doc_path: &str) -> Option<&str> {
+pub(crate) fn scoped_file_doc(doc_path: &str) -> Option<&str> {
     doc_path
         .strip_prefix("code/files/")
         .and_then(|path| path.strip_suffix(".md"))
 }
 
-fn scoped_module_doc(doc_path: &str) -> Option<&str> {
+pub(crate) fn scoped_module_doc(doc_path: &str) -> Option<&str> {
     doc_path
         .strip_prefix("code/modules/")
         .and_then(|path| path.strip_suffix(".md"))
