@@ -17,11 +17,11 @@ use super::code_edges::{
     truncation_component,
 };
 use super::query::scope_params;
-use super::wiki_facts::{resolve_graph_target, slug_target_map};
 use super::{
     CODE_CALL_EDGE_TRUNCATION_COMPONENT, CODE_IMPORT_EDGE_TRUNCATION_COMPONENT,
     CODE_TOTAL_EDGE_TRUNCATION_COMPONENT, FALKORDB_GRAPH_NAME, MAX_TOTAL_CODE_EDGES,
 };
+use crate::support::graph::{graph_target_maps, resolve_graph_target};
 
 #[test]
 fn falkordb_graph_name_is_wiki_owned() {
@@ -31,33 +31,21 @@ fn falkordb_graph_name_is_wiki_owned() {
 
 #[test]
 fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
-    let scope = SearchScope::topic("rust");
-    let documents = vec![WikiGraphDocument {
-        scope: scope.clone(),
-        path: PathBuf::from("knowledge/topics/rust.md"),
-        title: Some("Rust Async".to_string()),
-    }];
-    let document_targets =
-        graph::document_target_map(documents.iter().map(|document| &document.path));
-    let slug_targets = slug_target_map(&documents);
+    let path = PathBuf::from("knowledge/topics/rust.md");
+    let title = Some("Rust Async".to_string());
+    let targets = graph_target_maps(std::iter::once((&path, title.as_deref(), "")));
     assert_eq!(
         resolve_graph_target(
             "Rust Async",
             Path::new("knowledge/topics/source.md"),
-            &document_targets,
-            &slug_targets
+            &targets
         ),
         Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
             "knowledge/topics/rust.md"
         )))
     );
     assert_eq!(
-        resolve_graph_target(
-            "RUST.md",
-            Path::new("knowledge/topics/source.md"),
-            &document_targets,
-            &slug_targets
-        ),
+        resolve_graph_target("RUST.md", Path::new("knowledge/topics/source.md"), &targets),
         Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
             "knowledge/topics/rust.md"
         ))),
@@ -67,8 +55,7 @@ fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
         resolve_graph_target(
             "Missing Page",
             Path::new("knowledge/topics/source.md"),
-            &document_targets,
-            &slug_targets
+            &targets
         ),
         Some(graph::WikiGraphLinkTarget::Unresolved(
             "Missing Page".to_string()
@@ -78,8 +65,7 @@ fn graph_resolution_keeps_unresolved_targets_and_skips_external() {
         resolve_graph_target(
             "https://example.test",
             Path::new("knowledge/topics/source.md"),
-            &document_targets,
-            &slug_targets
+            &targets
         )
         .is_none()
     );

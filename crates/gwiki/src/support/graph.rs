@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-use crate::links::canonical_target_key;
+use gobby_core::vault::lint::{link_lookup_keys, page_targets};
+
+use crate::frontmatter::{WikiFrontmatter, parse_frontmatter};
+use crate::links::{LinkKind, canonical_target_key};
 use crate::{graph, search, store};
 
 use super::text::slugify;
@@ -19,21 +22,26 @@ pub(crate) fn memory_graph_from_store(
             title: document.title.clone(),
         })
         .collect::<Vec<_>>();
-    let document_targets = graph::document_target_map(store.documents.keys());
-    let slug_targets = slug_target_map(store);
+    let targets = graph_target_maps(store.documents.values().map(|document| {
+        (
+            &document.path,
+            document.title.as_deref(),
+            document.body.as_str(),
+        )
+    }));
     let links = store
         .links
         .values()
         .flat_map(|links| links.iter())
         .filter_map(|link| {
-            resolve_graph_target(&link.target, &link.path, &document_targets, &slug_targets).map(
-                |target| graph::WikiGraphLink {
+            resolve_graph_target(&link.target, &link.path, &targets).map(|target| {
+                graph::WikiGraphLink {
                     scope: scope.clone(),
                     source_path: link.path.clone(),
                     raw_target: link.target.clone(),
                     target,
-                },
-            )
+                }
+            })
         })
         .collect::<Vec<_>>();
     let sources = store
@@ -56,11 +64,70 @@ pub(crate) fn memory_graph_from_store(
     mem_graph
 }
 
-fn resolve_graph_target(
+/// Lookup maps for graph link resolution. `document_targets` holds the lint
+/// target set ([`page_targets`]: relative path, stem, title, aliases) plus the
+/// exact page-file path key; `slug_targets` is the slugified stem/title
+/// fallback for prose-style mentions.
+pub(crate) struct GraphTargetMaps {
+    document_targets: BTreeMap<String, PathBuf>,
+    slug_targets: BTreeMap<String, PathBuf>,
+}
+
+/// Build resolution maps from `(path, stored_title, body)` document rows.
+/// Frontmatter is parsed for the title and aliases lint matches against;
+/// malformed frontmatter never fails a graph build — lint reports it.
+pub(crate) fn graph_target_maps<'a, I>(documents: I) -> GraphTargetMaps
+where
+    I: IntoIterator<Item = (&'a PathBuf, Option<&'a str>, &'a str)>,
+{
+    let mut document_targets = BTreeMap::<String, PathBuf>::new();
+    let mut slug_targets = BTreeMap::<String, PathBuf>::new();
+    for (path, stored_title, body) in documents {
+        let metadata = parse_frontmatter(body)
+            .map(|parsed| parsed.metadata)
+            .unwrap_or_else(|_| WikiFrontmatter::empty());
+        let title = metadata.title.as_deref().or(stored_title);
+
+        // Deterministic collision behavior: first path in iteration order
+        // wins for each key, and later stem/title/alias collisions keep it.
+        for key in page_targets(path, title, &metadata.aliases) {
+            document_targets.entry(key).or_insert_with(|| path.clone());
+        }
+        document_targets
+            .entry(canonical_target_key(&path.to_string_lossy()))
+            .or_insert_with(|| path.clone());
+
+        if let Some(file_slug) = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(slugify)
+        {
+            slug_targets
+                .entry(file_slug)
+                .or_insert_with(|| path.clone());
+        }
+        if let Some(title_slug) = title.map(slugify) {
+            slug_targets
+                .entry(title_slug)
+                .or_insert_with(|| path.clone());
+        }
+    }
+    GraphTargetMaps {
+        document_targets,
+        slug_targets,
+    }
+}
+
+/// Resolve a stored link target against the vault page set using lint's
+/// candidate rule ([`link_lookup_keys`]): vault-root-relative first, then
+/// ancestor-directory joins. Stored links do not persist their kind; the
+/// wikilink rule's ancestor candidates are a superset of the markdown rule's
+/// single-parent candidate, so unknown kinds resolve at least everything lint
+/// resolves (#17638).
+pub(crate) fn resolve_graph_target(
     raw_target: &str,
     source_path: &Path,
-    document_targets: &BTreeMap<String, PathBuf>,
-    slug_targets: &BTreeMap<String, PathBuf>,
+    targets: &GraphTargetMaps,
 ) -> Option<graph::WikiGraphLinkTarget> {
     let trimmed = raw_target.trim();
     if is_external_target(trimmed) {
@@ -77,87 +144,36 @@ fn resolve_graph_target(
         return None;
     }
 
-    let lookup = resolve_relative_graph_path(&normalized, source_path);
-    if let Some(path) = document_targets.get(&canonical_target_key(&lookup)) {
+    for key in link_lookup_keys(source_path, LinkKind::Wikilink, &normalized) {
+        if let Some(path) = targets.document_targets.get(&key) {
+            return Some(graph::WikiGraphLinkTarget::Resolved(path.clone()));
+        }
+    }
+
+    let target_slug = slugify(normalized.strip_suffix(".md").unwrap_or(&normalized));
+    if let Some(path) = targets.slug_targets.get(&target_slug) {
         return Some(graph::WikiGraphLinkTarget::Resolved(path.clone()));
     }
 
-    let target_slug = slugify(lookup.strip_suffix(".md").unwrap_or(&lookup));
-    if let Some(path) = slug_targets.get(&target_slug) {
-        return Some(graph::WikiGraphLinkTarget::Resolved(path.clone()));
-    }
-
-    Some(graph::WikiGraphLinkTarget::Unresolved(lookup))
-}
-
-fn resolve_relative_graph_path(raw_target: &str, source_path: &Path) -> String {
-    let normalized = raw_target.trim_start_matches('/');
-    if raw_target.starts_with('/') || !is_path_like_target(normalized) {
-        return normalized.to_string();
-    }
-    let Some(parent) = source_path.parent() else {
-        return normalized.to_string();
-    };
-    normalize_path(parent.join(normalized))
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn is_path_like_target(target: &str) -> bool {
-    target.contains('/') || target.starts_with('.') || target.ends_with(".md")
-}
-
-fn normalize_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(part) => normalized.push(part),
-            Component::RootDir | Component::Prefix(_) => {}
-        }
-    }
-    normalized
-}
-
-fn slug_target_map(store: &store::MemoryWikiStore) -> BTreeMap<String, PathBuf> {
-    let mut targets = BTreeMap::new();
-    for document in store.documents.values() {
-        // Deterministic collision behavior: first path in BTreeMap document
-        // order wins for each slug, and later title/file slug collisions keep it.
-        if let Some(file_slug) = document
-            .path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .map(slugify)
-        {
-            targets
-                .entry(file_slug)
-                .or_insert_with(|| document.path.clone());
-        }
-        if let Some(title_slug) = document.title.as_deref().map(slugify) {
-            targets
-                .entry(title_slug)
-                .or_insert_with(|| document.path.clone());
-        }
-    }
-    targets
+    Some(graph::WikiGraphLinkTarget::Unresolved(normalized))
 }
 
 fn is_external_target(target: &str) -> bool {
+    let lower = target.to_ascii_lowercase();
     target.is_empty()
-        || target.contains("://")
-        || target.starts_with("//")
-        || target.starts_with("\\\\")
-        || target.starts_with("mailto:")
+        || lower.contains("://")
+        || lower.starts_with("//")
+        || target.starts_with(r"\\")
+        || lower.starts_with("mailto:")
+        || lower.starts_with("tel:")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiSource};
+    use crate::store::{
+        MemoryWikiStore, WikiDocument, WikiDocumentKind, WikiLink as StoreWikiLink, WikiSource,
+    };
 
     #[test]
     fn graph_uses_distinct_source_document_paths() {
@@ -192,35 +208,38 @@ mod tests {
         );
     }
 
+    fn store_target_maps(store: &MemoryWikiStore) -> GraphTargetMaps {
+        graph_target_maps(store.documents.values().map(|document| {
+            (
+                &document.path,
+                document.title.as_deref(),
+                document.body.as_str(),
+            )
+        }))
+    }
+
+    fn insert_document(store: &mut MemoryWikiStore, path: &str, title: Option<&str>, body: &str) {
+        store.documents.insert(
+            PathBuf::from(path),
+            WikiDocument {
+                path: PathBuf::from(path),
+                kind: WikiDocumentKind::Topic,
+                title: title.map(str::to_string),
+                content_hash: "hash".to_string(),
+                body: body.to_string(),
+            },
+        );
+    }
+
     #[test]
     fn graph_rejects_url_like_external_targets() {
         let store = MemoryWikiStore::default();
-        let document_targets = graph::document_target_map(store.documents.keys());
-        let slug_targets = slug_target_map(&store);
+        let targets = store_target_maps(&store);
         let source = Path::new("knowledge/topics/source.md");
 
-        assert!(
-            resolve_graph_target(
-                "//cdn.example.test/page",
-                source,
-                &document_targets,
-                &slug_targets
-            )
-            .is_none()
-        );
-        assert!(
-            resolve_graph_target(
-                r"\\server\share\page",
-                source,
-                &document_targets,
-                &slug_targets
-            )
-            .is_none()
-        );
-        assert!(
-            resolve_graph_target("custom://example", source, &document_targets, &slug_targets)
-                .is_none()
-        );
+        assert!(resolve_graph_target("//cdn.example.test/page", source, &targets).is_none());
+        assert!(resolve_graph_target(r"\\server\share\page", source, &targets).is_none());
+        assert!(resolve_graph_target("custom://example", source, &targets).is_none());
     }
 
     #[test]
@@ -230,26 +249,20 @@ mod tests {
             "knowledge/topics/rust-async.md",
             "knowledge/topics/rust_async.md",
         ] {
-            store.documents.insert(
-                PathBuf::from(path),
-                WikiDocument {
-                    path: PathBuf::from(path),
-                    kind: WikiDocumentKind::Topic,
-                    title: (path.ends_with("rust-async.md")).then(|| "Rust Async".to_string()),
-                    content_hash: "hash".to_string(),
-                    body: "# Rust Async".to_string(),
-                },
+            insert_document(
+                &mut store,
+                path,
+                path.ends_with("rust-async.md").then_some("Rust Async"),
+                "# Rust Async",
             );
         }
-        let document_targets = graph::document_target_map(store.documents.keys());
-        let slug_targets = slug_target_map(&store);
+        let targets = store_target_maps(&store);
 
         assert_eq!(
             resolve_graph_target(
                 "Rust Async",
                 Path::new("knowledge/topics/source.md"),
-                &document_targets,
-                &slug_targets
+                &targets
             ),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
                 "knowledge/topics/rust-async.md"
@@ -261,8 +274,7 @@ mod tests {
             resolve_graph_target(
                 "Rust_Async.md",
                 Path::new("knowledge/topics/source.md"),
-                &document_targets,
-                &slug_targets
+                &targets
             ),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
                 "knowledge/topics/rust_async.md"
@@ -279,37 +291,99 @@ mod tests {
             "knowledge/topics/nested/bar.md",
             "knowledge/topics/concepts/foo.md",
         ] {
-            store.documents.insert(
-                PathBuf::from(path),
-                WikiDocument {
-                    path: PathBuf::from(path),
-                    kind: WikiDocumentKind::Topic,
-                    title: None,
-                    content_hash: "hash".to_string(),
-                    body: String::new(),
-                },
-            );
+            insert_document(&mut store, path, None, "");
         }
-        let document_targets = graph::document_target_map(store.documents.keys());
-        let slug_targets = slug_target_map(&store);
+        let targets = store_target_maps(&store);
         let source = Path::new("knowledge/topics/nested/source.md");
 
         assert_eq!(
-            resolve_graph_target("bar.md", source, &document_targets, &slug_targets),
+            resolve_graph_target("bar.md", source, &targets),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
                 "knowledge/topics/nested/bar.md"
             )))
         );
         assert_eq!(
-            resolve_graph_target(
-                "../concepts/foo.md",
-                source,
-                &document_targets,
-                &slug_targets
-            ),
+            resolve_graph_target("../concepts/foo.md", source, &targets),
             Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
                 "knowledge/topics/concepts/foo.md"
             )))
+        );
+    }
+
+    #[test]
+    fn vault_root_relative_wikilinks_resolve_without_joining_source_directory() {
+        // #17638 repro: a concept page links a digest by vault-root-relative
+        // path. The old resolver joined the concept page's directory onto the
+        // target, mangling it into knowledge/concepts/knowledge/sources/...
+        // and surfacing a bogus link suggestion for a resolvable link.
+        let digest = "knowledge/sources/src-5966419ee2f6bb38-session-019e4155.md";
+        let mut store = MemoryWikiStore::default();
+        insert_document(&mut store, "knowledge/concepts/gcode.md", Some("gcode"), "");
+        insert_document(&mut store, digest, Some("Session digest"), "");
+        store.links.insert(
+            PathBuf::from("knowledge/concepts/gcode.md"),
+            vec![StoreWikiLink {
+                path: PathBuf::from("knowledge/concepts/gcode.md"),
+                target: "knowledge/sources/src-5966419ee2f6bb38-session-019e4155".to_string(),
+                alias: Some("digest".to_string()),
+                byte_start: 0,
+                byte_end: 10,
+            }],
+        );
+
+        let scope = search::SearchScope::project("project-1");
+        let graph = memory_graph_from_store(&store, &scope);
+
+        assert_eq!(
+            graph.graph_facts_for_tests().links[0].target,
+            graph::WikiGraphLinkTarget::Resolved(PathBuf::from(digest))
+        );
+        assert!(
+            graph.link_suggestions(&scope, 10).is_empty(),
+            "resolvable vault-root-relative links must not surface as suggestions"
+        );
+    }
+
+    #[test]
+    fn unresolved_targets_keep_their_written_form() {
+        let mut store = MemoryWikiStore::default();
+        insert_document(&mut store, "knowledge/concepts/gcode.md", Some("gcode"), "");
+        let targets = store_target_maps(&store);
+
+        assert_eq!(
+            resolve_graph_target(
+                "knowledge/sources/missing-digest",
+                Path::new("knowledge/concepts/gcode.md"),
+                &targets
+            ),
+            Some(graph::WikiGraphLinkTarget::Unresolved(
+                "knowledge/sources/missing-digest".to_string()
+            )),
+            "unresolved suggestions must not be mangled by directory joins"
+        );
+    }
+
+    #[test]
+    fn frontmatter_aliases_resolve_like_lint() {
+        let mut store = MemoryWikiStore::default();
+        insert_document(
+            &mut store,
+            "knowledge/concepts/build-home.md",
+            Some("Build Home"),
+            "---\naliases:\n  - Build Home Dashboard\n---\n# Build Home\n",
+        );
+        let targets = store_target_maps(&store);
+
+        assert_eq!(
+            resolve_graph_target(
+                "Build Home Dashboard",
+                Path::new("knowledge/topics/source.md"),
+                &targets
+            ),
+            Some(graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
+                "knowledge/concepts/build-home.md"
+            ))),
+            "alias targets lint resolves must not surface as suggestions"
         );
     }
 }

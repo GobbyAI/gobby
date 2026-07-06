@@ -326,19 +326,34 @@ fn ignored_target(target: &str) -> bool {
 /// Candidate [`canonical_target_key`] lookup keys for a link, matching the
 /// case-folded keys produced by [`page_targets`].
 fn link_lookup_targets(relative_path: &Path, link: &WikiLink) -> Vec<String> {
-    let folded_target = canonical_target_key(&link.normalized_target);
+    link_lookup_keys(relative_path, link.kind, &link.normalized_target)
+}
+
+/// Candidate [`canonical_target_key`] lookup keys for a normalized target, in
+/// resolution order: the vault-root-relative key first, then — unless the
+/// target names a reserved top-level vault directory or is absolute — keys
+/// joined onto each ancestor directory of the linking page (immediate parent
+/// only for markdown links). This is the single vault link-resolution rule;
+/// gwiki's graph builders share it so `gwiki link-suggest` cannot drift from
+/// `gwiki lint` (#17638).
+pub fn link_lookup_keys(
+    relative_path: &Path,
+    kind: LinkKind,
+    normalized_target: &str,
+) -> Vec<String> {
+    let folded_target = canonical_target_key(normalized_target);
     let mut targets = vec![folded_target.clone()];
-    if (link.kind != LinkKind::Markdown && link.kind != LinkKind::Wikilink)
+    if (kind != LinkKind::Markdown && kind != LinkKind::Wikilink)
         || folded_target.starts_with("knowledge/")
         || folded_target.starts_with("code/")
         || folded_target.starts_with("raw/")
         || folded_target.starts_with("meta/")
-        || Path::new(&link.normalized_target).is_absolute()
+        || Path::new(normalized_target).is_absolute()
     {
         return targets;
     }
 
-    let parents: Box<dyn Iterator<Item = &Path> + '_> = if link.kind == LinkKind::Markdown {
+    let parents: Box<dyn Iterator<Item = &Path> + '_> = if kind == LinkKind::Markdown {
         Box::new(relative_path.parent().into_iter())
     } else {
         Box::new(relative_path.ancestors().skip(1))
@@ -612,6 +627,45 @@ mod tests {
         assert_eq!(
             normalize_path_components("knowledge/topics", "../../../outside.md"),
             "outside.md"
+        );
+    }
+
+    #[test]
+    fn link_lookup_keys_short_circuit_reserved_vault_prefixes() {
+        // A vault-root-relative target under a reserved directory must never
+        // pick up the linking page's directory as a join candidate (#17638).
+        assert_eq!(
+            link_lookup_keys(
+                Path::new("knowledge/concepts/gcode.md"),
+                LinkKind::Wikilink,
+                "knowledge/sources/src-5966419ee2f6bb38",
+            ),
+            vec!["knowledge/sources/src-5966419ee2f6bb38".to_string()]
+        );
+    }
+
+    #[test]
+    fn link_lookup_keys_try_vault_root_before_ancestor_directories() {
+        assert_eq!(
+            link_lookup_keys(
+                Path::new("code/modules/crates.md"),
+                LinkKind::Wikilink,
+                "sub/page",
+            ),
+            vec![
+                "sub/page".to_string(),
+                "code/modules/sub/page".to_string(),
+                "code/sub/page".to_string(),
+            ]
+        );
+        // Markdown links only consider the immediate parent directory.
+        assert_eq!(
+            link_lookup_keys(
+                Path::new("code/modules/crates.md"),
+                LinkKind::Markdown,
+                "sub/page",
+            ),
+            vec!["sub/page".to_string(), "code/modules/sub/page".to_string()]
         );
     }
 

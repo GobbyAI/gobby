@@ -1,16 +1,11 @@
-use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 
 use postgres::Client;
 
 use crate::WikiError;
-use crate::graph::{
-    WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget, WikiGraphSource,
-    document_target_map,
-};
-use crate::links::canonical_target_key;
+use crate::graph::{WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphSource};
 use crate::search::SearchScope;
-use crate::support::text::slugify;
+use crate::support::graph::{graph_target_maps, resolve_graph_target};
 
 pub(crate) fn load_wiki_graph_facts(
     conn: &mut Client,
@@ -20,7 +15,7 @@ pub(crate) fn load_wiki_graph_facts(
     let scope_id = scope.scope_value().to_string();
     let document_rows = conn
         .query(
-            "SELECT path, title
+            "SELECT path, title, body
              FROM gwiki_documents
              WHERE scope_kind = $1 AND scope_id = $2
              ORDER BY path",
@@ -29,17 +24,30 @@ pub(crate) fn load_wiki_graph_facts(
         .map_err(|error| WikiError::Config {
             detail: format!("failed to load gwiki documents for FalkorDB sync: {error}"),
         })?;
-    let documents = document_rows
+    let document_records = document_rows
         .into_iter()
-        .map(|row| WikiGraphDocument {
-            scope: scope.clone(),
-            path: PathBuf::from(row.get::<_, String>("path")),
-            title: row.get::<_, Option<String>>("title"),
+        .map(|row| {
+            (
+                PathBuf::from(row.get::<_, String>("path")),
+                row.get::<_, Option<String>>("title"),
+                row.get::<_, Option<String>>("body").unwrap_or_default(),
+            )
         })
         .collect::<Vec<_>>();
 
-    let document_targets = document_target_map(documents.iter().map(|document| &document.path));
-    let slug_targets = slug_target_map(&documents);
+    let targets = graph_target_maps(
+        document_records
+            .iter()
+            .map(|(path, title, body)| (path, title.as_deref(), body.as_str())),
+    );
+    let documents = document_records
+        .into_iter()
+        .map(|(path, title, _)| WikiGraphDocument {
+            scope: scope.clone(),
+            path,
+            title,
+        })
+        .collect::<Vec<_>>();
 
     let link_rows = conn
         .query(
@@ -57,14 +65,12 @@ pub(crate) fn load_wiki_graph_facts(
         .filter_map(|row| {
             let source_path = PathBuf::from(row.get::<_, String>("path"));
             let raw_target = row.get::<_, String>("target_path");
-            resolve_graph_target(&raw_target, &source_path, &document_targets, &slug_targets).map(
-                |target| WikiGraphLink {
-                    scope: scope.clone(),
-                    source_path,
-                    raw_target,
-                    target,
-                },
-            )
+            resolve_graph_target(&raw_target, &source_path, &targets).map(|target| WikiGraphLink {
+                scope: scope.clone(),
+                source_path,
+                raw_target,
+                target,
+            })
         })
         .collect::<Vec<_>>();
 
@@ -94,91 +100,4 @@ pub(crate) fn load_wiki_graph_facts(
         sources,
         code_edges: Vec::new(),
     })
-}
-
-pub(super) fn resolve_graph_target(
-    raw_target: &str,
-    source_path: &Path,
-    document_targets: &BTreeMap<String, PathBuf>,
-    slug_targets: &BTreeMap<String, PathBuf>,
-) -> Option<WikiGraphLinkTarget> {
-    let trimmed = raw_target.trim();
-    if is_external_target(trimmed) {
-        return None;
-    }
-    let normalized = trimmed
-        .split('#')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .replace('\\', "/");
-    if normalized.is_empty() {
-        return None;
-    }
-
-    let lookup = resolve_relative_graph_path(&normalized, source_path);
-    if let Some(path) = document_targets.get(&canonical_target_key(&lookup)) {
-        return Some(WikiGraphLinkTarget::Resolved(path.clone()));
-    }
-
-    let target_slug = slugify(lookup.strip_suffix(".md").unwrap_or(&lookup));
-    if let Some(path) = slug_targets.get(&target_slug) {
-        return Some(WikiGraphLinkTarget::Resolved(path.clone()));
-    }
-
-    Some(WikiGraphLinkTarget::Unresolved(lookup))
-}
-
-pub(super) fn slug_target_map(documents: &[WikiGraphDocument]) -> BTreeMap<String, PathBuf> {
-    documents
-        .iter()
-        .filter_map(|document| {
-            let title = document.title.as_deref()?;
-            Some((slugify(title), document.path.clone()))
-        })
-        .collect()
-}
-
-fn resolve_relative_graph_path(raw_target: &str, source_path: &Path) -> String {
-    let normalized = raw_target.trim_start_matches('/');
-    if raw_target.starts_with('/') || !is_path_like_target(normalized) {
-        return normalized.to_string();
-    }
-    let raw_path = Path::new(normalized);
-    let candidate = source_path
-        .parent()
-        .map(|parent| parent.join(raw_path))
-        .unwrap_or_else(|| raw_path.to_path_buf());
-    normalize_path(candidate)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn is_path_like_target(target: &str) -> bool {
-    target.contains('/') || target.starts_with('.') || target.ends_with(".md")
-}
-
-fn normalize_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(value) => normalized.push(value),
-            Component::RootDir | Component::Prefix(_) => {}
-        }
-    }
-    normalized
-}
-
-fn is_external_target(target: &str) -> bool {
-    let lower = target.to_ascii_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("mailto:")
-        || lower.starts_with("//")
-        || target.starts_with(r"\\")
-        || lower.contains("://")
 }
