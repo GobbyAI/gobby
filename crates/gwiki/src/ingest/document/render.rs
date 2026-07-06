@@ -10,6 +10,7 @@ use super::*;
 
 pub(crate) fn render_raw_document_markdown(
     snapshot: &DocumentSnapshot,
+    fetched_at: &str,
     source_hash: &str,
     asset_path: &Path,
 ) -> String {
@@ -17,7 +18,7 @@ pub(crate) fn render_raw_document_markdown(
     let fields = vec![
         ("source_kind", snapshot.kind.to_string()),
         ("source_location", snapshot.location.clone()),
-        ("fetched_at", snapshot.fetched_at.clone()),
+        ("fetched_at", fetched_at.to_string()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", asset_path.clone()),
     ];

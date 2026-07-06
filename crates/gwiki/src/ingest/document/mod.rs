@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::document::DocumentDegradation;
 use crate::ingest::{
-    IngestResult, index_after_ingest, lowercase_extension, markdown_title, write_asset,
-    write_raw_markdown,
+    IngestResult, existing_raw_markdown, index_after_ingest, lowercase_extension, markdown_title,
+    write_asset, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -164,12 +164,29 @@ pub(crate) fn ingest_document_with_endpoint_without_index(
         },
     )?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
-    let raw_markdown = render_raw_document_markdown(&snapshot, &record.content_hash, &asset_path);
-    let raw_path = match write_raw_markdown(vault_root, &record, &raw_markdown) {
-        Ok(path) => path,
-        Err(error) => {
-            remove_document_asset_after_failure(vault_root, &asset_path, "raw markdown write");
-            return Err(error);
+    // Reuse the first capture on unchanged re-ingest; fresh writes render with
+    // the record's stored capture time so recovery re-writes stay
+    // byte-identical to the manifest record (#17650).
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => {
+            let raw_markdown = render_raw_document_markdown(
+                &snapshot,
+                &record.fetched_at,
+                &record.content_hash,
+                &asset_path,
+            );
+            match write_raw_markdown(vault_root, &record, &raw_markdown) {
+                Ok(path) => path,
+                Err(error) => {
+                    remove_document_asset_after_failure(
+                        vault_root,
+                        &asset_path,
+                        "raw markdown write",
+                    );
+                    return Err(error);
+                }
+            }
         }
     };
     let derived_path = match write_document_derived_markdown(

@@ -118,6 +118,49 @@ fn ingest_sample(
 }
 
 #[test]
+fn unchanged_document_reingest_reuses_immutable_raw_capture() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut store = MemoryWikiStore::default();
+    let snapshot_for = |timestamp: &str| DocumentSnapshot {
+        location: "/tmp/brief.docx".to_string(),
+        file_name: "brief.docx".to_string(),
+        fetched_at: timestamp.to_string(),
+        bytes: sample_docx(),
+        kind: SourceKind::Office,
+    };
+
+    let first = ingest_document(
+        temp.path(),
+        &mut store,
+        ScopeIdentity::project("project-123"),
+        snapshot_for("2026-05-31T20:00:00Z"),
+    )
+    .expect("first ingest");
+
+    let second = ingest_document(
+        temp.path(),
+        &mut store,
+        ScopeIdentity::project("project-123"),
+        snapshot_for("2026-06-01T07:00:00Z"),
+    )
+    .expect("unchanged re-ingest");
+
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.raw_path, first.raw_path);
+    let raw = std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("raw markdown");
+    assert!(
+        raw.contains("2026-05-31T20:00:00Z"),
+        "first capture time kept"
+    );
+    assert!(
+        !raw.contains("2026-06-01T07:00:00Z"),
+        "re-ingest time not written"
+    );
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1);
+}
+
+#[test]
 fn extracts_office_html_and_degrades() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut store = MemoryWikiStore::default();

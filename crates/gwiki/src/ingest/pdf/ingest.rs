@@ -5,7 +5,8 @@ use crate::ScopeIdentity;
 use crate::WikiError;
 use crate::document::{DocumentDegradation, DocumentFailureMode, DocumentUnitCount};
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_title, write_asset, write_raw_markdown,
+    IngestResult, existing_raw_markdown, index_after_ingest, markdown_title, write_asset,
+    write_raw_markdown,
 };
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -180,6 +181,16 @@ fn ingest_pages_with_vision_inner(
             return rollback_registered_pdf_source(vault_root, &previous_manifest, None, error);
         }
     };
+    // Unchanged re-ingest dedups to the existing record; its immutable raw
+    // markdown embeds run-varying vision text, so reuse the first capture and
+    // skip the page-vision pass entirely (#17650).
+    if let Some(existing) = existing_raw_markdown(vault_root, &record) {
+        return Ok(IngestResult {
+            record,
+            raw_path: existing,
+            asset_path: Some(asset_path),
+        });
+    }
     if snapshot
         .pages
         .iter()
@@ -203,6 +214,7 @@ fn ingest_pages_with_vision_inner(
         scope,
         &snapshot,
         &title,
+        &record.fetched_at,
         &record.content_hash,
         &asset_path,
         &pages,

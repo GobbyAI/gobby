@@ -11,8 +11,8 @@ use gobby_core::ai::generation::{
 #[cfg(feature = "ai")]
 use crate::ai::clients::ProductionTranscriptionClient;
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
-    write_asset, write_raw_markdown,
+    IngestResult, existing_raw_markdown, index_after_ingest, markdown_metadata, markdown_title,
+    path_to_string, write_asset, write_raw_markdown,
 };
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -218,8 +218,21 @@ pub(crate) fn ingest_audio_with_transcription_without_index(
     .with_citation(snapshot.location.clone());
     let record = SourceManifest::register_with_content_hash(vault_root, draft, content_hash)?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
-    let raw_markdown = render_raw_audio_markdown(&snapshot, &record.content_hash, &asset_path);
-    let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
+    // Reuse the first capture on unchanged re-ingest; fresh writes render with
+    // the record's stored capture time so recovery re-writes stay
+    // byte-identical to the manifest record (#17650).
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => {
+            let raw_markdown = render_raw_audio_markdown(
+                &snapshot,
+                &record.fetched_at,
+                &record.content_hash,
+                &asset_path,
+            );
+            write_raw_markdown(vault_root, &record, &raw_markdown)?
+        }
+    };
     let request = TranscriptionRequest {
         file_name: &snapshot.file_name,
         mime_type: snapshot.mime_type.as_deref(),
@@ -389,6 +402,7 @@ impl From<AudioIngestResult> for IngestResult {
 
 fn render_raw_audio_markdown(
     snapshot: &AudioSnapshot,
+    fetched_at: &str,
     source_hash: &str,
     asset_path: &Path,
 ) -> String {
@@ -396,7 +410,7 @@ fn render_raw_audio_markdown(
     let mut fields = vec![
         ("source_kind", "audio".to_string()),
         ("source_location", snapshot.location.clone()),
-        ("fetched_at", snapshot.fetched_at.clone()),
+        ("fetched_at", fetched_at.to_string()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", asset_path.clone()),
     ];
@@ -903,6 +917,48 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(manifest.entries[0].kind, SourceKind::Audio);
         assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn unchanged_audio_reingest_reuses_immutable_raw_capture() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+        let context = test_context(AiRouting::Off, None);
+
+        let first = ingest_audio(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            sample_snapshot(),
+            &context,
+        )
+        .expect("first ingest");
+
+        let mut reingest = sample_snapshot();
+        reingest.fetched_at = "2026-05-30T09:00:00Z".to_string();
+        let second = ingest_audio(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            reingest,
+            &context,
+        )
+        .expect("unchanged re-ingest");
+
+        assert_eq!(second.record.id, first.record.id);
+        assert_eq!(second.raw_path, first.raw_path);
+        let raw =
+            std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("raw markdown");
+        assert!(
+            raw.contains("2026-05-29T21:15:00Z"),
+            "first capture time kept"
+        );
+        assert!(
+            !raw.contains("2026-05-30T09:00:00Z"),
+            "re-ingest time not written"
+        );
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
     }
 
     #[test]

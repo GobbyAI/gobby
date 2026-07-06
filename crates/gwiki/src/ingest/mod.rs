@@ -39,12 +39,28 @@ pub(crate) fn lowercase_extension(path: impl AsRef<Path>) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+fn raw_markdown_relative_path(record: &SourceRecord) -> PathBuf {
+    PathBuf::from("raw").join(format!("{}.md", record.id))
+}
+
+/// Return the immutable raw markdown path for `record` when it already exists.
+///
+/// An unchanged re-ingest dedups to the existing manifest record, but media
+/// raw markdown embeds run-varying capture data (fetched_at, transcription and
+/// vision output, degradation state), so its original bytes cannot be
+/// reproduced. Callers reuse the first capture instead of re-rendering and
+/// failing the immutable raw write (#17650).
+pub(crate) fn existing_raw_markdown(vault_root: &Path, record: &SourceRecord) -> Option<PathBuf> {
+    let raw_path = raw_markdown_relative_path(record);
+    vault_root.join(&raw_path).exists().then_some(raw_path)
+}
+
 pub(crate) fn write_raw_markdown(
     vault_root: &Path,
     record: &SourceRecord,
     markdown: &str,
 ) -> Result<PathBuf, WikiError> {
-    let raw_path = PathBuf::from("raw").join(format!("{}.md", record.id));
+    let raw_path = raw_markdown_relative_path(record);
     let normalized = crate::markdown::normalize(markdown);
     let path = vault_root.join(&raw_path);
     if path.exists() {

@@ -8,8 +8,8 @@ use gobby_core::config::{AiCapability, AiRouting};
 #[cfg(feature = "ai")]
 use crate::ai::clients::ProductionVisionClient;
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
-    write_asset, write_raw_markdown,
+    IngestResult, existing_raw_markdown, index_after_ingest, markdown_metadata, markdown_title,
+    path_to_string, write_asset, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -145,8 +145,21 @@ pub(crate) fn ingest_image_with_vision_without_index(
         },
     )?;
     let asset_path = write_asset(vault_root, &record, &snapshot.file_name, &snapshot.bytes)?;
-    let raw_markdown = render_raw_image_markdown(&snapshot, &record.content_hash, &asset_path);
-    let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
+    // Reuse the first capture on unchanged re-ingest; fresh writes render with
+    // the record's stored capture time so recovery re-writes stay
+    // byte-identical to the manifest record (#17650).
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => {
+            let raw_markdown = render_raw_image_markdown(
+                &snapshot,
+                &record.fetched_at,
+                &record.content_hash,
+                &asset_path,
+            );
+            write_raw_markdown(vault_root, &record, &raw_markdown)?
+        }
+    };
     let VisionMarkdownResult {
         path: derived_path,
         degradation,
@@ -186,6 +199,7 @@ impl From<ImageIngestResult> for IngestResult {
 
 fn render_raw_image_markdown(
     snapshot: &ImageSnapshot,
+    fetched_at: &str,
     source_hash: &str,
     asset_path: &Path,
 ) -> String {
@@ -193,7 +207,7 @@ fn render_raw_image_markdown(
     let mut fields = vec![
         ("source_kind", "image".to_string()),
         ("source_location", snapshot.location.clone()),
-        ("fetched_at", snapshot.fetched_at.clone()),
+        ("fetched_at", fetched_at.to_string()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", asset_path.clone()),
     ];
@@ -277,6 +291,45 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(manifest.entries[0].kind, SourceKind::Image);
         assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn unchanged_image_reingest_reuses_immutable_raw_capture() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut store = MemoryWikiStore::default();
+
+        let first = ingest_image(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            sample_snapshot(),
+        )
+        .expect("first ingest");
+
+        let mut reingest = sample_snapshot();
+        reingest.fetched_at = "2026-05-30T09:00:00Z".to_string();
+        let second = ingest_image(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            reingest,
+        )
+        .expect("unchanged re-ingest");
+
+        assert_eq!(second.record.id, first.record.id);
+        assert_eq!(second.raw_path, first.raw_path);
+        let raw =
+            std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("raw markdown");
+        assert!(
+            raw.contains("2026-05-29T20:30:00Z"),
+            "first capture time kept"
+        );
+        assert!(
+            !raw.contains("2026-05-30T09:00:00Z"),
+            "re-ingest time not written"
+        );
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
     }
 
     #[test]

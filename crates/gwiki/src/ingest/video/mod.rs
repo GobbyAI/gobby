@@ -11,8 +11,9 @@ use gobby_core::config::AiRouting;
 
 use crate::ingest::audio::{production_transcription_endpoint, transcribe_for_markdown};
 use crate::ingest::{
-    IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
-    write_asset, write_asset_from_path, write_asset_with_suffix, write_raw_markdown,
+    IngestResult, existing_raw_markdown, index_after_ingest, markdown_metadata, markdown_title,
+    path_to_string, write_asset, write_asset_from_path, write_asset_with_suffix,
+    write_raw_markdown,
 };
 use crate::sources::{SourceDraft, SourceKind, SourceManifest, SourceRecord};
 use crate::store::WikiIndexStore;

@@ -34,6 +34,51 @@ fn stores_original_video() {
 }
 
 #[test]
+fn unchanged_video_reingest_reuses_immutable_raw_capture() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut store = MemoryWikiStore::default();
+
+    let first = ingest_video(
+        temp.path(),
+        &mut store,
+        ScopeIdentity::topic("field-work"),
+        sample_snapshot(),
+    )
+    .expect("first ingest");
+
+    // Run-varying capture state: a later run may transcribe differently, so
+    // the raw markdown bytes cannot be reproduced; the first capture wins.
+    let mut reingest = sample_snapshot();
+    reingest.fetched_at = "2026-05-30T09:00:00Z".to_string();
+    reingest.transcript_segments.clear();
+    let second = ingest_video(
+        temp.path(),
+        &mut store,
+        ScopeIdentity::topic("field-work"),
+        reingest,
+    )
+    .expect("unchanged re-ingest");
+
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.raw_path, first.raw_path);
+    let raw = std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("raw markdown");
+    assert!(
+        raw.contains("2026-05-29T21:30:00Z"),
+        "first capture time kept"
+    );
+    assert!(
+        !raw.contains("2026-05-30T09:00:00Z"),
+        "re-ingest time not written"
+    );
+    assert!(
+        raw.contains("video_transcript_segment_count: \"2\""),
+        "first capture transcript count kept"
+    );
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1);
+}
+
+#[test]
 fn stores_file_backed_video() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source_path = temp.path().join("lecture-source.mp4");

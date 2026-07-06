@@ -49,13 +49,23 @@ pub(crate) fn ingest_video_with_asset_without_index(
     let frame_interval_seconds = snapshot
         .frame_interval_seconds
         .unwrap_or(DEFAULT_FRAME_INTERVAL_SECONDS);
-    let raw_markdown = render_raw_video_markdown(
-        &snapshot,
-        &record.content_hash,
-        &asset_path,
-        frame_interval_seconds,
-    );
-    let raw_path = write_raw_markdown(vault_root, &record, &raw_markdown)?;
+    // Reuse the first capture on unchanged re-ingest: the raw markdown embeds
+    // run-varying transcription/frame counts, so its bytes cannot be
+    // reproduced. Fresh writes render with the record's stored capture time
+    // (#17650).
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => {
+            let raw_markdown = render_raw_video_markdown(
+                &snapshot,
+                &record.fetched_at,
+                &record.content_hash,
+                &asset_path,
+                frame_interval_seconds,
+            );
+            write_raw_markdown(vault_root, &record, &raw_markdown)?
+        }
+    };
     let frame_samples = if frame_interval_seconds == 0 || degradations.suppress_frame_sampling {
         Vec::new()
     } else if !snapshot.frame_samples.is_empty() {

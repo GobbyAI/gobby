@@ -85,6 +85,7 @@ impl From<VideoIngestResult> for IngestResult {
 
 pub(crate) fn render_raw_video_markdown(
     snapshot: &VideoSnapshotRef<'_>,
+    fetched_at: &str,
     source_hash: &str,
     asset_path: &Path,
     frame_interval_seconds: u32,
@@ -93,7 +94,7 @@ pub(crate) fn render_raw_video_markdown(
     let mut fields = vec![
         ("source_kind", "video".to_string()),
         ("source_location", snapshot.location.to_string()),
-        ("fetched_at", snapshot.fetched_at.to_string()),
+        ("fetched_at", fetched_at.to_string()),
         ("source_hash", source_hash.to_string()),
         ("source_asset", asset_path.clone()),
     ];
