@@ -217,18 +217,17 @@ def create_wiki_librarian_handler(
 
     async def librarian_handler(job: CronJob) -> str:
         result = await gateway.librarian()
-        coordinated = dict(result)
-        coordinated["task_filing"] = _file_librarian_tasks(
+        task_filing = _file_librarian_tasks(
             task_manager=task_manager,
             scope=scope,
             fallback_project_id=fallback_project_id,
             suggested=_payload(result).get("suggested_tasks"),
         )
-        return _history_output(
+        return _librarian_history_output(
             purpose="File wiki librarian proposals as tasks",
             scope=scope,
-            command="librarian",
-            gwiki_result=coordinated,
+            gwiki_result=result,
+            task_filing=task_filing,
         )
 
     return librarian_handler
@@ -555,6 +554,63 @@ def _history_output(
         result=_visible_result(gwiki_result, payload),
         changed_paths=changed_paths,
     )
+
+
+def _librarian_history_output(
+    *,
+    purpose: str,
+    scope: str,
+    gwiki_result: dict[str, Any],
+    task_filing: dict[str, Any],
+) -> str:
+    """Compact librarian history: full check item lists and patch diff bodies
+    overflow the cron run output budget (see _truncate in the executor)."""
+    payload = _payload(gwiki_result)
+    result = _visible_health_result(gwiki_result, _compact_librarian_payload(payload))
+    result["task_filing"] = task_filing
+    return _history_output_json(
+        purpose=purpose,
+        scope=scope,
+        command="librarian",
+        status=_status(gwiki_result, payload),
+        result=result,
+    )
+
+
+def _compact_librarian_payload(
+    payload: dict[str, Any],
+    *,
+    sample_size: int = WIKI_HEALTH_HISTORY_SAMPLE_SIZE,
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key == "checks" and isinstance(value, list):
+            compact[key] = [_compact_librarian_check(check, sample_size) for check in value]
+        elif key == "suggested_tasks" and isinstance(value, list):
+            compact["suggested_tasks_count"] = len(value)
+        elif key == "suggested_patch_diffs" and isinstance(value, list):
+            compact["suggested_patch_diffs_count"] = len(value)
+            compact["suggested_patch_diffs_sample"] = [
+                {"path": diff.get("path"), "summary": diff.get("summary")}
+                for diff in value[:sample_size]
+                if isinstance(diff, dict)
+            ]
+        elif key in ("artifacts", "degradation", "dependency_classification", "error"):
+            compact[key] = value
+        elif _is_json_scalar(value):
+            compact[key] = value
+    return compact
+
+
+def _compact_librarian_check(check: Any, sample_size: int) -> dict[str, Any]:
+    if not isinstance(check, dict):
+        return {"items_count": 0}
+    compact = {key: value for key, value in check.items() if _is_json_scalar(value)}
+    items = check.get("items")
+    if isinstance(items, list):
+        compact["items_count"] = len(items)
+        compact["items_sample"] = items[:sample_size]
+    return compact
 
 
 def _health_history_output(

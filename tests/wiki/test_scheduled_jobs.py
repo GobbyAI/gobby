@@ -755,6 +755,15 @@ async def test_librarian_job_files_deduped_tasks_without_write_coordinator() -> 
     assert gateway.index_calls == 0
     assert "index_handoff" not in output["result"]
 
+    # History is compacted: raw suggestion/check payloads overflow the cron
+    # run output budget.
+    assert output["result"]["suggested_tasks_count"] == 3
+    assert "suggested_tasks" not in output["result"]
+    assert output["result"]["checks"] == [
+        {"name": "broken_links", "available": True, "items_count": 0, "items_sample": []}
+    ]
+    assert "payload" not in output["result"]["gwiki"]
+
     assert [task["title"] for task in task_manager.created] == ["Fix broken wikilink in gcode page"]
     created = task_manager.created[0]
     assert created["project_id"] == "alpha"
