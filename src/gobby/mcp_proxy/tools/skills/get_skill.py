@@ -11,6 +11,46 @@ from gobby.mcp_proxy.tools.skills._context import SkillsContext
 logger = logging.getLogger(__name__)
 
 
+def _serve_scan_error(
+    skill_name: str,
+    source_type: str | None,
+    content: str,
+    path: str = "SKILL.md",
+) -> dict[str, Any] | None:
+    """Serve-time gate: rescan external-tier content before it reaches context.
+
+    Returns an error response dict when the content must not be served, or
+    None when serving is allowed. Content hashes are cached, so each unique
+    content is scanned once per process. External sources fail closed when
+    the scanner is unavailable.
+    """
+    from gobby.skills.scanner import is_external_source, scan_served_content
+
+    if not is_external_source(source_type):
+        return None
+    try:
+        scan_result = scan_served_content(content, name=skill_name, path=path)
+    except ImportError:
+        return {
+            "success": False,
+            "error": (
+                f"clawcare is not installed; refusing to serve skill "
+                f"'{skill_name}' from external source ({source_type}) "
+                f"without a security scan"
+            ),
+        }
+    if not scan_result["is_safe"]:
+        return {
+            "success": False,
+            "error": (
+                f"Skill '{skill_name}' content at {path} failed security scan "
+                f"(max severity: {scan_result['max_severity']}); refusing to serve"
+            ),
+            "scan_result": scan_result,
+        }
+    return None
+
+
 def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
     """Register the get_skill and get_skill_file tools on the registry."""
 
@@ -55,6 +95,10 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             if skill is None:
                 return {"success": False, "error": f"Skill not found: {skill_id or name}"}
+
+            scan_error = _serve_scan_error(skill.name, skill.source_type, skill.content)
+            if scan_error is not None:
+                return scan_error
 
             # Record skill usage when session_id is provided
             if session_id:
@@ -144,6 +188,12 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             skill_file = ctx.storage.get_skill_file(skill.id, path)
             if skill_file is None:
                 return {"success": False, "error": f"File not found: {path}"}
+
+            scan_error = _serve_scan_error(
+                skill.name, skill.source_type, skill_file.content, path=skill_file.path
+            )
+            if scan_error is not None:
+                return scan_error
 
             return {
                 "success": True,

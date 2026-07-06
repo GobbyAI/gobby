@@ -198,6 +198,12 @@ class SkillUpdater:
                     skill_id=skill_id,
                 )
 
+            # Rescan the refreshed content before persisting (TOCTOU guard):
+            # a source that passed install-time scanning can swap in a
+            # hostile payload on refresh. Unsafe updates are rejected and the
+            # stored version is kept.
+            self._scan_update(skill, parsed)
+
             # Apply update
             self._apply_update(skill, parsed)
 
@@ -392,6 +398,38 @@ class SkillUpdater:
                 return True
 
         return False
+
+    def _scan_update(self, skill: Skill, parsed: ParsedSkill) -> None:
+        """Security-scan refreshed content; raise SkillUpdateError if unsafe.
+
+        External sources fail closed when the scanner is unavailable; local
+        sources keep warn-and-continue.
+        """
+        from gobby.skills.scanner import is_external_source, scan_parsed_skill
+
+        try:
+            scan_result = scan_parsed_skill(parsed, name=skill.name)
+        except ImportError:
+            if is_external_source(skill.source_type):
+                raise SkillUpdateError(
+                    "clawcare is not installed; refusing to update skill from "
+                    f"external source ({skill.source_type}) without a security scan",
+                    skill_id=skill.id,
+                ) from None
+            logger.warning(f"clawcare not installed, skipping security scan for {skill.name}")
+            return
+
+        if not scan_result["is_safe"]:
+            findings_summary = "; ".join(
+                f"[{f['severity']}] {f['title']} at {f['location']}"
+                for f in scan_result["findings"]
+                if f["severity"] in ("HIGH", "CRITICAL")
+            )
+            raise SkillUpdateError(
+                f"Updated content failed security scan "
+                f"(max severity: {scan_result['max_severity']}): {findings_summary}",
+                skill_id=skill.id,
+            )
 
     def _apply_update(self, skill: Skill, parsed: ParsedSkill) -> None:
         """Apply parsed skill data to storage."""

@@ -184,17 +184,15 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     )
                 parsed_skill = parsed_skill[0]
 
-            # Scan skill content for safety before persisting
-            try:
-                from gobby.skills.scanner import scan_skill_content
+            # Scan the skill's full text surface (SKILL.md + references/,
+            # scripts/, assets) for safety before persisting
+            from gobby.skills.scanner import is_external_source, scan_parsed_skill
 
-                scan_result = scan_skill_content(
-                    content=parsed_skill.content,
-                    name=parsed_skill.name,
-                )
+            try:
+                scan_result = scan_parsed_skill(parsed_skill)
                 if not scan_result["is_safe"]:
                     findings_summary = "; ".join(
-                        f"[{f['severity']}] {f['title']}"
+                        f"[{f['severity']}] {f['title']} at {f['location']}"
                         for f in scan_result["findings"]
                         if f["severity"] in ("HIGH", "CRITICAL")
                     )
@@ -208,6 +206,17 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         "scan_result": scan_result,
                     }
             except ImportError:
+                # External sources fail closed: unscanned third-party content
+                # must not be persisted. Local sources keep warn-and-continue.
+                if is_external_source(source_type):
+                    return {
+                        "success": False,
+                        "error": (
+                            f"clawcare is not installed; refusing to install skill "
+                            f"'{parsed_skill.name}' from external source "
+                            f"({source_type}) without a security scan"
+                        ),
+                    }
                 logger.warning(
                     f"clawcare not installed, skipping security scan for {parsed_skill.name}",
                 )
