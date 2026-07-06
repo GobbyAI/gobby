@@ -278,6 +278,8 @@ async def test_respects_max_concurrent(
     )
     run = cron_storage.create_run(job1.id)
     cron_storage.update_run(run.id, status="running")
+    # Simulate the live execution task that owns this run
+    scheduler._active_run_ids.add(run.id)
 
     # Create a due job
     job2 = cron_storage.create_job(
@@ -319,6 +321,8 @@ async def test_skips_job_with_active_run_but_dispatches_other_due_job(
     )
     active_run = cron_storage.create_run(active_job.id)
     cron_storage.update_run(active_run.id, status="running")
+    # Simulate the live execution task that owns this run
+    scheduler._active_run_ids.add(active_run.id)
     cron_storage.update_job(active_job.id, next_run_at=past)
     waiting_job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -431,6 +435,9 @@ async def test_old_running_runs_are_not_failed_by_scheduler_loop(
     stale_run = cron_storage.create_run(stale_job.id)
     old = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_run(stale_run.id, status="running", started_at=old)
+    # A tracked run must never be failed by the loop, no matter how old:
+    # liveness, not age, decides (long handlers can legitimately run for hours)
+    scheduler._active_run_ids.add(stale_run.id)
     due_job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="waiting",
@@ -448,6 +455,152 @@ async def test_old_running_runs_are_not_failed_by_scheduler_loop(
     assert refreshed_stale_run.status == "running"
     assert refreshed_stale_run.error is None
     mock_executor.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("orphan_status", ["pending", "running"])
+async def test_orphaned_active_run_is_swept_and_job_redispatched(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+    orphan_status: str,
+) -> None:
+    """An active row with no live task is failed at dispatch time and unblocks its job."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="wedged",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    orphan_run = cron_storage.create_run(job.id)
+    assert orphan_run is not None
+    if orphan_status == "running":
+        cron_storage.update_run(orphan_run.id, status="running", started_at=past)
+    cron_storage.update_job(job.id, next_run_at=past)
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="re-dispatch after orphan sweep",
+    )
+
+    swept_run = cron_storage.get_run(orphan_run.id)
+    assert swept_run is not None
+    assert swept_run.status == "failed"
+    assert swept_run.error is not None
+    assert "no live scheduler task" in swept_run.error
+    mock_executor.execute.assert_awaited_once()
+    assert mock_executor.execute.await_args.args[0].id == job.id
+    assert len(cron_storage.list_runs(job.id, limit=10)) == 2
+
+
+@pytest.mark.asyncio
+async def test_due_job_with_live_run_redispatches_after_completion(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """A due job skips while its run is in flight and dispatches once it completes."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="long-runner",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    in_flight = cron_storage.create_run(job.id)
+    assert in_flight is not None
+    cron_storage.update_run(in_flight.id, status="running", started_at=past)
+    scheduler._active_run_ids.add(in_flight.id)
+    cron_storage.update_job(job.id, next_run_at=past)
+
+    await scheduler._check_due_jobs()
+    await drain_asyncio_tasks()
+
+    mock_executor.execute.assert_not_awaited()
+    assert len(cron_storage.list_runs(job.id, limit=10)) == 1
+
+    # The in-flight run completes and its execution task untracks itself
+    now = datetime.now(UTC).isoformat()
+    cron_storage.update_run(in_flight.id, status="completed", completed_at=now)
+    scheduler._active_run_ids.discard(in_flight.id)
+
+    await scheduler._check_due_jobs()
+    await wait_for_async_condition(
+        lambda: mock_executor.execute.await_count >= 1,
+        description="re-dispatch after run completion",
+    )
+
+    mock_executor.execute.assert_awaited_once()
+    assert mock_executor.execute.await_args.args[0].id == job.id
+    assert len(cron_storage.list_runs(job.id, limit=10)) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_now_sweeps_orphaned_run_and_proceeds(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """A manual trigger is not blocked by an orphaned active row."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="manual-wedged",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    orphan_run = cron_storage.create_run(job.id)
+    assert orphan_run is not None
+    cron_storage.update_run(orphan_run.id, status="running")
+
+    result = await scheduler.run_now(job.id)
+    await drain_asyncio_tasks()
+
+    assert result is not None
+    assert result.id != orphan_run.id
+    swept_run = cron_storage.get_run(orphan_run.id)
+    assert swept_run is not None
+    assert swept_run.status == "failed"
+    assert len(cron_storage.list_runs(job.id, limit=10)) == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_and_update_fails_run_when_executor_raises(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """An executor crash terminalizes the run row instead of wedging the job."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="crashing",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    mock_executor.execute = AsyncMock(side_effect=RuntimeError("executor exploded"))
+
+    await scheduler._execute_and_update(job, run)
+
+    failed_run = cron_storage.get_run(run.id)
+    assert failed_run is not None
+    assert failed_run.status == "failed"
+    assert failed_run.error is not None
+    assert "Scheduler failed to finalize run" in failed_run.error
 
 
 @pytest.mark.asyncio
@@ -583,6 +736,8 @@ async def test_run_now_returns_none_when_job_already_running(
     active_run = cron_storage.create_run(job.id)
     assert active_run is not None
     cron_storage.update_run(active_run.id, status="running")
+    # Simulate the live execution task that owns this run
+    scheduler._active_run_ids.add(active_run.id)
 
     result = await scheduler.run_now(job.id)
 
@@ -617,6 +772,8 @@ async def test_run_now_rejects_when_max_concurrency_full(
     )
     active_run = cron_storage.create_run(active_job.id)
     cron_storage.update_run(active_run.id, status="running")
+    # Simulate the live execution task that owns this run
+    scheduler._active_run_ids.add(active_run.id)
 
     with pytest.raises(CronRunRejected) as exc_info:
         await scheduler.run_now(idle_job.id)

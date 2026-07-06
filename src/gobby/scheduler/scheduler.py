@@ -56,6 +56,7 @@ class CronScheduler:
         self._check_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
         self._active_tasks: set[asyncio.Task[None]] = set()
+        self._active_run_ids: set[str] = set()
         self.on_run_complete: Callable[[CronJob, CronRun], Awaitable[None]] | None = None
 
     async def start(self) -> None:
@@ -89,6 +90,43 @@ class CronScheduler:
                 result["dispatched"],
                 result["failed"],
             )
+
+    def _track_run_task(self, task: asyncio.Task[None], run_id: str) -> None:
+        """Track an in-flight execution task and the cron run row it owns."""
+        self._active_tasks.add(task)
+        self._active_run_ids.add(run_id)
+
+        def _untrack(done: asyncio.Task[None]) -> None:
+            self._active_tasks.discard(done)
+            self._active_run_ids.discard(run_id)
+
+        task.add_done_callback(_untrack)
+
+    def _sweep_orphaned_active_runs(self) -> int:
+        """Fail active runs that no live task in this process is executing.
+
+        The scheduler is the only writer of pending/running cron_runs rows, so
+        an active row without a tracked task (cancelled execution, terminal
+        update lost to a DB error) can never complete and would wedge its job
+        and a concurrency slot until daemon restart. Liveness — not age — is
+        the discriminator: long-running handlers stay tracked and are never
+        swept, no matter how old their run is.
+        """
+        swept = 0
+        for run in self.storage.list_active_runs():
+            if run.id in self._active_run_ids:
+                continue
+            if self.storage.fail_run_if_active(
+                run.id,
+                error="Orphaned cron run had no live scheduler task at dispatch time",
+            ):
+                logger.warning(
+                    "Failed orphaned cron run %s (job %s): no live scheduler task",
+                    run.id,
+                    run.cron_job_id,
+                )
+                swept += 1
+        return swept
 
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""
@@ -136,6 +174,8 @@ class CronScheduler:
         removed = self.storage.delete_removed_automation_jobs()
         if removed:
             logger.info("Deleted %s removed automation cron job(s)", removed)
+
+        self._sweep_orphaned_active_runs()
 
         due_jobs = self.storage.get_due_jobs()
         if not due_jobs:
@@ -199,8 +239,7 @@ class CronScheduler:
                     name=f"cron-run-{run.id}",
                     context=contextvars.Context(),
                 )
-                self._active_tasks.add(task)
-                task.add_done_callback(self._active_tasks.discard)
+                self._track_run_task(task, run.id)
                 dispatched += 1
             except Exception as e:
                 logger.error(f"Failed to dispatch cron job {job.id}: {e}", exc_info=True)
@@ -246,6 +285,15 @@ class CronScheduler:
 
             except Exception as e:
                 logger.error(f"Unexpected error executing cron job {job.id}: {e}", exc_info=True)
+                # The executor normally terminalizes the run row; if it raised
+                # instead, fail the row so it cannot wedge the job's dispatch.
+                try:
+                    self.storage.fail_run_if_active(
+                        run.id,
+                        error=f"Scheduler failed to finalize run: {e}",
+                    )
+                except Exception:
+                    logger.debug("Failed to finalize errored cron run %s", run.id, exc_info=True)
 
             # Fire event callback (best-effort, non-blocking)
             if self.on_run_complete and result:
@@ -302,6 +350,8 @@ class CronScheduler:
         if not job:
             return None
 
+        self._sweep_orphaned_active_runs()
+
         run, running_count = self.storage.create_run_if_admitted(
             job.id,
             max_concurrent_jobs=self.config.max_concurrent_jobs,
@@ -322,7 +372,6 @@ class CronScheduler:
             name=f"cron-run-manual-{run.id}",
             context=contextvars.Context(),
         )
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._track_run_task(task, run.id)
 
         return run

@@ -475,55 +475,23 @@ def test_create_run_returns_none_when_job_already_active(
     assert third is not None
 
 
-def test_fail_running_runs_marks_only_active_rows_failed(
+def test_list_active_runs_returns_only_pending_and_running(
     cron_storage: CronJobStorage,
 ) -> None:
-    """fail_running_runs clears orphaned active rows without touching completed history."""
-    job = cron_storage.create_job(
+    """list_active_runs surfaces pending/running rows across jobs, skipping terminal ones."""
+    pending_job = cron_storage.create_job(
         project_id=PROJECT_ID,
-        name="Fail Running Test",
+        name="Pending Job",
         schedule_type="cron",
         action_type="shell",
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
-    completed = cron_storage.create_run(job.id)
-    assert completed is not None
-    cron_storage.update_run(completed.id, status="completed")
-    running = cron_storage.create_run(job.id)
-    assert running is not None
-    cron_storage.update_run(running.id, status="running")
-
-    failed = cron_storage.fail_running_runs("scheduler restarted")
-
-    assert failed == 1
-    refreshed_running = cron_storage.get_run(running.id)
-    refreshed_completed = cron_storage.get_run(completed.id)
-    assert refreshed_running is not None
-    assert refreshed_running.status == "failed"
-    assert refreshed_running.error == "scheduler restarted"
-    assert refreshed_running.completed_at is not None
-    assert refreshed_completed is not None
-    assert refreshed_completed.status == "completed"
-
-
-def test_fail_pending_runs_marks_only_pending_rows_failed(
-    cron_storage: CronJobStorage,
-) -> None:
-    """fail_pending_runs clears orphaned pending rows without touching active history."""
-    job = cron_storage.create_job(
-        project_id=PROJECT_ID,
-        name="Fail Pending Test",
-        schedule_type="cron",
-        action_type="shell",
-        action_config={"command": "echo"},
-        cron_expr="0 * * * *",
-    )
-    pending = cron_storage.create_run(job.id)
+    pending = cron_storage.create_run(pending_job.id)
     assert pending is not None
     running_job = cron_storage.create_job(
         project_id=PROJECT_ID,
-        name="Other Running",
+        name="Running Job",
         schedule_type="cron",
         action_type="shell",
         action_config={"command": "echo"},
@@ -532,18 +500,55 @@ def test_fail_pending_runs_marks_only_pending_rows_failed(
     running = cron_storage.create_run(running_job.id)
     assert running is not None
     cron_storage.update_run(running.id, status="running")
+    completed_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Completed Job",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    completed = cron_storage.create_run(completed_job.id)
+    assert completed is not None
+    cron_storage.update_run(completed.id, status="completed")
 
-    failed = cron_storage.fail_pending_runs("scheduler restarted")
+    active = cron_storage.list_active_runs()
 
-    assert failed == 1
-    refreshed_pending = cron_storage.get_run(pending.id)
-    refreshed_running = cron_storage.get_run(running.id)
-    assert refreshed_pending is not None
-    assert refreshed_pending.status == "failed"
-    assert refreshed_pending.error == "scheduler restarted"
-    assert refreshed_pending.completed_at is not None
-    assert refreshed_running is not None
-    assert refreshed_running.status == "running"
+    assert {run.id for run in active} == {pending.id, running.id}
+
+
+def test_fail_run_if_active_transitions_only_active_rows(
+    cron_storage: CronJobStorage,
+) -> None:
+    """fail_run_if_active fails a pending/running row and no-ops on terminal rows."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Fail If Active Test",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    running = cron_storage.create_run(job.id)
+    assert running is not None
+    cron_storage.update_run(running.id, status="running")
+
+    assert cron_storage.fail_run_if_active(running.id, "orphaned") is True
+    refreshed = cron_storage.get_run(running.id)
+    assert refreshed is not None
+    assert refreshed.status == "failed"
+    assert refreshed.error == "orphaned"
+    assert refreshed.completed_at is not None
+
+    completed = cron_storage.create_run(job.id)
+    assert completed is not None
+    cron_storage.update_run(completed.id, status="completed")
+
+    assert cron_storage.fail_run_if_active(completed.id, "orphaned") is False
+    refreshed_completed = cron_storage.get_run(completed.id)
+    assert refreshed_completed is not None
+    assert refreshed_completed.status == "completed"
+    assert cron_storage.fail_run_if_active("00000000-0000-0000-0000-0000000000ff", "gone") is False
 
 
 def test_has_running_run_is_scoped_to_job(cron_storage: CronJobStorage) -> None:

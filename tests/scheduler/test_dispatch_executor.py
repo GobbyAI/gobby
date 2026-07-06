@@ -76,8 +76,8 @@ async def test_idle_dispatcher_cron_run_does_not_park_system_job(
         interval_seconds=60,
         is_system=True,
     )
-    future = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
-    storage.update_system_job_bookkeeping(job.id, next_run_at=future)
+    future = datetime.now(UTC) + timedelta(minutes=5)
+    storage.update_system_job_bookkeeping(job.id, next_run_at=future.isoformat())
     run = storage.create_run(job.id)
 
     result = await CronExecutor(storage).execute(job, run)
@@ -116,8 +116,8 @@ async def test_dispatcher_cron_run_with_work_does_not_park(
         interval_seconds=60,
         is_system=True,
     )
-    future = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
-    storage.update_system_job_bookkeeping(job.id, next_run_at=future)
+    future = datetime.now(UTC) + timedelta(minutes=5)
+    storage.update_system_job_bookkeeping(job.id, next_run_at=future.isoformat())
     run = storage.create_run(job.id)
 
     result = await CronExecutor(storage).execute(job, run)

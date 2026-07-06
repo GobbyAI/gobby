@@ -16,7 +16,6 @@ from gobby.storage.cron_children import (
 from gobby.storage.cron_children import (
     reconcile_interrupted_runs as reconcile_interrupted_cron_runs,
 )
-from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronRun
 from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
 from gobby.utils.datetime import utc_now
@@ -218,6 +217,17 @@ class CronRunStorageMixin:
         )
         return row is not None
 
+    def list_active_runs(self) -> list[CronRun]:
+        """Return all pending/running cron runs across jobs."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM cron_runs
+             WHERE status IN ('pending', 'running')
+             ORDER BY created_at ASC
+            """
+        )
+        return hydrate_run_children(self.db, [CronRun.from_row(row) for row in rows])
+
     def active_children_for_job(self, job_id: str, action_type: str) -> list[dict[str, Any]]:
         """Return active dispatched child work for a job/action pair."""
         children = project_active_children_for_job(self.db, job_id, action_type)
@@ -230,66 +240,26 @@ class CronRunStorageMixin:
     def _hydrate_run(self, run: CronRun) -> CronRun:
         return hydrate_run_children(self.db, [run])[0]
 
-    def fail_stale_running_runs(self, timeout_seconds: int) -> int:
-        """Mark stale running cron runs failed so they stop consuming scheduler slots."""
-        timeout_seconds = max(timeout_seconds, MIN_CRON_INTERVAL_SECONDS)
-        now = utc_now()
-        cutoff = now - timedelta(seconds=timeout_seconds)
-        cursor = self.db.execute(
-            """
-            UPDATE cron_runs
-               SET status = 'failed',
-                   completed_at = %s,
-                   error = %s
-             WHERE status = 'running'
-               AND COALESCE(started_at, triggered_at, created_at) < %s
-            """,
-            (
-                now,
-                f"Cron run exceeded running timeout ({timeout_seconds}s)",
-                cutoff,
-            ),
-        )
-        return cursor.rowcount
+    def fail_run_if_active(self, run_id: str, error: str) -> bool:
+        """Atomically fail a run only while it is still pending/running.
 
-    def fail_running_runs(self, error: str) -> int:
-        """Mark all currently running cron runs failed.
-
-        This is used when a scheduler process starts. In-process cron tasks do not
-        survive daemon restart, so any persisted running row at scheduler startup is
-        orphaned and must not keep consuming concurrency slots.
+        Returns True when this call transitioned the run to failed; False when
+        the run was already terminal (or does not exist), leaving it untouched.
         """
         now = utc_now()
-        cursor = self.db.execute(
+        row = self.db.fetchone(
             """
             UPDATE cron_runs
                SET status = 'failed',
                    completed_at = %s,
                    error = %s
-             WHERE status = 'running'
+             WHERE id = %s
+               AND status IN ('pending', 'running')
+            RETURNING id
             """,
-            (now, _truncate_cron_run_error(error, context="running")),
+            (now, _truncate_cron_run_error(error, context="active"), run_id),
         )
-        return cursor.rowcount
-
-    def fail_pending_runs(self, error: str) -> int:
-        """Mark pending cron runs failed.
-
-        Pending rows from a previous daemon cannot be safely replayed because they
-        only prove stale user intent, not a currently owned execution.
-        """
-        now = utc_now()
-        cursor = self.db.execute(
-            """
-            UPDATE cron_runs
-               SET status = 'failed',
-                   completed_at = %s,
-                   error = %s
-             WHERE status = 'pending'
-            """,
-            (now, _truncate_cron_run_error(error, context="pending")),
-        )
-        return cursor.rowcount
+        return row is not None
 
     def cleanup_old_runs(self, days: int) -> int:
         """Delete runs older than the given number of days."""
