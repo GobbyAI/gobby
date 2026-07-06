@@ -16,6 +16,8 @@ from gobby.hooks.event_handlers._session import (
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
+from ._event_handler_helpers import empty_database_mock
+
 pytestmark = pytest.mark.unit
 
 
@@ -76,6 +78,7 @@ class _TestHandler(SessionEventHandlerMixin):
     def __init__(self) -> None:
         self.logger = MagicMock()
         self._session_manager = MagicMock()
+        self._session_manager.db = empty_database_mock()
         self._session_manager.update.return_value = None
         self._session_coordinator = MagicMock()
         self._message_processor = MagicMock()

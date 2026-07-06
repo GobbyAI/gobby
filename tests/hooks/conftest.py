@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookResponse
+from gobby.hooks.hook_manager import HookManager
+
+from ._event_handler_helpers import empty_database_mock
 
 
 @pytest.fixture
@@ -51,3 +55,58 @@ def mock_empty_session_variable_manager(monkeypatch: pytest.MonkeyPatch) -> Magi
 def event_handlers(mock_dependencies: dict[str, Any]) -> EventHandlers:
     """Create EventHandlers instance with mocks."""
     return EventHandlers(**mock_dependencies)
+
+
+@pytest.fixture
+def mock_components() -> MagicMock:
+    """Create a mock HookManagerFactory components object."""
+    components = MagicMock()
+    components.config = MagicMock()
+    components.database = empty_database_mock()
+    components.daemon_client = MagicMock()
+    components.transcript_processor = MagicMock()
+    components.session_task_manager = MagicMock()
+    components.memory_storage = MagicMock()
+    components.message_manager = MagicMock()
+    components.task_manager = MagicMock()
+    components.agent_run_manager = MagicMock()
+    components.worktree_manager = MagicMock()
+    components.stop_registry = MagicMock()
+    components.progress_tracker = MagicMock()
+    components.stuck_detector = MagicMock()
+    components.memory_manager = MagicMock()
+    components.workflow_loader = MagicMock()
+    components.skill_manager = MagicMock()
+    components.pipeline_executor = MagicMock()
+    components.workflow_handler = MagicMock()
+    components.webhook_dispatcher = MagicMock()
+    components.webhook_dispatcher.config = MagicMock()
+    components.webhook_dispatcher.config.enabled = False
+    components.session_manager = MagicMock()
+    components.session_coordinator = MagicMock()
+    components.health_monitor = MagicMock()
+    components.hook_assembler = MagicMock()
+    components.event_handlers = MagicMock()
+    return components
+
+
+@pytest.fixture
+def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
+    """Create a HookManager with all subsystems mocked."""
+    with (
+        patch("gobby.hooks.hook_manager.HookManagerFactory") as mock_factory,
+        patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
+        patch("gobby.hooks.event_enrichment.EventEnricher"),
+        patch("gobby.hooks.session_lookup.SessionLookupService"),
+        patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
+    ):
+        mock_factory.create.return_value = mock_components
+        manager = HookManager(
+            daemon_host="localhost",
+            daemon_port=60887,
+            log_file="/tmp/test-hook-manager.log",
+        )
+        # Pre-warm health monitor cache
+        manager._health_monitor.get_cached_status.return_value = (True, "ready", "ready", None)
+        manager._health_monitor.check_now.return_value = True
+        yield manager

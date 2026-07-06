@@ -1,8 +1,8 @@
 """Regression tests for call_tool session_id reference handling."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,56 +12,7 @@ from gobby.hooks.hook_manager import HookManager
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def mock_components() -> MagicMock:
-    components = MagicMock()
-    components.config = MagicMock()
-    components.database = MagicMock()
-    components.daemon_client = MagicMock()
-    components.transcript_processor = MagicMock()
-    components.session_task_manager = MagicMock()
-    components.memory_storage = MagicMock()
-    components.message_manager = MagicMock()
-    components.task_manager = MagicMock()
-    components.agent_run_manager = MagicMock()
-    components.worktree_manager = MagicMock()
-    components.stop_registry = MagicMock()
-    components.progress_tracker = MagicMock()
-    components.stuck_detector = MagicMock()
-    components.memory_manager = MagicMock()
-    components.workflow_loader = MagicMock()
-    components.skill_manager = MagicMock()
-    components.pipeline_executor = MagicMock()
-    components.workflow_handler = MagicMock()
-    components.webhook_dispatcher = MagicMock()
-    components.webhook_dispatcher.config = MagicMock()
-    components.webhook_dispatcher.config.enabled = False
-    components.session_manager = MagicMock()
-    components.session_coordinator = MagicMock()
-    components.health_monitor = MagicMock()
-    components.hook_assembler = MagicMock()
-    components.event_handlers = MagicMock()
-    return components
-
-
-@pytest.fixture
-def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
-    with (
-        patch("gobby.hooks.hook_manager.HookManagerFactory") as mock_factory,
-        patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
-        patch("gobby.hooks.event_enrichment.EventEnricher"),
-        patch("gobby.hooks.session_lookup.SessionLookupService"),
-        patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
-    ):
-        mock_factory.create.return_value = mock_components
-        manager = HookManager(
-            daemon_host="localhost",
-            daemon_port=60887,
-            log_file="/tmp/test-call-tool-session-id-refs.log",
-        )
-        manager._health_monitor.get_cached_status.return_value = (True, "ready", "ready", None)
-        manager._health_monitor.check_now.return_value = True
-        yield manager
+# mock_components and manager_with_mocks come from tests/hooks/conftest.py.
 
 
 @pytest.fixture

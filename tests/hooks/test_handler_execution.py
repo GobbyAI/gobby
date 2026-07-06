@@ -45,12 +45,12 @@ class TestReturnValues:
         assert hasattr(response, "decision")
         assert hasattr(response, "context")
 
-    def test_context_is_string(
+    def test_session_banner_in_system_message_not_context(
         self,
         event_handlers: EventHandlers,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test context is always a string."""
+        """Lean session start carries the banner in system_message; context stays empty."""
         manager = MagicMock()
         manager.get_variables.return_value = {}
         manager.merge_variables.return_value = True
@@ -61,7 +61,9 @@ class TestReturnValues:
         )
         event = make_event(HookEventType.SESSION_START)
         response = event_handlers.handle_session_start(event)
-        assert isinstance(response.context, str)
+        assert response.context is None
+        assert response.system_message is not None
+        assert "Gobby Session ID" in response.system_message
 
 
 class TestNoManagerDependencies:

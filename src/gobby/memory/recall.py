@@ -16,6 +16,7 @@ from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.prompts.loader import PromptLoader
+from gobby.utils.datetime import datetime_to_required_iso
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -618,7 +619,9 @@ def _memory_to_payload(memory: Memory) -> dict[str, Any]:
         "id": memory.id,
         "content": memory.content,
         "type": memory.memory_type,
-        "created_at": memory.created_at,
+        # Payloads feed json.dumps for both the selector prompt and the
+        # deferred inter-session message; a raw datetime breaks both.
+        "created_at": datetime_to_required_iso(memory.created_at),
         "tags": memory.tags or [],
     }
     for field in (
