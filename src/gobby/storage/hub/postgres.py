@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import importlib.resources
 import json
 import logging
@@ -9,6 +10,7 @@ import os
 import re
 import threading
 import uuid
+import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from datetime import date, datetime
@@ -49,6 +51,26 @@ from gobby.storage.migrations import (
 from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
+
+_OPEN_DATABASES: weakref.WeakSet[PostgresHubDatabase] = weakref.WeakSet()
+
+
+def _close_open_databases_at_exit() -> None:
+    """Close any hub pools still open when the process exits.
+
+    atexit runs before interpreter finalization, where joining the pool's
+    worker threads is still legal. A pool that instead reaches GC during
+    finalization raises PythonFinalizationError from ConnectionPool.__del__
+    on Python 3.14, spraying tracebacks on stderr at CLI exit.
+    """
+    for db in list(_OPEN_DATABASES):
+        try:
+            db.close()
+        except Exception:
+            logger.debug("Failed to close PostgreSQL hub pool at exit", exc_info=True)
+
+
+atexit.register(_close_open_databases_at_exit)
 
 _SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
@@ -108,6 +130,7 @@ class PostgresHubDatabase:
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
+        _OPEN_DATABASES.add(self)
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
         """Open the lazy connection pool before first use."""
