@@ -23,7 +23,7 @@ pub struct MediaWikiPageSnapshot {
 pub fn ingest_page(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
-    snapshot: MediaWikiPageSnapshot,
+    mut snapshot: MediaWikiPageSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let title = markdown_title(&snapshot.title);
     let source_url = single_line(&snapshot.source_url);
@@ -36,6 +36,10 @@ pub fn ingest_page(
     .with_title(title.clone())
     .with_citation(source_url);
     let record = SourceManifest::register(vault_root, draft)?;
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and fresh writes must stay
+    // byte-identical to the manifest record's original capture (#17653).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_mediawiki_markdown(&snapshot, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
@@ -120,5 +124,34 @@ mod tests {
             Some("https://wiki.example.test/wiki/Gobby Editor")
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:00:00Z");
+    }
+
+    #[test]
+    fn mediawiki_unchanged_reingest_dedups_to_existing_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = |fetched_at: &str| MediaWikiPageSnapshot {
+            title: "Gobby".to_string(),
+            source_url: "https://wiki.example.test/wiki/Gobby".to_string(),
+            revision_id: "123456".to_string(),
+            revision_timestamp: Some("2026-05-29T12:00:00Z".to_string()),
+            fetched_at: fetched_at.to_string(),
+            wikitext: "'''Gobby''' is a collaborative editor.".to_string(),
+            category: Some("Software".to_string()),
+        };
+        let mut store = MemoryWikiStore::default();
+        let first = ingest_page(temp.path(), &mut store, snapshot("2026-05-29T18:00:00Z"))
+            .expect("first ingest");
+
+        let second = ingest_page(temp.path(), &mut store, snapshot("2026-06-01T09:00:00Z"))
+            .expect("unchanged re-ingest dedups instead of failing");
+
+        assert_eq!(second.record.id, first.record.id);
+        assert_eq!(second.record.fetched_at, "2026-05-29T18:00:00Z");
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        let raw = std::fs::read_to_string(temp.path().join(&second.raw_path))
+            .expect("raw capture survives re-ingest");
+        assert!(raw.contains("2026-05-29T18:00:00Z"));
+        assert!(!raw.contains("2026-06-01T09:00:00Z"));
     }
 }

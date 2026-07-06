@@ -30,7 +30,7 @@ pub struct GitRepositorySnapshot {
 pub fn ingest_repository(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
-    snapshot: GitRepositorySnapshot,
+    mut snapshot: GitRepositorySnapshot,
 ) -> Result<IngestResult, WikiError> {
     if snapshot.files.is_empty() {
         return Err(WikiError::InvalidInput {
@@ -50,6 +50,10 @@ pub fn ingest_repository(
     .with_title(title.clone())
     .with_citation(format!("{} @ {}", snapshot.remote_url, snapshot.commit_sha));
     let record = SourceManifest::register(vault_root, draft)?;
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and fresh writes must stay
+    // byte-identical to the manifest record's original capture (#17653).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_git_markdown(&snapshot, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
@@ -233,6 +237,35 @@ mod tests {
             "git+https://github.com/GobbyAI/example.git@7f83b1657ff1fc53b92dc18148a1d65dfa135adb"
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:20:00Z");
+    }
+
+    #[test]
+    fn git_unchanged_reingest_dedups_to_existing_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = |fetched_at: &str| GitRepositorySnapshot {
+            remote_url: "https://github.com/GobbyAI/example.git".to_string(),
+            commit_sha: "7f83b1657ff1fc53b92dc18148a1d65dfa135adb".to_string(),
+            fetched_at: fetched_at.to_string(),
+            files: vec![GitFileSnapshot {
+                path: "README.md".to_string(),
+                bytes: b"# Example\n\nRepository notes.\n".to_vec(),
+            }],
+        };
+        let mut store = MemoryWikiStore::default();
+        let first = ingest_repository(temp.path(), &mut store, snapshot("2026-05-29T18:20:00Z"))
+            .expect("first ingest");
+
+        let second = ingest_repository(temp.path(), &mut store, snapshot("2026-06-01T09:00:00Z"))
+            .expect("unchanged re-ingest dedups instead of failing");
+
+        assert_eq!(second.record.id, first.record.id);
+        assert_eq!(second.record.fetched_at, "2026-05-29T18:20:00Z");
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        let raw = std::fs::read_to_string(temp.path().join(&second.raw_path))
+            .expect("raw capture survives re-ingest");
+        assert!(raw.contains("2026-05-29T18:20:00Z"));
+        assert!(!raw.contains("2026-06-01T09:00:00Z"));
     }
 
     #[test]

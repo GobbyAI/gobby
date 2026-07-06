@@ -42,6 +42,10 @@ pub fn ingest_capture(
     .with_title(title.clone())
     .with_citation(snapshot.capture_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and fresh writes must stay
+    // byte-identical to the manifest record's original capture (#17653).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_wayback_markdown(&snapshot, &document, &title, &record.content_hash);
     write_raw_then_index(vault_root, store, record, &markdown, None)
 }
@@ -397,6 +401,35 @@ mod tests {
             Some("https://web.archive.org/web/20260529123456/https://example.com/research")
         );
         assert_eq!(entry.fetched_at, "2026-05-29T18:10:00Z");
+    }
+
+    #[test]
+    fn wayback_unchanged_reingest_dedups_to_existing_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = |fetched_at: &str| WaybackCaptureSnapshot {
+            original_url: "https://example.com/research".to_string(),
+            capture_url: "https://web.archive.org/web/20260529123456/https://example.com/research"
+                .to_string(),
+            capture_timestamp: "20260529123456".to_string(),
+            fetched_at: fetched_at.to_string(),
+            body: b"<html><body><main>Archived page body.</main></body></html>".to_vec(),
+            content_type: Some("text/html".to_string()),
+        };
+        let mut store = MemoryWikiStore::default();
+        let first = ingest_capture(temp.path(), &mut store, snapshot("2026-05-29T18:10:00Z"))
+            .expect("first ingest");
+
+        let second = ingest_capture(temp.path(), &mut store, snapshot("2026-06-01T09:00:00Z"))
+            .expect("unchanged re-ingest dedups instead of failing");
+
+        assert_eq!(second.record.id, first.record.id);
+        assert_eq!(second.record.fetched_at, "2026-05-29T18:10:00Z");
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        let raw = std::fs::read_to_string(temp.path().join(&second.raw_path))
+            .expect("raw capture survives re-ingest");
+        assert!(raw.contains("2026-05-29T18:10:00Z"));
+        assert!(!raw.contains("2026-06-01T09:00:00Z"));
     }
 
     #[test]

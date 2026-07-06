@@ -53,6 +53,76 @@ fn render_session_markdown_emits_deterministic_session_frontmatter() {
 }
 
 #[test]
+fn session_unchanged_reingest_dedups_to_existing_record() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let bytes = br#"{"type":"session","timestamp":"2026-06-16T20:00:00Z","payload":{"title":"Fixture session","messages":[{"role":"user","timestamp":"2026-06-16T20:00:01Z","content":"Hello."}]}}"#;
+    let snapshot = |fetched_at: &str| SessionFileSnapshot {
+        location: "/tmp/session.jsonl".to_string(),
+        file_name: "session.jsonl".to_string(),
+        fetched_at: fetched_at.to_string(),
+        path: PathBuf::from("/tmp/session.jsonl"),
+        bytes: bytes.to_vec(),
+    };
+    let first = ingest_session_file_without_index(temp.path(), snapshot("2026-06-16T20:05:00Z"))
+        .expect("first ingest");
+
+    let second = ingest_session_file_without_index(temp.path(), snapshot("2026-06-17T08:00:00Z"))
+        .expect("unchanged re-ingest dedups instead of failing");
+
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.record.fetched_at, "2026-06-16T20:05:00Z");
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    let raw = std::fs::read_to_string(temp.path().join(&second.raw_path))
+        .expect("raw capture survives re-ingest");
+    assert!(raw.contains("2026-06-16T20:05:00Z"));
+    assert!(!raw.contains("2026-06-17T08:00:00Z"));
+    // The derived digest is regenerable and must stay overwrite-safe.
+    let derived = temp
+        .path()
+        .join("knowledge")
+        .join("sources")
+        .join(format!("{}.md", second.record.id));
+    assert!(derived.is_file());
+}
+
+#[test]
+fn session_wiki_unchanged_reingest_dedups_to_existing_record() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon_md = concat!(
+        "---\n",
+        "title: \"Session: abcd1234 — 2026-06-24\"\n",
+        "session_id: sess-1\n",
+        "source: claude\n",
+        "---\n",
+        "\n",
+        "## Summary\n\nWired the synthesis ingest.\n"
+    );
+    let snapshot = |fetched_at: &str| SessionWikiFileSnapshot {
+        external_id: "abcd1234-0000-4000-8000-000000000000".to_string(),
+        path: PathBuf::from("/tmp/abcd1234-0000-4000-8000-000000000000.md"),
+        fetched_at: fetched_at.to_string(),
+        bytes: daemon_md.as_bytes().to_vec(),
+    };
+    let first =
+        ingest_session_wiki_file_without_index(temp.path(), snapshot("2026-06-24T00:00:00Z"), None)
+            .expect("first ingest");
+
+    let second =
+        ingest_session_wiki_file_without_index(temp.path(), snapshot("2026-06-25T07:00:00Z"), None)
+            .expect("unchanged re-ingest dedups instead of failing");
+
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.record.fetched_at, "2026-06-24T00:00:00Z");
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    let raw = std::fs::read_to_string(temp.path().join(&second.raw_path))
+        .expect("raw capture survives re-ingest");
+    assert!(raw.contains("2026-06-24T00:00:00Z"));
+    assert!(!raw.contains("2026-06-25T07:00:00Z"));
+}
+
+#[test]
 fn session_wiki_ingest_strips_daemon_frontmatter_and_redacts() {
     let temp = tempfile::tempdir().expect("tempdir");
     let openai_key = format!("{}{}", "sk-proj-", "abcdefghijklmnopqrstuvwxyz123456");

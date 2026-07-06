@@ -52,7 +52,9 @@ fn raw_markdown_relative_path(record: &SourceRecord) -> PathBuf {
 /// failing the immutable raw write (#17650).
 pub(crate) fn existing_raw_markdown(vault_root: &Path, record: &SourceRecord) -> Option<PathBuf> {
     let raw_path = raw_markdown_relative_path(record);
-    vault_root.join(&raw_path).exists().then_some(raw_path)
+    // Only a regular file is a reusable capture; anything else blocking the
+    // path must fall through to the raw write so it surfaces as an error.
+    vault_root.join(&raw_path).is_file().then_some(raw_path)
 }
 
 pub(crate) fn write_raw_markdown(
@@ -163,7 +165,13 @@ pub(crate) fn write_raw_then_index(
     markdown: &str,
     asset_path: Option<PathBuf>,
 ) -> Result<IngestResult, WikiError> {
-    let raw_path = write_raw_markdown(vault_root, &record, markdown)?;
+    // Reuse the first capture on unchanged re-ingest: register() dedups to
+    // the existing record and the immutable raw write only tolerates
+    // byte-identical bytes, so a drifted re-render must not reach it (#17653).
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => write_raw_markdown(vault_root, &record, markdown)?,
+    };
     index_after_ingest(
         vault_root,
         store,

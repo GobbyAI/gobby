@@ -7,8 +7,8 @@ use serde_json::json;
 
 use crate::WikiError;
 use crate::ingest::{
-    asset_path as source_asset_path, index_after_ingest, markdown_metadata, markdown_title,
-    text_from_utf8_lossy, write_asset, write_raw_markdown,
+    asset_path as source_asset_path, existing_raw_markdown, index_after_ingest, markdown_metadata,
+    markdown_title, text_from_utf8_lossy, write_asset, write_raw_markdown,
 };
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
@@ -225,19 +225,27 @@ fn accept_item(
                     .with_title(url.clone())
                     .with_citation(url.clone()),
             )?;
-            let markdown = render_url_markdown(&url, fetched_at, &record.content_hash);
-            let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
-                Ok(raw_path) => raw_path,
-                Err(error) => {
-                    let predicted_raw_path = PathBuf::from("raw").join(format!("{}.md", record.id));
-                    return rollback_registered_collect_source(
-                        vault_root,
-                        &previous_manifest,
-                        Some(&predicted_raw_path),
-                        None,
-                        error,
-                    );
-                }
+            // Render with the record's stored capture time and reuse the
+            // first capture on unchanged re-drop: register() dedups to the
+            // existing record, and reaching the write-error rollback here
+            // would delete that record's raw capture (#17653).
+            let markdown = render_url_markdown(&url, &record.fetched_at, &record.content_hash);
+            let raw_path = match existing_raw_markdown(vault_root, &record) {
+                Some(existing) => existing,
+                None => match write_raw_markdown(vault_root, &record, &markdown) {
+                    Ok(raw_path) => raw_path,
+                    Err(error) => {
+                        let predicted_raw_path =
+                            PathBuf::from("raw").join(format!("{}.md", record.id));
+                        return rollback_registered_collect_source(
+                            vault_root,
+                            &previous_manifest,
+                            Some(&predicted_raw_path),
+                            None,
+                            error,
+                        );
+                    }
+                },
             };
             (record.kind, raw_path, None)
         }
@@ -277,27 +285,32 @@ fn accept_item(
                 }
                 None => None,
             };
+            // Same unchanged re-drop handling as the URL branch (#17653).
             let markdown = render_file_markdown(
                 &title,
                 &relative,
-                fetched_at,
+                &record.fetched_at,
                 &record.content_hash,
                 &kind,
                 &bytes,
                 asset_path.as_deref(),
             );
-            let raw_path = match write_raw_markdown(vault_root, &record, &markdown) {
-                Ok(raw_path) => raw_path,
-                Err(error) => {
-                    let predicted_raw_path = PathBuf::from("raw").join(format!("{}.md", record.id));
-                    return rollback_registered_collect_source(
-                        vault_root,
-                        &previous_manifest,
-                        Some(&predicted_raw_path),
-                        asset_path.as_ref(),
-                        error,
-                    );
-                }
+            let raw_path = match existing_raw_markdown(vault_root, &record) {
+                Some(existing) => existing,
+                None => match write_raw_markdown(vault_root, &record, &markdown) {
+                    Ok(raw_path) => raw_path,
+                    Err(error) => {
+                        let predicted_raw_path =
+                            PathBuf::from("raw").join(format!("{}.md", record.id));
+                        return rollback_registered_collect_source(
+                            vault_root,
+                            &previous_manifest,
+                            Some(&predicted_raw_path),
+                            asset_path.as_ref(),
+                            error,
+                        );
+                    }
+                },
             };
             (record.kind, raw_path, asset_path)
         }
@@ -737,6 +750,56 @@ mod tests {
                 entry.location
             );
         }
+    }
+
+    #[test]
+    fn collect_unchanged_url_redrop_dedups_to_existing_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let stub = b"[InternetShortcut]\nURL=https://example.com/research\n";
+        write_file(temp.path(), "inbox/link.url", stub);
+        let first = collect_inbox(temp.path(), "2026-05-29T18:00:00Z").expect("first collect");
+        assert_eq!(first.accepted.len(), 1);
+
+        write_file(temp.path(), "inbox/link.url", stub);
+        let second = collect_inbox(temp.path(), "2026-06-01T09:00:00Z")
+            .expect("unchanged re-drop dedups instead of failing");
+
+        assert_eq!(second.accepted.len(), 1);
+        assert!(second.skipped.is_empty());
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        let entry = &manifest.entries[0];
+        assert_eq!(entry.fetched_at, "2026-05-29T18:00:00Z");
+        let raw = std::fs::read_to_string(temp.path().join("raw").join(format!("{}.md", entry.id)))
+            .expect("raw capture survives re-drop");
+        assert!(raw.contains("2026-05-29T18:00:00Z"));
+        assert!(!raw.contains("2026-06-01T09:00:00Z"));
+        assert!(!temp.path().join("inbox/link.url").exists());
+    }
+
+    #[test]
+    fn collect_unchanged_file_redrop_dedups_to_existing_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let notes = b"# Notes\n\nMarkdown source.\n";
+        write_file(temp.path(), "inbox/notes.md", notes);
+        let first = collect_inbox(temp.path(), "2026-05-29T18:00:00Z").expect("first collect");
+        assert_eq!(first.accepted.len(), 1);
+
+        write_file(temp.path(), "inbox/notes.md", notes);
+        let second = collect_inbox(temp.path(), "2026-06-01T09:00:00Z")
+            .expect("unchanged re-drop dedups instead of failing");
+
+        assert_eq!(second.accepted.len(), 1);
+        assert!(second.skipped.is_empty());
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        let entry = &manifest.entries[0];
+        assert_eq!(entry.fetched_at, "2026-05-29T18:00:00Z");
+        let raw = std::fs::read_to_string(temp.path().join("raw").join(format!("{}.md", entry.id)))
+            .expect("raw capture survives re-drop");
+        assert!(raw.contains("2026-05-29T18:00:00Z"));
+        assert!(!raw.contains("2026-06-01T09:00:00Z"));
+        assert!(!temp.path().join("inbox/notes.md").exists());
     }
 
     #[test]

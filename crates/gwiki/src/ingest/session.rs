@@ -29,8 +29,8 @@ pub(crate) use summarize::SessionSummarizer;
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, MetadataValue, markdown_metadata_values, markdown_title, path_to_string,
-    single_line, text_from_utf8_lossy, write_raw_markdown,
+    IngestResult, MetadataValue, existing_raw_markdown, markdown_metadata_values, markdown_title,
+    path_to_string, single_line, text_from_utf8_lossy, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 
@@ -101,7 +101,7 @@ pub(crate) trait SessionTranscriptAdapter {
 
 pub(crate) fn ingest_session_file_without_index(
     vault_root: &Path,
-    snapshot: SessionFileSnapshot,
+    mut snapshot: SessionFileSnapshot,
 ) -> Result<IngestResult, WikiError> {
     let parsed = parse_session_archive_bytes(&snapshot.path, &snapshot.bytes)?;
     let title =
@@ -122,9 +122,18 @@ pub(crate) fn ingest_session_file_without_index(
             compile_status: CompileStatus::Pending,
         },
     )?;
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and fresh writes must stay
+    // byte-identical to the manifest record's original capture (#17653).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_session_markdown(&snapshot, &parsed, &title, &record.content_hash);
     let markdown = redact_session_markdown(&markdown);
-    let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+    // Reuse the first capture on unchanged re-ingest; the derived digest is
+    // regenerable and overwrites atomically, so it is always refreshed.
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => write_raw_markdown(vault_root, &record, &markdown)?,
+    };
     write_session_derived_markdown(vault_root, &record, &markdown)?;
 
     Ok(IngestResult {
@@ -145,7 +154,7 @@ pub(crate) fn ingest_session_file_without_index(
 /// before write — the synthesis can lift secrets from the digest verbatim.
 pub(crate) fn ingest_session_wiki_file_without_index(
     vault_root: &Path,
-    snapshot: SessionWikiFileSnapshot,
+    mut snapshot: SessionWikiFileSnapshot,
     enricher: Option<&ConnectionsEnricher>,
 ) -> Result<IngestResult, WikiError> {
     let text = text_from_utf8_lossy(&snapshot.bytes);
@@ -183,6 +192,10 @@ pub(crate) fn ingest_session_wiki_file_without_index(
         },
     )?;
 
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and fresh writes must stay
+    // byte-identical to the manifest record's original capture (#17653).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_session_wiki_markdown(
         &snapshot,
         &page,
@@ -191,7 +204,12 @@ pub(crate) fn ingest_session_wiki_file_without_index(
         &record.content_hash,
     );
     let markdown = redact_session_markdown(&markdown);
-    let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+    // Reuse the first capture on unchanged re-ingest; the derived digest is
+    // regenerable and overwrites atomically, so it is always refreshed.
+    let raw_path = match existing_raw_markdown(vault_root, &record) {
+        Some(existing) => existing,
+        None => write_raw_markdown(vault_root, &record, &markdown)?,
+    };
     write_session_derived_markdown(vault_root, &record, &markdown)?;
 
     Ok(IngestResult {
