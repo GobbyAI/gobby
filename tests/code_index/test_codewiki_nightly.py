@@ -73,10 +73,10 @@ class FakeRefreshService(CodewikiRefreshService):
         )
 
 
-def test_wiki_config_nightly_defaults_to_opt_in_local_schedule() -> None:
+def test_wiki_config_nightly_defaults_to_enabled_local_schedule() -> None:
     config = WikiConfig()
 
-    assert config.codewiki_nightly_enabled is False
+    assert config.codewiki_nightly_enabled is True
     assert config.codewiki_nightly_schedule_cron == "0 3 * * *"
     assert config.codewiki_nightly_timezone is None
 
@@ -148,6 +148,42 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
     assert updated.cron_expr == "0 4 * * *"
     assert updated.next_run_at is not None
     assert updated.next_run_at.utcoffset() == timedelta(0)
+
+
+def test_register_codewiki_nightly_cron_enables_previously_disabled_job_on_default_flip(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """A job row created under the old disabled default is re-enabled on reconcile."""
+    storage = CronJobStorage(temp_db)
+    executor = FakeCronExecutor()
+
+    register_codewiki_nightly_cron(
+        cron_storage=storage,
+        cron_executor=executor,
+        project_id=PROJECT_ID,
+        project_name=PROJECT_NAME,
+        repo_path=tmp_path,
+        wiki_config=WikiConfig(codewiki_nightly_enabled=False),
+    )
+    disabled = storage.get_job_by_name(codewiki_nightly_job_name(PROJECT_ID))
+    assert disabled is not None
+    assert disabled.enabled is False
+
+    register_codewiki_nightly_cron(
+        cron_storage=storage,
+        cron_executor=executor,
+        project_id=PROJECT_ID,
+        project_name=PROJECT_NAME,
+        repo_path=tmp_path,
+        wiki_config=WikiConfig(),
+    )
+
+    enabled = storage.get_job_by_name(codewiki_nightly_job_name(PROJECT_ID))
+    assert enabled is not None
+    assert enabled.enabled is True
+    assert enabled.next_run_at is not None
+    assert enabled.next_run_at.utcoffset() == timedelta(0)
 
 
 def test_register_codewiki_nightly_crons_covers_each_project_once(

@@ -61,8 +61,12 @@ class WikiConfig(BaseModel):
         ),
     )
     codewiki_nightly_enabled: bool = Field(
-        default=False,
-        description="Refresh generated codewiki docs on a nightly daemon cron schedule.",
+        default=True,
+        description=(
+            "Refresh generated codewiki docs on a nightly daemon cron schedule. "
+            "Hash reuse keeps steady-state runs near-free; only changed sources "
+            "regenerate after the first full run."
+        ),
     )
     codewiki_nightly_schedule_cron: str = Field(
         default="0 3 * * *",
