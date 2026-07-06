@@ -200,6 +200,8 @@ def create_workflows_registry(
 
         Checks for unreachable steps, dead-end steps, undefined transition targets,
         undefined variable references, MCP tool conflicts, and unknown MCP servers/tools.
+        Names that resolve to an agent definition instead of a workflow are
+        evaluated as agents (top-level tool gates plus inline steps).
 
         Args:
             name: Workflow name to evaluate.
@@ -208,7 +210,7 @@ def create_workflows_registry(
         Returns:
             Dict with valid bool, items list, step_trace, and lifecycle_path.
         """
-        from gobby.workflows.dry_run import evaluate_workflow
+        from gobby.workflows.dry_run import evaluate_agent_definition, evaluate_workflow
 
         mcp_inventory = _workflow_mcp_inventory(internal_manager, mcp_manager)
 
@@ -223,6 +225,26 @@ def create_workflows_registry(
             resolved_path,
             mcp_inventory,
         )
+
+        # Fall back to agent-definition evaluation when the name is an agent,
+        # so `gobby workflows check <agent>` lints agent-level tool gates.
+        if not eval_result.valid and any(i.code == "WORKFLOW_NOT_FOUND" for i in eval_result.items):
+            agent_row = _def_manager.get_by_name(name) if _def_manager is not None else None
+            if agent_row is not None and agent_row.workflow_type == "agent":
+                import json as _json
+
+                from gobby.workflows.definitions import AgentDefinitionBody
+
+                try:
+                    body = _json.loads(agent_row.definition_json)
+                    body.setdefault("name", agent_row.name)
+                    agent = AgentDefinitionBody.model_validate(body)
+                except ValueError as e:
+                    logger.warning(f"Agent definition '{name}' failed to parse: {e}")
+                else:
+                    agent_result = await evaluate_agent_definition(agent, mcp_inventory)
+                    return agent_result.to_dict()
+
         return eval_result.to_dict()
 
     @registry.tool(

@@ -13,7 +13,13 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
+from gobby.workflows.definitions import (
+    AgentDefinitionBody,
+    PipelineDefinition,
+    WorkflowDefinition,
+    WorkflowStep,
+)
+from gobby.workflows.native_tools import is_known_native_tool
 
 if TYPE_CHECKING:
     from gobby.workflows.loader import WorkflowLoader
@@ -223,6 +229,81 @@ async def evaluate_workflow(
     return result
 
 
+async def evaluate_agent_definition(
+    agent: AgentDefinitionBody,
+    mcp_manager: MCPInventoryProtocol | None = None,
+) -> WorkflowEvaluation:
+    """
+    Evaluate an agent definition's tool gates and inline step workflow.
+
+    Lints the agent-level blocked_tools/blocked_mcp_tools (enforced at runtime
+    for every step) and, when the agent carries inline steps, runs the full
+    structural and semantic step checks over them.
+
+    Args:
+        agent: Parsed agent definition body.
+        mcp_manager: Optional MCP inventory for semantic MCP tool checks.
+
+    Returns:
+        WorkflowEvaluation with findings.
+    """
+    result = WorkflowEvaluation(valid=True, workflow_name=agent.name)
+    result.workflow_type = "agent"
+
+    check_agent_tool_gates(agent, result)
+
+    if agent.steps:
+        inline = WorkflowDefinition(
+            name=f"{agent.name} (inline steps)",
+            type="step",
+            steps=agent.steps,
+            variables=agent.step_variables or {},
+            exit_condition=agent.exit_condition,
+        )
+        # check_agent_tool_gates already covered inline step gates; the
+        # structural pass re-adds them, so dedupe by (code, message).
+        seen = {(i.code, i.message) for i in result.items}
+        inline_result = WorkflowEvaluation(valid=True, workflow_name=inline.name)
+        _check_structure(inline, inline_result)
+        await _check_semantics(inline, inline_result, mcp_manager)
+        result.items.extend(i for i in inline_result.items if (i.code, i.message) not in seen)
+        _build_step_trace(inline, result)
+        _build_lifecycle_path(inline, result)
+
+    if mcp_manager is not None:
+        # Agent-level blocked_mcp_tools against the live inventory (fail-open).
+        try:
+            available_servers = set(mcp_manager.get_available_servers())
+            tools_by_server = await mcp_manager.list_tools()
+            server_tools = {
+                server_name: {t.get("name", "") for t in tools if isinstance(t, dict)}
+                for server_name, tools in tools_by_server.items()
+            }
+            _check_mcp_tool_refs(
+                f"Agent '{agent.name}'",
+                "blocked_mcp_tools",
+                agent.blocked_mcp_tools,
+                available_servers,
+                server_tools,
+                result,
+                level="error",
+            )
+        except (ConnectionError, TimeoutError, RuntimeError, OSError) as e:
+            result.items.append(
+                EvaluationItem(
+                    layer="semantics",
+                    level="warning",
+                    code="MCP_QUERY_FAILED",
+                    message=f"Failed to query MCP servers: {e}",
+                )
+            )
+
+    if any(i.level == "error" for i in result.items):
+        result.valid = False
+
+    return result
+
+
 def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation) -> None:
     """Run structural checks on a workflow definition."""
     steps = definition.steps
@@ -343,6 +424,10 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                         )
                     )
 
+    # Tool gate reference validation (typo in a blocked list fails open)
+    for step in steps:
+        check_step_tool_gates(step, result)
+
     # Tool restriction conflicts
     for step in steps:
         if isinstance(step.allowed_tools, list) and step.blocked_tools:
@@ -370,6 +455,99 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                         detail={"step": step.name, "mcp_tools": sorted(overlap)},
                     )
                 )
+
+
+def check_step_tool_gates(step: WorkflowStep, result: WorkflowEvaluation) -> None:
+    """Statically validate a step's tool gate references.
+
+    Runtime gate matching is exact string membership, so an unrecognized name
+    in a blocked list is a security control that silently never fires
+    (fail-open, error) while one in an allowed list merely over-restricts
+    (fail-closed, warning).
+    """
+    owner = f"Step '{step.name}'"
+    _check_native_tool_refs(owner, "blocked_tools", step.blocked_tools, result, blocking=True)
+    _check_native_tool_refs(owner, "allowed_tools", step.allowed_tools, result, blocking=False)
+    _check_mcp_ref_format(owner, "blocked_mcp_tools", step.blocked_mcp_tools, result, blocking=True)
+    _check_mcp_ref_format(
+        owner, "allowed_mcp_tools", step.allowed_mcp_tools, result, blocking=False
+    )
+
+
+def check_agent_tool_gates(agent: AgentDefinitionBody, result: WorkflowEvaluation) -> None:
+    """Statically validate an agent definition's tool gates.
+
+    Covers the agent-level ``blocked_tools``/``blocked_mcp_tools`` (enforced
+    for every step at runtime) plus each inline step's gates.
+    """
+    owner = f"Agent '{agent.name}'"
+    _check_native_tool_refs(owner, "blocked_tools", agent.blocked_tools, result, blocking=True)
+    _check_mcp_ref_format(
+        owner, "blocked_mcp_tools", agent.blocked_mcp_tools, result, blocking=True
+    )
+    for step in agent.steps or []:
+        check_step_tool_gates(step, result)
+
+
+def _check_native_tool_refs(
+    owner: str,
+    field_name: str,
+    tools: list[str] | str,
+    result: WorkflowEvaluation,
+    *,
+    blocking: bool,
+) -> None:
+    """Flag native tool gate entries the catalog does not recognize."""
+    if not isinstance(tools, list):
+        return
+    for ref in tools:
+        if ":" in ref or is_known_native_tool(ref):
+            continue
+        consequence = (
+            "the block never fires (fail-open)" if blocking else "the tool is never allowed"
+        )
+        result.items.append(
+            EvaluationItem(
+                layer="structure",
+                level="error" if blocking else "warning",
+                code="UNKNOWN_NATIVE_TOOL",
+                message=(
+                    f"{owner} {field_name} references unknown native tool '{ref}' — {consequence}"
+                ),
+                detail={"owner": owner, "field": field_name, "ref": ref},
+            )
+        )
+
+
+def _check_mcp_ref_format(
+    owner: str,
+    field_name: str,
+    tools: list[str] | str,
+    result: WorkflowEvaluation,
+    *,
+    blocking: bool,
+) -> None:
+    """Flag MCP gate entries that can never match runtime 'server:tool' keys."""
+    if not isinstance(tools, list):
+        return
+    for ref in tools:
+        if ":" in ref:
+            continue
+        consequence = (
+            "the block never fires (fail-open)" if blocking else "the tool is never allowed"
+        )
+        result.items.append(
+            EvaluationItem(
+                layer="structure",
+                level="error" if blocking else "warning",
+                code="MALFORMED_MCP_TOOL_REF",
+                message=(
+                    f"{owner} {field_name} entry '{ref}' is not 'server:tool' or "
+                    f"'server:*' — {consequence}"
+                ),
+                detail={"owner": owner, "field": field_name, "ref": ref},
+            )
+        )
 
 
 def _bfs_reachable(
@@ -456,23 +634,25 @@ async def _check_semantics(
         return
 
     for step in definition.steps:
-        # Check allowed_mcp_tools
+        # Check allowed_mcp_tools (unknown ref over-restricts: fail-closed)
         _check_mcp_tool_refs(
-            step.name,
+            f"Step '{step.name}'",
             "allowed_mcp_tools",
             step.allowed_mcp_tools,
             available_servers,
             server_tools,
             result,
+            level="warning",
         )
-        # Check blocked_mcp_tools
+        # Check blocked_mcp_tools (unknown ref never blocks: fail-open)
         _check_mcp_tool_refs(
-            step.name,
+            f"Step '{step.name}'",
             "blocked_mcp_tools",
             step.blocked_mcp_tools,
             available_servers,
             server_tools,
             result,
+            level="error",
         )
 
         # Check on_enter call_mcp_tool actions
@@ -510,14 +690,19 @@ async def _check_semantics(
 
 
 def _check_mcp_tool_refs(
-    step_name: str,
+    owner: str,
     field_name: str,
     tools: list[str] | str,
     available_servers: set[str],
     server_tools: dict[str, set[str]],
     result: WorkflowEvaluation,
+    level: str = "warning",
 ) -> None:
-    """Check MCP tool references in allowed/blocked lists."""
+    """Check MCP tool references in allowed/blocked lists.
+
+    Pass level="error" for blocked lists: an unknown ref there means the
+    block never matches at runtime (fail-open).
+    """
     if tools == "all" or not isinstance(tools, list):
         return
 
@@ -532,20 +717,20 @@ def _check_mcp_tool_refs(
             result.items.append(
                 EvaluationItem(
                     layer="semantics",
-                    level="warning",
+                    level=level,
                     code="UNKNOWN_MCP_SERVER",
-                    message=f"Step '{step_name}' {field_name} references unknown server '{server}'",
-                    detail={"step": step_name, "server": server, "ref": ref},
+                    message=f"{owner} {field_name} references unknown server '{server}'",
+                    detail={"owner": owner, "server": server, "ref": ref},
                 )
             )
         elif tool and tool != "*" and tool not in server_tools.get(server, set()):
             result.items.append(
                 EvaluationItem(
                     layer="semantics",
-                    level="warning",
+                    level=level,
                     code="UNKNOWN_MCP_TOOL",
-                    message=f"Step '{step_name}' {field_name} references unknown tool '{ref}'",
-                    detail={"step": step_name, "server": server, "tool": tool, "ref": ref},
+                    message=f"{owner} {field_name} references unknown tool '{ref}'",
+                    detail={"owner": owner, "server": server, "tool": tool, "ref": ref},
                 )
             )
 
