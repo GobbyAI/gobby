@@ -17,8 +17,8 @@ use crate::session::{CompileState, ResearchSession};
 use crate::sources::SourceRecord;
 use crate::synthesis::{
     ArticleKind, PageWriteKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource,
-    SynthesizedPage, WritePolicy, relative_path, synthesize_article, synthesize_source_pages,
-    write_synthesized_page,
+    SynthesizedPage, WritePolicy, relative_path, resolve_article_path, synthesize_article,
+    synthesize_source_pages, write_synthesized_page,
 };
 use crate::{ScopeIdentity, WikiError};
 
@@ -164,6 +164,15 @@ pub fn compile_to_wiki_with_options(
         render_source_citations(vault_root, &source_paths)?,
     );
 
+    // Resolve the article page before building the synthesis input: a
+    // recompile of the same topic with no explicit target must land on the
+    // existing article (no slug-suffixed sibling) and feed its current body
+    // into the prompt as update-over-create context (#17635).
+    let article_page = match &target_page {
+        Some(page) => page.clone(),
+        None => resolve_article_path(vault_root, &handoff.bundle.topic, options.target_kind),
+    };
+
     let manifest_records = source_records_for_paths(vault_root, &source_paths)?;
     let synthesis_sources = handoff
         .bundle
@@ -185,7 +194,7 @@ pub fn compile_to_wiki_with_options(
         citations,
         conflicting_claims: handoff.bundle.conflicting_claims.clone(),
         missing_evidence: handoff.bundle.missing_evidence.clone(),
-        existing_page_body: existing_target_page_body(target_page.as_deref())?,
+        existing_page_body: existing_target_page_body(&article_page)?,
         aliases: options.aliases.clone(),
         extra_tags: options.extra_tags.clone(),
     };
@@ -221,7 +230,7 @@ pub fn compile_to_wiki_with_options(
         let rendered = render_bundle(&handoff.bundle);
         write_target_page(session.scope.root(), target_page, &rendered)?;
     }
-    let article = synthesize_article(vault_root, &input, target_page, &explainer)?;
+    let article = synthesize_article(vault_root, &input, article_page, &explainer)?;
     let mut pages = vec![article.clone()];
     pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);
 
@@ -275,10 +284,7 @@ fn existing_digest_page(
 /// recompile updates the page instead of regenerating it from scratch.
 /// Frontmatter is stripped: the prompt needs the prose, and metadata is
 /// re-rendered on write.
-fn existing_target_page_body(target_page: Option<&Path>) -> Result<Option<String>, WikiError> {
-    let Some(target_page) = target_page else {
-        return Ok(None);
-    };
+fn existing_target_page_body(target_page: &Path) -> Result<Option<String>, WikiError> {
     let text = match fs::read_to_string(target_page) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

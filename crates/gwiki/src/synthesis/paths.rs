@@ -163,6 +163,21 @@ pub fn slugify_unique(
     format!("{base}-{}", uuid::Uuid::new_v4().simple())
 }
 
+/// Resolve the article page path for a topic when the caller supplied no
+/// explicit target page. An existing page in the target kind's directory whose
+/// frontmatter title matches the topic is the same article: recompiles resolve
+/// back to it and update it in place instead of minting a slug-suffixed
+/// sibling (#17635, the article-side counterpart of #17596). Only genuinely
+/// different topics that slugify to the same base keep suffixing.
+pub fn resolve_article_path(vault_root: &Path, topic: &str, target_kind: ArticleKind) -> PathBuf {
+    let directory = vault_root.join(target_kind.directory());
+    let slug = slugify_unique(topic, target_kind.reserved_suffix(), |slug| {
+        let candidate = directory.join(format!("{slug}.md"));
+        candidate.exists() && !page_matches_topic(&candidate, topic)
+    });
+    directory.join(format!("{slug}.md"))
+}
+
 pub fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -212,6 +227,17 @@ pub(super) fn source_page_paths(
 /// True when the page at `page_path` is a compile-emitted stub for the source
 /// identified by `identity` (its vault-relative raw path). Unreadable or
 /// unparseable pages never match, so they keep colliding into fresh slugs.
+/// True when an existing page's frontmatter title matches the topic exactly —
+/// the article identity used by [`resolve_article_path`]. Pages whose
+/// frontmatter fails to parse never match, so they keep colliding into
+/// suffixed slugs instead of being silently overwritten.
+fn page_matches_topic(page_path: &Path, topic: &str) -> bool {
+    let Ok(markdown) = std::fs::read_to_string(page_path) else {
+        return false;
+    };
+    parse_frontmatter(&markdown).is_ok_and(|parsed| parsed.metadata.title.as_deref() == Some(topic))
+}
+
 fn page_matches_source_identity(page_path: &Path, identity: &str) -> bool {
     let Ok(markdown) = std::fs::read_to_string(page_path) else {
         return false;

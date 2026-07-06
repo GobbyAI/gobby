@@ -8,7 +8,8 @@ use super::paths::source_page_paths;
 use super::render::yaml_scalar;
 use super::{
     ArticleKind, PageWriteKind, SynthesisInput, SynthesisSource, SynthesizedPage, WritePolicy,
-    slugify_unique, synthesize_article, synthesize_source_pages, write_synthesized_page,
+    resolve_article_path, slugify_unique, synthesize_article, synthesize_source_pages,
+    write_synthesized_page,
 };
 
 fn empty_input(topic: &str, target_kind: ArticleKind) -> SynthesisInput {
@@ -105,8 +106,14 @@ fn reserved_instruction_title_never_becomes_instruction_filename() {
     let temp = tempfile::tempdir().expect("tempdir");
     let input = empty_input("Claude", ArticleKind::Concept);
 
-    let article = synthesize_article(temp.path(), &input, None, &ExplainerGeneration::Skipped)
-        .expect("article synthesized");
+    let article_path = resolve_article_path(temp.path(), "Claude", ArticleKind::Concept);
+    let article = synthesize_article(
+        temp.path(),
+        &input,
+        article_path,
+        &ExplainerGeneration::Skipped,
+    )
+    .expect("article synthesized");
 
     assert_eq!(
         article.path,
@@ -125,6 +132,59 @@ fn reserved_instruction_title_never_becomes_instruction_filename() {
 }
 
 #[test]
+fn resolve_article_path_reuses_existing_page_with_matching_title() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path().join("knowledge/topics");
+    fs::create_dir_all(&directory).expect("topics dir");
+    fs::write(
+        directory.join("durable-compile.md"),
+        "---\ntitle: Durable Compile\n---\n# Durable Compile\n",
+    )
+    .expect("existing article written");
+
+    // A recompile of the same topic resolves back to the existing article
+    // instead of minting a -2 sibling (#17635).
+    let path = resolve_article_path(temp.path(), "Durable Compile", ArticleKind::Topic);
+
+    assert_eq!(path, directory.join("durable-compile.md"));
+}
+
+#[test]
+fn resolve_article_path_suffixes_different_topic_with_same_slug() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path().join("knowledge/topics");
+    fs::create_dir_all(&directory).expect("topics dir");
+    fs::write(
+        directory.join("durable-compile.md"),
+        "---\ntitle: Durable Compile\n---\n# Durable Compile\n",
+    )
+    .expect("existing article written");
+
+    // Identity is the exact frontmatter title: a different topic that
+    // slugifies to the same base is a genuine collision and keeps suffixing.
+    let path = resolve_article_path(temp.path(), "Durable compile", ArticleKind::Topic);
+
+    assert_eq!(path, directory.join("durable-compile-2.md"));
+}
+
+#[test]
+fn resolve_article_path_treats_page_without_frontmatter_as_collision() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let directory = temp.path().join("knowledge/topics");
+    fs::create_dir_all(&directory).expect("topics dir");
+    fs::write(
+        directory.join("durable-compile.md"),
+        "# Durable Compile\n\nHand-authored page without frontmatter.\n",
+    )
+    .expect("existing page written");
+
+    // A page whose identity cannot be read is never claimed for overwrite.
+    let path = resolve_article_path(temp.path(), "Durable Compile", ArticleKind::Topic);
+
+    assert_eq!(path, directory.join("durable-compile-2.md"));
+}
+
+#[test]
 fn explicit_reserved_target_page_is_refused() {
     let temp = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(temp.path().join("knowledge/concepts")).expect("create concepts dir");
@@ -133,7 +193,7 @@ fn explicit_reserved_target_page_is_refused() {
     let error = synthesize_article(
         temp.path(),
         &input,
-        Some(temp.path().join("knowledge/concepts/claude.md")),
+        temp.path().join("knowledge/concepts/claude.md"),
         &ExplainerGeneration::Skipped,
     )
     .expect_err("reserved target page refused");
@@ -361,8 +421,14 @@ fn frontmatter_renders_aliases_and_extra_tags() {
     input.aliases = vec!["gcode".to_string(), "GCode".to_string()];
     input.extra_tags = vec!["entity".to_string()];
 
-    let article = synthesize_article(temp.path(), &input, None, &ExplainerGeneration::Skipped)
-        .expect("article synthesized");
+    let article_path = resolve_article_path(temp.path(), "Gcode", ArticleKind::Concept);
+    let article = synthesize_article(
+        temp.path(),
+        &input,
+        article_path,
+        &ExplainerGeneration::Skipped,
+    )
+    .expect("article synthesized");
 
     assert!(
         article
@@ -397,13 +463,8 @@ fn synthesized_article_rejects_escaping_target_path() {
     );
     let target = temp.path().join("..").join(outside_name);
 
-    let error = synthesize_article(
-        temp.path(),
-        &input,
-        Some(target),
-        &ExplainerGeneration::Skipped,
-    )
-    .expect_err("escaping target must be rejected");
+    let error = synthesize_article(temp.path(), &input, target, &ExplainerGeneration::Skipped)
+        .expect_err("escaping target must be rejected");
 
     assert!(matches!(
         error,

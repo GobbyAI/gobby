@@ -455,6 +455,76 @@ fn recompile_updates_source_stub_pages_in_place() {
 }
 
 #[test]
+fn recompile_without_target_page_updates_article_in_place() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "First compile evidence.\n").expect("note written");
+    let request = || CompileRequest {
+        topic: "Durable Compile".to_string(),
+        outline: vec!["Overview".to_string()],
+        target_page: None,
+        write_intent: true,
+    };
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let first = compile_to_wiki(&mut session, request()).expect("first compile succeeded");
+    assert_eq!(
+        first.article_path,
+        scope.root().join("knowledge/topics/durable-compile.md")
+    );
+
+    std::fs::write(&note_path, "Recompiled evidence.\n").expect("note rewritten");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let outcome = compile_to_wiki(&mut session, request()).expect("recompile succeeded");
+
+    // The recompile resolves the article written by the first compile and
+    // updates it in place — no -2 suffixed sibling article (#17635).
+    assert_eq!(outcome.article_path, first.article_path);
+    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/topics"))
+        .expect("topics dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, vec!["durable-compile.md".to_string()]);
+    // Resolving the existing page also feeds its body into the synthesis
+    // prompt as update-over-create context.
+    assert!(
+        outcome
+            .prompt
+            .user
+            .contains("update it rather than starting over"),
+        "{}",
+        outcome.prompt.user
+    );
+}
+
+#[test]
+fn recompile_without_target_page_requires_write_intent() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "First compile evidence.\n").expect("note written");
+    let request = |write_intent: bool| CompileRequest {
+        topic: "Durable Compile".to_string(),
+        outline: vec!["Overview".to_string()],
+        target_page: None,
+        write_intent,
+    };
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    compile_to_wiki(&mut session, request(true)).expect("first compile succeeded");
+
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let error = compile_to_wiki(&mut session, request(false))
+        .expect_err("recompile without write intent fails loud");
+
+    // Resolving to the existing article keeps the merge-intent contract: the
+    // overwrite fails loud instead of silently minting a -2 sibling (#17635).
+    assert_eq!(error.code(), "invalid_input");
+}
+
+#[test]
 fn recompile_carries_existing_target_body_into_prompt() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

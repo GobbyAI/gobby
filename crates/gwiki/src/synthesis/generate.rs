@@ -4,8 +4,7 @@ use crate::WikiError;
 use crate::explainer::{CitationTarget, ExplainerGeneration, ExplainerReport, ground_explainer};
 
 use super::paths::{
-    ensure_synthesized_path_inside_vault, relative_path, slugify_unique, source_links,
-    source_page_paths, wiki_link,
+    ensure_synthesized_path_inside_vault, relative_path, source_links, source_page_paths, wiki_link,
 };
 use super::render::{
     FrontmatterFields, render_frontmatter, render_list_section, render_source_excerpts,
@@ -15,16 +14,13 @@ use super::types::{ArticleKind, SynthesisInput, SynthesizedPage};
 pub fn synthesize_article(
     vault_root: &Path,
     input: &SynthesisInput,
-    target_page: Option<PathBuf>,
+    article_path: PathBuf,
     explainer: &ExplainerGeneration,
 ) -> Result<SynthesizedPage, WikiError> {
-    let path = target_page.unwrap_or_else(|| {
-        let directory = vault_root.join(input.target_kind.directory());
-        let slug = slugify_unique(&input.topic, input.target_kind.reserved_suffix(), |slug| {
-            directory.join(format!("{slug}.md")).exists()
-        });
-        directory.join(format!("{slug}.md"))
-    });
+    // Callers resolve the path up front (explicit target page or
+    // `resolve_article_path`) so recompiles can feed the existing page body
+    // into the synthesis prompt before this point.
+    let path = article_path;
     ensure_synthesized_path_inside_vault(vault_root, &path, "article_path")?;
 
     let source_paths = source_page_paths(vault_root, &path, &input.accepted_sources);

@@ -6,7 +6,8 @@ mod write;
 
 pub use generate::{synthesize_article, synthesize_source_pages};
 pub use paths::{
-    ensure_synthesized_path_inside_vault, relative_path, slugify, slugify_unique, wiki_link,
+    ensure_synthesized_path_inside_vault, relative_path, resolve_article_path, slugify,
+    slugify_unique, wiki_link,
 };
 pub use types::{
     ArticleKind, PageWriteKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource,
