@@ -242,12 +242,19 @@ fn render_knowledge_index(
     }
     for record in sources {
         let title = record.title.as_deref().unwrap_or(&record.location);
-        let digest = vault_root.join("knowledge/sources").join(&record.id);
+        // Link the digest page only when it exists on disk: manifest entries
+        // whose digests were purged or compiled under another page name would
+        // otherwise regenerate as guaranteed-broken wikilinks on every rebuild.
+        let digest = crate::paths::derived_markdown_path(record)
+            .ok()
+            .filter(|relative| vault_root.join(relative).is_file());
+        let label = match digest {
+            Some(relative) => wiki_link(vault_root, &vault_root.join(relative), title),
+            None => title.to_string(),
+        };
         markdown.push_str(&format!(
-            "- {} — {} {}\n",
-            wiki_link(vault_root, &digest, title),
-            record.kind,
-            record.location
+            "- {label} — {} {}\n",
+            record.kind, record.location
         ));
     }
     markdown
@@ -770,6 +777,16 @@ mod tests {
             .with_title("Apple"),
         )
         .expect("apple registered");
+        write_page(
+            root,
+            &format!("knowledge/sources/{}.md", zebra.id),
+            &page("Zebra", "Zebra digest."),
+        );
+        write_page(
+            root,
+            &format!("knowledge/sources/{}.md", apple.id),
+            &page("Apple", "Apple digest."),
+        );
 
         regenerate(root, &ScopeIdentity::global()).expect("regenerate");
 
@@ -781,6 +798,55 @@ mod tests {
         assert!(first < second, "{knowledge}");
         assert!(
             knowledge.contains(&format!("knowledge/sources/{}", apple.id)),
+            "{knowledge}"
+        );
+    }
+
+    #[test]
+    fn knowledge_index_skips_links_for_missing_digest_pages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let digested = SourceManifest::register(
+            root,
+            SourceDraft::new(
+                "raw/research/digested.md",
+                SourceKind::Text,
+                "unix-ms:1751500000000",
+                b"digested".to_vec(),
+            )
+            .with_title("Digested"),
+        )
+        .expect("digested registered");
+        let purged = SourceManifest::register(
+            root,
+            SourceDraft::new(
+                "raw/research/purged.md",
+                SourceKind::Text,
+                "unix-ms:1751500000001",
+                b"purged".to_vec(),
+            )
+            .with_title("Purged"),
+        )
+        .expect("purged registered");
+        write_page(
+            root,
+            &format!("knowledge/sources/{}.md", digested.id),
+            &page("Digested", "Digest body."),
+        );
+
+        regenerate(root, &ScopeIdentity::global()).expect("regenerate");
+
+        let knowledge = fs::read_to_string(root.join("knowledge/INDEX.md")).expect("INDEX.md");
+        assert!(
+            knowledge.contains(&format!("[[knowledge/sources/{}|Digested]]", digested.id)),
+            "{knowledge}"
+        );
+        assert!(
+            !knowledge.contains(&format!("knowledge/sources/{}", purged.id)),
+            "{knowledge}"
+        );
+        assert!(
+            knowledge.contains("- Purged — text raw/research/purged.md"),
             "{knowledge}"
         );
     }
