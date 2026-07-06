@@ -299,6 +299,14 @@ class TestInconsistentVerdictReconciliation:
             ({"status": "invalid", "blocking_reasons": [404]}, False),
             ({"status": "INVALID", "blocking_reasons": []}, True),  # case-insensitive
             ({"status": "invalid", "blocking_reasons": ["missing 404 test"]}, False),
+            (
+                {
+                    "status": "invalid",
+                    "feedback": "Verified all validation criteria are satisfied.",
+                    "blocking_reasons": ["missing 404 test"],
+                },
+                True,
+            ),
             ({"status": "valid", "blocking_reasons": []}, False),
             ({"status": "pending", "blocking_reasons": []}, False),  # only invalid targeted
         ],
@@ -331,6 +339,68 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_success_feedback_invalid_with_reasons_is_revalidated_once(
+        self,
+        config: TaskValidationConfig,
+        mock_llm: MagicMock,
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": "Verified all validation criteria are satisfied.",
+                "blocking_reasons": ["Missing regression coverage."],
+            },
+            {
+                "status": "valid",
+                "feedback": "Confirmed complete.",
+                "blocking_reasons": [],
+            },
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
+        assert result.feedback == "Confirmed complete."
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_success_feedback_invalid_empty_reroll_becomes_pending(
+        self,
+        config: TaskValidationConfig,
+        mock_llm: MagicMock,
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": "All acceptance criteria are met.",
+                "blocking_reasons": ["Missing regression coverage."],
+            },
+            None,
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "pending"
+        assert result.blocking_reasons == [
+            "Validation response did not name unmet criteria or failing gates"
+        ]
         assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio

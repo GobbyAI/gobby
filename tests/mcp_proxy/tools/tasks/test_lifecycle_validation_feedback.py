@@ -235,9 +235,25 @@ def test_zero_failure_summaries_do_not_admit_failure(feedback: str) -> None:
 @pytest.mark.parametrize(
     "feedback",
     [
+        "All acceptance criteria are met. The 5 previously failing tests now pass.",
+        "Verified all validation criteria are satisfied; formerly failed checks are now green.",
+        "All acceptance criteria are met. Prior failing tests have been fixed.",
+    ],
+)
+def test_resolved_regression_summaries_do_not_admit_failure(feedback: str) -> None:
+    """Resolved-regression wording is success context, not failure evidence."""
+    assert matched_successful_validation_pattern(feedback) is not None
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
         "tests: 9 passed, 1 failed",
         "Validation summary: 2 failures remain.",
         "Tests are failing in the required check.",
+        "Tests are still failing in the required check.",
         "The validation gate did not pass.",
     ],
 )
@@ -327,6 +343,50 @@ async def test_conflicting_success_and_failure_feedback_prefers_failure() -> Non
         validation_status="invalid",
         validation_feedback=feedback,
     )
+
+
+@pytest.mark.asyncio
+async def test_invalid_result_with_blocking_reasons_preserves_close_metadata() -> None:
+    """Invalid close-layer validation surfaces blocking reasons to the caller."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    blocking_reasons = ["pytest regression still fails", "lint gate failed"]
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="invalid",
+                feedback="Validation did not pass.",
+                blocking_reasons=blocking_reasons,
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is False
+    assert result.message == (
+        "Validation did not pass.\n"
+        "Blocking reasons: pytest regression still fails; lint gate failed"
+    )
+    assert result.extra == {
+        "validation_status": "invalid",
+        "blocking_reasons": blocking_reasons,
+    }
 
 
 @pytest.mark.asyncio
@@ -421,6 +481,49 @@ async def test_invalid_llm_result_with_negated_failure_success_feedback_is_promo
     feedback = (
         "All acceptance criteria are met. The Changed File Manifest confirms source, test, "
         "and config changes across all required areas. No missing gates or unmet criteria."
+    )
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="invalid",
+                feedback=feedback,
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is True
+    update_task.assert_called_once_with(
+        "task-1",
+        validation_status="valid",
+        validation_feedback=feedback,
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_result_with_resolved_regression_success_feedback_is_promoted() -> None:
+    """Retrospective fixed-regression wording does not block explicit success feedback."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    feedback = (
+        "All acceptance criteria are met. The 5 previously failing tests now pass "
+        "under GOBBY_TEST_PROTECT=1."
     )
     validator = SimpleNamespace(
         validate_task=AsyncMock(

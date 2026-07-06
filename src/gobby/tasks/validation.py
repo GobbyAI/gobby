@@ -23,6 +23,7 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks._validation_feedback import matched_successful_validation_pattern
 from gobby.tasks.validation_evidence import (
     build_diff_validation_evidence,
     build_file_context_evidence,
@@ -641,27 +642,23 @@ def _validation_result_from_data(result_data: dict[str, Any]) -> ValidationResul
 
 
 def _is_unsupported_reject(result_data: dict[str, Any]) -> bool:
-    """Detect the inconsistent-verdict hallucination: an ``invalid`` status that
-    lists no blocking reasons.
-
-    The validation prompt requires a non-empty ``blocking_reasons`` list for any
-    non-``valid`` verdict, so an ``invalid`` that names none is internally
-    contradictory and not actionable (the model typically affirms success in
-    ``feedback`` yet stamps a reject). Only the unsupported ``invalid`` case is
-    targeted — reasoned rejects (non-empty ``blocking_reasons``) are never
-    second-guessed, keeping reconciliation symmetric and unbiased toward
-    ``valid``.
-    """
+    """Detect contradictory ``invalid`` verdicts that should be revalidated."""
     if str(result_data.get("status", "")).strip().lower() != "invalid":
         return False
+    feedback = result_data.get("feedback")
+    success_feedback = (
+        matched_successful_validation_pattern(feedback) is not None
+        if isinstance(feedback, str)
+        else False
+    )
     reasons = result_data.get("blocking_reasons")
     if isinstance(reasons, list):
-        return not _coerce_blocking_reasons(reasons)
+        return not _coerce_blocking_reasons(reasons) or success_feedback
     if isinstance(reasons, str):
-        return not reasons.strip()
+        return not reasons.strip() or success_feedback
     # Missing or null field: treat as "no reasons given" so the unsupported
     # reject is re-validated rather than trusted.
-    return reasons is None
+    return reasons is None or success_feedback
 
 
 class TaskValidator:
@@ -849,16 +846,13 @@ class TaskValidator:
                     status="pending", feedback="Validation failed: Empty response from LLM"
                 )
 
-            # Defense against inconsistent verdicts: an ``invalid`` that names no
-            # blocking reasons is the hallucination signature (the model affirms
-            # success in ``feedback`` yet stamps a reject). Such a verdict is not
-            # actionable, so re-validate exactly once with an independent sample.
-            # Reasoned rejects are never re-rolled, so this never biases toward
-            # ``valid``.
+            # Defense against inconsistent verdicts: re-validate an ``invalid``
+            # that lacks usable reasons, or one whose feedback explicitly says
+            # all validation criteria passed.
             if _is_unsupported_reject(result_data):
                 logger.warning(
-                    "Task %s validation returned an unsupported 'invalid' verdict with no "
-                    "blocking reasons; re-validating once.",
+                    "Task %s validation returned a contradictory 'invalid' verdict; "
+                    "re-validating once.",
                     task_id,
                 )
                 reroll = await self.llm_service.call_json_feature(
@@ -873,8 +867,8 @@ class TaskValidator:
                     return ValidationResult(
                         status="pending",
                         feedback=(
-                            "Validation inconclusive: unsupported invalid verdict named no "
-                            "blocking reasons and reroll returned no payload"
+                            "Validation inconclusive: contradictory invalid verdict "
+                            "reroll returned no payload"
                         ),
                         blocking_reasons=[
                             "Validation response did not name unmet criteria or failing gates"
