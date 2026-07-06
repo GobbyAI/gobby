@@ -6,6 +6,7 @@ Creates and caches TracerProvider, MeterProvider, and LoggerProvider.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -22,6 +23,8 @@ from gobby.telemetry.exporters import create_exporters
 if TYPE_CHECKING:
     from gobby.storage.spans import SpanStorage
     from gobby.telemetry.config import TelemetrySettings
+
+logger = logging.getLogger(__name__)
 
 # Globals for lazy caching
 _TRACER_PROVIDER: TracerProvider | None = None
@@ -109,9 +112,16 @@ def shutdown_providers() -> None:
         _SPAN_STORAGE_EXPORTER_REGISTERED = False
 
     if tracer_provider is not None:
-        tracer_provider.shutdown()
+        _shutdown_provider("tracer", tracer_provider.shutdown)
     if meter_provider is not None:
-        meter_provider.shutdown()
+        _shutdown_provider("meter", meter_provider.shutdown)
     if logger_provider is not None:
         # OpenTelemetry exposes shutdown with a broader callable shape than this sync path needs.
-        cast(Callable[[], None], logger_provider.shutdown)()
+        _shutdown_provider("logger", cast(Callable[[], None], logger_provider.shutdown))
+
+
+def _shutdown_provider(provider_name: str, shutdown: Callable[[], None]) -> None:
+    try:
+        shutdown()
+    except Exception:
+        logger.exception("Failed to shut down %s telemetry provider", provider_name)

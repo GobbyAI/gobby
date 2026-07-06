@@ -100,6 +100,30 @@ def test_task_summary_coalesces_explicit_none_list_fields() -> None:
     assert payload["additional_skills"] == []
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("labels", "bug"),
+        ("additional_skills", ("code-review",)),
+    ],
+)
+def test_task_summary_rejects_non_list_fields(field_name: str, value: object) -> None:
+    list_fields: dict[str, object] = {"labels": [], "additional_skills": []}
+    list_fields[field_name] = value
+    task = SimpleNamespace(
+        id="03940009-0faa-4d80-9b96-289df7f44431",
+        seq_num=17428,
+        title="Reject non-list fields",
+        task_type="bug",
+        category="code",
+        priority=1,
+        **list_fields,
+    )
+
+    with pytest.raises(TypeError, match=field_name):
+        task_summary_payload(task, dependencies={})
+
+
 def test_task_summary_preserves_attribute_fields_missing_from_to_dict() -> None:
     task = SimpleNamespace(
         id="03940009-0faa-4d80-9b96-289df7f44431",

@@ -45,11 +45,18 @@ BEGIN
     IF value IS NULL THEN
         RETURN TRUE;
     END IF;
-    PERFORM value::UUID;
-    RETURN TRUE;
-EXCEPTION WHEN invalid_text_representation THEN
-    RETURN FALSE;
-END
+
+    IF value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        RETURN TRUE;
+    END IF;
+
+    BEGIN
+        PERFORM value::UUID;
+        RETURN TRUE;
+    EXCEPTION WHEN invalid_text_representation THEN
+        RETURN FALSE;
+    END;
+END;
 $$;
 
 DO $$

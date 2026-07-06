@@ -255,6 +255,13 @@ def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
             "with the offending column names (see 305_uuid_completion in "
             "git history for the reference pattern)"
         )
+        if path.name == "306_reconcile_live_hub_schema_drift.sql":
+            normalized = _normalize_sql_whitespace(content)
+            regex_fast_path = (
+                "value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'"
+            )
+            assert regex_fast_path in normalized
+            assert normalized.index(regex_fast_path) < normalized.index("PERFORM value::UUID")
 
 
 def test_postgres_baseline_version_is_flattened_to_305() -> None:

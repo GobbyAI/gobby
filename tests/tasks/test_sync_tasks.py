@@ -21,7 +21,11 @@ def _session_id(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gobby-sync-test-session:{name}"))
 
 
-def _github_issue_task_id(issue_num: int) -> str:
+def _github_issue_task_id(project_id: str, issue_num: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_id}/github/owner/repo/issues/{issue_num}"))
+
+
+def _legacy_normalized_github_issue_task_id(issue_num: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"owner/repo/issues/{issue_num}"))
 
 
@@ -896,9 +900,9 @@ class TestImportFromGitHubIssues:
 
         assert result["success"] is True
         assert result["count"] == 2
-        assert _github_issue_task_id(1) in result["imported"]
-        assert _github_issue_task_id(2) in result["imported"]
-        task = sync_manager.task_manager.get_task(_github_issue_task_id(1))
+        assert _github_issue_task_id(sample_project["id"], 1) in result["imported"]
+        assert _github_issue_task_id(sample_project["id"], 2) in result["imported"]
+        task = sync_manager.task_manager.get_task(_github_issue_task_id(sample_project["id"], 1))
         assert task.github_repo == "owner/repo"
         assert task.github_issue_number == 1
 
@@ -958,7 +962,7 @@ class TestImportFromGitHubIssues:
 
         # Should update, not import
         assert result2["count"] == 0
-        assert _github_issue_task_id(1) in result2["imported"]
+        assert _github_issue_task_id(sample_project["id"], 1) in result2["imported"]
         assert "updated 1 existing" in result2["message"]
 
     @pytest.mark.asyncio
@@ -1050,6 +1054,113 @@ class TestImportFromGitHubIssues:
         assert updated.title == "Legacy Updated"
         assert updated.github_repo == "owner/repo"
         assert updated.github_issue_number == 8
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_issues_updates_current_project_legacy_normalized_id(
+        self, sync_manager, sample_project
+    ):
+        """Test import updates old normalized-ID rows only in the requested project."""
+        repo_url = "https://github.com/owner/repo"
+        legacy_task_id = _legacy_normalized_github_issue_task_id(9)
+        existing = sync_manager.task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Legacy normalized task",
+            description="Original body",
+        )
+        sync_manager.db.execute(
+            "UPDATE tasks SET id = %s WHERE id = %s",
+            (legacy_task_id, existing.id),
+        )
+        issues_json = json.dumps(
+            [
+                {
+                    "number": 9,
+                    "title": "Legacy Normalized Updated",
+                    "body": "Updated body",
+                    "labels": [],
+                    "createdAt": "2023-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),
+                MagicMock(returncode=0, stdout=issues_json),
+            ]
+
+            result = await sync_manager.import_from_github_issues(
+                repo_url,
+                project_id=sample_project["id"],
+            )
+
+        assert result["success"] is True
+        assert result["count"] == 0
+        assert result["imported"] == [legacy_task_id]
+        updated = sync_manager.task_manager.get_task(legacy_task_id)
+        assert updated.title == "Legacy Normalized Updated"
+        assert updated.github_repo == "owner/repo"
+        assert updated.github_issue_number == 9
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_issues_ignores_legacy_id_in_other_project(
+        self, sync_manager, sample_project
+    ):
+        """Test legacy ID fallback is scoped to the requested project."""
+        other_project = LocalProjectManager(sync_manager.db).create(
+            name="other-project",
+            repo_path="/tmp/other-project",
+            github_url="https://github.com/other/repo",
+        )
+        legacy_task_id = _legacy_normalized_github_issue_task_id(10)
+        other_task = sync_manager.task_manager.create_task(
+            project_id=other_project.id,
+            title="Other project legacy task",
+            description="Other body",
+        )
+        sync_manager.db.execute(
+            "UPDATE tasks SET id = %s WHERE id = %s",
+            (legacy_task_id, other_task.id),
+        )
+        issues_json = json.dumps(
+            [
+                {
+                    "number": 10,
+                    "title": "Current project issue",
+                    "body": "Current body",
+                    "labels": [],
+                    "createdAt": "2023-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),
+                MagicMock(returncode=0, stdout=issues_json),
+            ]
+
+            result = await sync_manager.import_from_github_issues(
+                "https://github.com/owner/repo",
+                project_id=sample_project["id"],
+            )
+
+        expected_task_id = _github_issue_task_id(sample_project["id"], 10)
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["imported"] == [expected_task_id]
+
+        current_project_task = sync_manager.task_manager.get_task(expected_task_id)
+        assert current_project_task.title == "Current project issue"
+        assert current_project_task.project_id == sample_project["id"]
+
+        other_project_task = sync_manager.task_manager.get_task(legacy_task_id)
+        assert other_project_task.title == "Other project legacy task"
+        assert other_project_task.project_id == other_project.id
+        assert other_project_task.github_repo is None
+        assert other_project_task.github_issue_number is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration

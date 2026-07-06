@@ -95,9 +95,13 @@ def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str 
     return None
 
 
-def _github_issue_uuid_seed(owner: str, repo: str, issue_num: int) -> str:
+def _legacy_github_issue_uuid_seed(owner: str, repo: str, issue_num: int) -> str:
     normalized_repo = repo.removesuffix(".git").lower()
     return f"{owner.lower()}/{normalized_repo}/issues/{issue_num}"
+
+
+def _github_issue_uuid_seed(project_id: str, owner: str, repo: str, issue_num: int) -> str:
+    return f"{project_id}/github/{_legacy_github_issue_uuid_seed(owner, repo, issue_num)}"
 
 
 class TaskSyncManager:
@@ -642,13 +646,17 @@ class TaskSyncManager:
                     if type(issue_num) is not int:
                         continue
 
-                    # Deterministic id keyed on normalized owner/repo/issue:
-                    # re-imports upsert the same row even if URL casing or
-                    # trailing slash differs.
+                    # Deterministic id keyed on project plus normalized owner/repo/issue.
                     task_id = str(
                         uuid.uuid5(
                             uuid.NAMESPACE_URL,
-                            _github_issue_uuid_seed(owner, repo, issue_num),
+                            _github_issue_uuid_seed(project_id, owner, repo, issue_num),
+                        )
+                    )
+                    legacy_normalized_task_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            _legacy_github_issue_uuid_seed(owner, repo, issue_num),
                         )
                     )
                     legacy_task_id = str(
@@ -678,15 +686,17 @@ class TaskSyncManager:
                         (project_id, github_repo, issue_num),
                     ).fetchone()
                     if existing is None:
-                        existing = conn.execute(
-                            "SELECT id FROM tasks WHERE id = %s",
-                            (task_id,),
-                        ).fetchone()
-                    if existing is None:
-                        existing = conn.execute(
-                            "SELECT id FROM tasks WHERE id = %s",
-                            (legacy_task_id,),
-                        ).fetchone()
+                        for candidate_task_id in (
+                            task_id,
+                            legacy_normalized_task_id,
+                            legacy_task_id,
+                        ):
+                            existing = conn.execute(
+                                "SELECT id FROM tasks WHERE project_id = %s AND id = %s",
+                                (project_id, candidate_task_id),
+                            ).fetchone()
+                            if existing is not None:
+                                break
 
                     if existing:
                         task_id = str(existing["id"])
@@ -699,7 +709,8 @@ class TaskSyncManager:
                                    updated_at=%s,
                                    github_repo=%s,
                                    github_issue_number=%s
-                             WHERE id=%s
+                             WHERE project_id=%s
+                               AND id=%s
                             """,
                             (
                                 title,
@@ -708,6 +719,7 @@ class TaskSyncManager:
                                 updated_at,
                                 github_repo,
                                 issue_num,
+                                project_id,
                                 task_id,
                             ),
                         )

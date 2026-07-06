@@ -98,3 +98,23 @@ def test_shutdown_providers() -> None:
     assert get_tracer_provider(config) is not p_trace
     assert get_meter_provider(config) is not p_meter
     assert get_logger_provider(config) is not p_logger
+
+
+def test_shutdown_providers_logs_and_continues_after_provider_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tracer_provider = MagicMock()
+    meter_provider = MagicMock()
+    logger_provider = MagicMock()
+    tracer_provider.shutdown.side_effect = RuntimeError("tracer shutdown failed")
+    providers._TRACER_PROVIDER = tracer_provider
+    providers._METER_PROVIDER = meter_provider
+    providers._LOGGER_PROVIDER = logger_provider
+
+    with caplog.at_level("ERROR", logger="gobby.telemetry.providers"):
+        shutdown_providers()
+
+    tracer_provider.shutdown.assert_called_once_with()
+    meter_provider.shutdown.assert_called_once_with()
+    logger_provider.shutdown.assert_called_once_with()
+    assert "Failed to shut down tracer telemetry provider" in caplog.text

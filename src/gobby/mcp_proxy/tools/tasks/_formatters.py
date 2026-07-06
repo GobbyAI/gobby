@@ -28,7 +28,11 @@ def _task_value(task: Any, name: str, default: Any = None) -> Any:
 
 def _task_list_value(task: Any, name: str) -> list[Any]:
     value = _task_value(task, name, [])
-    return [] if value is None else value
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    raise TypeError(f"Task field {name!r} must be a list, got {type(value).__name__}")
 
 
 def _task_dict(task: Any) -> dict[str, Any]:

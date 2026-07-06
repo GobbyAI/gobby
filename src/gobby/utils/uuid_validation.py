@@ -15,9 +15,9 @@ def parse_uuid_reference(value: object) -> uuid.UUID | None:
         return None
 
 
-def is_full_uuid(value: str | None) -> bool:
+def is_full_uuid(value: object) -> bool:
     """Return whether a value is a 36-character UUID string."""
-    if value is None or len(value) != 36:
+    if not isinstance(value, str) or len(value) != 36:
         return False
     try:
         uuid.UUID(value)

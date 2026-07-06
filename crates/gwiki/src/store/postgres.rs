@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn scope_params_returns_expected_tuple() {
+    fn wiki_scope_params_returns_expected_tuple() {
         let project_id = "018f3b18-6a80-7c18-9d43-8f21b4e89f24";
 
         assert_eq!(
