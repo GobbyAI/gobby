@@ -50,6 +50,68 @@ fn dedupes_by_canonical_identity_and_hash() {
 }
 
 #[test]
+fn supersede_location_removes_stale_records_and_their_files() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path();
+    let location = "/notes/recaptured.md";
+
+    let stale = SourceManifest::register(
+        vault,
+        SourceDraft::new(
+            location,
+            SourceKind::Markdown,
+            "2026-07-01T00:00:00Z",
+            b"first capture".to_vec(),
+        ),
+    )
+    .expect("register stale record");
+    let kept = SourceManifest::register(
+        vault,
+        SourceDraft::new(
+            location,
+            SourceKind::Markdown,
+            "2026-07-02T00:00:00Z",
+            b"second capture".to_vec(),
+        ),
+    )
+    .expect("register kept record");
+    assert_ne!(stale.id, kept.id);
+
+    let stale_raw = vault.join(format!("raw/{}.md", stale.id));
+    let stale_digest = vault.join(format!("knowledge/sources/{}.md", stale.id));
+    let stale_asset = vault.join(format!("raw/assets/{}.pdf", stale.id));
+    let kept_raw = vault.join(format!("raw/{}.md", kept.id));
+    for path in [&stale_raw, &stale_digest, &stale_asset, &kept_raw] {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, "body").expect("file");
+    }
+
+    let removed = SourceManifest::supersede_location(vault, &kept).expect("supersede stale record");
+
+    assert_eq!(
+        removed,
+        vec![
+            PathBuf::from(format!("raw/{}.md", stale.id)),
+            PathBuf::from(format!("knowledge/sources/{}.md", stale.id)),
+            PathBuf::from(format!("raw/assets/{}.pdf", stale.id)),
+        ]
+    );
+    assert!(!stale_raw.exists());
+    assert!(!stale_digest.exists());
+    assert!(!stale_asset.exists());
+    assert!(kept_raw.exists());
+    let manifest = SourceManifest::read(vault).expect("read manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].id, kept.id);
+
+    // Idempotent once the location has a single record.
+    let removed_again =
+        SourceManifest::supersede_location(vault, &kept).expect("supersede idempotent");
+    assert_eq!(removed_again, Vec::<PathBuf>::new());
+    assert!(kept_raw.exists());
+}
+
+#[test]
 fn local_file_replay_metadata_round_trips_through_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let record = SourceManifest::register(

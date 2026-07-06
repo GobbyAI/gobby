@@ -300,6 +300,49 @@ fn batch_url_ingest_accepts_successes_and_records_failures() {
 }
 
 #[test]
+fn reingesting_changed_url_supersedes_manifest_record() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let urls = vec!["https://example.test/changing".to_string()];
+    let mut store = MemoryWikiStore::default();
+
+    let first = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &urls,
+        "2026-07-01T00:00:00Z",
+        |url, fetched_at| Ok(test_snapshot(url, url, "First revision", fetched_at)),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("first ingest");
+    let old_record = first.accepted[0].result.record.clone();
+    let old_raw = temp.path().join(&first.accepted[0].result.raw_path);
+    assert!(old_raw.is_file());
+
+    let second = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &urls,
+        "2026-07-02T00:00:00Z",
+        |url, fetched_at| Ok(test_snapshot(url, url, "Second revision", fetched_at)),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("second ingest");
+    let new_record = second.accepted[0].result.record.clone();
+
+    assert_ne!(new_record.id, old_record.id);
+    assert_eq!(new_record.canonical_location, old_record.canonical_location);
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1, "single record per URL");
+    assert_eq!(manifest.entries[0].id, new_record.id);
+    assert!(!old_raw.exists(), "stale raw capture removed");
+    assert!(
+        temp.path()
+            .join(&second.accepted[0].result.raw_path)
+            .is_file()
+    );
+}
+
+#[test]
 fn batch_url_ingest_indexes_once_after_accepted_batch() {
     let temp = tempfile::tempdir().expect("tempdir");
     let urls = vec![

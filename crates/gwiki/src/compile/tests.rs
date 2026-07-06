@@ -500,6 +500,94 @@ fn recompile_without_target_page_updates_article_in_place() {
 }
 
 #[test]
+fn compile_after_recapture_emits_single_digest_without_suffix() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let vault_root = scope.root().to_path_buf();
+    let source_path = vault_root.join("recaptured-note.md");
+
+    let mut ai_source = gobby_core::config::EnvOnlySource;
+    let mut ai_context = gobby_core::ai_context::AiContext::resolve(None, &mut ai_source);
+    let options = crate::api::IngestFileOptions {
+        no_ai: true,
+        ..crate::api::IngestFileOptions::default()
+    };
+    options.apply_to_ai_context(&mut ai_context);
+
+    let scope_identity = scope.identity();
+    for (body, fetched_at) in [
+        ("# Note\n\nFirst capture body.\n", "2026-07-01T00:00:00Z"),
+        (
+            "# Note\n\nSecond capture body, changed.\n",
+            "2026-07-02T00:00:00Z",
+        ),
+    ] {
+        std::fs::write(&source_path, body).expect("write source");
+        let mut store = crate::store::MemoryWikiStore::default();
+        crate::ingest::file::ingest_path(
+            &vault_root,
+            &mut store,
+            &scope_identity,
+            &ai_context,
+            &options,
+            crate::ingest::file::LocalFileSnapshot {
+                path: &source_path,
+                fetched_at,
+            },
+            &mut crate::progress::ProgressOptions::default(),
+        )
+        .expect("ingest capture");
+    }
+
+    // Re-capturing the changed file supersedes the first record (#17644), so
+    // the compile input holds a single raw capture for the location.
+    let raw_notes: Vec<PathBuf> = std::fs::read_dir(vault_root.join("raw"))
+        .expect("raw dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "md")
+                && path.file_name().is_some_and(|name| name != "INDEX.md")
+        })
+        .collect();
+    assert_eq!(raw_notes.len(), 1, "re-capture keeps a single raw source");
+
+    let mut session = session_with_note(&scope, "Recaptured note", "raw/research/unused.md");
+    session.accepted_notes = raw_notes
+        .iter()
+        .map(|path| AcceptedResearchNote {
+            title: "Recaptured note".to_string(),
+            path: path.clone(),
+            code_citations: Vec::new(),
+            degradation: None,
+        })
+        .collect();
+
+    compile_to_wiki(
+        &mut session,
+        CompileRequest {
+            topic: "Recaptured Note Topic".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(PathBuf::from("knowledge/topics/recaptured-note.md")),
+            write_intent: true,
+        },
+    )
+    .expect("compile succeeded");
+
+    let digests: Vec<String> = std::fs::read_dir(vault_root.join("knowledge/sources"))
+        .expect("sources dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        digests.len(),
+        1,
+        "single digest page, no -2 sibling: {digests:?}"
+    );
+    assert!(!digests[0].ends_with("-2.md"), "{digests:?}");
+}
+
+#[test]
 fn recompile_without_target_page_requires_write_intent() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

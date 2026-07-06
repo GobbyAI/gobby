@@ -114,6 +114,81 @@ fn file_ingest_progress_reports_ingest_and_index_phases() {
 }
 
 #[test]
+fn reingesting_changed_file_supersedes_manifest_record() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("note-pmb.md");
+    std::fs::write(&file_path, b"# Note\n\nFirst capture body.\n").expect("write local file");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let first = ingest_path_for_test(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-07-01T00:00:00Z",
+    )
+    .expect("first ingest");
+    let old_raw = temp.path().join(&first.raw_path);
+    assert!(old_raw.is_file());
+    // Simulate a compiled digest for the first capture; the re-capture must
+    // remove it so compile cannot keep a parallel digest alive.
+    let old_digest = temp
+        .path()
+        .join(format!("knowledge/sources/{}.md", first.record.id));
+    std::fs::create_dir_all(old_digest.parent().expect("parent")).expect("digest dir");
+    std::fs::write(&old_digest, "# Note digest\n").expect("digest file");
+
+    std::fs::write(&file_path, b"# Note\n\nSecond capture body, changed.\n")
+        .expect("rewrite local file");
+    let second = ingest_path_for_test(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-07-02T00:00:00Z",
+    )
+    .expect("second ingest");
+
+    assert_ne!(second.record.id, first.record.id);
+    assert_eq!(
+        second.record.canonical_location,
+        first.record.canonical_location
+    );
+    let manifest = SourceManifest::read(temp.path()).expect("read manifest");
+    let matching: Vec<_> = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.canonical_location == second.record.canonical_location)
+        .collect();
+    assert_eq!(matching.len(), 1, "single record per location");
+    assert_eq!(matching[0].id, second.record.id);
+    assert!(!old_raw.exists(), "stale raw capture removed");
+    assert!(!old_digest.exists(), "stale digest removed");
+    assert!(temp.path().join(&second.raw_path).is_file());
+
+    // Unchanged re-ingest stays idempotent: same record, nothing superseded.
+    let third = ingest_path_for_test(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-07-03T00:00:00Z",
+    )
+    .expect("third ingest");
+    assert_eq!(third.record.id, second.record.id);
+    assert!(temp.path().join(&second.raw_path).is_file());
+}
+
+#[test]
 fn source_location_preserves_external_canonical_path() {
     let vault = tempfile::tempdir().expect("vault tempdir");
     let outside = tempfile::tempdir().expect("outside tempdir");

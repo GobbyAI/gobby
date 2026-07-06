@@ -35,10 +35,14 @@ pub(super) fn ingest_generic_file_without_index(
     let asset_path = should_store_asset(kind, bytes.len())
         .then(|| write_asset(vault_root, &record, file_name, &bytes))
         .transpose()?;
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and reproducing its original bytes keeps
+    // the immutable raw write idempotent instead of failing on a timestamp
+    // drift (#17644).
     let markdown = render_file_markdown(
         &title,
         location,
-        fetched_at,
+        &record.fetched_at,
         &record.content_hash,
         kind,
         &bytes,

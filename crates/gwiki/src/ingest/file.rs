@@ -73,6 +73,10 @@ pub fn ingest_path(
     )?;
     ingest_progress.advance(&snapshot.path.display().to_string());
     drop(ingest_progress);
+    // Re-capturing the same location with changed content supersedes the
+    // stale manifest record before indexing, so the index never sees the
+    // superseded raw capture or digest (#17644).
+    SourceManifest::supersede_location(vault_root, &result.result.record)?;
     index_after_ingest(vault_root, store, progress)?;
     Ok(result.result)
 }
@@ -103,6 +107,9 @@ pub fn ingest_stdin(
         None,
     );
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+    // A re-piped label with changed content supersedes the stale manifest
+    // record, matching `ingest_path` re-capture semantics (#17644).
+    SourceManifest::supersede_location(vault_root, &record)?;
     index_after_ingest(
         vault_root,
         store,

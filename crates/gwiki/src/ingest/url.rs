@@ -100,6 +100,11 @@ pub(crate) fn ingest_snapshot_without_index(
     .with_title(markdown_title(&title))
     .with_citation(snapshot.final_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
+    // Render with the record's stored capture time: an unchanged re-ingest
+    // dedups to the existing record, and reproducing its original bytes keeps
+    // the immutable raw write idempotent instead of failing on a timestamp
+    // drift (#17644).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_url_markdown(
         &snapshot,
         &record.canonical_location,
@@ -134,6 +139,9 @@ fn ingest_non_html_snapshot_without_index(
     .with_citation(snapshot.final_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
     let asset_path = write_asset(vault_root, &record, &title, &body)?;
+    // Reproduce the record's original bytes on unchanged re-ingest (see the
+    // HTML path above).
+    snapshot.fetched_at = record.fetched_at.clone();
     let markdown = render_non_html_url_markdown(
         &snapshot,
         &record.canonical_location,
@@ -202,7 +210,14 @@ pub(crate) fn ingest_urls_with_fetcher(
             Ok(snapshot) => {
                 let requested_url = snapshot.requested_url.clone();
                 let final_url = snapshot.final_url.clone();
-                match ingest_snapshot_without_index(vault_root, snapshot) {
+                // Re-ingesting a URL whose content changed supersedes the
+                // stale manifest record, matching local-file re-capture
+                // semantics (#17644). Refresh performs its own supersede and
+                // calls `ingest_snapshot_without_index` directly.
+                match ingest_snapshot_without_index(vault_root, snapshot).and_then(|result| {
+                    SourceManifest::supersede_location(vault_root, &result.record)?;
+                    Ok(result)
+                }) {
                     Ok(result) => accepted.push(AcceptedUrlIngest {
                         requested_url,
                         final_url,

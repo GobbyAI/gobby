@@ -146,6 +146,57 @@ impl SourceManifest {
         })
     }
 
+    /// Drop every manifest record that shares `keep`'s canonical location but
+    /// carries a different id, removing each stale record's raw capture,
+    /// derived digest page, and stored assets (#17644).
+    ///
+    /// Re-capturing a location whose content changed follows `gwiki refresh`
+    /// semantics: the location keeps a single manifest record instead of
+    /// accumulating parallel records that compile into duplicate digests.
+    /// Callers invoke this only after the new record's files are safely
+    /// written, so a failed re-ingest never destroys the previous capture.
+    /// Returns the vault-relative paths that were removed.
+    pub(crate) fn supersede_location(
+        vault_root: &Path,
+        keep: &SourceRecord,
+    ) -> Result<Vec<PathBuf>, WikiError> {
+        with_manifest_lock(vault_root, || {
+            let mut manifest = Self::read(vault_root)?;
+            let stale: Vec<SourceRecord> = manifest
+                .entries
+                .iter()
+                .filter(|entry| {
+                    entry.canonical_location == keep.canonical_location && entry.id != keep.id
+                })
+                .cloned()
+                .collect();
+            if stale.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let mut removed_paths = Vec::new();
+            for record in &stale {
+                let mut candidates = vec![
+                    crate::paths::raw_source_path(&record.id)?,
+                    crate::paths::derived_markdown_path(record)?,
+                ];
+                candidates.extend(crate::paths::source_asset_paths_for_id(
+                    vault_root, &record.id,
+                )?);
+                for candidate in candidates {
+                    if crate::paths::remove_relative_file(vault_root, &candidate)? {
+                        removed_paths.push(candidate);
+                    }
+                }
+            }
+            manifest.entries.retain(|entry| {
+                entry.canonical_location != keep.canonical_location || entry.id == keep.id
+            });
+            manifest.write_unlocked(vault_root)?;
+            Ok(removed_paths)
+        })
+    }
+
     pub fn write(&self, vault_root: &Path) -> Result<(), WikiError> {
         with_manifest_lock(vault_root, || self.write_unlocked(vault_root))
     }
