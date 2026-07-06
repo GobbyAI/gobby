@@ -28,6 +28,9 @@ WIKI_LIBRARIAN_INTERVAL_SECONDS = 24 * 60 * 60
 # Recaps run just after UTC midnight for the day that just ended; gwiki recap
 # attributes sessions to UTC days, so the schedule stays in UTC.
 WIKI_RECAP_SCHEDULE_CRON = "10 0 * * *"
+# Maintenance commands (librarian check sweeps, upkeep/recap synthesis) run
+# far past the gateway's 30s interactive default; cron has no caller waiting.
+WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS = 600.0
 WIKI_HEALTH_HISTORY_SAMPLE_SIZE = 10
 WIKI_LIBRARIAN_TASK_LABEL_PREFIX = "wiki-librarian"
 _LIBRARIAN_DEDUP_LOOKUP_LIMIT = 20
@@ -415,7 +418,11 @@ async def _create_gateway(
     )
     if gateway_factory is not None:
         return gateway_factory(resolved)
-    return GwikiGateway(project_root=resolved.project_root, topic=resolved.topic)
+    return GwikiGateway(
+        project_root=resolved.project_root,
+        topic=resolved.topic,
+        timeout_seconds=WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS,
+    )
 
 
 def _ensure_wiki_cron_job(

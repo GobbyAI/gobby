@@ -8,11 +8,13 @@ from typing import Any
 
 import pytest
 
+from gobby.gwiki_gateway import GwikiGateway
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.scheduled_jobs import (
     WIKI_RECAP_SCHEDULE_CRON,
+    WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS,
     _create_gateway,
     _previous_utc_day,
     configured_wiki_cron_scopes,
@@ -480,6 +482,19 @@ async def test_wiki_cron_registration_requires_db_without_gateway_factory(
 async def test_create_gateway_requires_db_without_gateway_factory() -> None:
     with pytest.raises(ValueError, match="requires db"):
         await _create_gateway("project:alpha", db=None, gateway_factory=None)
+
+
+@pytest.mark.asyncio
+async def test_create_gateway_uses_scheduled_timeout(
+    project_id: str,
+    temp_db: Any,
+) -> None:
+    gateway = await _create_gateway(f"project:{project_id}", db=temp_db, gateway_factory=None)
+
+    assert isinstance(gateway, GwikiGateway)
+    # Cron maintenance commands (librarian sweeps, upkeep/recap synthesis)
+    # overrun the 30s interactive default.
+    assert gateway._timeout_seconds == WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
