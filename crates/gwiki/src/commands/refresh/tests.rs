@@ -221,6 +221,12 @@ fn changed_content_replaces_manifest_and_removes_old_raw() {
         .path()
         .join(raw_source_path(&record.id).expect("raw path"));
     fs::write(&old_raw, "old raw").expect("write old raw");
+    let old_digest = temp
+        .path()
+        .join("knowledge/sources")
+        .join(format!("{}.md", record.id));
+    fs::create_dir_all(old_digest.parent().expect("digest parent")).expect("digest dir");
+    fs::write(&old_digest, "old digest").expect("write old digest");
 
     let outcome = execute_resolved_with_fetcher(
         test_scope(temp.path()),
@@ -240,13 +246,16 @@ fn changed_content_replaces_manifest_and_removes_old_raw() {
     assert_eq!(refreshed["old_id"], record.id);
     assert_ne!(refreshed["new_id"], refreshed["old_id"]);
     assert!(!old_raw.exists());
+    assert!(
+        !old_digest.exists(),
+        "superseded record's derived digest must not linger as an orphan (#17651)"
+    );
+    let new_id = refreshed["new_id"].as_str().expect("new source id");
+    assert!(temp.path().join(format!("raw/{new_id}.md")).is_file());
 
     let manifest = SourceManifest::read(temp.path()).expect("read manifest");
     assert_eq!(manifest.entries.len(), 1);
-    assert_eq!(
-        manifest.entries[0].id,
-        refreshed["new_id"].as_str().unwrap()
-    );
+    assert_eq!(manifest.entries[0].id, new_id);
 }
 
 #[test]
@@ -264,6 +273,12 @@ fn changed_local_file_replays_and_removes_old_raw_assets() {
     fs::create_dir_all(old_asset.parent().expect("asset parent")).expect("asset dir");
     fs::write(&old_raw, "old raw").expect("write old raw");
     fs::write(&old_asset, "old asset").expect("write old asset");
+    let old_digest = temp
+        .path()
+        .join("knowledge/sources")
+        .join(format!("{}.md", record.id));
+    fs::create_dir_all(old_digest.parent().expect("digest parent")).expect("digest dir");
+    fs::write(&old_digest, "old digest").expect("write old digest");
     fs::write(temp.path().join("artifact.bin"), b"new").expect("change source");
 
     let outcome = execute_resolved_with_fetcher(
@@ -282,6 +297,10 @@ fn changed_local_file_replays_and_removes_old_raw_assets() {
     assert_ne!(new_id, record.id);
     assert!(!old_raw.exists());
     assert!(!old_asset.exists());
+    assert!(
+        !old_digest.exists(),
+        "superseded record's derived digest must not linger as an orphan (#17651)"
+    );
     assert!(temp.path().join(format!("raw/{new_id}.md")).is_file());
     assert!(
         temp.path()
@@ -379,7 +398,8 @@ fn source_asset_paths_for_id_accepts_only_single_extension_assets() {
     fs::write(asset_dir.join("source-10.png"), "other source").expect("other source");
     fs::write(asset_dir.join("source-1."), "empty extension").expect("empty extension");
 
-    let mut paths = source_asset_paths_for_id(temp.path(), "source-1").expect("asset paths");
+    let mut paths =
+        crate::paths::source_asset_paths_for_id(temp.path(), "source-1").expect("asset paths");
     paths.sort();
 
     assert_eq!(paths, vec![PathBuf::from("raw/assets/source-1.png")]);

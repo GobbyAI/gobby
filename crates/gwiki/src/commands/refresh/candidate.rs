@@ -10,7 +10,7 @@ use crate::{ScopeIdentity, WikiError};
 
 use super::model::{ChangedRefresh, RefreshFailure, RefreshResult, RefreshSinks, RefreshedSource};
 use super::selection::{SelectionFailure, local_file_replay, selection_failure};
-use super::vault::{raw_source_path, remove_relative_file, source_asset_paths_for_id};
+use super::vault::{raw_source_path, remove_relative_file, source_record_paths};
 
 pub(crate) fn refresh_url_candidate(
     vault_root: &Path,
@@ -229,19 +229,10 @@ fn refresh_changed_url_source(
     snapshot: UrlSnapshot,
 ) -> Result<ChangedRefresh, WikiError> {
     let previous_raw_path = raw_source_path(&previous.id)?;
-    let mut previous_paths = vec![previous_raw_path.clone()];
-    previous_paths.extend(source_asset_paths_for_id(vault_root, &previous.id)?);
 
     let result = ingest::url::ingest_snapshot_without_index(vault_root, snapshot)?;
 
-    finalize_changed_refresh(
-        vault_root,
-        previous,
-        previous_raw_path,
-        previous_paths,
-        result,
-        Vec::new(),
-    )
+    finalize_changed_refresh(vault_root, previous, previous_raw_path, result, Vec::new())
 }
 
 fn refresh_changed_local_source(
@@ -254,8 +245,6 @@ fn refresh_changed_local_source(
     fetched_at: &str,
 ) -> Result<ChangedRefresh, WikiError> {
     let previous_raw_path = raw_source_path(&previous.id)?;
-    let mut previous_paths = vec![previous_raw_path.clone()];
-    previous_paths.extend(source_asset_paths_for_id(vault_root, &previous.id)?);
 
     let local_result = ingest::file::ingest_path_without_index(
         vault_root, scope, ai_context, options, path, fetched_at,
@@ -266,7 +255,6 @@ fn refresh_changed_local_source(
         vault_root,
         previous,
         previous_raw_path,
-        previous_paths,
         result,
         local_result.degradations,
     )
@@ -276,12 +264,13 @@ fn finalize_changed_refresh(
     vault_root: &Path,
     previous: &SourceRecord,
     previous_raw_path: PathBuf,
-    previous_paths: Vec<PathBuf>,
     result: ingest::IngestResult,
     degradations: Vec<String>,
 ) -> Result<ChangedRefresh, WikiError> {
+    // The superseded record's raw capture, derived digest, and assets all go;
+    // paths the replacing ingest just wrote are skipped (#17651).
     let mut removed_paths = Vec::new();
-    for previous_path in previous_paths {
+    for previous_path in source_record_paths(vault_root, previous)? {
         if previous_path == result.raw_path
             || result
                 .asset_path

@@ -176,14 +176,7 @@ impl SourceManifest {
 
             let mut removed_paths = Vec::new();
             for record in &stale {
-                let mut candidates = vec![
-                    crate::paths::raw_source_path(&record.id)?,
-                    crate::paths::derived_markdown_path(record)?,
-                ];
-                candidates.extend(crate::paths::source_asset_paths_for_id(
-                    vault_root, &record.id,
-                )?);
-                for candidate in candidates {
+                for candidate in crate::paths::source_record_paths(vault_root, record)? {
                     if crate::paths::remove_relative_file(vault_root, &candidate)? {
                         removed_paths.push(candidate);
                     }

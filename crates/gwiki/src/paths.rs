@@ -81,6 +81,18 @@ pub(crate) fn source_asset_paths_for_id(
     Ok(paths)
 }
 
+/// All vault-relative files belonging to `record`: its raw capture, derived
+/// digest page, and stored assets. Supersede-style cleanup must remove every
+/// entry, or replacing a record leaves an orphan digest behind (#17651).
+pub(crate) fn source_record_paths(
+    vault_root: &Path,
+    record: &SourceRecord,
+) -> Result<Vec<PathBuf>, WikiError> {
+    let mut paths = vec![raw_source_path(&record.id)?, derived_markdown_path(record)?];
+    paths.extend(source_asset_paths_for_id(vault_root, &record.id)?);
+    Ok(paths)
+}
+
 /// Remove a vault-relative file, tolerating a file that is already gone.
 /// Returns whether a file was removed.
 pub(crate) fn remove_relative_file(
@@ -180,6 +192,26 @@ mod tests {
         assert_eq!(
             derived_markdown_path(&record).expect("derived path"),
             PathBuf::from("knowledge/sources/src-abc.md")
+        );
+    }
+
+    #[test]
+    fn source_record_paths_cover_raw_derived_and_assets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let asset_dir = temp.path().join("raw/assets");
+        fs::create_dir_all(&asset_dir).expect("asset dir");
+        fs::write(asset_dir.join("src-abc.png"), "asset").expect("write asset");
+        let record = source_record("src-abc");
+
+        let paths = source_record_paths(temp.path(), &record).expect("record paths");
+
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("raw/src-abc.md"),
+                PathBuf::from("knowledge/sources/src-abc.md"),
+                PathBuf::from("raw/assets/src-abc.png"),
+            ]
         );
     }
 

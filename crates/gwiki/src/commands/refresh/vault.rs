@@ -2,21 +2,19 @@ use std::path::{Path, PathBuf};
 
 use crate::WikiError;
 use crate::paths;
+use crate::sources::SourceRecord;
 
 pub(crate) fn raw_source_path(id: &str) -> Result<PathBuf, WikiError> {
     paths::raw_source_path(id)
 }
 
-/// Returns vault-relative raw asset paths whose file stem matches `id`.
-///
-/// `vault_root` is the vault root and `id` is trimmed before matching. Missing
-/// `raw/assets` directories and unmatched IDs return an empty vector. Directory
-/// read failures are returned as `WikiError::Io`.
-pub(crate) fn source_asset_paths_for_id(
+/// Returns every vault-relative file belonging to `record`: raw capture,
+/// derived digest page, and stored assets.
+pub(crate) fn source_record_paths(
     vault_root: &Path,
-    id: &str,
+    record: &SourceRecord,
 ) -> Result<Vec<PathBuf>, WikiError> {
-    paths::source_asset_paths_for_id(vault_root, id)
+    paths::source_record_paths(vault_root, record)
 }
 
 pub(crate) fn remove_relative_file(
