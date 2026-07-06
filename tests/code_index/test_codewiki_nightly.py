@@ -10,9 +10,12 @@ import pytest
 
 from gobby.code_index.codewiki_nightly import (
     CODEWIKI_NIGHTLY_AI,
+    CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS,
+    CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS,
     codewiki_nightly_handler_name,
     codewiki_nightly_job_name,
     create_codewiki_nightly_handler,
+    nightly_refresh_service,
     register_codewiki_nightly_cron,
     register_codewiki_nightly_crons,
 )
@@ -71,6 +74,26 @@ class FakeRefreshService(CodewikiRefreshService):
             ingested_paths=(),
             indexed=bool(changed_paths),
         )
+
+
+def test_nightly_refresh_service_uses_generation_sized_gateway_timeouts(
+    tmp_path: Path,
+) -> None:
+    """Nightly gateways must outlive a full generation pass, not interactive defaults.
+
+    A full first run LLM-summarizes thousands of pages; the interactive
+    GcodeGateway rebuild timeout (120s) killed even a 7-page scoped run (168s
+    measured), so the nightly path builds its own generation-sized gateways.
+    """
+    service = nightly_refresh_service()
+
+    gcode = service._gcode_gateway_factory()
+    assert gcode._rebuild_timeout_seconds == CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS
+    assert CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS >= 4 * 60 * 60.0
+
+    gwiki = service._gwiki_gateway_factory(tmp_path)
+    assert gwiki._timeout_seconds == CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS
+    assert CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS >= 10 * 60.0
 
 
 def test_wiki_config_nightly_defaults_to_enabled_local_schedule() -> None:

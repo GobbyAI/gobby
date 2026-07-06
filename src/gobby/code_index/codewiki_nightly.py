@@ -15,7 +15,9 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshService,
     normalize_codewiki_ai,
 )
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
+from gobby.gwiki_gateway import GwikiGateway
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
@@ -24,6 +26,26 @@ logger = logging.getLogger(__name__)
 
 CODEWIKI_NIGHTLY_CRON_EXPR = "0 3 * * *"
 CODEWIKI_NIGHTLY_AI = "auto"
+
+# The first full run LLM-summarizes every core file (thousands of pages on a
+# large repo); steady-state incremental runs finish in minutes via hash reuse.
+# GcodeGateway's default rebuild timeout (120s) is sized for interactive
+# projection rebuilds and would kill any real nightly generation pass.
+CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS = 8 * 60 * 60.0
+CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS = 30 * 60.0
+
+
+def nightly_refresh_service() -> CodewikiRefreshService:
+    """Build a refresh service with gateways sized for unattended nightly runs."""
+    return CodewikiRefreshService(
+        gcode_gateway_factory=lambda: GcodeGateway(
+            rebuild_timeout_seconds=CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS,
+        ),
+        gwiki_gateway_factory=lambda root: GwikiGateway(
+            project_root=root,
+            timeout_seconds=CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS,
+        ),
+    )
 
 
 class CronRegistrationProtocol(Protocol):
@@ -47,7 +69,7 @@ def create_codewiki_nightly_handler(
     scopes: list[str] | None = None,
     refresh_service: CodewikiRefreshService | None = None,
 ) -> CronHandler:
-    service = refresh_service or CodewikiRefreshService()
+    service = refresh_service or nightly_refresh_service()
     normalized_ai = normalize_codewiki_ai(ai)
 
     async def _handler(_job: CronJob) -> str:
@@ -80,7 +102,7 @@ def register_codewiki_nightly_cron(
 ) -> int:
     """Register and reconcile the current project's nightly codewiki system job."""
     root = Path(repo_path).resolve(strict=False)
-    service = refresh_service or CodewikiRefreshService()
+    service = refresh_service or nightly_refresh_service()
     out_dir = service.resolve_out_dir(root, None)
     enabled = bool(wiki_config.codewiki_nightly_enabled)
     cron_expr = wiki_config.codewiki_nightly_schedule_cron
@@ -185,7 +207,7 @@ def register_codewiki_nightly_crons(
     A single shared ``CodewikiRefreshService`` backs every registered handler.
     Returns the number of projects registered.
     """
-    service = refresh_service or CodewikiRefreshService()
+    service = refresh_service or nightly_refresh_service()
     seen: set[str] = set()
     seen_repo_paths: set[str] = set()
     registered = 0
