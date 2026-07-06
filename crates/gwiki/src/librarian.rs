@@ -506,6 +506,12 @@ fn near_duplicate_query(page: &lint::WikiPage) -> String {
 fn unresolved_link_clusters(broken_links: &[lint::LinkIssue]) -> Vec<UnresolvedLinkCluster> {
     let mut clusters: BTreeMap<String, UnresolvedLinkCluster> = BTreeMap::new();
     for issue in broken_links {
+        // An absolute filesystem path can never be a vault page, so it is
+        // pure noise as a page-creation candidate (#17649); the broken-links
+        // repair check still covers such dead links.
+        if Path::new(&issue.target).is_absolute() {
+            continue;
+        }
         let key = canonical_target_key(&issue.target);
         if key.is_empty() {
             continue;
@@ -1387,6 +1393,19 @@ mod tests {
                 mentions: 2,
             }]
         );
+    }
+
+    #[test]
+    fn unresolved_link_clusters_skip_absolute_filesystem_targets() {
+        // #17649: scratchpad links in session digests cluster like any other
+        // repeated unresolved target, but an absolute filesystem path can
+        // never be a vault page — no page-creation proposal.
+        let issues = vec![
+            link_issue("a.md", "/private/tmp/claude-501/scratchpad/note-orchid.md"),
+            link_issue("b.md", "/private/tmp/claude-501/scratchpad/note-orchid.md"),
+        ];
+
+        assert_eq!(unresolved_link_clusters(&issues), Vec::new());
     }
 
     #[test]

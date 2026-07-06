@@ -334,6 +334,12 @@ impl MemoryWikiGraph {
             if &link.scope != scope {
                 continue;
             }
+            // An absolute filesystem path can never be a vault page, so it
+            // is pure noise as a page-creation candidate; lint keeps
+            // reporting the link as broken (#17649).
+            if Path::new(target).is_absolute() {
+                continue;
+            }
 
             let entry = by_target.entry(canonical_target_key(target)).or_default();
             entry.count += 1;

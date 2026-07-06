@@ -339,6 +339,28 @@ mod tests {
     }
 
     #[test]
+    fn absolute_filesystem_targets_stay_reported_as_broken_links() {
+        // #17649 excludes absolute filesystem targets from page-creation
+        // suggestion surfaces; lint must keep reporting them as broken links
+        // so the librarian's repair check still covers them.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/sources/src-0011223344556677-session.md",
+            "---\ntitle: Session digest\n---\n# Session digest\nSee [note](/private/tmp/claude-501/scratchpad/note-orchid.md).\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert_eq!(report.broken_links.len(), 1);
+        assert_eq!(
+            report.broken_links[0].target,
+            "/private/tmp/claude-501/scratchpad/note-orchid.md"
+        );
+    }
+
+    #[test]
     fn link_targets_resolve_case_insensitively() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();

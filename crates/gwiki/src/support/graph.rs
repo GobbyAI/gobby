@@ -345,6 +345,41 @@ mod tests {
     }
 
     #[test]
+    fn absolute_filesystem_targets_never_surface_as_suggestions() {
+        // #17649 repro: session digests carry markdown links to scratchpad
+        // files. An absolute filesystem path can never be a vault page, so it
+        // must not become a page-creation suggestion; the link fact itself
+        // stays unresolved so lint parity holds.
+        let digest = "knowledge/sources/src-5966419ee2f6bb38-session-019e4155.md";
+        let scratchpad = "/private/tmp/claude-501/scratchpad/note-orchid.md";
+        let mut store = MemoryWikiStore::default();
+        insert_document(&mut store, digest, Some("Session digest"), "");
+        store.links.insert(
+            PathBuf::from(digest),
+            vec![StoreWikiLink {
+                path: PathBuf::from(digest),
+                target: scratchpad.to_string(),
+                alias: Some("note".to_string()),
+                byte_start: 0,
+                byte_end: 10,
+            }],
+        );
+
+        let scope = search::SearchScope::project("project-1");
+        let graph = memory_graph_from_store(&store, &scope);
+
+        assert_eq!(
+            graph.graph_facts_for_tests().links[0].target,
+            graph::WikiGraphLinkTarget::Unresolved(scratchpad.to_string()),
+            "the link fact must survive for lint parity"
+        );
+        assert!(
+            graph.link_suggestions(&scope, 10).is_empty(),
+            "absolute filesystem targets must not surface as page-creation suggestions"
+        );
+    }
+
+    #[test]
     fn unresolved_targets_keep_their_written_form() {
         let mut store = MemoryWikiStore::default();
         insert_document(&mut store, "knowledge/concepts/gcode.md", Some("gcode"), "");
