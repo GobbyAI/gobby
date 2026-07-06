@@ -36,8 +36,8 @@ instructions: |
   After claiming and reading the task, load the `wiki-research` skill. Call
   get_skill(name="wiki-research") on gobby-skills, then follow that
   methodology end to end: context bootstrap, discovery, curation, pre-ingest
-  dedup, ingest, accepted notes, explicit-topic compile, optional
-  investigation tasks, run report, finish.
+  dedup, ingest, accepted notes, explicit-topic compile, task triage +
+  optional investigation tasks, run report, finish.
 
   CRITICAL RULES:
   - Do NOT call git push.
@@ -128,8 +128,9 @@ steps:
     status_message: |
       Follow the wiki-research skill: bootstrap context, discover up to
       max_sources, curate to max_items, dedup, ingest, write accepted notes,
-      compile with an explicit topic and full source list, write the run
-      report, then call close_task with a changes_summary — pass task_id set
+      compile with an explicit topic and full source list, triage follow-up
+      findings against existing tasks and prior art before filing, write the
+      run report, then call close_task with a changes_summary — pass task_id set
       to your assigned_task_id EXACTLY as given; closing any other task does
       not complete this workflow. Escalate only for blocking missing
       decisions.

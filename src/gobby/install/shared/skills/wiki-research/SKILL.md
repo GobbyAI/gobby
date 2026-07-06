@@ -123,16 +123,35 @@ the `topic` parameter would switch wiki scope — never pass it.
 
 ## 8. Investigation tasks (only when `create_tasks`)
 
-One `create_task` on `gobby-tasks` per kept item: title from the finding,
-description = the item's investigation prompt plus its `citation:` lines,
-label `wiki-research`. No tasks for discarded candidates.
+Triage every kept item before filing — the vault knows sources, but the task
+graph and the codebase know whether the idea is new:
+
+1. `search_tasks` on `gobby-tasks` with the finding's key terms (limit 10).
+   Results include closed tasks — that is the point:
+   - An open task already covering the investigation → do not file.
+   - A closed hit closed as duplicate, wont_fix, already_implemented, or
+     obsolete → do not re-file; its close rationale is the answer.
+   - Related-but-distinct tasks → still file, and add one `related: #NNNN`
+     line per related task to the description.
+2. `gcode search "<proposed mechanism>"` (plus `gcode search-content` for
+   docs and code comments) to check the idea against the codebase. Already
+   implemented, or explicitly settled in a code comment (e.g. a "regressed
+   in #NNNN" note) → do not file; record the prior art instead.
+
+Then one `create_task` on `gobby-tasks` per surviving item: title from the
+finding, description = the item's investigation prompt plus its `citation:`
+lines and any `related: #NNNN` lines, label `wiki-research`. No tasks for
+discarded candidates. Every triaged-away item MUST appear in the run report
+(step 9) with its reason — a duplicate task ref or a prior-art pointer.
+Skipped filings are visible, never silent.
 
 ## 9. Run report
 
 Write a run report page under `outputs/` covering: the question, angles
 searched, candidates found, keep/discard reasons, dedup hits, ingest failures,
-compiled page path, and tasks filed. Append one line to the vault's `log.md`
-recording the run and linking the report and topic page.
+compiled page path, tasks filed, and items triaged away in step 8 (with their
+duplicate task refs or prior-art reasons). Append one line to the vault's
+`log.md` recording the run and linking the report and topic page.
 
 ## 10. Finish
 

@@ -171,6 +171,13 @@ class TestWikiResearcherInstructions:
         assert "Partial results are still results" in instructions
         assert "end_agent_run" in instructions
 
+    def test_task_triage_present(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "task triage" in instructions
+
+        research = next(step for step in agent.steps or [] if step.name == "research")
+        assert "triage follow-up" in (research.status_message or "")
+
 
 class TestSpawnSurfaceHasNoMaxTurns:
     """The spawn path never enforced max_turns; the parameter is gone."""
