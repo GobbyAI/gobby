@@ -7,6 +7,7 @@ use crate::lint::{WikiPage, line_number};
 use crate::markdown::{
     MarkdownFence, markdown_fence_closes, markdown_fence_start, parse_atx_heading,
 };
+use crate::models::WikiSourceKind;
 use crate::provenance::ProvenanceGraph;
 use crate::synthesis::slugify;
 
@@ -29,6 +30,7 @@ pub(super) fn unsupported_claims(
     let claims = claim_lines(page, options);
     let supported_lines = supported_claim_lines(page, provenance, &claims);
     let has_page_source_support = has_codewiki_frontmatter_source_spans(page);
+    let attributed_sections = daemon_synthesis_attributed_sections(page);
     let claim_source_context = claim_source_context(page, source_context);
     claims
         .into_iter()
@@ -36,6 +38,10 @@ pub(super) fn unsupported_claims(
             if (has_page_source_support && claim.kind == ClaimKind::Structural)
                 || supported_lines.contains(&claim.line)
                 || has_inline_source_support(&claim.text)
+                || claim
+                    .heading
+                    .as_deref()
+                    .is_some_and(|heading| attributed_sections.contains(heading))
             {
                 return None;
             }
@@ -60,6 +66,54 @@ fn claim_source_context(
     } else {
         Arc::clone(source_context)
     }
+}
+
+/// An auto-generated daemon-synthesis concept page (`source_kind: concept` +
+/// `synthesis_mode: daemon`). Unlike curated `knowledge/**` articles, these are
+/// clustered from session sources by the daemon, and attribute a synthesized
+/// section's prose to its sources with a section-level `_Source: [[...]]_`
+/// line rather than an inline citation on every wrapped prose line.
+fn is_daemon_synthesis_concept_page(page: &WikiPage) -> bool {
+    page.parsed.frontmatter.source_kind == Some(WikiSourceKind::Concept)
+        && page
+            .parsed
+            .frontmatter
+            .unknown
+            .get("synthesis_mode")
+            .and_then(Value::as_str)
+            == Some("daemon")
+}
+
+/// Section headings on a daemon-synthesis concept page whose body carries an
+/// inline source attribution (e.g. a trailing `_Source: [[knowledge/sources/...]]_`
+/// line). The daemon cites such a section at the section level, so the
+/// line-granular claim model wrongly flags the section's wrapped prose lines as
+/// unsupported. Crediting the whole attributed section — scoped to these
+/// auto-generated pages — mirrors the page-level grounding
+/// `is_generated_code_projection_page` grants deterministic code projections,
+/// while leaving curated multi-source synthesis pages fully per-claim audited.
+fn daemon_synthesis_attributed_sections(page: &WikiPage) -> BTreeSet<String> {
+    if !is_daemon_synthesis_concept_page(page) {
+        return BTreeSet::new();
+    }
+    let mut attributed = BTreeSet::new();
+    let mut current_heading: Option<String> = None;
+    for raw_line in page.markdown.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(heading) = heading_title(trimmed) {
+            current_heading = Some(heading);
+            continue;
+        }
+        if let Some(heading) = current_heading.as_ref()
+            && has_inline_source_support(trimmed)
+        {
+            attributed.insert(heading.clone());
+        }
+    }
+    attributed
 }
 
 /// Deterministic catalog surfaces rebuilt by `catalog::regenerate` from

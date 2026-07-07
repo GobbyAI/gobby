@@ -760,3 +760,69 @@ fn configured_ignored_sections_extend_defaults() {
     assert_eq!(claims.len(), 1);
     assert_eq!(claims[0].text, "Claim needing support.");
 }
+
+#[test]
+fn source_excerpts_section_is_ignored() {
+    // Daemon-synthesis concept pages quote verbatim source excerpts under a
+    // `## Source excerpts` heading; each line names its session and is source
+    // material, not a synthesized claim (#17704).
+    let page = test_codewiki_page(
+        "knowledge/concepts/example-concept.md",
+        "---\ntitle: Example\nsource_kind: concept\n---\n# Example\n## Source excerpts\n- Session: 019d79c6 — 2026-04-10: # Session heading\n",
+    );
+
+    let claims = claim_lines(&page, &AuditOptions::default());
+
+    assert!(
+        claims.is_empty(),
+        "source-excerpt lines should not be claims, got {claims:?}"
+    );
+}
+
+#[test]
+fn daemon_synthesis_concept_overview_is_credited_by_section_attribution() {
+    // A daemon-synthesis concept page attributes its Overview synthesis to the
+    // source with a trailing `_Source: [[knowledge/sources/...]]_` line. That
+    // section-level attribution must credit the wrapped prose lines that carry
+    // no inline citation of their own (#17704).
+    let markdown = "---\ntitle: Claude\nsource_kind: concept\nsynthesis_mode: daemon\n---\n# Claude\n## Overview\nClaude is one of the providers investigated during runtime discovery.\n\nThe source also says Claude probing uses hardcoded shortnames.\n\n_Source: [[knowledge/sources/src-93b4c1e401d23dd7-session-019d79c6-9d23-7180-a50b-2622488b0c47|Session]]_\n";
+    let page = test_codewiki_page("knowledge/concepts/claude-concept.md", markdown);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(
+        claims.is_empty(),
+        "daemon-synthesis Overview prose should be credited by its section attribution, got {claims:?}"
+    );
+}
+
+#[test]
+fn curated_concept_prose_without_daemon_synthesis_stays_audited() {
+    // The section-attribution crediting is scoped to auto-generated
+    // daemon-synthesis pages (`synthesis_mode: daemon`). An otherwise identical
+    // page without that marker keeps per-claim auditing, so its uncited prose is
+    // still flagged even though the section carries a trailing source line.
+    let markdown = "---\ntitle: Claude\nsource_kind: concept\n---\n# Claude\n## Overview\nAn uncited curated assertion about Claude.\n\n_Source: [[knowledge/sources/src-93b4c1e401d23dd7-session-019d79c6-9d23-7180-a50b-2622488b0c47|Session]]_\n";
+    let page = test_codewiki_page("knowledge/concepts/claude.md", markdown);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert_eq!(
+        claims.len(),
+        1,
+        "curated (non-daemon) prose without an inline citation should stay flagged, got {claims:?}"
+    );
+    assert!(claims[0].claim.contains("uncited curated assertion"));
+}

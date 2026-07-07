@@ -25,6 +25,7 @@ const DEFAULT_IGNORED_SECTIONS: &[&str] = &[
     "source",
     "backlinks",
     "extracts",
+    "source excerpts",
     "used by",
     "missing evidence",
     "conflicting claims",

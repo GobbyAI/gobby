@@ -288,7 +288,11 @@ pub fn line_number(markdown: &str, byte_start: usize) -> usize {
 pub fn page_targets(relative_path: &Path, title: Option<&str>, aliases: &[String]) -> Vec<String> {
     let mut targets = Vec::new();
     let relative = relative_path.to_string_lossy().replace('\\', "/");
-    targets.push(canonical_target_key(&normalize_wiki_path(&relative)));
+    let relative_key = canonical_target_key(&normalize_wiki_path(&relative));
+    if let Some(identity_key) = source_identity_lookup_key(&relative_key) {
+        targets.push(identity_key);
+    }
+    targets.push(relative_key);
     if let Some(file_stem) = relative_path.file_stem().and_then(|stem| stem.to_str()) {
         targets.push(canonical_target_key(&normalize_wiki_path(file_stem)));
     }
@@ -329,6 +333,34 @@ fn link_lookup_targets(relative_path: &Path, link: &WikiLink) -> Vec<String> {
     link_lookup_keys(relative_path, link.kind, &link.normalized_target)
 }
 
+/// Prefix marking the private keyspace for source-identity resolution keys, so
+/// they can never collide with a real page path, title, or alias target.
+const SOURCE_IDENTITY_KEY_PREFIX: &str = "\u{1}source-identity\u{1}";
+
+/// A stable link-resolution key for a wiki source page/link, or `None` when the
+/// key is not a `knowledge/sources/src-<content-hash>-<location-slug>` source id.
+///
+/// Wiki source pages are named `knowledge/sources/src-<content-hash>-<slug>.md`,
+/// but the content hash rotates whenever a source is re-fetched or re-synced
+/// (e.g. session transcripts grow), renaming the page. Links minted against the
+/// old name would then dangle even though the page still exists under the same
+/// canonical location. Resolve both a page and a link to the stable location
+/// slug (everything after the hash — mirroring gwiki's `source_identity_slug`
+/// and `compile::select::source_id_slug`), so a rotated link still finds its
+/// page. `canonical_target_key` has already lowercased and stripped the `.md`
+/// page extension; strip it again defensively.
+fn source_identity_lookup_key(canonical_key: &str) -> Option<String> {
+    let rest = canonical_key.strip_prefix("knowledge/sources/")?;
+    let stem = rest.strip_suffix(".md").unwrap_or(rest);
+    let (hash, slug) = stem.strip_prefix("src-")?.split_once('-')?;
+    if hash.is_empty() || slug.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{SOURCE_IDENTITY_KEY_PREFIX}knowledge/sources/{slug}"
+    ))
+}
+
 /// Candidate [`canonical_target_key`] lookup keys for a normalized target, in
 /// resolution order: the vault-root-relative key first, then — unless the
 /// target names a reserved top-level vault directory or is absolute — keys
@@ -343,6 +375,9 @@ pub fn link_lookup_keys(
 ) -> Vec<String> {
     let folded_target = canonical_target_key(normalized_target);
     let mut targets = vec![folded_target.clone()];
+    if let Some(identity_key) = source_identity_lookup_key(&folded_target) {
+        targets.push(identity_key);
+    }
     if (kind != LinkKind::Markdown && kind != LinkKind::Wikilink)
         || folded_target.starts_with("knowledge/")
         || folded_target.starts_with("code/")
@@ -576,6 +611,64 @@ mod tests {
         assert_eq!(
             outcome.orphan_pages,
             vec![PathBuf::from("knowledge/topics/orphan.md")]
+        );
+    }
+
+    #[test]
+    fn source_links_resolve_across_content_hash_rotation() {
+        // A session source page is named `src-<content-hash>-<location-slug>`;
+        // the content hash rotates when the source is re-synced, renaming the
+        // page. Links minted against the old name must still resolve to the page
+        // under its rotated name via the stable location slug (#17704).
+        let uuid = "session-3e4c4a13-7bf9-439f-ac19-e3b739867a34";
+        let pages = vec![
+            owned_page(
+                "knowledge/concepts/gcode.md",
+                &format!(
+                    "---\ntitle: gcode\n---\n# gcode\nSources: [[knowledge/sources/src-009f22a4019162a7-{uuid}|Session]]\n"
+                ),
+                &[],
+            ),
+            owned_page(
+                &format!("knowledge/sources/src-103b0fac32183609-{uuid}.md"),
+                "---\ntitle: Session\n---\n# Session\nBack to [[knowledge/concepts/gcode]].\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert!(
+            outcome.broken_links.is_empty(),
+            "rotated-hash source link should resolve by stable identity: {:?}",
+            outcome.broken_links
+        );
+    }
+
+    #[test]
+    fn source_identity_resolution_does_not_mask_a_missing_source() {
+        // Stable-identity resolution must not resolve a link to a source that
+        // has no page on disk: a different session slug stays broken.
+        let pages = vec![
+            owned_page(
+                "knowledge/concepts/gcode.md",
+                "---\ntitle: gcode\n---\n# gcode\nSee [[knowledge/sources/src-009f22a4019162a7-session-deadbeef-0000-0000-0000-000000000000|Session]].\n",
+                &[],
+            ),
+            owned_page(
+                "knowledge/sources/src-103b0fac32183609-session-3e4c4a13-7bf9-439f-ac19-e3b739867a34.md",
+                "---\ntitle: Session\n---\n# Session\nOrphan.\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert_eq!(outcome.broken_links.len(), 1);
+        assert!(
+            outcome.broken_links[0].target.contains("session-deadbeef"),
+            "unexpected broken link: {:?}",
+            outcome.broken_links
         );
     }
 
