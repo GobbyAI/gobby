@@ -150,21 +150,13 @@ fn generated_codewiki_numeric_claims_do_not_inherit_raw_source_context() {
         .iter()
         .filter(|claim| claim.path.as_path() == code_path.as_path())
         .collect::<Vec<_>>();
-    assert_eq!(generated_claims.len(), 2);
+    // A codewiki-generated `code/**` projection page (index-count claims like
+    // `Files: 457`/`Symbols: 7901`) is exempt from claim scanning: it must
+    // contribute no unsupported claims and, in particular, must never inherit
+    // raw source context from unrelated knowledge sources.
     assert!(
-        generated_claims
-            .iter()
-            .any(|claim| claim.claim == "Files: 457")
-    );
-    assert!(
-        generated_claims
-            .iter()
-            .any(|claim| claim.claim == "Symbols: 7901")
-    );
-    assert!(
-        generated_claims
-            .iter()
-            .all(|claim| claim.source_context.is_empty())
+        generated_claims.is_empty(),
+        "generated code projection page should be exempt, got {generated_claims:?}"
     );
     let rendered = render_text(&report);
     assert!(
@@ -391,6 +383,180 @@ This generated page makes an unsupported prose claim.
     assert_eq!(
         claims[0].claim,
         "This generated page makes an unsupported prose claim."
+    );
+}
+
+#[test]
+fn template_projected_code_docs_are_page_level_supported() {
+    // Mirrors a real `ai_route: off` codewiki file page: file-level provenance,
+    // no per-claim ranges, and purely mechanical scaffolding (overview count,
+    // symbol/kind rows, module wikilink). Every line is index-derived and
+    // attributed to the declared source file, so nothing is unsupported even
+    // though none of the lines carry inline or frontmatter source spans.
+    let markdown = r#"---
+title: src/mathutil.py
+type: code_file
+provenance:
+- file: src/mathutil.py
+generated_by: gcode-codewiki
+trust: generated
+freshness: indexed
+ai_route: off
+ai_fallback: false
+ai_generation_status: skipped
+---
+
+# src/mathutil.py
+
+Module: [[code/modules/src|src]]
+
+## Overview
+
+`src/mathutil.py` exposes 1 indexed API symbol.
+
+## Reference
+
+- Symbol: `add`
+  Kind: function
+"#;
+    let page = test_codewiki_page("code/files/src/mathutil.py.md", markdown);
+
+    // Guard the precondition: this page has no per-claim source spans, so the
+    // exemption is the only thing that can credit its claims.
+    assert!(!has_codewiki_frontmatter_source_spans(&page));
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(
+        claims.is_empty(),
+        "template-projected code doc should have no unsupported claims, got {claims:?}"
+    );
+}
+
+#[test]
+fn degraded_codewiki_docs_are_page_level_supported() {
+    // A degraded page fell back to the template body (no AI narrative landed),
+    // so it is credited wholesale just like a skipped page.
+    let markdown = r#"---
+title: src/mathutil.py
+type: code_file
+provenance:
+- file: src/mathutil.py
+generated_by: gcode-codewiki
+trust: generated
+freshness: indexed
+ai_route: off
+ai_fallback: true
+ai_generation_status: degraded
+degraded: true
+degraded_sources:
+- model_provider_unavailable
+---
+
+# src/mathutil.py
+
+`src/mathutil.py` exposes 1 indexed API symbol.
+"#;
+    let page = test_codewiki_page("code/files/src/mathutil.py.md", markdown);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(
+        claims.is_empty(),
+        "degraded template code doc should have no unsupported claims, got {claims:?}"
+    );
+}
+
+#[test]
+fn generated_status_code_docs_are_grounded_by_file_provenance() {
+    // A code page with landed AI narrative (ai_generation_status: generated) is
+    // still grounded by its file provenance: the narrative is about that one
+    // indexed file, and the per-line claim model cannot meaningfully audit
+    // flowing prose. It is exempt, exactly like a template-projected page.
+    let markdown = r#"---
+title: src/mathutil.py
+type: code_file
+provenance:
+- file: src/mathutil.py
+generated_by: gcode-codewiki
+trust: generated
+freshness: indexed
+ai_route: daemon
+ai_fallback: false
+ai_generation_status: generated
+---
+
+# src/mathutil.py
+
+This narrative sentence describes the file and is grounded by its provenance.
+"#;
+    let page = test_codewiki_page("code/files/src/mathutil.py.md", markdown);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(
+        claims.is_empty(),
+        "generated-status code doc with file provenance should be grounded, got {claims:?}"
+    );
+}
+
+#[test]
+fn aggregate_code_pages_with_empty_provenance_are_exempt() {
+    // The `code/repo.md` aggregate rolls up the whole tree and carries no
+    // per-file frontmatter provenance (`provenance: []`), but it is still a
+    // codewiki index projection (generated_by + trust: generated), so its
+    // mechanical module counts and links are exempt.
+    let markdown = r#"---
+title: Repository Overview
+type: code_repo
+provenance: []
+generated_by: gcode-codewiki
+trust: generated
+freshness: indexed
+stub: true
+ai_route: off
+ai_fallback: false
+ai_generation_status: skipped
+---
+
+# Repository Overview
+
+Repository code documentation covers 2553 files across 275 modules.
+
+Module: [[code/modules/crates|crates]]
+Summary: `crates` contains 0 direct files and 4 child modules.
+"#;
+    let page = test_codewiki_page("code/repo.md", markdown);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(
+        claims.is_empty(),
+        "aggregate code projection page should be exempt, got {claims:?}"
     );
 }
 

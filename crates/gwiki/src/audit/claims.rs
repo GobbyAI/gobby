@@ -22,6 +22,7 @@ pub(super) fn unsupported_claims(
     if is_manifest_backed_source_digest(page, manifest_hashes)
         || is_catalog_page(page)
         || is_recap_page(page)
+        || is_generated_code_projection_page(page)
     {
         return Vec::new();
     }
@@ -97,6 +98,37 @@ pub(super) fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
             .provenance
             .iter()
             .any(frontmatter_value_has_code_source_span)
+}
+
+/// A codewiki-generated `code/**` projection page — a per-file, per-module, or
+/// repo-level aggregate view of the code index.
+///
+/// Every such page is generated deterministically from the code index. Its body
+/// mixes structural scaffolding (overview counts, `Symbol:`/`Kind:` rows,
+/// module/file wikilinks, per-symbol purpose lines) with, for AI-routed pages,
+/// flowing narrative *about the same indexed code*. Two facts make per-claim
+/// source spans the wrong bar here:
+///
+/// 1. The page is a projection of the code index for the code it documents, so
+///    every claim already traces to that source. The page's identity as a
+///    codewiki projection — not a per-claim line span — is the grounding.
+/// 2. The audit extracts one claim per physical line, so flowing narrative
+///    paragraphs are inherently mostly "unsupported" no matter how densely the
+///    generator cites them (a wrapped sentence carries its span on one line and
+///    leaves the continuation lines bare). The line-granular claim model fits
+///    structural/list content, not prose.
+///
+/// So these pages are auto-generated texture grounded by the index, not curated
+/// multi-source synthesis, and they are exempt from claim scanning — consistent
+/// with the catalog/recap/manifest-digest exemptions and with trust gating only
+/// on *curated* broken links. This covers `code/files/**`, `code/modules/**`,
+/// and the `code/repo.md` aggregate (which carries no per-file frontmatter
+/// provenance because it rolls up the whole tree). Curated knowledge pages
+/// (`knowledge/**`) are not `code/**` and remain fully audited.
+fn is_generated_code_projection_page(page: &WikiPage) -> bool {
+    is_generated_codewiki_page(page)
+        && page.parsed.frontmatter.generated_by.as_deref()
+            == Some(gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI)
 }
 
 /// A digest under `knowledge/sources/` whose frontmatter `source_hash` matches
