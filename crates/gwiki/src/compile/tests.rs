@@ -637,7 +637,7 @@ fn compile_after_recapture_emits_single_digest_without_suffix() {
 }
 
 #[test]
-fn recompile_without_target_page_requires_write_intent() {
+fn recompile_of_machine_page_overwrites_without_write_intent() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());
     let note_path = scope.root().join("raw/research/compile.md");
@@ -649,16 +649,70 @@ fn recompile_without_target_page_requires_write_intent() {
         target_page: None,
         write_intent,
     };
-    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
-    compile_to_wiki(&mut session, request(true)).expect("first compile succeeded");
 
+    // The first compile authors the machine article; it carries `synthesis_mode`.
     let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
-    let error = compile_to_wiki(&mut session, request(false))
-        .expect_err("recompile without write intent fails loud");
+    let first = compile_to_wiki(&mut session, request(true)).expect("first compile succeeded");
+    assert!(
+        std::fs::read_to_string(&first.article_path)
+            .expect("article written")
+            .contains("synthesis_mode:"),
+        "first compile marks the page machine-owned"
+    );
 
-    // Resolving to the existing article keeps the merge-intent contract: the
-    // overwrite fails loud instead of silently minting a -2 sibling (#17635).
+    // A recompile with no write intent now refreshes the machine-owned page in
+    // place: the page's `synthesis_mode` provenance authorizes the overwrite, so
+    // an automated recompile can self-drain re-fetched sources instead of failing
+    // loud or minting a slug-suffixed sibling (#17708; supersedes the blanket
+    // #17635 fail-loud for machine-owned pages).
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let second = compile_to_wiki(&mut session, request(false))
+        .expect("recompile of a machine-owned page overwrites without write intent");
+    assert_eq!(second.article_path, first.article_path);
+
+    let articles: Vec<String> =
+        std::fs::read_dir(first.article_path.parent().expect("article parent"))
+            .expect("article dir listed")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".md"))
+            .collect();
+    assert_eq!(articles.len(), 1, "no slug-suffixed sibling: {articles:?}");
+}
+
+#[test]
+fn recompile_over_hand_authored_page_requires_write_intent() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "First compile evidence.\n").expect("note written");
+    let target = PathBuf::from("knowledge/topics/hand-authored.md");
+    let page_path = scope.root().join(&target);
+    std::fs::create_dir_all(page_path.parent().expect("target parent")).expect("target dir");
+    let curated = "# Hand authored\n\nCurated by a human; no synthesis_mode.\n";
+    std::fs::write(&page_path, curated).expect("page written");
+
+    // A page without `synthesis_mode` provenance is not machine-owned, so the
+    // #17635 anti-clobber guard still fails an intent-less recompile loud and
+    // never clobbers the human page.
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let error = compile_to_wiki(
+        &mut session,
+        CompileRequest {
+            topic: "Hand Authored".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(target.clone()),
+            write_intent: false,
+        },
+    )
+    .expect_err("recompile over a hand-authored page fails loud without write intent");
     assert_eq!(error.code(), "invalid_input");
+    assert_eq!(
+        std::fs::read_to_string(&page_path).expect("page retained"),
+        curated,
+        "the human page is never clobbered"
+    );
 }
 
 #[test]

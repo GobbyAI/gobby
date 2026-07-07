@@ -256,6 +256,58 @@ fn changed_content_replaces_manifest_and_removes_old_raw() {
     let manifest = SourceManifest::read(temp.path()).expect("read manifest");
     assert_eq!(manifest.entries.len(), 1);
     assert_eq!(manifest.entries[0].id, new_id);
+    // A source that was Pending stays Pending: carry-forward only preserves an
+    // already-Compiled status, it never gratuitously promotes (#17708).
+    assert_eq!(manifest.entries[0].compile_status, CompileStatus::Pending);
+}
+
+#[test]
+fn changed_content_carries_compiled_status_forward() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    // Seed a URL source and mark it Compiled, as a topic compile would.
+    let record = seed_url(temp.path(), "https://example.test/a", "then", b"old");
+    SourceManifest::update(temp.path(), |manifest| {
+        let entry = manifest
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == record.id)
+            .expect("seeded record present");
+        entry.compile_status = CompileStatus::Compiled;
+        Ok(true)
+    })
+    .expect("mark compiled");
+
+    // A re-fetch rotates the content hash (volatile chrome) but the canonical
+    // location is unchanged, so the replacement record must inherit the
+    // Compiled status instead of being re-pended (#17708).
+    let outcome = execute_resolved_with_fetcher(
+        test_scope(temp.path()),
+        vec![record.id.clone()],
+        false,
+        |record, _fetched_at| {
+            Ok(snapshot(
+                &record.location,
+                "<html><title>New</title><body>new</body></html>",
+            ))
+        },
+    )
+    .expect("refresh changed");
+
+    let refreshed = &outcome.result.payload["refreshed"][0];
+    let new_id = refreshed["new_id"].as_str().expect("new source id");
+    assert_ne!(
+        new_id, record.id,
+        "content-hash rotation mints a new record id"
+    );
+
+    let manifest = SourceManifest::read(temp.path()).expect("read manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].id, new_id);
+    assert_eq!(
+        manifest.entries[0].compile_status,
+        CompileStatus::Compiled,
+        "an already-compiled source must not be re-pended by content-hash rotation (#17708)"
+    );
 }
 
 #[test]

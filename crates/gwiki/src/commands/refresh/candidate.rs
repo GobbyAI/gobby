@@ -5,7 +5,7 @@ use crate::commands::index;
 use crate::ingest;
 use crate::ingest::url::{UrlIngestFailure, UrlSnapshot};
 use crate::scope::ResolvedScope;
-use crate::sources::{SourceManifest, SourceRecord};
+use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
 use crate::{ScopeIdentity, WikiError};
 
 use super::model::{ChangedRefresh, RefreshFailure, RefreshResult, RefreshSinks, RefreshedSource};
@@ -264,7 +264,7 @@ fn finalize_changed_refresh(
     vault_root: &Path,
     previous: &SourceRecord,
     previous_raw_path: PathBuf,
-    result: ingest::IngestResult,
+    mut result: ingest::IngestResult,
     degradations: Vec<String>,
 ) -> Result<ChangedRefresh, WikiError> {
     // The superseded record's raw capture, derived digest, and assets all go;
@@ -284,10 +284,37 @@ fn finalize_changed_refresh(
         }
     }
 
+    // A re-fetch of a volatile URL (GitHub chrome, timestamps) rotates the
+    // content hash and mints a fresh `Pending` record, but the source is still
+    // folded into whatever topic already cited it — its canonical location is
+    // unchanged. Carry the superseded record's `Compiled` status onto the
+    // replacement so a content-hash rotation does not gratuitously re-pend an
+    // already-compiled source and pin `uncompiled_source_count` (and trust) with
+    // no automated drain (#17708). The derived source stub survives the
+    // supersede (its slug-keyed path differs from the hash-keyed
+    // `source_record_paths` removed above), so no stub regeneration is needed.
+    if previous.compile_status == CompileStatus::Compiled
+        && result.record.compile_status != CompileStatus::Compiled
+    {
+        result.record.compile_status = CompileStatus::Compiled;
+    }
+    let carried_id = result.record.id.clone();
+    let carry_compiled = result.record.compile_status == CompileStatus::Compiled;
     SourceManifest::update(vault_root, |manifest| {
         let before = manifest.entries.len();
         manifest.entries.retain(|entry| entry.id != previous.id);
-        Ok(manifest.entries.len() != before)
+        let mut changed = manifest.entries.len() != before;
+        if carry_compiled
+            && let Some(entry) = manifest
+                .entries
+                .iter_mut()
+                .find(|entry| entry.id == carried_id)
+            && entry.compile_status != CompileStatus::Compiled
+        {
+            entry.compile_status = CompileStatus::Compiled;
+            changed = true;
+        }
+        Ok(changed)
     })?;
 
     Ok(ChangedRefresh {

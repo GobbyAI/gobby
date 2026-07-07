@@ -243,17 +243,27 @@ pub fn compile_to_wiki_with_options(
     let mut pages = vec![article.clone()];
     pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);
 
-    // The article (`pages[0]`) is a curated target page: overwriting it on a
-    // recompile needs explicit write intent so an existing human-facing page is
-    // never silently clobbered (#17635). The source stub pages (`pages[1..]`)
-    // are deterministic machine digests keyed by source identity — regenerating
-    // them in place is lossless ("Used by" backlinks are preserved by
-    // `synthesize_source_pages`), so they always overwrite. Gating them on the
-    // article's write intent instead makes a recompile fail loud (or, before
-    // identity-slug resolution, mint a slug-suffixed sibling) whenever the
-    // derived source page already exists, e.g. a second topic sharing a source
-    // already compiled by another (#17707).
-    let article_policy = if write_intent {
+    // The article (`pages[0]`) is a curated target page. Overwriting it on a
+    // recompile is gated so an existing human-facing page is never silently
+    // clobbered (#17635). Two signals authorize the overwrite: an explicit
+    // `write_intent` flag, or provenance — an existing article that already
+    // carries a `synthesis_mode` frontmatter written by this pipeline is owned
+    // by the compile lifecycle, so an automated recompile may refresh it in
+    // place to fold in newly accepted or re-fetched sources without a human
+    // `--write-intent` flag (#17708). A page lacking that provenance
+    // (hand-authored, or authored by another tool) still requires explicit
+    // merge intent, preserving the anti-clobber guard. The synthesis already
+    // feeds the existing body in as update-over-create context, so an
+    // authorized overwrite is a merge, not a blind discard.
+    //
+    // The source stub pages (`pages[1..]`) are deterministic machine digests
+    // keyed by source identity — regenerating them in place is lossless ("Used
+    // by" backlinks are preserved by `synthesize_source_pages`), so they always
+    // overwrite. Gating them on the article's write intent instead makes a
+    // recompile fail loud (or, before identity-slug resolution, mint a
+    // slug-suffixed sibling) whenever the derived source page already exists,
+    // e.g. a second topic sharing a source already compiled by another (#17707).
+    let article_policy = if write_intent || existing_page_is_machine_owned(&article.path)? {
         WritePolicy::AllowOverwriteAfterMerge
     } else {
         WritePolicy::RequireMergeIntent
@@ -325,6 +335,39 @@ fn existing_target_page_body(target_page: &Path) -> Result<Option<String>, WikiE
         Err(_) => text,
     };
     Ok(Some(body))
+}
+
+/// Whether an existing article page was authored by this compile pipeline.
+///
+/// A machine-owned page carries a `synthesis_mode` frontmatter key (the
+/// synthesis route: `daemon`, `fallback`, ...), written by
+/// [`crate::synthesis::render`]. Recompiling such a page is a lifecycle refresh,
+/// so it may be overwritten without an explicit `--write-intent` flag (#17708).
+/// A missing file, unparseable frontmatter, or a page without that key (a
+/// hand-authored article, or one from another tool) is treated as not
+/// machine-owned, keeping the #17635 anti-clobber guard in force.
+fn existing_page_is_machine_owned(target_page: &Path) -> Result<bool, WikiError> {
+    let text = match fs::read_to_string(target_page) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read existing compile target page",
+                path: Some(target_page.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+    let Ok(parsed) = parse_frontmatter(&text) else {
+        return Ok(false);
+    };
+    let machine_owned = parsed
+        .metadata
+        .unknown
+        .get("synthesis_mode")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|mode| !mode.trim().is_empty());
+    Ok(machine_owned)
 }
 
 /// Append one `page_created`/`page_updated` log line per synthesized page,
