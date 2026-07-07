@@ -303,6 +303,103 @@ fn recompile_resolves_stub_for_same_source_identity_in_place() {
 }
 
 #[test]
+fn recompile_resolves_stub_after_source_content_hash_rotates() {
+    // #17705: a re-fetched source gets a new `src-<hash>-<location>` id (the
+    // 16-hex content hash rotates) for the SAME canonical location. A recompile
+    // must land back on the existing stub by its stable location slug instead of
+    // minting a slug-suffixed `-2` sibling and leaking the source as uncompiled.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let article_path = temp.path().join("knowledge/topics/gist-roundup.md");
+    let mut input = empty_input("Gist Roundup", ArticleKind::Topic);
+    input.accepted_sources = vec![SynthesisSource {
+        title: "mgsloan pre-commit gist".to_string(),
+        path: PathBuf::from("raw/src-b75e5eacb3d718ef-https-gist-github-com-mgsloan-pre-commit.md"),
+        chunks: vec!["First extract.".to_string()],
+        existing_page: None,
+    }];
+
+    let first = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("first source pages synthesized");
+    assert_eq!(first.len(), 1);
+    let stub_path = first[0].path.clone();
+    write_synthesized_page(
+        temp.path(),
+        &first[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("first stub written");
+
+    // Content re-fetched: hash prefix rotates, same location slug.
+    input.handoff_id = "handoff-2".to_string();
+    input.accepted_sources[0].path =
+        PathBuf::from("raw/src-1ca0bb24edbe42ac-https-gist-github-com-mgsloan-pre-commit.md");
+    input.accepted_sources[0].chunks = vec!["Updated extract.".to_string()];
+
+    let second = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("recompiled source pages synthesized");
+    assert_eq!(second.len(), 1);
+    assert_eq!(
+        second[0].path, stub_path,
+        "recompile after hash rotation must reuse the existing stub"
+    );
+    write_synthesized_page(
+        temp.path(),
+        &second[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("stub updated in place");
+
+    let entries: Vec<String> = fs::read_dir(temp.path().join("knowledge/sources"))
+        .expect("sources dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries.len(), 1, "no -2 sibling minted: {entries:?}");
+    let markdown = fs::read_to_string(&stub_path).expect("stub read");
+    assert!(markdown.contains("Updated extract."), "{markdown}");
+}
+
+#[test]
+fn recompile_reuses_legacy_stub_without_source_path_frontmatter() {
+    // The real #17705 vault case: a stub written before the `source_path`
+    // frontmatter key (#17596) records the raw path only in its `Source path:`
+    // body line, AND the source content hash later rotated. A recompile must
+    // resolve back to that legacy stub by its stable location slug.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let sources_dir = temp.path().join("knowledge/sources");
+    fs::create_dir_all(&sources_dir).expect("sources dir");
+    let legacy = concat!(
+        "---\n",
+        "title: \"Gist\"\n",
+        "source_kind: \"source_note\"\n",
+        "synthesis_mode: \"source\"\n",
+        "---\n\n",
+        "# Gist\n\n",
+        "Source path: `raw/src-b75e5eacb3d718ef-https-gist-example-com-a.md`\n\n",
+        "## Extracts\n\n- old\n",
+    );
+    fs::write(sources_dir.join("gist.md"), legacy).expect("legacy stub written");
+
+    let article_path = temp.path().join("knowledge/topics/roundup.md");
+    let mut input = empty_input("Roundup", ArticleKind::Topic);
+    input.accepted_sources = vec![SynthesisSource {
+        title: "Gist".to_string(),
+        path: PathBuf::from("raw/src-1ca0bb24edbe42ac-https-gist-example-com-a.md"),
+        chunks: vec!["new".to_string()],
+        existing_page: None,
+    }];
+
+    let pages = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("source pages synthesized");
+    assert_eq!(pages.len(), 1);
+    assert_eq!(
+        pages[0].path,
+        sources_dir.join("gist.md"),
+        "recompile must reuse the legacy stub, not mint a -2 sibling"
+    );
+}
+
+#[test]
 fn source_page_paths_suffix_only_for_different_source_identity() {
     let temp = tempfile::tempdir().expect("tempdir");
     let article_path = temp.path().join("knowledge/topics/hn-roundup.md");

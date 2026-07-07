@@ -242,14 +242,59 @@ fn page_matches_source_identity(page_path: &Path, identity: &str) -> bool {
     let Ok(markdown) = std::fs::read_to_string(page_path) else {
         return false;
     };
-    parse_frontmatter(&markdown).is_ok_and(|parsed| {
-        parsed
+    // A recompile must resolve a source back to its existing stub even after the
+    // source content was re-fetched and its content hash rotated, minting a new
+    // `src-<hash>-<location>` id for the SAME canonical location (#17705).
+    // Match on the stable location slug (everything after the hash, mirroring
+    // `compile::select::source_id_slug`) taken from the page's `source_path`
+    // frontmatter (#17596) or, for stubs written before that key existed, the
+    // rendered `Source path:` body line. Fall back to an exact comparison for
+    // identities that are not `src-<hash>-...` paths.
+    let want_slug = source_identity_slug(identity);
+    page_source_identities(&markdown).iter().any(|recorded| {
+        match (&want_slug, source_identity_slug(recorded)) {
+            (Some(want), Some(have)) => *want == have,
+            _ => recorded == identity,
+        }
+    })
+}
+
+/// The stable, re-fetch-invariant location slug of a raw source path or id.
+/// Source ids are `src-<content_hash>-<location-slug>` (see
+/// [`crate::sources::render::source_id`]); the 16-hex content hash rotates every
+/// time the source is re-fetched while the location slug is stable. Returns the
+/// slug for a `raw/src-<hash>-<slug>.md` path (or bare id), or `None` when the
+/// input is not a hash-prefixed source identity.
+fn source_identity_slug(identity: &str) -> Option<String> {
+    let name = Path::new(identity.trim()).file_name()?.to_str()?;
+    let stem = name.strip_suffix(".md").unwrap_or(name);
+    let (_hash, slug) = stem.strip_prefix("src-")?.split_once('-')?;
+    (!slug.is_empty()).then(|| slug.to_string())
+}
+
+/// Every raw source identity a stub page records: its `source_path` frontmatter
+/// (#17596) and — for legacy stubs written before that key existed — the raw
+/// path in its rendered `Source path:` body line.
+fn page_source_identities(markdown: &str) -> Vec<String> {
+    let mut identities = Vec::new();
+    if let Ok(parsed) = parse_frontmatter(markdown)
+        && let Some(value) = parsed
             .metadata
             .unknown
             .get(SOURCE_PATH_FRONTMATTER_KEY)
             .and_then(Value::as_str)
-            == Some(identity)
-    })
+    {
+        identities.push(value.to_string());
+    }
+    for line in markdown.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("Source path:") {
+            let path = rest.trim().trim_matches('`').trim();
+            if !path.is_empty() {
+                identities.push(path.to_string());
+            }
+        }
+    }
+    identities
 }
 
 pub(super) fn source_links(
