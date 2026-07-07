@@ -160,6 +160,14 @@ class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
     """Raised when the Claude SDK child process is terminated during shutdown."""
 
 
+# Turn budget for the one-shot feature text-generation path (codewiki, synthesis,
+# memory.dream, etc.). Must be >1: with max_turns=1 the Claude Agent SDK raises
+# "Reached maximum number of turns (1)" on reasoning/continuation-heavy prompts
+# instead of returning text (gobby-#17698). Tools are disabled on this path, so
+# the model cannot take action-loops; this is bounded headroom, not an agent loop.
+_FEATURE_TEXTGEN_MAX_TURNS = 8
+
+
 class ClaudeLLMProvider:
     """Claude implementation using the Claude Agent SDK."""
 
@@ -521,7 +529,14 @@ class ClaudeLLMProvider:
             applied_reasoning_effort = reasoning_options.get("effort")
             options = ClaudeAgentOptions(
                 system_prompt=system_prompt or "You are a helpful assistant.",
-                max_turns=1,
+                # gobby-#17698: feature text-gen was starved at max_turns=1. The
+                # Claude Agent SDK RAISES ("Reached maximum number of turns (1)")
+                # rather than returning accumulated text when the turn budget is
+                # exhausted, which reasoning/continuation-heavy prompts (codewiki,
+                # synthesis, memory.dream) routinely hit — stalling those features.
+                # Tools are disabled below, so the model cannot take action-loops;
+                # this bounded headroom only lets a single generation complete.
+                max_turns=_FEATURE_TEXTGEN_MAX_TURNS,
                 model=model or self._default_model,
                 tools=[],  # Explicitly disable all tools
                 allowed_tools=[],

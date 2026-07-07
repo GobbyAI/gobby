@@ -378,6 +378,32 @@ class TestGenerateText:
         assert captured_kwargs[0]["effort"] == "xhigh"
 
     @pytest.mark.asyncio
+    async def test_generate_text_sdk_uses_turn_headroom_with_tools_disabled(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        # gobby-#17698: the feature text-gen path must not be starved at
+        # max_turns=1 — the Claude Agent SDK raises "Reached maximum number of
+        # turns (1)" on reasoning/continuation-heavy prompts instead of returning
+        # text. Guard bounded headroom (>1) AND that tools stay disabled so the
+        # extra turns can never become an agent action-loop.
+        captured_kwargs: list[dict[str, object]] = []
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured_kwargs.append(options.kwargs)
+            yield MockAssistantMessage([MockTextBlock("reply")])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider._generate_text_sdk("Generate a long page")
+
+        assert result.text == "reply"
+        assert captured_kwargs[0]["max_turns"] > 1
+        assert captured_kwargs[0]["tools"] == []
+        assert captured_kwargs[0]["allowed_tools"] == []
+
+    @pytest.mark.asyncio
     async def test_generate_text_sdk_omits_reasoning_effort_when_auto_or_unset(
         self, claude_config: DaemonConfig
     ) -> None:
