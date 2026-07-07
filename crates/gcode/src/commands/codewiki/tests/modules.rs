@@ -39,6 +39,65 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
 }
 
 #[test]
+fn scoped_run_emits_module_pages_for_synthetic_cluster_link_targets() {
+    // Regression: a file page renders `Module: [[code/modules/<file.module>]]`.
+    // When clustering assigns a cross-directory synthetic module name (here
+    // `src/source_execute`, as `cluster_module_name` does for a call-connected
+    // cluster spanning sibling subdirectories) that is not a path prefix of any
+    // changed-file scope, a scoped/incremental run's doc-prune filter used to
+    // drop that module page while still emitting the file pages that link to it
+    // — a dangling link that grew `curated_broken_link_count` every heal. The
+    // module page for every direct `file.module` link target must be emitted
+    // regardless of the scope filter.
+    let files = vec![
+        file_doc_with_symbol("src/audit/claims.rs", "src/source_execute", "claims"),
+        file_doc_with_symbol("src/ai/chunk.rs", "src/source_execute", "chunk"),
+    ];
+    let mut generate = None;
+    let mut progress = CodewikiProgress::silent();
+    let mut emitted = Vec::new();
+
+    // Scope filter mimics an incremental run scoped to the changed files' own
+    // directories; the synthetic cluster path `src/source_execute` matches no
+    // scope, so before the fix its module page was filtered out even though the
+    // in-scope file pages link straight to it.
+    let scope_filter = |module: &str| {
+        module == "src/audit"
+            || module.starts_with("src/audit/")
+            || module == "src/ai"
+            || module.starts_with("src/ai/")
+    };
+    assert!(
+        !scope_filter("src/source_execute"),
+        "the synthetic cluster path must be outside the file-path scope"
+    );
+
+    let docs = build_module_docs_with_filter(
+        &files,
+        &std::collections::BTreeMap::new(),
+        &[],
+        &mut generate,
+        &mut None,
+        &mut progress,
+        &scope_filter,
+        &mut |doc| {
+            emitted.push(doc.module.clone());
+            Ok(())
+        },
+    )
+    .expect("module docs build");
+
+    assert!(
+        docs.iter().any(|doc| doc.module == "src/source_execute"),
+        "module page for the direct file->module link target must be built"
+    );
+    assert!(
+        emitted.iter().any(|module| module == "src/source_execute"),
+        "the synthetic cluster module page must be emitted, not dropped by scope"
+    );
+}
+
+#[test]
 fn module_page_drops_component_id_dump_keeps_navigation() {
     let files = vec![
         file_doc_with_symbol("src/lib.rs", "src", "direct-component"),

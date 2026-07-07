@@ -56,9 +56,24 @@ pub(crate) fn build_module_docs_with_filter(
 
     let mut module_summaries: BTreeMap<String, String> = BTreeMap::new();
     let mut module_sources: BTreeMap<String, Vec<SourceSpan>> = BTreeMap::new();
+    // Every file page renders `Module: [[code/modules/<file.module>]]`, so each
+    // distinct non-empty `file.module` MUST get a module page or the file page
+    // dangles. In a scoped/incremental run the doc-prune filter keys on
+    // file-path scopes; synthetic cross-directory cluster names (e.g.
+    // `crates/gwiki/src/source_execute`, produced by `cluster_module_name` when
+    // a call-connected cluster spans sibling subdirectories) match no path scope
+    // and get dropped — even though in-scope file pages link straight to them,
+    // which grows `curated_broken_link_count` every heal. Keep those direct
+    // link targets regardless of the scope filter; the filter still bounds
+    // ancestor-only modules that no file page links to.
+    let direct_link_modules = files
+        .iter()
+        .map(|file| file.module.clone())
+        .filter(|module| !module.is_empty())
+        .collect::<BTreeSet<String>>();
     let mut modules = module_names
         .into_iter()
-        .filter(|module| module_filter(module))
+        .filter(|module| module_filter(module) || direct_link_modules.contains(module))
         .collect::<Vec<_>>();
     modules.sort_by_key(|module| std::cmp::Reverse(module_depth(module)));
 
