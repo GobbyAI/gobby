@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import signal
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from gobby.code_index import codewiki_nightly
 from gobby.code_index.codewiki_nightly import (
     CODEWIKI_NIGHTLY_AI,
     CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS,
@@ -24,8 +26,9 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshResult,
     CodewikiRefreshService,
 )
-from gobby.code_index.gcode_gateway import GcodeGatewayError
+from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeGatewayError
 from gobby.config.wiki import WikiConfig
+from gobby.shutdown_intent import ShutdownIntent, ShutdownIntentRecord
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
@@ -288,6 +291,62 @@ async def test_codewiki_nightly_handler_raises_on_refresh_failure(tmp_path: Path
     )
 
     with pytest.raises(GcodeGatewayError, match="gcode failed"):
+        await handler(_cron_job())
+
+
+async def test_codewiki_nightly_handler_treats_shutdown_sigterm_as_benign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gcode -15 while the daemon is shutting down is child-reap collateral,
+    # not a refresh failure; it must not raise (which would storm the retry).
+    sigterm_error = GcodeCommandError(["gcode", "codewiki"], -signal.SIGTERM, "")
+    service = FakeRefreshService(error=sigterm_error)
+    handler = create_codewiki_nightly_handler(
+        project_id=PROJECT_ID,
+        root_path=tmp_path,
+        out_dir=tmp_path / "wiki",
+        refresh_service=service,
+    )
+    monkeypatch.setattr(
+        codewiki_nightly,
+        "read_active_shutdown_intent",
+        lambda *args, **kwargs: ShutdownIntentRecord(
+            intent=ShutdownIntent.RESTART,
+            source="cli_restart",
+            sender_pid=123,
+            timestamp=1.0,
+        ),
+    )
+
+    output = await handler(_cron_job())
+
+    assert output == (
+        f"codewiki nightly refresh for {PROJECT_ID} skipped: daemon shutdown in progress"
+    )
+
+
+async def test_codewiki_nightly_handler_raises_sigterm_without_active_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A gcode SIGTERM with no active shutdown marker is a genuine failure and
+    # must still surface (so it is not silently swallowed as benign).
+    sigterm_error = GcodeCommandError(["gcode", "codewiki"], -signal.SIGTERM, "")
+    service = FakeRefreshService(error=sigterm_error)
+    handler = create_codewiki_nightly_handler(
+        project_id=PROJECT_ID,
+        root_path=tmp_path,
+        out_dir=tmp_path / "wiki",
+        refresh_service=service,
+    )
+    monkeypatch.setattr(
+        codewiki_nightly,
+        "read_active_shutdown_intent",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(GcodeCommandError, match="gcode exited -15"):
         await handler(_cron_job())
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
@@ -15,10 +16,11 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshService,
     normalize_codewiki_ai,
 )
-from gobby.code_index.gcode_gateway import GcodeGateway
+from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeGateway
 from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
 from gobby.gwiki_gateway import GwikiGateway
 from gobby.scheduler.executor import CronHandler
+from gobby.shutdown_intent import read_active_shutdown_intent
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 
@@ -60,6 +62,23 @@ def codewiki_nightly_handler_name(project_id: str) -> str:
     return f"codewiki_nightly:{project_id}"
 
 
+def _is_shutdown_interrupted_codewiki(exc: GcodeCommandError) -> bool:
+    """True when gcode was SIGTERM'd because the daemon is shutting down.
+
+    The nightly codewiki gcode subprocess is a non-agent child of the daemon.
+    On a graceful restart/stop, child-process reaping sends SIGTERM to it,
+    surfacing as ``gcode exited -15``. That is a benign interruption, not a
+    real refresh failure, so it must not increment the cron job's consecutive
+    failure counter — doing so drives a retry/backoff storm that keeps the
+    vault from ever converging. Mirrors ``_is_noop_shutdown_prune`` in
+    ``prune.py``; gated on a fresh shutdown-intent marker so genuine gcode
+    SIGTERMs still surface as failures.
+    """
+    if exc.returncode != -signal.SIGTERM:
+        return False
+    return read_active_shutdown_intent() is not None
+
+
 def create_codewiki_nightly_handler(
     *,
     project_id: str,
@@ -73,15 +92,28 @@ def create_codewiki_nightly_handler(
     normalized_ai = normalize_codewiki_ai(ai)
 
     async def _handler(_job: CronJob) -> str:
-        result = await service.refresh(
-            CodewikiRefreshRequest(
-                root_path=str(root_path),
-                project_id=project_id,
-                out_dir=str(out_dir),
-                ai=normalized_ai,
-                scopes=scopes,
+        try:
+            result = await service.refresh(
+                CodewikiRefreshRequest(
+                    root_path=str(root_path),
+                    project_id=project_id,
+                    out_dir=str(out_dir),
+                    ai=normalized_ai,
+                    scopes=scopes,
+                )
             )
-        )
+        except GcodeCommandError as exc:
+            if _is_shutdown_interrupted_codewiki(exc):
+                logger.info(
+                    "codewiki nightly refresh for %s interrupted by daemon "
+                    "shutdown; treating as benign no-op (not a failure)",
+                    project_id,
+                )
+                return (
+                    f"codewiki nightly refresh for {project_id} skipped: "
+                    "daemon shutdown in progress"
+                )
+            raise
         return (
             f"codewiki nightly refresh completed for {project_id}: "
             f"{result.changed_count} changed doc(s)"
