@@ -96,6 +96,74 @@ pub(crate) fn accepted_note_from_source(
     })
 }
 
+/// Re-point a loaded checkpoint's accepted notes at the current source manifest.
+///
+/// A source that is re-fetched by `gwiki refresh` gets a new content hash and
+/// therefore a new `src-<hash>-<slug>` raw path, orphaning the path stored in an
+/// older research checkpoint and deleting the old raw file. Because the
+/// URL-derived slug is stable across re-fetches, each stale note is re-pointed to
+/// the manifest record that shares its slug. Notes whose source no longer exists
+/// are dropped so that one unrelated re-fetch cannot hard-fail an entire topic
+/// compile (#17702). Returns `true` when any note was re-pointed or dropped.
+pub(crate) fn reconcile_accepted_notes_with_manifest(
+    vault_root: &Path,
+    notes: &mut Vec<session::AcceptedResearchNote>,
+    manifest: &SourceManifest,
+) -> bool {
+    let mut changed = false;
+    notes.retain_mut(|note| {
+        if vault_root.join(&note.path).is_file() {
+            return true;
+        }
+        if let Some(current_path) =
+            current_raw_path_for_stale_note(vault_root, manifest, &note.path)
+        {
+            note.path = current_path;
+            changed = true;
+            return true;
+        }
+        eprintln!(
+            "warning: dropping accepted research note whose raw source is missing from the vault: {}",
+            note.path.display()
+        );
+        changed = true;
+        false
+    });
+    changed
+}
+
+/// Resolve the current raw path for a stale note by matching the stable
+/// URL-derived slug embedded in its `src-<hash>-<slug>` filename against the
+/// manifest. Returns `None` when no current source shares the slug or the
+/// re-pointed raw file is itself absent.
+fn current_raw_path_for_stale_note(
+    vault_root: &Path,
+    manifest: &SourceManifest,
+    stale_path: &Path,
+) -> Option<std::path::PathBuf> {
+    let stale_slug = stale_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(source_id_slug)?;
+    let record = manifest
+        .entries
+        .iter()
+        .find(|record| source_id_slug(&record.id) == Some(stale_slug))?;
+    let current_path = paths::raw_source_path(&record.id).ok()?;
+    vault_root
+        .join(&current_path)
+        .is_file()
+        .then_some(current_path)
+}
+
+/// Extract the stable URL-derived slug from a `src-<hash>-<slug>` source id.
+/// Returns `None` for hash-only ids (`src-<hash>`), which carry no slug.
+fn source_id_slug(id: &str) -> Option<&str> {
+    id.strip_prefix("src-")?
+        .split_once('-')
+        .map(|(_hash, slug)| slug)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +356,100 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn reconcile_repoints_stale_note_to_refetched_source() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // Source re-fetched by refresh: new content hash, same URL slug.
+        let current = source_record(
+            "src-f8564a331c2de6-example-com-a",
+            "https://example.com/a",
+            "https://example.com/a",
+            Some("Example A"),
+        );
+        write_raw_source(root, &current);
+        let manifest = SourceManifest {
+            entries: vec![current],
+        };
+        // Checkpoint still points at the pre-refresh raw path (file now absent).
+        let mut notes = vec![session::AcceptedResearchNote {
+            title: "Example A".to_string(),
+            path: PathBuf::from("raw/src-ae5a51a7122bac-example-com-a.md"),
+            code_citations: Vec::new(),
+            degradation: None,
+        }];
+
+        let changed = reconcile_accepted_notes_with_manifest(root, &mut notes, &manifest);
+
+        assert!(changed);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(
+            notes[0].path,
+            PathBuf::from("raw/src-f8564a331c2de6-example-com-a.md")
+        );
+    }
+
+    #[test]
+    fn reconcile_drops_note_when_source_removed_from_manifest() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let manifest = SourceManifest {
+            entries: Vec::new(),
+        };
+        let mut notes = vec![session::AcceptedResearchNote {
+            title: "Gone".to_string(),
+            path: PathBuf::from("raw/src-deadbeefdeadbe-example-com-gone.md"),
+            code_citations: Vec::new(),
+            degradation: None,
+        }];
+
+        let changed = reconcile_accepted_notes_with_manifest(root, &mut notes, &manifest);
+
+        assert!(changed);
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn reconcile_leaves_present_notes_untouched() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let present = source_record(
+            "src-livehash000000-example-com-b",
+            "https://example.com/b",
+            "https://example.com/b",
+            Some("Example B"),
+        );
+        write_raw_source(root, &present);
+        let present_path = paths::raw_source_path(&present.id).expect("raw path");
+        let manifest = SourceManifest {
+            entries: vec![present],
+        };
+        let mut notes = vec![session::AcceptedResearchNote {
+            title: "Example B".to_string(),
+            path: present_path.clone(),
+            code_citations: Vec::new(),
+            degradation: None,
+        }];
+
+        let changed = reconcile_accepted_notes_with_manifest(root, &mut notes, &manifest);
+
+        assert!(!changed);
+        assert_eq!(notes[0].path, present_path);
+    }
+
+    #[test]
+    fn source_id_slug_extracts_stable_slug_across_hash_changes() {
+        assert_eq!(
+            source_id_slug("src-ae5a51a7122bac-https-example-com-a"),
+            Some("https-example-com-a")
+        );
+        assert_eq!(
+            source_id_slug("src-f8564a331c2de6-https-example-com-a"),
+            Some("https-example-com-a")
+        );
+        assert_eq!(source_id_slug("src-0000000000000000"), None);
+        assert_eq!(source_id_slug("knowledge/sources/foo"), None);
     }
 }

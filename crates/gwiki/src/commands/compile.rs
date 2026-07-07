@@ -36,6 +36,8 @@ pub(crate) fn execute(
     let mut session = load_compile_session(research_scope, topic_seed.as_deref())?;
     if !source.is_empty() {
         apply_source_selection(&mut session, &source)?;
+    } else {
+        reconcile_checkpoint_sources(&mut session)?;
     }
     let topic = resolve_compile_topic(topic_seed, &session);
     let daemon_report = daemon::probe_daemon_capabilities();
@@ -236,6 +238,22 @@ fn apply_source_selection(
     session.accepted_notes =
         wiki_compile::select::resolve_source_notes(session.scope.root(), &manifest, selectors)?;
     session.save_checkpoint()
+}
+
+/// Re-point a reused research checkpoint's accepted notes at the current source
+/// manifest so a `gwiki refresh` that re-hashed an unrelated source cannot
+/// hard-fail this compile with `accepted_note ... was not found` (#17702).
+fn reconcile_checkpoint_sources(session: &mut session::ResearchSession) -> Result<(), WikiError> {
+    let manifest = SourceManifest::read(session.scope.root())?;
+    let vault_root = session.scope.root().to_path_buf();
+    if wiki_compile::select::reconcile_accepted_notes_with_manifest(
+        &vault_root,
+        &mut session.accepted_notes,
+        &manifest,
+    ) {
+        session.save_checkpoint()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
