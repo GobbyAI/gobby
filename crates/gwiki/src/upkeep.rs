@@ -25,7 +25,7 @@ use serde::Serialize;
 
 use crate::compile::{CompileRequest, WikiCompileOptions, compile_to_wiki_with_options, select};
 use crate::explainer::ExplainerGenerator;
-use crate::links::{canonical_target_key, is_entity_key};
+use crate::links::{LinkKind, canonical_target_key, extract_links, is_entity_key};
 use crate::search::SearchScope;
 use crate::search::semantic::{SemanticSearchBackend, SemanticSearchRequest};
 use crate::session::{ResearchScope, ResearchSession};
@@ -51,6 +51,11 @@ const NEAR_DUPLICATE_REVIEW_COSINE: f64 = 0.80;
 const NEAR_DUPLICATE_SEARCH_LIMIT: usize = 8;
 /// Vault-relative path of the run report written by non-dry runs.
 pub(crate) const REPORT_RELATIVE_PATH: &str = "meta/upkeep/last-run.json";
+
+/// Durable registry of concept mentions the heal pass unwrapped from digest
+/// bodies. It preserves the concept-synthesis work-queue signal across runs so
+/// unwrapping a red-link to plain text does not lose the mention (#17703).
+const HEALED_MENTIONS_PATH: &str = "meta/upkeep/concept-mentions.json";
 /// Frontmatter tag marking entity concept pages synthesized by upkeep.
 const ENTITY_TAG: &str = "entity";
 
@@ -217,6 +222,7 @@ pub fn run(
 
     let lint_report = lint::run(&vault_root, scope.clone())?;
     let mut accumulators: BTreeMap<String, ClusterAccumulator> = BTreeMap::new();
+    let mut counted_mentions: BTreeSet<(usize, String)> = BTreeSet::new();
     for issue in &lint_report.broken_links {
         let Some(&source_index) = digest_records.get(&issue.path) else {
             continue;
@@ -229,6 +235,7 @@ pub fn run(
         if !is_entity_key(&key) {
             continue;
         }
+        counted_mentions.insert((source_index, key.clone()));
         let accumulator = accumulators.entry(key).or_default();
         accumulator.mentions += 1;
         *accumulator
@@ -236,6 +243,30 @@ pub fn run(
             .entry(issue.target.clone())
             .or_default() += 1;
         accumulator.source_indices.insert(source_index);
+    }
+
+    // Healed mentions (concept red-links a prior run unwrapped to plain text)
+    // keep seeding clusters so concept discovery accumulates across upkeep
+    // cycles even though the digest bodies no longer carry the unresolved
+    // `[[Entity]]` links. This durable registry replaces the permanent broken
+    // links the vault used to accrue as its concept-synthesis work-queue: a
+    // digest link and its healed record never both count for the same
+    // (digest, entity) pair (#17703).
+    let mut healed_mentions = HealedMentions::read(&vault_root)?;
+    for (digest_path, &source_index) in &digest_records {
+        for entity in healed_mentions.entities_for(digest_path) {
+            let key = canonical_target_key(entity);
+            if !is_entity_key(&key) || !counted_mentions.insert((source_index, key.clone())) {
+                continue;
+            }
+            let accumulator = accumulators.entry(key).or_default();
+            accumulator.mentions += 1;
+            *accumulator
+                .variant_counts
+                .entry(entity.clone())
+                .or_default() += 1;
+            accumulator.source_indices.insert(source_index);
+        }
     }
 
     let mut candidates: Vec<Cluster> = accumulators
@@ -389,6 +420,40 @@ pub fn run(
             }
         }
         clusters.push(outcome);
+    }
+
+    // Heal the vault's broken-link debt: any `[[Entity]]` concept link still
+    // unresolved AFTER this run's synthesis is unwrapped to plain text and its
+    // entity recorded in the durable mentions registry, so `broken_link_count`
+    // converges to ~0 while concept discovery keeps accumulating across runs
+    // (#17703). Re-linting after synthesis keeps freshly created concept pages
+    // linked (their targets now resolve) without approximating which keys the
+    // librarian actually minted.
+    if !options.dry_run {
+        let post_synthesis = lint::run(&vault_root, scope.clone())?;
+        let mut unresolved_by_digest: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+        for issue in &post_synthesis.broken_links {
+            if !digest_records.contains_key(&issue.path) {
+                continue;
+            }
+            let key = canonical_target_key(&issue.target);
+            if !is_entity_key(&key) {
+                continue;
+            }
+            unresolved_by_digest
+                .entry(issue.path.clone())
+                .or_default()
+                .insert(key);
+        }
+        for (digest_path, unresolved_keys) in &unresolved_by_digest {
+            for entity in
+                unwrap_unresolved_concept_links(&vault_root, digest_path, unresolved_keys)?
+            {
+                healed_mentions.record(digest_path, entity);
+            }
+        }
+        healed_mentions.retain_digests(digest_records.keys());
+        healed_mentions.write(&vault_root)?;
     }
 
     // Only pending sources reconcile: a compiled digest feeding a cluster is
@@ -834,6 +899,133 @@ fn page_match_keys(page: &lint::WikiPage) -> BTreeSet<String> {
     }
     keys.remove("");
     keys
+}
+
+/// Persisted map of digest relative path -> concept entities the heal pass has
+/// unwrapped from that digest body. Consumed by clustering so concept discovery
+/// still accumulates mentions across runs once the red-links are gone (#17703).
+#[derive(Debug, Default, Serialize, serde::Deserialize)]
+struct HealedMentions {
+    #[serde(default)]
+    digests: BTreeMap<String, Vec<String>>,
+}
+
+impl HealedMentions {
+    fn read(vault_root: &Path) -> Result<Self, WikiError> {
+        let path = vault_root.join(HEALED_MENTIONS_PATH);
+        match fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text).map_err(|error| WikiError::Json {
+                action: "parse healed concept-mentions registry",
+                path: Some(path),
+                source: error,
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(WikiError::Io {
+                action: "read healed concept-mentions registry",
+                path: Some(path),
+                source: error,
+            }),
+        }
+    }
+
+    fn write(&self, vault_root: &Path) -> Result<(), WikiError> {
+        let path = vault_root.join(HEALED_MENTIONS_PATH);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| WikiError::Io {
+                action: "create healed concept-mentions directory",
+                path: Some(parent.to_path_buf()),
+                source: error,
+            })?;
+        }
+        let json = serde_json::to_string_pretty(self).map_err(|error| WikiError::Json {
+            action: "serialize healed concept-mentions registry",
+            path: Some(path.clone()),
+            source: error,
+        })?;
+        fs::write(&path, json).map_err(|error| WikiError::Io {
+            action: "write healed concept-mentions registry",
+            path: Some(path),
+            source: error,
+        })
+    }
+
+    fn entities_for(&self, digest_path: &Path) -> &[String] {
+        self.digests
+            .get(&digest_key(digest_path))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    fn record(&mut self, digest_path: &Path, entity: String) {
+        let entities = self.digests.entry(digest_key(digest_path)).or_default();
+        if !entities.contains(&entity) {
+            entities.push(entity);
+            entities.sort();
+        }
+    }
+
+    fn retain_digests<'a>(&mut self, live: impl IntoIterator<Item = &'a PathBuf>) {
+        let live: BTreeSet<String> = live.into_iter().map(|path| digest_key(path)).collect();
+        self.digests.retain(|key, _| live.contains(key));
+    }
+}
+
+/// Canonical string key for a digest relative path (forward slashes) so the
+/// registry stays stable across platforms.
+fn digest_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Unwrap every unresolved `[[Entity]]` wikilink whose canonical key is in
+/// `unresolved_keys` to its plain-text display, returning the raw entity names
+/// (link targets) that were unwrapped so the caller can record them in the
+/// mentions registry. Resolved links and non-wikilinks are left untouched;
+/// links inside code spans are never matched (`extract_links` skips them).
+fn unwrap_unresolved_concept_links(
+    vault_root: &Path,
+    digest_relative: &Path,
+    unresolved_keys: &BTreeSet<String>,
+) -> Result<Vec<String>, WikiError> {
+    let path = vault_root.join(digest_relative);
+    let markdown = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read digest for concept-link heal",
+                path: Some(path),
+                source: error,
+            });
+        }
+    };
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut recorded: Vec<String> = Vec::new();
+    for link in extract_links(&markdown, std::iter::empty::<&str>()) {
+        if link.kind != LinkKind::Wikilink {
+            continue;
+        }
+        if !unresolved_keys.contains(&canonical_target_key(&link.normalized_target)) {
+            continue;
+        }
+        let display = link.alias.clone().unwrap_or_else(|| link.target.clone());
+        edits.push((link.byte_start, link.byte_end, display));
+        recorded.push(link.target);
+    }
+    if edits.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut updated = markdown;
+    for (byte_start, byte_end, replacement) in edits.into_iter().rev() {
+        updated.replace_range(byte_start..byte_end, &replacement);
+    }
+    fs::write(&path, updated).map_err(|error| WikiError::Io {
+        action: "write healed digest concept links",
+        path: Some(path),
+        source: error,
+    })?;
+    recorded.sort();
+    recorded.dedup();
+    Ok(recorded)
 }
 
 fn write_report(vault_root: &Path, report: &UpkeepReport) -> Result<(), WikiError> {
@@ -1616,5 +1808,131 @@ mod tests {
         // The failed cluster's source stays pending; the drained one flips.
         assert_eq!(compile_status_of(root, "src-a"), CompileStatus::Pending);
         assert_eq!(compile_status_of(root, "src-b"), CompileStatus::Compiled);
+    }
+
+    #[test]
+    fn upkeep_heals_unresolved_concept_links_to_plain_text() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // Two mentions cluster and synthesize (link kept resolved); the lone
+        // mention stays unresolved and must be unwrapped to plain text with its
+        // entity recorded for future runs.
+        seed_source(root, "src-a", "Built on [[PostgreSQL]].\n");
+        seed_source(root, "src-b", "Also uses [[PostgreSQL]].\n");
+        seed_source(root, "src-solo", "## Connections\n\n- [[Ephemeral Idea]]\n");
+
+        run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        let clustered = fs::read_to_string(root.join("knowledge/sources/src-a.md"))
+            .expect("read clustered digest");
+        assert!(
+            clustered.contains("[[PostgreSQL]]"),
+            "synthesized concept link is kept resolved: {clustered}"
+        );
+        assert!(root.join("knowledge/concepts/postgresql.md").exists());
+
+        let solo = fs::read_to_string(root.join("knowledge/sources/src-solo.md"))
+            .expect("read solo digest");
+        assert!(
+            !solo.contains("[[Ephemeral Idea]]"),
+            "unresolved singleton link is unwrapped: {solo}"
+        );
+        assert!(
+            solo.contains("- Ephemeral Idea"),
+            "unwrapped mention stays as plain text: {solo}"
+        );
+
+        let registry =
+            fs::read_to_string(root.join(HEALED_MENTIONS_PATH)).expect("read healed registry");
+        assert!(
+            registry.contains("Ephemeral Idea"),
+            "healed entity recorded for later clustering: {registry}"
+        );
+    }
+
+    #[test]
+    fn upkeep_healed_mentions_seed_a_later_cluster() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // Run 1: a lone mention is healed to plain text and recorded.
+        seed_source(root, "src-a", "First note on [[Emerging Topic]].\n");
+        let first = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("first upkeep run");
+        assert_eq!(first.pages_created, 0, "a singleton does not synthesize");
+        assert!(
+            !fs::read_to_string(root.join("knowledge/sources/src-a.md"))
+                .expect("read src-a")
+                .contains("[[Emerging Topic]]"),
+            "singleton healed to plain text on the first run"
+        );
+
+        // A second digest mentions the same concept on a later run.
+        seed_source(root, "src-b", "Second note on [[Emerging Topic]].\n");
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("second upkeep run");
+
+        // The healed mention from run 1 plus the fresh mention now cluster, so
+        // decoupling the work-queue from the red-links preserves discovery.
+        assert_eq!(report.pages_created, 1);
+        let cluster = report
+            .clusters
+            .iter()
+            .find(|outcome| outcome.key == "emerging topic")
+            .expect("emerging topic cluster");
+        assert_eq!(cluster.mentions, 2);
+        assert!(cluster.source_ids.contains(&"src-a".to_string()));
+        assert!(cluster.source_ids.contains(&"src-b".to_string()));
+    }
+
+    #[test]
+    fn upkeep_heal_skips_concept_links_inside_code_spans() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(
+            root,
+            "src-a",
+            "Mentions `[[Not A Link]]` inline and [[Real Mention]] outside.\n",
+        );
+        run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+        let digest =
+            fs::read_to_string(root.join("knowledge/sources/src-a.md")).expect("read digest");
+        assert!(
+            digest.contains("`[[Not A Link]]`"),
+            "code-span content is left verbatim: {digest}"
+        );
+        assert!(
+            !digest.contains("[[Real Mention]]"),
+            "real unresolved link is unwrapped: {digest}"
+        );
     }
 }
