@@ -66,6 +66,26 @@ _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
     }
 )
 
+# Circuit breaker for the shared feature-LLM route. Under a sustained provider
+# outage, every feature call would otherwise run the full slow try-all-candidates
+# loop before failing; a batch caller such as the codewiki nightly then multiplies
+# that per-page into a multi-hour runaway (gobby-#17696). The breaker trips a
+# provider binding after N consecutive failures and short-circuits further calls
+# to it for a cooldown, so callers fail fast (and fall back) instead of hanging.
+# It is a no-op in healthy operation: a single success resets the counter, and the
+# open state is purely time-based so it can never latch permanently.
+_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 8
+_CIRCUIT_BREAKER_COOLDOWN_SECONDS = 60.0
+
+
+class _CircuitOpenError(RuntimeError):
+    """Raised to short-circuit a candidate whose provider binding is in cooldown."""
+
+    def __init__(self, breaker_key: str, retry_after_seconds: float) -> None:
+        self.breaker_key = breaker_key
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"circuit open for '{breaker_key}'; retry in {retry_after_seconds:.1f}s")
+
 
 class _ReasoningEffortRejectedError(ValueError):
     """Raised when a candidate's reasoning effort must fail before adapter execution."""
@@ -168,6 +188,8 @@ class TextGenerationService:
         candidate_timeout_seconds: float | None = None,
         cli_candidate_timeout_seconds: float | None = None,
         spawn_cold_max_concurrency: int = 3,
+        circuit_breaker_failure_threshold: int = _CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        circuit_breaker_cooldown_seconds: float = _CIRCUIT_BREAKER_COOLDOWN_SECONDS,
     ) -> None:
         if spawn_cold_max_concurrency < 1:
             raise ValueError("spawn_cold_max_concurrency must be >= 1")
@@ -182,6 +204,36 @@ class TextGenerationService:
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
         }
+        self._circuit_breaker_failure_threshold = circuit_breaker_failure_threshold
+        self._circuit_breaker_cooldown_seconds = circuit_breaker_cooldown_seconds
+        self._breaker_failures: dict[str, int] = {}
+        self._breaker_open_until: dict[str, float] = {}
+
+    @staticmethod
+    def _breaker_key(binding: CapabilityBinding, candidate: TextGenerationRequest) -> str:
+        model = candidate.model or next(iter(binding.models), "")
+        return f"{binding.provider}:{model}"
+
+    def _breaker_retry_after(self, key: str) -> float:
+        """Seconds until the breaker for key reopens, or 0.0 when it is closed."""
+        if self._circuit_breaker_failure_threshold <= 0:
+            return 0.0
+        remaining = self._breaker_open_until.get(key, 0.0) - time.monotonic()
+        return remaining if remaining > 0.0 else 0.0
+
+    def _breaker_record_success(self, key: str) -> None:
+        self._breaker_failures.pop(key, None)
+        self._breaker_open_until.pop(key, None)
+
+    def _breaker_record_failure(self, key: str) -> None:
+        if self._circuit_breaker_failure_threshold <= 0:
+            return
+        failures = self._breaker_failures.get(key, 0) + 1
+        self._breaker_failures[key] = failures
+        if failures >= self._circuit_breaker_failure_threshold:
+            self._breaker_open_until[key] = (
+                time.monotonic() + self._circuit_breaker_cooldown_seconds
+            )
 
     def _candidate_timeout_for_binding(
         self, request: TextGenerationRequest, binding: CapabilityBinding | None
@@ -333,8 +385,13 @@ class TextGenerationService:
             attempted_candidates.append(candidate_label)
             start = time.perf_counter()
             binding: CapabilityBinding | None = None
+            breaker_key: str | None = None
             try:
                 binding = self._select_binding(candidate)
+                breaker_key = self._breaker_key(binding, candidate)
+                retry_after = self._breaker_retry_after(breaker_key)
+                if retry_after > 0.0:
+                    raise _CircuitOpenError(breaker_key, retry_after)
                 candidate = _gate_reasoning_effort(candidate, binding=binding)
                 adapter = self._adapter_for_provider(binding.provider)
 
@@ -344,16 +401,21 @@ class TextGenerationService:
                 ) -> Awaitable[str | LLMTextResult]:
                     return adapter.generate(candidate)
 
-                result = await self._await_admitted_candidate(
-                    generate_candidate,
-                    request=candidate,
-                    binding=binding,
-                )
-                text_result = _coerce_text_result(
-                    result,
-                    applied_reasoning_effort=candidate.reasoning_effort,
-                )
-                _validate_text_generation_output(candidate, text_result.text)
+                try:
+                    result = await self._await_admitted_candidate(
+                        generate_candidate,
+                        request=candidate,
+                        binding=binding,
+                    )
+                    text_result = _coerce_text_result(
+                        result,
+                        applied_reasoning_effort=candidate.reasoning_effort,
+                    )
+                    _validate_text_generation_output(candidate, text_result.text)
+                except Exception:
+                    self._breaker_record_failure(breaker_key)
+                    raise
+                self._breaker_record_success(breaker_key)
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -372,6 +434,18 @@ class TextGenerationService:
                 )
             except LLMProviderCancellation:
                 raise
+            except _CircuitOpenError as exc:
+                last_error = exc
+                candidate_errors.append((candidate_label, f"{type(exc).__name__}: {exc}"))
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=False,
+                    error=exc,
+                    terminal_failure=not has_remaining_candidates,
+                )
+                continue
             except _ReasoningEffortRejectedError as exc:
                 last_error = exc
                 last_reasoning_error = exc

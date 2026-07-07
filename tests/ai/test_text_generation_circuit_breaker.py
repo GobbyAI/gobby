@@ -1,0 +1,165 @@
+"""Circuit breaker for the shared feature-LLM route (gobby-#17696).
+
+Under a sustained provider outage every feature call would otherwise run the full
+slow try-all-candidates loop before failing; a batch caller (the codewiki nightly)
+then multiplies that per-page into a multi-hour runaway. The breaker trips a
+provider binding after N consecutive failures and short-circuits further calls to
+it for a cooldown, so callers fail fast (and fall back) instead of hanging. It is a
+no-op in healthy operation: a single success resets the counter, and the open state
+is purely time-based so it can never latch permanently.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from gobby.ai import (
+    AIAdapterStyle,
+    AICapability,
+    AICapabilityRegistry,
+    CapabilityBinding,
+    TextGenerationRequest,
+    TextGenerationService,
+)
+from gobby.ai._text_generation_service import _CircuitOpenError
+
+pytestmark = pytest.mark.unit
+
+
+class _CountingFailAdapter:
+    """Always fails; records how many times generate() was actually invoked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.calls += 1
+        raise RuntimeError("provider degraded")
+
+
+class _ScriptedAdapter:
+    """Fails or succeeds per a fixed script; records real invocations.
+
+    ``outcomes[i]`` True means the i-th invocation raises; missing/False succeeds.
+    """
+
+    def __init__(self, outcomes: list[bool]) -> None:
+        self.outcomes = outcomes
+        self.calls = 0
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        index = self.calls
+        self.calls += 1
+        if index < len(self.outcomes) and self.outcomes[index]:
+            raise RuntimeError("provider degraded")
+        return "ok"
+
+
+def _breaker_service(adapter: object, *, threshold: int, cooldown: float) -> TextGenerationService:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                available=True,
+            )
+        ]
+    )
+    return TextGenerationService(
+        registry,
+        {"claude": adapter},
+        circuit_breaker_failure_threshold=threshold,
+        circuit_breaker_cooldown_seconds=cooldown,
+    )
+
+
+async def _call(service: TextGenerationService) -> str:
+    return await service.generate(
+        TextGenerationRequest(prompt="hi", provider="claude", model="haiku")
+    )
+
+
+@pytest.mark.asyncio
+async def test_breaker_opens_after_threshold_and_short_circuits() -> None:
+    adapter = _CountingFailAdapter()
+    service = _breaker_service(adapter, threshold=3, cooldown=60.0)
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            await _call(service)
+    assert adapter.calls == 3
+
+    # Breaker is open: the next call short-circuits without invoking the adapter.
+    with pytest.raises(_CircuitOpenError):
+        await _call(service)
+    assert adapter.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_breaker_resets_counter_on_success() -> None:
+    # fail, fail, SUCCESS, fail, fail. With threshold=3 and a reset-on-success
+    # breaker the counter never reaches 3, so every call reaches the adapter.
+    # Without the reset, the 4th failure would open the breaker and the 5th call
+    # would be short-circuited (adapter.calls would stop at 4).
+    adapter = _ScriptedAdapter([True, True, False, True, True])
+    service = _breaker_service(adapter, threshold=3, cooldown=60.0)
+
+    for _ in range(5):
+        try:
+            await _call(service)
+        except Exception:
+            pass
+
+    assert adapter.calls == 5
+
+
+@pytest.mark.asyncio
+async def test_breaker_is_noop_in_healthy_operation() -> None:
+    adapter = _ScriptedAdapter([False] * 10)
+    service = _breaker_service(adapter, threshold=2, cooldown=60.0)
+
+    for _ in range(10):
+        assert await _call(service) == "ok"
+    assert adapter.calls == 10
+
+
+@pytest.mark.asyncio
+async def test_breaker_probes_again_after_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Drive the breaker's clock deterministically instead of sleeping.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "gobby.ai._text_generation_service.time.monotonic",
+        lambda: clock["now"],
+    )
+    adapter = _CountingFailAdapter()
+    service = _breaker_service(adapter, threshold=2, cooldown=30.0)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            await _call(service)
+    assert adapter.calls == 2
+
+    # Open: an immediate call short-circuits without advancing the clock.
+    with pytest.raises(_CircuitOpenError):
+        await _call(service)
+    assert adapter.calls == 2
+
+    # Advancing past the cooldown lets exactly one probe through.
+    clock["now"] += 31.0
+    with pytest.raises(RuntimeError):
+        await _call(service)
+    assert adapter.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_breaker_disabled_when_threshold_not_positive() -> None:
+    adapter = _CountingFailAdapter()
+    service = _breaker_service(adapter, threshold=0, cooldown=60.0)
+
+    # With the breaker disabled every call reaches the adapter, even after many
+    # consecutive failures.
+    for _ in range(6):
+        with pytest.raises(RuntimeError):
+            await _call(service)
+    assert adapter.calls == 6
