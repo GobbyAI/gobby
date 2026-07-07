@@ -28,6 +28,7 @@ pub struct HealthReport {
     pub uncited_sources: Vec<HealthSourceIssue>,
     pub broken_links: Vec<crate::lint::LinkIssue>,
     pub duplicate_concepts: Vec<DuplicateConcept>,
+    pub duplicate_sources: Vec<DuplicateSource>,
     pub uncompiled_sources: Vec<HealthSourceIssue>,
     pub json_path: PathBuf,
     pub text_path: PathBuf,
@@ -43,6 +44,15 @@ pub struct HealthSourceIssue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DuplicateConcept {
     pub title: String,
+    pub paths: Vec<PathBuf>,
+}
+
+/// Multiple `knowledge/sources/` pages that resolve to the same canonical source
+/// identity — orphaned duplicates left when a recompile minted a slug-suffixed
+/// sibling instead of overwriting the derived page in place (#17707).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DuplicateSource {
+    pub identity: String,
     pub paths: Vec<PathBuf>,
 }
 
@@ -72,6 +82,7 @@ pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, 
         .map(source_issue)
         .collect();
     let duplicate_concepts = duplicate_concepts(&pages);
+    let duplicate_sources = duplicate_sources(&pages);
     let uncompiled_sources = manifest
         .entries
         .iter()
@@ -87,6 +98,7 @@ pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, 
         uncited_sources,
         broken_links: lint_report.broken_links,
         duplicate_concepts,
+        duplicate_sources,
         uncompiled_sources,
         json_path: PathBuf::from("meta/health/latest.json"),
         text_path: PathBuf::from("meta/health/latest.md"),
@@ -101,6 +113,7 @@ pub fn render_text(report: &HealthReport) -> String {
     render_sources(&mut text, "Uncited sources", &report.uncited_sources);
     render_broken_links(&mut text, &report.broken_links);
     render_duplicate_concepts(&mut text, &report.duplicate_concepts);
+    render_duplicate_sources(&mut text, &report.duplicate_sources);
     render_sources(&mut text, "Uncompiled sources", &report.uncompiled_sources);
     text
 }
@@ -573,10 +586,151 @@ fn render_duplicate_concepts(text: &mut String, duplicates: &[DuplicateConcept])
     }
 }
 
+/// Group `knowledge/sources/` pages by `(canonical source identity, title)` and
+/// flag any pairing backed by more than one page. A base/-2/-3 sibling set for
+/// one re-fetched source shares both keys (the `-N` suffix lives only in the
+/// filename slug, never the title), so it collapses to a single duplicate group.
+/// Keying on both fields keeps genuinely distinct sources apart even when they
+/// coincide on one field: different repos that share a title keep distinct
+/// identities, and distinct notes captured from a shared directory location
+/// (same identity slug) keep distinct titles (#17707).
+fn duplicate_sources(pages: &[crate::lint::WikiPage]) -> Vec<DuplicateSource> {
+    let mut by_source: BTreeMap<(String, String), Vec<PathBuf>> = BTreeMap::new();
+    for page in pages {
+        if !page.relative_path.starts_with("knowledge/sources") {
+            continue;
+        }
+        let Some(identity) = crate::synthesis::page_source_identities(&page.markdown)
+            .into_iter()
+            .next()
+        else {
+            continue;
+        };
+        let key = (
+            crate::synthesis::source_identity_key(&identity),
+            title_for_page(page),
+        );
+        by_source
+            .entry(key)
+            .or_default()
+            .push(page.relative_path.clone());
+    }
+    by_source
+        .into_iter()
+        .filter_map(|((identity, _title), mut paths)| {
+            paths.sort();
+            (paths.len() > 1).then_some(DuplicateSource { identity, paths })
+        })
+        .collect()
+}
+
+fn render_duplicate_sources(text: &mut String, duplicates: &[DuplicateSource]) {
+    text.push_str("\nDuplicate source pages:\n");
+    if duplicates.is_empty() {
+        text.push_str("- none\n");
+        return;
+    }
+    for duplicate in duplicates {
+        text.push_str("- ");
+        text.push_str(&duplicate.identity);
+        text.push_str(": ");
+        text.push_str(
+            &duplicate
+                .paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        text.push('\n');
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sources::{IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+
+    #[test]
+    fn duplicate_sources_flags_rotated_hash_siblings_not_distinct_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sources = temp.path().join("knowledge/sources");
+        std::fs::create_dir_all(&sources).expect("sources dir");
+
+        let stub = |source_path: &str, body: &str| {
+            format!(
+                "---\ntitle: \"Example\"\nsource_kind: \"source_note\"\n\
+                 synthesis_mode: \"source\"\nsource_path: \"{source_path}\"\n---\n\n\
+                 # Example\n\n{body}\n"
+            )
+        };
+        // Base + rotated-hash sibling for ONE canonical GitHub source: the
+        // content hash rotated on re-fetch but the location slug is stable, so
+        // both pages describe the same source and are orphaned duplicates.
+        std::fs::write(
+            sources.join("example-repo.md"),
+            stub(
+                "raw/src-0000000000000000-https-github-com-example-repo.md",
+                "Base.",
+            ),
+        )
+        .expect("base written");
+        std::fs::write(
+            sources.join("example-repo-2.md"),
+            stub(
+                "raw/src-1111111111111111-https-github-com-example-repo.md",
+                "Sibling.",
+            ),
+        )
+        .expect("sibling written");
+        // A genuinely distinct source (different location) must NOT be flagged.
+        std::fs::write(
+            sources.join("other-repo.md"),
+            stub(
+                "raw/src-2222222222222222-https-github-com-other-repo.md",
+                "Other.",
+            ),
+        )
+        .expect("other written");
+        // Two distinct notes captured from the same directory location share an
+        // identity slug but differ by title — they must NOT be flagged as
+        // duplicates of each other (the false positive an identity-only key hit).
+        let titled_stub = |title: &str, source_path: &str| {
+            format!(
+                "---\ntitle: \"{title}\"\nsource_kind: \"source_note\"\n\
+                 synthesis_mode: \"source\"\nsource_path: \"{source_path}\"\n---\n\n# {title}\n"
+            )
+        };
+        std::fs::write(
+            sources.join("note-alpha-md.md"),
+            titled_stub(
+                "note-alpha.md",
+                "raw/src-3333333333333333-tmp-scratch-dir.md",
+            ),
+        )
+        .expect("note alpha written");
+        std::fs::write(
+            sources.join("note-beta-md.md"),
+            titled_stub(
+                "note-beta.md",
+                "raw/src-4444444444444444-tmp-scratch-dir.md",
+            ),
+        )
+        .expect("note beta written");
+
+        let pages = collect_pages(temp.path()).expect("pages collected");
+        let duplicates = duplicate_sources(&pages);
+
+        assert_eq!(duplicates.len(), 1, "{duplicates:?}");
+        assert_eq!(duplicates[0].identity, "https-github-com-example-repo");
+        assert_eq!(
+            duplicates[0].paths,
+            vec![
+                PathBuf::from("knowledge/sources/example-repo-2.md"),
+                PathBuf::from("knowledge/sources/example-repo.md"),
+            ]
+        );
+    }
 
     #[test]
     fn health_checks_required_cases() {

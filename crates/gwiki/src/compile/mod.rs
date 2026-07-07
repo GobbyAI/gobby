@@ -243,13 +243,28 @@ pub fn compile_to_wiki_with_options(
     let mut pages = vec![article.clone()];
     pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);
 
-    let policy = if write_intent {
+    // The article (`pages[0]`) is a curated target page: overwriting it on a
+    // recompile needs explicit write intent so an existing human-facing page is
+    // never silently clobbered (#17635). The source stub pages (`pages[1..]`)
+    // are deterministic machine digests keyed by source identity — regenerating
+    // them in place is lossless ("Used by" backlinks are preserved by
+    // `synthesize_source_pages`), so they always overwrite. Gating them on the
+    // article's write intent instead makes a recompile fail loud (or, before
+    // identity-slug resolution, mint a slug-suffixed sibling) whenever the
+    // derived source page already exists, e.g. a second topic sharing a source
+    // already compiled by another (#17707).
+    let article_policy = if write_intent {
         WritePolicy::AllowOverwriteAfterMerge
     } else {
         WritePolicy::RequireMergeIntent
     };
     let mut page_writes = Vec::with_capacity(pages.len());
-    for page in &pages {
+    for (index, page) in pages.iter().enumerate() {
+        let policy = if index == 0 {
+            article_policy
+        } else {
+            WritePolicy::AllowOverwriteAfterMerge
+        };
         page_writes.push(write_synthesized_page(vault_root, page, policy)?);
     }
     let scope_identity = session.scope.identity();

@@ -164,6 +164,7 @@ impl TrustReport {
             uncompiled_source_count: health.uncompiled_sources.len(),
             broken_link_count: health.broken_links.len(),
             duplicate_concept_count: health.duplicate_concepts.len(),
+            duplicate_source_count: health.duplicate_sources.len(),
         };
         let graph_metrics = GraphMetrics {
             wiki_link_count: index_counts.links,
@@ -269,6 +270,7 @@ struct HealthSummary {
     uncompiled_source_count: usize,
     broken_link_count: usize,
     duplicate_concept_count: usize,
+    duplicate_source_count: usize,
 }
 
 fn degradation_labels(
@@ -300,6 +302,9 @@ fn degradation_labels(
     }
     if links.duplicate_concept_count > 0 {
         labels.insert("duplicate_concepts".to_string());
+    }
+    if health.duplicate_source_count > 0 {
+        labels.insert("duplicate_source_pages".to_string());
     }
     if health.uncited_source_count > 0 {
         labels.insert("uncited_sources".to_string());
@@ -412,6 +417,7 @@ mod tests {
             uncompiled_source_count: 0,
             broken_link_count: 0,
             duplicate_concept_count: 0,
+            duplicate_source_count: 0,
         };
 
         assert_eq!(
@@ -439,6 +445,7 @@ mod tests {
             uncompiled_source_count: 0,
             broken_link_count: 148,
             duplicate_concept_count: 0,
+            duplicate_source_count: 0,
         };
 
         // Red links only inside knowledge/sources/ digests: enumerable wiki
@@ -504,6 +511,7 @@ mod tests {
             uncompiled_source_count: 0,
             broken_link_count: 0,
             duplicate_concept_count: 0,
+            duplicate_source_count: 0,
         };
         let services = json!({
             "postgres": {"configured": true},

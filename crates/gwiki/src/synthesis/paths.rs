@@ -265,17 +265,26 @@ fn page_matches_source_identity(page_path: &Path, identity: &str) -> bool {
 /// time the source is re-fetched while the location slug is stable. Returns the
 /// slug for a `raw/src-<hash>-<slug>.md` path (or bare id), or `None` when the
 /// input is not a hash-prefixed source identity.
-fn source_identity_slug(identity: &str) -> Option<String> {
+pub(crate) fn source_identity_slug(identity: &str) -> Option<String> {
     let name = Path::new(identity.trim()).file_name()?.to_str()?;
     let stem = name.strip_suffix(".md").unwrap_or(name);
     let (_hash, slug) = stem.strip_prefix("src-")?.split_once('-')?;
     (!slug.is_empty()).then(|| slug.to_string())
 }
 
+/// The canonical grouping key for a raw source identity: the re-fetch-invariant
+/// location slug for `src-<hash>-<slug>` ids, or the raw identity otherwise.
+/// Two source pages sharing this key describe the same canonical source, exactly
+/// as [`page_matches_source_identity`] resolves recompiles in place — so lint
+/// and compile agree on what counts as a duplicate.
+pub(crate) fn source_identity_key(identity: &str) -> String {
+    source_identity_slug(identity).unwrap_or_else(|| identity.trim().to_string())
+}
+
 /// Every raw source identity a stub page records: its `source_path` frontmatter
 /// (#17596) and — for legacy stubs written before that key existed — the raw
 /// path in its rendered `Source path:` body line.
-fn page_source_identities(markdown: &str) -> Vec<String> {
+pub(crate) fn page_source_identities(markdown: &str) -> Vec<String> {
     let mut identities = Vec::new();
     if let Ok(parsed) = parse_frontmatter(markdown)
         && let Some(value) = parsed

@@ -436,6 +436,45 @@ fn source_page_paths_suffix_only_for_different_source_identity() {
 }
 
 #[test]
+fn source_page_paths_reuse_base_across_rotated_source_hash() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let article_path = temp.path().join("knowledge/topics/hn-roundup.md");
+    let mut input = empty_input("HN Roundup", ArticleKind::Topic);
+    input.accepted_sources = vec![SynthesisSource {
+        title: "GitHub - example/repo".to_string(),
+        path: PathBuf::from("raw/src-0000000000000000-https-github-com-example-repo.md"),
+        chunks: vec!["First extract.".to_string()],
+        existing_page: None,
+    }];
+    let first = synthesize_source_pages(temp.path(), &input, &article_path)
+        .expect("first source pages synthesized");
+    write_synthesized_page(
+        temp.path(),
+        &first[0],
+        WritePolicy::AllowOverwriteAfterMerge,
+    )
+    .expect("first stub written");
+
+    // Re-fetching the same GitHub location rotates its content hash, minting a
+    // new `src-<newhash>-<location>` raw id for the SAME canonical location.
+    // The stable location slug resolves back to the existing stub, so a
+    // recompile updates it in place instead of suffixing (#17705, #17707).
+    let sources = vec![SynthesisSource {
+        title: "GitHub - example/repo".to_string(),
+        path: PathBuf::from("raw/src-1111111111111111-https-github-com-example-repo.md"),
+        chunks: Vec::new(),
+        existing_page: None,
+    }];
+
+    let paths = source_page_paths(temp.path(), &article_path, &sources);
+
+    assert_eq!(
+        paths[0],
+        temp.path().join("knowledge/sources/github-example-repo.md")
+    );
+}
+
+#[test]
 fn recompile_stub_merges_used_by_links_across_articles() {
     let temp = tempfile::tempdir().expect("tempdir");
     let source = SynthesisSource {

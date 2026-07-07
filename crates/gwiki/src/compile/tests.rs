@@ -455,6 +455,55 @@ fn recompile_updates_source_stub_pages_in_place() {
 }
 
 #[test]
+fn recompile_overwrites_source_stub_without_write_intent() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/shared.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Shared source evidence.\n").expect("note written");
+
+    // A first topic compiles the source, minting its derived stub page.
+    let mut first = session_with_note(&scope, "Shared Source", "raw/research/shared.md");
+    compile_to_wiki(
+        &mut first,
+        CompileRequest {
+            topic: "First Topic".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(PathBuf::from("knowledge/topics/first-topic.md")),
+            write_intent: true,
+        },
+    )
+    .expect("first compile succeeded");
+
+    // A second, brand-new topic references the SAME source with no write
+    // intent. Its article is create-only, but the shared source stub already
+    // exists — the stub is a deterministic machine digest, so it must overwrite
+    // in place rather than fail loud or mint a slug-suffixed sibling (#17707).
+    let mut second = session_with_note(&scope, "Shared Source", "raw/research/shared.md");
+    let outcome = compile_to_wiki(
+        &mut second,
+        CompileRequest {
+            topic: "Second Topic".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(PathBuf::from("knowledge/topics/second-topic.md")),
+            write_intent: false,
+        },
+    )
+    .expect("second compile overwrites shared stub without write intent");
+
+    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/sources"))
+        .expect("sources dir listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, vec!["shared-source.md".to_string()]);
+    assert_eq!(
+        outcome.source_paths,
+        vec![scope.root().join("knowledge/sources/shared-source.md")]
+    );
+}
+
+#[test]
 fn recompile_without_target_page_updates_article_in_place() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());
