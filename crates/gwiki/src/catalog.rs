@@ -572,6 +572,30 @@ mod tests {
     }
 
     #[test]
+    fn regenerate_drops_code_module_link_after_page_removed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // A synthetic cross-directory cluster module page, as a codewiki heal emits.
+        write_page(
+            root,
+            "code/modules/src/foo/cluster.md",
+            &page("cluster", "Call-connected cluster module."),
+        );
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("first regenerate");
+        let before = fs::read_to_string(root.join("code/INDEX.md")).expect("code/INDEX.md");
+        assert!(before.contains("code/modules/src/foo/cluster"));
+
+        // A later incremental heal re-clusters and removes the page. Regenerating
+        // the catalog must drop the now-stale link, or `code/INDEX.md` dangles and
+        // grows `curated_broken_link_count` (the codewiki-nightly convergence bug:
+        // the nightly flow `gcode codewiki` -> `gwiki index` now regenerates here).
+        fs::remove_file(root.join("code/modules/src/foo/cluster.md")).expect("remove page");
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("second regenerate");
+        let after = fs::read_to_string(root.join("code/INDEX.md")).expect("code/INDEX.md");
+        assert!(!after.contains("code/modules/src/foo/cluster"));
+    }
+
+    #[test]
     fn overview_recent_work_lists_recaps_newest_first() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
