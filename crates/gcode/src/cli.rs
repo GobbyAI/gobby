@@ -207,6 +207,11 @@ pub(crate) enum Command {
         /// Synchronously update graph and vector projections after PostgreSQL indexing
         #[arg(long)]
         sync_projections: bool,
+        /// Skip (exit 3) instead of blocking when another indexer holds the
+        /// project index lock. Used by daemon-triggered per-file flushes so a
+        /// concurrent reindex does not cause a blocking-waiter pileup (#17701).
+        #[arg(long)]
+        skip_if_locked: bool,
     },
     /// Show project index status
     Status,

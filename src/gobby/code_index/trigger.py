@@ -138,6 +138,11 @@ class CodeIndexTrigger:
                 "--files",
                 *files,
                 "--quiet",
+                # Yield instead of blocking on the project index lock: a blocking
+                # flush that is later killed on timeout leaves a lingering
+                # advisory-lock waiter, which pileup-wedges the index under a slow
+                # reindex (#17701). gcode exits 3 when it skips.
+                "--skip-if-locked",
                 cwd=root_key,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -151,6 +156,16 @@ class CodeIndexTrigger:
                 logger.debug(
                     f"gcode indexed {len(files)} files for project {project_id} at {root_key}"
                 )
+            elif proc.returncode == 3:
+                # Index lock was held (typically by a concurrent reindex, which
+                # covers these files); gcode skipped without blocking. Requeue so
+                # the files are re-flushed once the lock frees, without emitting a
+                # scary warning for an expected transient condition.
+                logger.debug(
+                    f"gcode index skipped {len(files)} files for project {project_id} "
+                    "(index lock busy); requeuing"
+                )
+                self._requeue_for_retry(root_key, project_id, files)
             else:
                 detail = stderr.decode().strip() if stderr else "(no stderr)"
                 logger.warning(f"gcode index exited {proc.returncode}: {detail}")

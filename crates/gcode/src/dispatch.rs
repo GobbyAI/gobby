@@ -292,6 +292,7 @@ fn run() -> anyhow::Result<()> {
             full,
             require_cpp_semantics,
             sync_projections,
+            skip_if_locked,
         } => commands::index::run(
             &ctx,
             path,
@@ -299,6 +300,7 @@ fn run() -> anyhow::Result<()> {
             full,
             require_cpp_semantics,
             sync_projections,
+            skip_if_locked,
             format,
         ),
         Command::Status => {

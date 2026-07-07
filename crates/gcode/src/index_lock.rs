@@ -27,6 +27,23 @@ impl IndexLockPolicy {
             poll: Duration::from_millis(25),
         }
     }
+
+    /// Skip-if-busy policy for daemon-triggered per-file index flushes.
+    ///
+    /// A flush that observes a held index lock (typically a full reindex, which
+    /// re-indexes the same files anyway) must yield rather than block on
+    /// `pg_advisory_lock`: a blocking waiter that is later SIGKILLed by the
+    /// flush timeout leaves a lingering advisory-lock waiter (Postgres does not
+    /// notice the client disconnect while a backend is parked in the lock wait),
+    /// which is how a single stuck reindex produced a 40+ deep waiter pileup
+    /// (#17701). `BriefTry` polls `pg_try_advisory_lock` instead, so a killed
+    /// flush is idle between polls and its backend is reclaimed promptly.
+    pub(crate) fn brief_index_flush_try() -> Self {
+        Self::BriefTry {
+            total_wait: Duration::from_secs(3),
+            poll: Duration::from_millis(200),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -235,6 +252,20 @@ mod tests {
     #[test]
     fn project_lock_key_is_project_scoped() {
         assert_ne!(project_lock_key("proj-a"), project_lock_key("proj-b"));
+    }
+
+    #[test]
+    fn brief_index_flush_try_is_a_bounded_non_blocking_policy() {
+        // The flush policy must be a bounded BriefTry (never Wait): a blocking
+        // Wait waiter that is later killed pileup-wedges the index (#17701).
+        match IndexLockPolicy::brief_index_flush_try() {
+            IndexLockPolicy::BriefTry { total_wait, poll } => {
+                assert!(total_wait > Duration::ZERO);
+                assert!(poll > Duration::ZERO);
+                assert!(poll < total_wait);
+            }
+            IndexLockPolicy::Wait => panic!("flush policy must not be the blocking Wait policy"),
+        }
     }
 
     mod serial_db {

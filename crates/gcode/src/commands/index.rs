@@ -12,6 +12,9 @@ use crate::utils::short_id;
 use gobby_core::progress::ProgressBar;
 use serde::Serialize;
 
+// Args map 1:1 to the `gcode index` CLI flags; a wrapper struct would only add
+// indirection between clap and this entry point.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     ctx: &Context,
     path: Option<String>,
@@ -19,6 +22,7 @@ pub fn run(
     full: bool,
     require_cpp_semantics: bool,
     sync_projections: bool,
+    skip_if_locked: bool,
     format: Format,
 ) -> anyhow::Result<()> {
     let (target_ctx, path_filter) = resolve_index_context(ctx, path.as_deref())?;
@@ -50,7 +54,12 @@ pub fn run(
     }
 
     let mut index_progress = StderrIndexProgress::new(target_ctx.quiet);
-    let run_output = index_lock::with_project_lock(&target_ctx, IndexLockPolicy::Wait, || {
+    let lock_policy = if skip_if_locked {
+        IndexLockPolicy::brief_index_flush_try()
+    } else {
+        IndexLockPolicy::Wait
+    };
+    let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
         let outcome = api::index_files(
             request,
             &target_ctx,
@@ -74,10 +83,25 @@ pub fn run(
 
     let run_output = match run_output {
         IndexLockResult::Acquired(run_output) => run_output,
-        IndexLockResult::Busy => anyhow::bail!(
-            "index lock is busy for project {}; wait policy did not acquire it",
-            target_ctx.project_id
-        ),
+        IndexLockResult::Busy => {
+            if skip_if_locked {
+                // A concurrent indexer (typically a full reindex, which covers
+                // these files anyway) holds the lock. Yield without blocking;
+                // exit code 3 tells the daemon flush to requeue rather than
+                // treat this as success or a hard error (#17701).
+                if !target_ctx.quiet {
+                    eprintln!(
+                        "index lock busy for project {}; skipped (another indexer is running)",
+                        target_ctx.project_id
+                    );
+                }
+                std::process::exit(3);
+            }
+            anyhow::bail!(
+                "index lock is busy for project {}; wait policy did not acquire it",
+                target_ctx.project_id
+            )
+        }
     };
 
     match run_output {
