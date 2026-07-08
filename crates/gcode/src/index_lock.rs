@@ -11,9 +11,21 @@ const MIN_LOCK_POLL: Duration = Duration::from_millis(1);
 const ADVISORY_LOCK_DELAY_WARNING_MS_ENV: &str = "GCODE_ADVISORY_LOCK_DELAY_WARNING_MS";
 const DEFAULT_ADVISORY_LOCK_DELAY_WARNING_MS: u64 = 30_000;
 
+/// Upper bound for the blocking [`IndexLockPolicy::Wait`] acquisition. Normal
+/// index/codewiki lock handoffs complete in seconds; only a genuinely hung
+/// holder (e.g. a projection sync wedged on FalkorDB or Qdrant) reaches this
+/// cap. Exceeding it fails loudly rather than parking indefinitely in
+/// `pg_advisory_lock`, which — exactly like the flush path in #17701 — would
+/// otherwise leave an un-reclaimable waiter behind if the process is killed.
+const DEFAULT_WAIT_LOCK_TIMEOUT: Duration = Duration::from_secs(1800);
+/// Poll cadence for the bounded [`IndexLockPolicy::Wait`] acquisition.
+const WAIT_LOCK_POLL: Duration = Duration::from_millis(250);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndexLockPolicy {
-    Wait,
+    Wait {
+        max_wait: Duration,
+    },
     BriefTry {
         total_wait: Duration,
         poll: Duration,
@@ -42,6 +54,16 @@ impl IndexLockPolicy {
         Self::BriefTry {
             total_wait: Duration::from_secs(3),
             poll: Duration::from_millis(200),
+        }
+    }
+
+    /// Blocking-until-available policy with a generous safety cap, for the full
+    /// index, `init`, and codewiki runs. Poll-based (never a raw blocking
+    /// `pg_advisory_lock`) so a killed waiter is reclaimed promptly, and bounded
+    /// so a hung holder surfaces as a loud error instead of an indefinite hang.
+    pub(crate) fn wait() -> Self {
+        Self::Wait {
+            max_wait: DEFAULT_WAIT_LOCK_TIMEOUT,
         }
     }
 }
@@ -78,9 +100,22 @@ fn acquire_project_lock(
     let started = Instant::now();
 
     let acquired = match policy {
-        IndexLockPolicy::Wait => {
-            conn.execute("SELECT pg_advisory_lock($1)", &[&key])
-                .with_context(|| "failed to acquire gcode index lock")?;
+        IndexLockPolicy::Wait { max_wait } => {
+            // Poll rather than block in `pg_advisory_lock`: a parked blocking
+            // waiter is not reclaimed when its client dies (#17701), and an
+            // unbounded wait lets one hung holder starve every other index and
+            // codewiki run indefinitely. Bounded + poll-based means a killed
+            // waiter is idle between polls, and a genuinely hung holder trips
+            // the cap and fails loudly below instead of hanging forever.
+            if !try_advisory_lock_until(&mut conn, key, max_wait, WAIT_LOCK_POLL)? {
+                anyhow::bail!(
+                    "gave up acquiring gcode index lock for project {} after {}s: \
+                     a lock holder is likely hung (check for a stalled index or \
+                     codewiki run)",
+                    ctx.project_id,
+                    max_wait.as_secs(),
+                );
+            }
             true
         }
         IndexLockPolicy::BriefTry { total_wait, poll } => {
@@ -264,7 +299,9 @@ mod tests {
                 assert!(poll > Duration::ZERO);
                 assert!(poll < total_wait);
             }
-            IndexLockPolicy::Wait => panic!("flush policy must not be the blocking Wait policy"),
+            IndexLockPolicy::Wait { .. } => {
+                panic!("flush policy must not be the blocking Wait policy")
+            }
         }
     }
 
@@ -310,7 +347,7 @@ mod tests {
             let (done_tx, done_rx) = std::sync::mpsc::channel();
             let handle = std::thread::spawn(move || {
                 let result =
-                    with_project_lock(&ctx, IndexLockPolicy::Wait, || Ok::<_, anyhow::Error>(()));
+                    with_project_lock(&ctx, IndexLockPolicy::wait(), || Ok::<_, anyhow::Error>(()));
                 done_tx.send(()).expect("send wait lock completion");
                 result
             });
@@ -374,7 +411,7 @@ mod tests {
             // Model run()'s locked body: the index phase has completed and the
             // projection-sync phase is now running — still inside the closure.
             // From there, a second acquirer must observe the lock as held.
-            let observed = with_project_lock(&ctx, IndexLockPolicy::Wait, || {
+            let observed = with_project_lock(&ctx, IndexLockPolicy::wait(), || {
                 let mut competitor =
                     db::connect_readwrite(&database_url).expect("connect competing acquirer");
                 let acquired = try_advisory_lock(&mut competitor, key)
@@ -393,6 +430,42 @@ mod tests {
                 observed,
                 IndexLockResult::Acquired(true),
                 "project lock must remain held during the projection-sync phase"
+            );
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn wait_policy_errors_after_cap_when_holder_never_releases() {
+            // A hung holder must surface as a loud error, not an indefinite
+            // hang: the bounded Wait acquisition gives up after its cap and
+            // returns Err (never a silent Busy), so a stalled index or codewiki
+            // run fails visibly instead of parking forever in pg_advisory_lock
+            // (#17709).
+            let database_url = connect_postgres_test_db();
+            let project_id = "gcode-lock-wait-cap";
+            let ctx = context_for(database_url.clone(), project_id);
+            let _holder = hold_project_lock(&database_url, project_id);
+
+            let started = Instant::now();
+            let result = with_project_lock(
+                &ctx,
+                IndexLockPolicy::Wait {
+                    max_wait: Duration::from_millis(300),
+                },
+                || Ok::<_, anyhow::Error>(()),
+            );
+
+            assert!(
+                result.is_err(),
+                "bounded Wait must error when the holder never releases, got {result:?}"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "bounded Wait must give up near its cap, not hang"
             );
         }
     }

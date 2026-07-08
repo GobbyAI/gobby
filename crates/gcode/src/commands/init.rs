@@ -68,7 +68,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
         index_scope: config::ProjectIndexScope::Single,
     };
     let index_result =
-        match index_lock::with_project_lock(&index_ctx, IndexLockPolicy::Wait, || {
+        match index_lock::with_project_lock(&index_ctx, IndexLockPolicy::wait(), || {
             api::index_files(
                 api::IndexRequest {
                     project_root: project_root.to_path_buf(),

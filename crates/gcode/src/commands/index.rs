@@ -57,7 +57,7 @@ pub fn run(
     let lock_policy = if skip_if_locked {
         IndexLockPolicy::brief_index_flush_try()
     } else {
-        IndexLockPolicy::Wait
+        IndexLockPolicy::wait()
     };
     let run_output = index_lock::with_project_lock(&target_ctx, lock_policy, || {
         let outcome = api::index_files(
