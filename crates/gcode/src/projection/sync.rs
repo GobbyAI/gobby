@@ -1,3 +1,7 @@
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
+
 use super::reconcile_deleted_file;
 use crate::config::Context;
 use crate::db;
@@ -170,6 +174,195 @@ pub fn sync_after_index(
     let graph = sync_graph_files(ctx, file_paths, Some(progress))?;
     let vector = sync_vector_files(ctx, file_paths, Some(progress))?;
     Ok(ProjectionSyncReports { graph, vector })
+}
+
+/// Hard cap on how long the projection-sync phase may run *without observable
+/// per-file progress* while it holds the per-project index lock.
+///
+/// FalkorDB (via the `falkordb` crate) exposes no socket connect/read timeout,
+/// so a wedged or unreachable graph backend can block a sync worker forever and
+/// pin the advisory lock — observed live as a 10h+ idle hold. Qdrant and the
+/// embedding endpoint are already `reqwest`-bounded per request, but neither
+/// per-request timeouts nor a whole-repo cap distinguish "slow but progressing"
+/// from "wedged". A stall timeout does: every synced file relays a progress
+/// event, and only a lack of progress within this window abandons the worker
+/// so the caller can drop the lock (#17711).
+pub(crate) const DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// A progress event relayed from the detached sync worker back to the caller.
+///
+/// Each event doubles as a liveness heartbeat: as long as files keep syncing the
+/// caller keeps waiting; silence past the stall timeout means a backend is
+/// wedged and the worker must be abandoned to free the lock.
+enum ProjectionProgressEvent {
+    Start {
+        target: ProjectionTarget,
+        total: usize,
+    },
+    Advance {
+        target: ProjectionTarget,
+        file_path: String,
+    },
+    Finish {
+        target: ProjectionTarget,
+    },
+}
+
+/// Messages sent from the detached projection-sync worker to the bounded caller.
+enum ProjectionPhaseMessage {
+    Progress(ProjectionProgressEvent),
+    Done(anyhow::Result<ProjectionSyncReports>),
+}
+
+/// [`ProjectionProgressSink`] that forwards every event to the bounded caller
+/// over a channel instead of rendering it. The receiving side both renders the
+/// event and treats it as proof the worker is still making progress.
+struct ChannelProgressSink {
+    tx: mpsc::Sender<ProjectionPhaseMessage>,
+}
+
+impl ProjectionProgressSink for ChannelProgressSink {
+    fn start(&mut self, target: ProjectionTarget, total: usize) {
+        let _ = self.tx.send(ProjectionPhaseMessage::Progress(
+            ProjectionProgressEvent::Start { target, total },
+        ));
+    }
+
+    fn advance(&mut self, target: ProjectionTarget, file_path: &str) {
+        let _ = self.tx.send(ProjectionPhaseMessage::Progress(
+            ProjectionProgressEvent::Advance {
+                target,
+                file_path: file_path.to_string(),
+            },
+        ));
+    }
+
+    fn finish(&mut self, target: ProjectionTarget) {
+        let _ = self.tx.send(ProjectionPhaseMessage::Progress(
+            ProjectionProgressEvent::Finish { target },
+        ));
+    }
+}
+
+/// Run the post-index projection sync under a stall timeout that guarantees the
+/// per-project index lock cannot be pinned indefinitely by a wedged backend.
+///
+/// The sync runs on a detached worker thread; its progress is relayed back and
+/// rendered through `progress`, and each event resets the stall deadline. If no
+/// event arrives within `stall_timeout` the worker is abandoned — it may still
+/// be blocked in unbounded FalkorDB socket I/O — and degraded reports are
+/// returned so the caller's `with_project_lock` guard can drop the lock. Every
+/// failure mode folds into degraded reports rather than an error: the PostgreSQL
+/// index already succeeded, and best-effort projections must never fail the
+/// index command or hold the lock (#17711).
+pub fn sync_after_index_bounded(
+    ctx: &Context,
+    file_paths: &[String],
+    stall_timeout: Duration,
+    progress: &mut dyn ProjectionProgressSink,
+) -> ProjectionSyncReports {
+    let worker_ctx = ctx.clone();
+    let worker_files = file_paths.to_vec();
+    run_projection_phase_bounded(stall_timeout, progress, move |sink| {
+        sync_after_index(&worker_ctx, &worker_files, sink)
+    })
+}
+
+/// Core stall-timeout driver, factored out from [`sync_after_index_bounded`] so
+/// it can be exercised without live projection backends. `run` performs the
+/// actual sync on a worker thread using the channel-backed sink it is handed.
+fn run_projection_phase_bounded<F>(
+    stall_timeout: Duration,
+    progress: &mut dyn ProjectionProgressSink,
+    run: F,
+) -> ProjectionSyncReports
+where
+    F: FnOnce(&mut ChannelProgressSink) -> anyhow::Result<ProjectionSyncReports> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel::<ProjectionPhaseMessage>();
+    let spawned = thread::Builder::new()
+        .name("gcode-projection-sync".to_string())
+        .spawn(move || {
+            let mut sink = ChannelProgressSink { tx: tx.clone() };
+            let reports = run(&mut sink);
+            // The receiver may already be gone if we timed out; ignore the error.
+            let _ = tx.send(ProjectionPhaseMessage::Done(reports));
+        });
+    if let Err(error) = spawned {
+        // Spawning failed (resource exhaustion). Do not run inline: that would
+        // reintroduce the unbounded lock hold this function exists to prevent.
+        return degraded_projection_reports(
+            "projection_sync_spawn_failed",
+            format!("failed to spawn projection sync worker: {error}"),
+        );
+    }
+
+    let mut active_target: Option<ProjectionTarget> = None;
+    loop {
+        match rx.recv_timeout(stall_timeout) {
+            Ok(ProjectionPhaseMessage::Progress(event)) => {
+                active_target = apply_relayed_progress(progress, event);
+            }
+            Ok(ProjectionPhaseMessage::Done(Ok(reports))) => return reports,
+            Ok(ProjectionPhaseMessage::Done(Err(error))) => {
+                return degraded_projection_reports("projection_sync_failed", format!("{error:#}"));
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(target) = active_target.take() {
+                    progress.finish(target);
+                }
+                let message = format!(
+                    "projection sync made no progress for {}s while holding the per-project \
+                     index lock; abandoning the sync worker to release the lock (a projection \
+                     backend — FalkorDB, Qdrant, or the embedding endpoint — is likely wedged)",
+                    stall_timeout.as_secs(),
+                );
+                log::error!("{message}");
+                return degraded_projection_reports("projection_sync_timeout", message);
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                // Worker dropped its sender without a Done message (it panicked).
+                if let Some(target) = active_target.take() {
+                    progress.finish(target);
+                }
+                log::error!("projection sync worker exited without a result");
+                return degraded_projection_reports(
+                    "projection_sync_worker_lost",
+                    "projection sync worker exited without a result".to_string(),
+                );
+            }
+        }
+    }
+}
+
+/// Render a relayed progress event and report which target is mid-flight so a
+/// timeout or panic can cleanly finish that target's progress bar.
+fn apply_relayed_progress(
+    sink: &mut dyn ProjectionProgressSink,
+    event: ProjectionProgressEvent,
+) -> Option<ProjectionTarget> {
+    match event {
+        ProjectionProgressEvent::Start { target, total } => {
+            sink.start(target, total);
+            Some(target)
+        }
+        ProjectionProgressEvent::Advance { target, file_path } => {
+            sink.advance(target, &file_path);
+            Some(target)
+        }
+        ProjectionProgressEvent::Finish { target } => {
+            sink.finish(target);
+            None
+        }
+    }
+}
+
+/// Build a fully-degraded [`ProjectionSyncReports`] for both projection targets.
+fn degraded_projection_reports(kind: &str, message: String) -> ProjectionSyncReports {
+    ProjectionSyncReports {
+        graph: ProjectionSyncReport::degraded(kind, message.clone(), 0, 0),
+        vector: ProjectionSyncReport::degraded(kind, message, 0, 0),
+    }
 }
 
 pub(crate) fn sync_files_with_state<S>(
@@ -509,6 +702,137 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::time::Instant;
+
+    #[derive(Default)]
+    struct CollectingProgress {
+        events: Vec<String>,
+    }
+
+    impl ProjectionProgressSink for CollectingProgress {
+        fn start(&mut self, target: ProjectionTarget, total: usize) {
+            self.events.push(format!("{target:?}:start:{total}"));
+        }
+
+        fn advance(&mut self, target: ProjectionTarget, file_path: &str) {
+            self.events.push(format!("{target:?}:advance:{file_path}"));
+        }
+
+        fn finish(&mut self, target: ProjectionTarget) {
+            self.events.push(format!("{target:?}:finish"));
+        }
+    }
+
+    #[test]
+    fn bounded_phase_degrades_and_releases_when_worker_stalls() {
+        let mut progress = CollectingProgress::default();
+        let start = Instant::now();
+        let reports =
+            run_projection_phase_bounded(Duration::from_millis(100), &mut progress, |sink| {
+                // Simulate a wedged backend: emit one heartbeat, then block
+                // forever with no further progress. The held sender keeps the
+                // receiver from ever disconnecting, so this recv never returns —
+                // a truer stand-in for a wedged socket than a fixed sleep.
+                sink.start(ProjectionTarget::Graph, 3);
+                sink.advance(ProjectionTarget::Graph, "src/a.rs");
+                let (_never_tx, never_rx) = mpsc::channel::<()>();
+                let _ = never_rx.recv();
+                Ok(ProjectionSyncReports {
+                    graph: ProjectionSyncReport::ok(3, 0),
+                    vector: ProjectionSyncReport::ok(0, 0),
+                })
+            });
+        let elapsed = start.elapsed();
+
+        assert!(reports.graph.degraded);
+        assert!(reports.vector.degraded);
+        assert_eq!(
+            reports
+                .graph
+                .error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("projection_sync_timeout")
+        );
+        // The lock must be released promptly, long before the worker's 2s block.
+        assert!(elapsed < Duration::from_secs(1), "elapsed {elapsed:?}");
+        // The mid-flight target's progress bar was finished on timeout.
+        assert!(progress.events.iter().any(|event| event == "Graph:finish"));
+    }
+
+    #[test]
+    fn bounded_phase_passes_through_successful_reports() {
+        let mut progress = CollectingProgress::default();
+        let reports = run_projection_phase_bounded(Duration::from_secs(5), &mut progress, |sink| {
+            sink.start(ProjectionTarget::Vectors, 1);
+            sink.advance(ProjectionTarget::Vectors, "src/a.rs");
+            sink.finish(ProjectionTarget::Vectors);
+            Ok(ProjectionSyncReports {
+                graph: ProjectionSyncReport::ok(0, 0),
+                vector: ProjectionSyncReport::ok(1, 4),
+            })
+        });
+
+        assert!(!reports.vector.degraded);
+        assert_eq!(reports.vector.status, ProjectionStatus::Ok);
+        assert_eq!(reports.vector.synced_files, 1);
+        assert_eq!(reports.vector.synced_symbols, 4);
+        assert_eq!(
+            progress.events,
+            vec![
+                "Vectors:start:1",
+                "Vectors:advance:src/a.rs",
+                "Vectors:finish"
+            ]
+        );
+    }
+
+    #[test]
+    fn bounded_phase_does_not_time_out_while_progress_continues() {
+        let mut progress = CollectingProgress::default();
+        // Stall window 300ms; the worker advances every 30ms. Total wall time
+        // exceeds the window, but the gap between events never does. A whole-
+        // phase cap would abort this; a stall timeout must not.
+        let reports =
+            run_projection_phase_bounded(Duration::from_millis(300), &mut progress, |sink| {
+                sink.start(ProjectionTarget::Graph, 8);
+                for i in 0..8 {
+                    thread::sleep(Duration::from_millis(30));
+                    sink.advance(ProjectionTarget::Graph, &format!("src/f{i}.rs"));
+                }
+                sink.finish(ProjectionTarget::Graph);
+                Ok(ProjectionSyncReports {
+                    graph: ProjectionSyncReport::ok(8, 16),
+                    vector: ProjectionSyncReport::ok(0, 0),
+                })
+            });
+
+        assert!(
+            !reports.graph.degraded,
+            "steady progress must not be treated as a stall"
+        );
+        assert_eq!(reports.graph.synced_files, 8);
+    }
+
+    #[test]
+    fn bounded_phase_degrades_when_worker_panics() {
+        let mut progress = CollectingProgress::default();
+        let reports =
+            run_projection_phase_bounded(Duration::from_secs(5), &mut progress, |_sink| {
+                panic!("simulated projection backend panic")
+            });
+
+        assert!(reports.graph.degraded);
+        assert!(reports.vector.degraded);
+        assert_eq!(
+            reports
+                .graph
+                .error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some("projection_sync_worker_lost")
+        );
+    }
 
     fn test_context() -> Context {
         Context {

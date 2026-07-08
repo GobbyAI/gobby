@@ -67,11 +67,15 @@ pub fn run(
         )?;
         if sync_projections {
             let mut projection_progress = StderrProjectionProgress::new(target_ctx.quiet);
-            let projections = sync::sync_after_index(
+            // Bound the projection phase so a wedged FalkorDB/Qdrant/embedding
+            // backend cannot pin the per-project lock held by `with_project_lock`
+            // (#17711). Failures fold into degraded reports, never an error.
+            let projections = sync::sync_after_index_bounded(
                 &target_ctx,
                 &outcome.indexed_file_paths,
+                sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
                 &mut projection_progress,
-            )?;
+            );
             Ok(RunOutput::Projections(sync_projections_payload(
                 &outcome,
                 projections,
