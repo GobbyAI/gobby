@@ -68,17 +68,18 @@ The UI's file tree and codewiki tree must not require the multi-MB graph payload
 
 ```json
 {"command":"pages","scope":"…",
- "pages":[{"path":"knowledge/topics/foo.md","title":"Foo","tags":["rust"],"updated_at":"…"}],
+ "pages":[{"path":"knowledge/topics/foo.md","title":"Foo","tags":["rust"],"content_hash":"…","updated_at":"…"}],
  "outputs":[{"path":"outputs/foo-run-report.md","size":1234,"modified":"…"}]}
 ```
 
 - Extend `is_readable_wiki_path` (`crates/gwiki/src/commands/read.rs:234`) to allow `outputs/**` so `gwiki read --path outputs/<file>.md` renders run reports and `GRAPH_REPORT.md`. Reads only — writes to `outputs/**` stay blocked (see 1.3).
+- Include the page's `content_hash` in both the `pages` listing entries and the `gwiki read` payload — this is the revision baseline the editor holds for the conditional-write contract in 1.3/3.2.
 
 Validation: crate tests + clippy + release build + reinstall, as in 1.1.
 
 **Acceptance:**
 
-- 1.2.1 - `gwiki pages` returns all indexed pages with path/title/tags and a separate `outputs` array. file: `crates/gwiki/src/commands/pages.rs`.
+- 1.2.1 - `gwiki pages` returns all indexed pages with path/title/tags/content_hash (read payload also carries content_hash) and a separate `outputs` array. file: `crates/gwiki/src/commands/pages.rs`.
 - 1.2.2 - `--prefix code/` restricts the listing to codewiki pages. test: `crates/gwiki/src/commands/pages.rs::prefix_filters_listing`.
 - 1.2.3 - `gwiki read --path outputs/<report>.md` succeeds; `outputs/**` remains excluded from indexing. test: `crates/gwiki/src/commands/read.rs::outputs_paths_are_readable`.
 
@@ -92,7 +93,7 @@ Targets: `crates/gwiki/src/commands/page.rs` (new), `crates/gwiki/src/commands/r
 Vault mutation belongs in Rust where scope-root resolution and path normalization already live (`normalize_requested_path` in `read.rs`) — the daemon treats paths as opaque and CLI/MCP/HTTP stay mirrored:
 
 - Hoist `normalize_requested_path` out of `read.rs` into a shared `pub(crate)` helper used by read and page commands.
-- `gwiki page write --path <relative page path> [--mode upsert|create]` — content read from **stdin** (avoids argv length/quoting limits). Validation: relative path, traversal-normalized, markdown extension required, prefix must be `knowledge/**` — writes to `code/**` (generated), `outputs/**`, `raw/**`, `meta/**`, `.obsidian/**` are rejected. `--mode create` errors if the file exists; `upsert` creates parent dirs inside `knowledge/`. Content written verbatim (frontmatter round-trips untouched; `gwiki normalize` remains a separate pass). Canonicalize the resolved parent against the vault root to close symlink escapes. Payload: `{"command":"page-write","scope":…,"path":…,"created":bool,"bytes":n,"changed_paths":[path]}`.
+- `gwiki page write --path <relative page path> [--mode upsert|create]` — content read from **stdin** (avoids argv length/quoting limits). Validation: relative path, traversal-normalized, markdown extension required, prefix must be `knowledge/**` — writes to `code/**` (generated), `outputs/**`, `raw/**`, `meta/**`, `.obsidian/**` are rejected. `--mode create` errors if the file exists; `upsert` creates parent dirs inside `knowledge/`. Content written verbatim (frontmatter round-trips untouched; `gwiki normalize` remains a separate pass). Canonicalize the resolved parent against the vault root to close symlink escapes. Conditional-write precondition: optional `--expected-hash <sha256>` compares against the current on-disk content hash before writing (for `--mode create`, the precondition is nonexistence); mismatch returns a distinct precondition-failed error envelope and leaves the file untouched. Payload: `{"command":"page-write","scope":…,"path":…,"created":bool,"bytes":n,"content_hash":sha,"changed_paths":[path]}`.
 - `gwiki page delete --path <relative page path>` — same confinement; missing file → error envelope; payload `{"command":"page-delete",…,"changed_paths":[path]}`. The incremental indexer's `IndexEvent::Deleted` path prunes DB rows.
 
 Validation: crate tests + clippy + release build + reinstall, as in 1.1.
@@ -103,6 +104,7 @@ Validation: crate tests + clippy + release build + reinstall, as in 1.1.
 - 1.3.2 - Writes outside `knowledge/**` and traversal/symlink escapes are rejected. test: `crates/gwiki/src/commands/page.rs::write_rejects_confinement_violations`.
 - 1.3.3 - `--mode create` on an existing page returns a distinct already-exists error. test: `crates/gwiki/src/commands/page.rs::create_mode_conflicts_on_existing`.
 - 1.3.4 - `gwiki page delete` removes the file and emits `changed_paths` so reindex prunes derived rows. behavior: "delete reindex prune" in `crates/gwiki/src/commands/page.rs` tests.
+- 1.3.5 - `--expected-hash` mismatch returns a distinct precondition-failed error and leaves the file untouched. test: `crates/gwiki/src/commands/page.rs::write_precondition_hash_mismatch`.
 
 ### 1.4 Python read surfaces for graph and pages routes [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
