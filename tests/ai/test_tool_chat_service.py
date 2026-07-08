@@ -235,4 +235,6 @@ def test_builder_threads_generation_timeouts_into_tool_chat_service() -> None:
     )
     service = build_daemon_tool_chat_service(config)
     assert service._candidate_timeout_seconds == 33.0
-    assert service._cli_candidate_timeout_seconds == 600.0
+    # Spawn-cold lanes get the per-candidate cli_candidate_timeout_seconds, not the
+    # overall timeout_seconds attempt budget (gobby-#17710).
+    assert service._cli_candidate_timeout_seconds == 99.0

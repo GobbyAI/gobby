@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import re
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -153,11 +155,84 @@ def _strip_leading_preamble(text: str) -> str:
 
 
 class ClaudeSDKProviderFailure(RuntimeError):
-    """Typed failure for known Claude SDK/provider degradation paths."""
+    """Typed failure for known Claude SDK/provider degradation paths.
+
+    ``classification`` distinguishes a config/other error result
+    (``"error_result"``) from an opaque provider degradation
+    (``"provider_degraded"``). ``retry_after`` carries a provider-reported
+    cooldown in seconds when one is known, so calling services can back off for
+    the reported window instead of hammering a degraded route.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        classification: str = "provider_degraded",
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.classification = classification
+        self.retry_after = retry_after
+
+
+class ClaudeSDKRateLimited(ClaudeSDKProviderFailure):
+    """The Claude subscription or API reported a usage/rate limit.
+
+    Carries ``retry_after`` (seconds until reset, when the CLI reports it) and
+    ``reset_at`` (absolute epoch seconds) so a calling service can open its
+    circuit breaker for the reported window rather than retrying a provider that
+    will keep refusing until the limit resets.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after: float | None = None,
+        reset_at: float | None = None,
+    ) -> None:
+        super().__init__(message, classification="rate_limited", retry_after=retry_after)
+        self.reset_at = reset_at
 
 
 class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
     """Raised when the Claude SDK child process is terminated during shutdown."""
+
+
+# Substrings that mark a rate/usage limit inside a ResultMessage.result body.
+# The Claude Code CLI reports subscription limits in the result text (e.g.
+# "Claude AI usage limit reached|<reset_epoch>") and API-side limits carry an
+# api_error_status of 429, so classification does not depend on parsing succeeding.
+_RATE_LIMIT_MARKERS: tuple[str, ...] = (
+    "usage limit reached",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "overloaded_error",
+    "overloaded",
+)
+
+# Trailing "|<epoch>" reset marker in a usage-limit result body. The epoch is
+# reported in seconds (10 digits) or milliseconds (13 digits).
+_USAGE_LIMIT_RESET_RE = re.compile(r"\|\s*(\d{9,13})\s*$")
+
+
+def _parse_usage_limit_reset(text: str, *, now: float) -> tuple[float | None, float | None]:
+    """Return ``(reset_epoch_seconds, retry_after_seconds)`` from a usage-limit body.
+
+    Claude Code reports subscription usage limits as
+    ``"Claude AI usage limit reached|<reset_epoch>"``; the epoch may be seconds or
+    milliseconds. Returns ``(None, None)`` when no reset marker is present and a
+    ``None`` retry_after when the reset is already in the past.
+    """
+    match = _USAGE_LIMIT_RESET_RE.search(text)
+    if not match:
+        return None, None
+    raw = int(match.group(1))
+    reset_epoch = raw / 1000.0 if raw > 1_000_000_000_000 else float(raw)
+    retry_after = reset_epoch - now
+    return reset_epoch, retry_after if retry_after > 0.0 else None
 
 
 # Turn budget for the one-shot feature text-generation path (codewiki, synthesis,
@@ -220,6 +295,11 @@ class ClaudeLLMProvider:
             return False
         if ClaudeLLMProvider._is_sdk_sigterm_shutdown(e):
             return False
+        # Already-classified provider failures (rate limits, error results) are
+        # terminal for this attempt: retrying in-process cannot help and, for a
+        # rate limit, only worsens the condition. Let the calling service back off.
+        if isinstance(e, ClaudeSDKProviderFailure):
+            return False
         if ClaudeLLMProvider._is_error_result_success(e):
             return False
         msg = str(e).lower()
@@ -245,6 +325,80 @@ class ClaudeLLMProvider:
     def _is_error_result_success(e: BaseException) -> bool:
         """Return whether the SDK surfaced its known error-result-success shape."""
         return "claude code returned an error result: success" in str(e).lower()
+
+    @staticmethod
+    def _classify_result_message(
+        message: Any,
+        operation: str,
+        *,
+        now: float | None = None,
+        rate_limit_info: Any | None = None,
+    ) -> ClaudeSDKProviderFailure:
+        """Build a typed, classified failure from an ``is_error`` ResultMessage.
+
+        The Claude Agent SDK collapses an ``is_error`` ResultMessage into an
+        opaque ``"error result: <subtype>"`` string, discarding the ``result``
+        text and ``api_error_status`` that reveal *why* the turn failed. We
+        classify from the raw message before that evidence is lost: a rate/usage
+        limit becomes a :class:`ClaudeSDKRateLimited` carrying the reset window,
+        and every other error result keeps its real body for diagnosis.
+
+        ``rate_limit_info`` is the ``RateLimitInfo`` from a ``RateLimitEvent`` the
+        CLI emits alongside the result. When present it is the authoritative
+        source for the rejection status and reset epoch; the result-text and
+        ``api_error_status`` heuristics are the fallback.
+        """
+        now = time.time() if now is None else now
+        result_text = (getattr(message, "result", None) or "").strip()
+        subtype = getattr(message, "subtype", None) or "unknown"
+        api_status = getattr(message, "api_error_status", None)
+        lowered = result_text.lower()
+
+        rl_status = getattr(rate_limit_info, "status", None)
+        rl_resets_at = getattr(rate_limit_info, "resets_at", None)
+        rl_type = getattr(rate_limit_info, "rate_limit_type", None)
+
+        is_rate_limit = (
+            rl_status == "rejected"
+            or api_status == 429
+            or any(m in lowered for m in _RATE_LIMIT_MARKERS)
+        )
+        detail = result_text or f"subtype={subtype}"
+        if is_rate_limit:
+            reset_at: float | None = float(rl_resets_at) if rl_resets_at else None
+            retry_after: float | None = None
+            if reset_at is not None:
+                remaining = reset_at - now
+                retry_after = remaining if remaining > 0.0 else None
+            else:
+                reset_at, retry_after = _parse_usage_limit_reset(result_text, now=now)
+            parts = [f"{operation} provider rate-limited: {detail}"]
+            if rl_type:
+                parts.append(f"[window={rl_type}]")
+            if api_status:
+                parts.append(f"[api_error_status={api_status}]")
+            if retry_after:
+                parts.append(f"[retry_after={retry_after:.0f}s]")
+            return ClaudeSDKRateLimited(" ".join(parts), retry_after=retry_after, reset_at=reset_at)
+        parts = [
+            f"{operation} provider degraded: Claude SDK returned error result "
+            f"(subtype={subtype}): {detail}"
+        ]
+        if api_status:
+            parts.append(f"[api_error_status={api_status}]")
+        return ClaudeSDKProviderFailure(" ".join(parts), classification="error_result")
+
+    def _raise_for_error_result(
+        self, message: Any, operation: str, *, rate_limit_info: Any | None = None
+    ) -> None:
+        """Preempt the SDK's opaque error with a classified failure.
+
+        The ResultMessage is streamed to us *before* the SDK raises its own
+        ``ProcessError``-derived error, so we capture the real diagnostics here
+        and raise a classified failure that survives with its evidence intact.
+        """
+        if getattr(message, "is_error", False):
+            raise self._classify_result_message(message, operation, rate_limit_info=rate_limit_info)
 
     @staticmethod
     def _is_max_turns_error(e: BaseException) -> bool:
@@ -429,7 +583,17 @@ class ClaudeLLMProvider:
             if self._is_sdk_sigterm_shutdown(e):
                 raise _shutdown_cancellation(e) from e
 
+            if isinstance(e, ClaudeSDKProviderFailure):
+                # Already classified from the raw ResultMessage in _run_query with
+                # the real body, api_error_status, and (for rate limits) reset
+                # window. Emit the operator signal once and re-raise it unchanged.
+                self.logger.warning(str(e))
+                raise
+
             if self._is_error_result_success(e):
+                # Fallback: the SDK raised its opaque "error result: success"
+                # without us observing the preceding ResultMessage. Keep the
+                # degraded signal so the route still fails fast and audibly.
                 exit_code = self._extract_exit_code(e)
                 stderr_text = "\n".join(stderr_lines)
                 message = (
@@ -439,7 +603,7 @@ class ClaudeLLMProvider:
                     + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
                 )
                 self.logger.warning(message)
-                raise ClaudeSDKProviderFailure(message) from e
+                raise ClaudeSDKProviderFailure(message, classification="error_result") from e
 
             # Give stderr handler task time to drain before logging
             await asyncio.sleep(0.2)
@@ -553,11 +717,18 @@ class ClaudeLLMProvider:
                 nonlocal captured_usage
                 result_text = ""
                 message_count = 0
+                rate_limit_info: Any | None = None
                 async for message in query(prompt=prompt, options=options):
                     message_count += 1
                     self.logger.debug(
                         f"generate_text message {message_count}: {type(message).__name__}"
                     )
+                    # The CLI emits a RateLimitEvent carrying the authoritative
+                    # rejection status and reset epoch alongside the result; hold the
+                    # most recent one to classify a trailing error result precisely.
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
                     if isinstance(message, AssistantMessage):
                         for block in message.content:
                             if isinstance(block, TextBlock):
@@ -568,6 +739,9 @@ class ClaudeLLMProvider:
                     elif isinstance(message, ResultMessage):
                         self.logger.debug(
                             f"  ResultMessage: result={message.result}, type={type(message.result)}"
+                        )
+                        self._raise_for_error_result(
+                            message, operation, rate_limit_info=rate_limit_info
                         )
                         if message.result:
                             result_text = message.result
@@ -674,6 +848,7 @@ class ClaudeLLMProvider:
                                 tool_use_count += 1
                                 tool_breakdown[block.name] = tool_breakdown.get(block.name, 0) + 1
                     elif isinstance(message, ResultMessage):
+                        self._raise_for_error_result(message, operation)
                         if message.result:
                             result_text = message.result
                         usage = _normalize_claude_usage(getattr(message, "usage", None))
@@ -789,6 +964,7 @@ class ClaudeLLMProvider:
                             if isinstance(block, TextBlock):
                                 result_text += block.text
                     elif isinstance(message, ResultMessage):
+                        self._raise_for_error_result(message, operation)
                         if message.result:
                             result_text = message.result
                 if message_count == 0:
@@ -951,6 +1127,7 @@ class ClaudeLLMProvider:
                         if isinstance(block, TextBlock):
                             result_text += block.text
                 elif isinstance(message, ResultMessage):
+                    self._raise_for_error_result(message, "describe_image")
                     if message.result:
                         result_text = message.result
             if not result_text:

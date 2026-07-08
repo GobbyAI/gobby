@@ -28,8 +28,40 @@ class MockAssistantMessage:
 
 
 class MockResultMessage:
-    def __init__(self, result: str | None = None) -> None:
+    def __init__(
+        self,
+        result: str | None = None,
+        *,
+        is_error: bool = False,
+        subtype: str = "success",
+        api_error_status: int | None = None,
+        usage: dict[str, Any] | None = None,
+    ) -> None:
         self.result = result
+        self.is_error = is_error
+        self.subtype = subtype
+        self.api_error_status = api_error_status
+        self.usage = usage
+
+
+class MockRateLimitInfo:
+    def __init__(
+        self,
+        *,
+        status: str = "allowed",
+        resets_at: int | None = None,
+        rate_limit_type: str | None = None,
+        utilization: float | None = None,
+    ) -> None:
+        self.status = status
+        self.resets_at = resets_at
+        self.rate_limit_type = rate_limit_type
+        self.utilization = utilization
+
+
+class MockRateLimitEvent:
+    def __init__(self, rate_limit_info: MockRateLimitInfo) -> None:
+        self.rate_limit_info = rate_limit_info
 
 
 class MockTextBlock:
@@ -131,6 +163,20 @@ class TestIsTransientError:
 
         error = Exception("Claude Code returned an error result: success")
         assert ClaudeLLMProvider._is_transient_error(error) is False
+
+    def test_classified_provider_failures_are_not_transient(self) -> None:
+        """Typed provider failures (incl. rate limits) fail fast without retry."""
+        from gobby.llm.claude import (
+            ClaudeLLMProvider,
+            ClaudeSDKProviderFailure,
+            ClaudeSDKRateLimited,
+        )
+
+        assert ClaudeLLMProvider._is_transient_error(ClaudeSDKProviderFailure("x")) is False
+        assert (
+            ClaudeLLMProvider._is_transient_error(ClaudeSDKRateLimited("x", retry_after=120.0))
+            is False
+        )
 
     def test_sigterm_exit_code_is_not_retried(self) -> None:
         """Claude SDK SIGTERM exits are shutdown cancellation, not transient LLM errors."""
@@ -684,6 +730,95 @@ class TestGenerateTextProviderFailures:
         assert "retrying" not in caplog.text
         assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
+    @pytest.mark.asyncio
+    async def test_rate_limit_result_message_classified_with_reset_window(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A rejected RateLimitEvent + error result raises a typed rate-limit failure."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockRateLimitEvent(
+                MockRateLimitInfo(
+                    status="rejected",
+                    resets_at=4102444800,  # year 2100 — retry_after stays positive
+                    rate_limit_type="five_hour",
+                )
+            )
+            yield MockResultMessage(
+                result="Claude AI usage limit reached",
+                is_error=True,
+                subtype="success",
+            )
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with (
+                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+                pytest.raises(ClaudeSDKRateLimited) as excinfo,
+            ):
+                await provider.generate_text("Summarize", caller="wiki")
+
+        sleep.assert_not_awaited()
+        assert excinfo.value.classification == "rate_limited"
+        assert excinfo.value.retry_after is not None and excinfo.value.retry_after > 0.0
+        assert "provider rate-limited" in caplog.text
+        assert "window=five_hour" in caplog.text
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_api_429_result_message_classified_as_rate_limit(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        """An error result carrying api_error_status=429 is a rate limit even without body."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage(result="", is_error=True, api_error_status=429)
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with pytest.raises(ClaudeSDKRateLimited, match="api_error_status=429"):
+                await provider.generate_text("Summarize", caller="wiki")
+
+    @pytest.mark.asyncio
+    async def test_non_rate_limit_error_result_preserves_body(
+        self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-rate-limit error result surfaces its real body, not the opaque subtype."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage(
+                result="model refused: prompt too long",
+                is_error=True,
+                subtype="success",
+            )
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import (
+                ClaudeLLMProvider,
+                ClaudeSDKProviderFailure,
+                ClaudeSDKRateLimited,
+            )
+
+            provider = ClaudeLLMProvider(claude_config)
+
+            with (
+                caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
+                pytest.raises(ClaudeSDKProviderFailure) as excinfo,
+            ):
+                await provider.generate_text("Summarize", caller="wiki")
+
+        assert not isinstance(excinfo.value, ClaudeSDKRateLimited)
+        assert excinfo.value.classification == "error_result"
+        assert "model refused: prompt too long" in str(excinfo.value)
+        assert "model refused: prompt too long" in caplog.text
+
 
 # ─── describe_image tests ───────────────────────────────────────────────
 
@@ -718,3 +853,75 @@ class TestGenerateTextNoBackend:
 
             with pytest.raises(RuntimeError, match="unavailable"):
                 await provider.generate_text("Hello")
+
+
+class TestClassifyResultMessage:
+    """Unit tests for ClaudeLLMProvider._classify_result_message (no SDK needed)."""
+
+    def test_usage_limit_body_marks_rate_limit_and_parses_reset(self) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+
+        message = MockResultMessage(
+            result="Claude AI usage limit reached|1700001000",
+            is_error=True,
+            subtype="success",
+        )
+        failure = ClaudeLLMProvider._classify_result_message(
+            message, "generate_text", now=1_700_000_000.0
+        )
+
+        assert isinstance(failure, ClaudeSDKRateLimited)
+        assert failure.reset_at == 1_700_001_000.0
+        assert failure.retry_after == 1000.0
+
+    def test_rate_limit_event_reset_is_preferred_over_body(self) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+
+        message = MockResultMessage(
+            result="Claude AI usage limit reached|9999",
+            is_error=True,
+            subtype="success",
+        )
+        info = MockRateLimitInfo(status="rejected", resets_at=5000, rate_limit_type="seven_day")
+        failure = ClaudeLLMProvider._classify_result_message(
+            message, "generate_text", now=1000.0, rate_limit_info=info
+        )
+
+        assert isinstance(failure, ClaudeSDKRateLimited)
+        assert failure.reset_at == 5000.0
+        assert failure.retry_after == 4000.0
+        assert "window=seven_day" in str(failure)
+
+    def test_past_reset_yields_no_retry_after(self) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+
+        message = MockResultMessage(
+            result="Claude AI usage limit reached|1699999000",
+            is_error=True,
+            subtype="success",
+        )
+        failure = ClaudeLLMProvider._classify_result_message(
+            message, "generate_text", now=1_700_000_000.0
+        )
+
+        assert isinstance(failure, ClaudeSDKRateLimited)
+        assert failure.retry_after is None
+
+    def test_generic_error_result_is_not_rate_limited(self) -> None:
+        from gobby.llm.claude import (
+            ClaudeLLMProvider,
+            ClaudeSDKProviderFailure,
+            ClaudeSDKRateLimited,
+        )
+
+        message = MockResultMessage(
+            result="context deadline exceeded",
+            is_error=True,
+            subtype="success",
+        )
+        failure = ClaudeLLMProvider._classify_result_message(message, "generate_json", now=1000.0)
+
+        assert isinstance(failure, ClaudeSDKProviderFailure)
+        assert not isinstance(failure, ClaudeSDKRateLimited)
+        assert failure.classification == "error_result"
+        assert "context deadline exceeded" in str(failure)

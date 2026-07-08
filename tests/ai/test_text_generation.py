@@ -2900,7 +2900,8 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
         ]
     )
     # The qwen binding is a spawn-cold CLI lane, so it is bounded by
-    # timeout_seconds (not the fast-lane candidate_timeout_seconds).
+    # cli_candidate_timeout_seconds, which the config clamps down to
+    # timeout_seconds (0.01s) here since the default 150s exceeds it.
     service = build_daemon_text_generation_service(
         DaemonConfig(
             ai={
@@ -2918,6 +2919,25 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
         await service.generate(
             TextGenerationRequest(provider="qwen", model="qwen-model", prompt="never completes")
         )
+
+
+def test_builder_uses_cli_candidate_timeout_not_overall_budget() -> None:
+    # gobby-#17710: spawn-cold lanes must get cli_candidate_timeout_seconds, not
+    # the overall timeout_seconds budget, or a hung CLI candidate (e.g. codex)
+    # burns the whole attempt window before the route can fall back.
+    service = build_daemon_text_generation_service(
+        DaemonConfig(
+            ai={
+                "generation": {
+                    "candidate_timeout_seconds": 20.0,
+                    "cli_candidate_timeout_seconds": 45.0,
+                    "timeout_seconds": 600.0,
+                }
+            }
+        ),
+    )
+    assert service._candidate_timeout_seconds == 20.0
+    assert service._cli_candidate_timeout_seconds == 45.0
 
 
 class FakeProcess:

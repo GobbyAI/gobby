@@ -102,6 +102,19 @@ def _all_candidates_rejected_reasoning(
     )
 
 
+def _retry_after_from_exception(exc: BaseException) -> float | None:
+    """Return a positive provider-reported cooldown carried on ``exc``, if any.
+
+    Typed provider failures (e.g. a Claude rate-limit) expose ``retry_after`` in
+    seconds so the breaker can open for the reported reset window. Read it
+    structurally without importing provider-specific exception types.
+    """
+    retry_after = getattr(exc, "retry_after", None)
+    if isinstance(retry_after, int | float) and not isinstance(retry_after, bool):
+        return float(retry_after) if retry_after > 0.0 else None
+    return None
+
+
 def _json_parse_failure(raw: str, exc: Exception) -> ValueError:
     preview = raw[:240].replace("\n", "\\n").replace("\r", "\\r")
     if not preview:
@@ -225,8 +238,18 @@ class TextGenerationService:
         self._breaker_failures.pop(key, None)
         self._breaker_open_until.pop(key, None)
 
-    def _breaker_record_failure(self, key: str) -> None:
+    def _breaker_record_failure(self, key: str, *, retry_after: float | None = None) -> None:
         if self._circuit_breaker_failure_threshold <= 0:
+            return
+        if retry_after is not None and retry_after > 0.0:
+            # A provider-reported cooldown (e.g. a rate-limit reset window) is
+            # definitive: open the breaker immediately for the reported window
+            # instead of waiting for the consecutive-failure threshold, and never
+            # shorten an already-longer cooldown.
+            self._breaker_open_until[key] = max(
+                self._breaker_open_until.get(key, 0.0),
+                time.monotonic() + retry_after,
+            )
             return
         failures = self._breaker_failures.get(key, 0) + 1
         self._breaker_failures[key] = failures
@@ -412,8 +435,10 @@ class TextGenerationService:
                         applied_reasoning_effort=candidate.reasoning_effort,
                     )
                     _validate_text_generation_output(candidate, text_result.text)
-                except Exception:
-                    self._breaker_record_failure(breaker_key)
+                except Exception as exc:
+                    self._breaker_record_failure(
+                        breaker_key, retry_after=_retry_after_from_exception(exc)
+                    )
                     raise
                 self._breaker_record_success(breaker_key)
                 self._log_generation_event(

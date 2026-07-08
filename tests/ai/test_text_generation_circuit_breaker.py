@@ -163,3 +163,48 @@ async def test_breaker_disabled_when_threshold_not_positive() -> None:
         with pytest.raises(RuntimeError):
             await _call(service)
     assert adapter.calls == 6
+
+
+class _CooldownError(RuntimeError):
+    """A provider failure that reports a ``retry_after`` cooldown (like a rate limit)."""
+
+    def __init__(self, message: str, retry_after: object) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class _RetryAfterFailAdapter:
+    """Fails with a provider exception carrying a ``retry_after`` cooldown."""
+
+    def __init__(self, retry_after: float) -> None:
+        self.calls = 0
+        self._retry_after = retry_after
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.calls += 1
+        raise _CooldownError("provider rate-limited", self._retry_after)
+
+
+async def test_reported_retry_after_opens_breaker_before_threshold() -> None:
+    adapter = _RetryAfterFailAdapter(retry_after=300.0)
+    service = _breaker_service(adapter, threshold=8, cooldown=60.0)
+
+    # One rate-limit failure that reports a reset window opens the breaker
+    # immediately, without waiting for the consecutive-failure threshold.
+    with pytest.raises(RuntimeError):
+        await _call(service)
+    assert adapter.calls == 1
+
+    with pytest.raises(_CircuitOpenError):
+        await _call(service)
+    assert adapter.calls == 1
+
+
+def test_retry_after_from_exception_reads_positive_float() -> None:
+    from gobby.ai._text_generation_service import _retry_after_from_exception
+
+    assert _retry_after_from_exception(RuntimeError("x")) is None
+    assert _retry_after_from_exception(_CooldownError("x", 0.0)) is None
+    assert _retry_after_from_exception(_CooldownError("x", 42.0)) == 42.0
+    # A bool is not a valid duration even though it is an int subtype.
+    assert _retry_after_from_exception(_CooldownError("x", True)) is None
