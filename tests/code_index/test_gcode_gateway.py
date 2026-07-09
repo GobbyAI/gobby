@@ -26,8 +26,8 @@ GCODE_PIN = MANAGED_BIN_VERSION_PINS["gcode"]
 GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
 
 
-async def test_managed_gcode_pin_requires_1_4_0() -> None:
-    assert GCODE_PIN == "1.4.0"
+async def test_managed_gcode_pin_requires_1_5_0() -> None:
+    assert GCODE_PIN == "1.5.0"
 
 
 class FakeProcess:
