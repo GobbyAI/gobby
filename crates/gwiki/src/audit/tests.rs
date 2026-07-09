@@ -3,13 +3,25 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::claims::{
-    claim_lines, has_codewiki_frontmatter_source_spans, has_inline_source_support,
-    is_manifest_backed_source_digest, unsupported_claims,
+    analyze_claims, claim_lines, has_codewiki_frontmatter_source_spans, has_inline_source_support,
+    is_manifest_backed_source_digest,
 };
 use super::*;
 use crate::lint::WikiPage;
 use crate::provenance::ProvenanceGraph;
 use crate::sources::{SourceDraft, SourceManifest};
+
+/// Unsupported-claims view of [`analyze_claims`] for tests that only assert
+/// on audit failures.
+fn unsupported_claims(
+    page: &WikiPage,
+    provenance: &ProvenanceGraph,
+    source_context: &Arc<Vec<AuditSourceContext>>,
+    manifest_hashes: &BTreeSet<String>,
+    options: &AuditOptions,
+) -> Vec<UnsupportedClaim> {
+    analyze_claims(page, provenance, source_context, manifest_hashes, options).unsupported
+}
 
 #[test]
 fn catalog_surfaces_are_exempt_from_claim_scanning() {
@@ -825,4 +837,183 @@ fn curated_concept_prose_without_daemon_synthesis_stays_audited() {
         "curated (non-daemon) prose without an inline citation should stay flagged, got {claims:?}"
     );
     assert!(claims[0].claim.contains("uncited curated assertion"));
+}
+
+#[test]
+fn classifies_extracted_inferred_and_ambiguous_claims() {
+    let markdown = r#"---
+title: crates/example.rs
+type: code_file
+provenance:
+- file: crates/example.rs
+  ranges:
+  - 1-12
+---
+
+# crates/example.rs
+
+Module: [[code/modules/crates|crates]]
+
+Documents the builder pipeline. [crates/example.rs:3-9]
+
+Uncited operational assertion about the builder.
+"#;
+    let page = test_codewiki_page("code/files/crates/example.rs.md", markdown);
+
+    let analysis = analyze_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    let classification_for = |needle: &str| {
+        analysis
+            .classified
+            .iter()
+            .find(|claim| claim.claim.contains(needle))
+            .unwrap_or_else(|| panic!("claim containing {needle:?} in {:?}", analysis.classified))
+            .classification
+    };
+    assert_eq!(
+        classification_for("Module:"),
+        ClaimClassification::Inferred,
+        "structural claim on a source-span-grounded page is inferred"
+    );
+    assert_eq!(
+        classification_for("Documents the builder"),
+        ClaimClassification::Extracted,
+        "inline code source span is a direct citation"
+    );
+    assert_eq!(
+        classification_for("Uncited operational assertion"),
+        ClaimClassification::Ambiguous,
+        "prose without provenance is ambiguous"
+    );
+    assert_eq!(
+        analysis.unsupported.len(),
+        1,
+        "only the ambiguous prose claim is an audit failure, got {:?}",
+        analysis.unsupported
+    );
+    assert!(
+        analysis.unsupported[0]
+            .claim
+            .contains("Uncited operational assertion")
+    );
+}
+
+#[test]
+fn conflict_and_gap_sections_classify_ambiguous_without_audit_failures() {
+    let markdown = r#"---
+title: Topic
+source_kind: topic
+---
+# Topic
+
+## Conflicting claims
+
+- Source A says the cache is per-project; source B says it is global.
+
+## Missing evidence
+
+- No source covers the shutdown path.
+"#;
+    let page = test_codewiki_page("knowledge/topics/conflicts.md", markdown);
+
+    let analysis = analyze_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    let flagged: Vec<_> = analysis
+        .classified
+        .iter()
+        .filter(|claim| {
+            matches!(
+                claim.heading.as_deref(),
+                Some("Conflicting claims") | Some("Missing evidence")
+            )
+        })
+        .collect();
+    assert_eq!(
+        flagged.len(),
+        2,
+        "conflict/gap claims enter the classified stream, got {:?}",
+        analysis.classified
+    );
+    assert!(
+        flagged
+            .iter()
+            .all(|claim| claim.classification == ClaimClassification::Ambiguous),
+        "conflict/gap territory classifies ambiguous, got {flagged:?}"
+    );
+    assert!(
+        analysis.unsupported.is_empty(),
+        "explicitly flagged uncertainty is not an audit failure, got {:?}",
+        analysis.unsupported
+    );
+}
+
+#[test]
+fn conflict_prefixed_claims_under_normal_headings_stay_unsupported() {
+    let markdown = r#"---
+title: Topic
+source_kind: topic
+---
+# Topic
+
+conflict: retention window is 30 days vs 90 days across sources.
+"#;
+    let page = test_codewiki_page("knowledge/topics/prefixed.md", markdown);
+
+    let analysis = analyze_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert_eq!(analysis.classified.len(), 1);
+    assert_eq!(
+        analysis.classified[0].classification,
+        ClaimClassification::Ambiguous,
+        "conflict-prefixed line is ambiguous territory"
+    );
+    assert_eq!(
+        analysis.unsupported.len(),
+        1,
+        "a conflict-prefixed line under a normal heading still needs support"
+    );
+}
+
+#[test]
+fn audit_report_serializes_uppercase_claim_classifications() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let page = root.join("knowledge/topics/claims.md");
+    std::fs::create_dir_all(page.parent().expect("page parent")).expect("create wiki dir");
+    std::fs::write(
+        &page,
+        "---\ntitle: Claims\nsource_kind: topic\n---\n# Claims\nUnsupported operational claim.\n",
+    )
+    .expect("write page");
+
+    let report = run(root, ScopeIdentity::topic("ops")).expect("audit runs");
+    assert_eq!(report.claims.len(), 1);
+    assert_eq!(
+        report.claims[0].classification,
+        ClaimClassification::Ambiguous
+    );
+
+    let json = serde_json::to_value(&report).expect("serialize report");
+    assert_eq!(
+        json.pointer("/claims/0/classification"),
+        Some(&serde_json::Value::String("AMBIGUOUS".to_string()))
+    );
 }

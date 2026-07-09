@@ -11,50 +11,77 @@ use crate::models::WikiSourceKind;
 use crate::provenance::ProvenanceGraph;
 use crate::synthesis::slugify;
 
-use super::{AuditOptions, AuditSourceContext, UnsupportedClaim};
+use super::{
+    AuditOptions, AuditSourceContext, ClaimClassification, ClassifiedClaim, UnsupportedClaim,
+};
 
-pub(super) fn unsupported_claims(
+#[derive(Debug, Default)]
+pub(super) struct PageClaimAnalysis {
+    pub(super) classified: Vec<ClassifiedClaim>,
+    pub(super) unsupported: Vec<UnsupportedClaim>,
+}
+
+pub(super) fn analyze_claims(
     page: &WikiPage,
     provenance: &ProvenanceGraph,
     source_context: &Arc<Vec<AuditSourceContext>>,
     manifest_hashes: &BTreeSet<String>,
     options: &AuditOptions,
-) -> Vec<UnsupportedClaim> {
+) -> PageClaimAnalysis {
     if is_manifest_backed_source_digest(page, manifest_hashes)
         || is_catalog_page(page)
         || is_recap_page(page)
         || is_generated_code_projection_page(page)
     {
-        return Vec::new();
+        return PageClaimAnalysis::default();
     }
     let claims = claim_lines(page, options);
     let supported_lines = supported_claim_lines(page, provenance, &claims);
     let has_page_source_support = has_codewiki_frontmatter_source_spans(page);
     let attributed_sections = daemon_synthesis_attributed_sections(page);
     let claim_source_context = claim_source_context(page, source_context);
-    claims
-        .into_iter()
-        .filter_map(|claim| {
-            if (has_page_source_support && claim.kind == ClaimKind::Structural)
-                || supported_lines.contains(&claim.line)
-                || has_inline_source_support(&claim.text)
-                || claim
-                    .heading
-                    .as_deref()
-                    .is_some_and(|heading| attributed_sections.contains(heading))
-            {
-                return None;
-            }
-            Some(UnsupportedClaim {
+    let mut analysis = PageClaimAnalysis::default();
+    for claim in claims {
+        let in_conflict_gap_section = is_conflict_gap_heading(claim.heading.as_deref());
+        let extracted =
+            supported_lines.contains(&claim.line) || has_inline_source_support(&claim.text);
+        let inferred = (has_page_source_support && claim.kind == ClaimKind::Structural)
+            || claim
+                .heading
+                .as_deref()
+                .is_some_and(|heading| attributed_sections.contains(heading));
+        let classification = if in_conflict_gap_section || has_conflict_gap_prefix(&claim.text) {
+            ClaimClassification::Ambiguous
+        } else if extracted {
+            ClaimClassification::Extracted
+        } else if inferred {
+            ClaimClassification::Inferred
+        } else {
+            ClaimClassification::Ambiguous
+        };
+        // Conflict/gap sections record known uncertainty; they classify as
+        // ambiguous but are not audit failures. A conflict-/gap-prefixed line
+        // under a normal heading still needs support to escape the
+        // unsupported report.
+        if !in_conflict_gap_section && !extracted && !inferred {
+            analysis.unsupported.push(UnsupportedClaim {
                 path: page.relative_path.clone(),
                 line: claim.line,
-                heading: claim.heading,
-                claim: claim.text,
+                heading: claim.heading.clone(),
+                claim: claim.text.clone(),
                 reason: "claim has no source provenance or inline citation".to_string(),
                 source_context: Arc::clone(&claim_source_context),
-            })
-        })
-        .collect()
+            });
+        }
+        analysis.classified.push(ClassifiedClaim {
+            path: page.relative_path.clone(),
+            line: claim.line,
+            heading: claim.heading,
+            claim: claim.text,
+            classification,
+        });
+    }
+    analysis
 }
 
 fn claim_source_context(
@@ -350,7 +377,11 @@ pub(super) fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimL
             current_heading = Some(heading);
             continue;
         }
-        if ignored_claim_section(current_heading.as_deref(), options) || ignored_claim_line(trimmed)
+        // Conflict/gap sections stay in the stream so their claims classify
+        // as ambiguous; other ignored sections carry metadata, not claims.
+        if ignored_claim_line(trimmed)
+            || (!is_conflict_gap_heading(current_heading.as_deref())
+                && ignored_claim_section(current_heading.as_deref(), options))
         {
             continue;
         }
@@ -401,6 +432,28 @@ fn heading_title(line: &str) -> Option<String> {
 
 fn ignored_claim_section(heading: Option<&str>, options: &AuditOptions) -> bool {
     heading.is_some_and(|heading| options.ignores_section(heading))
+}
+
+/// Sections that record explicitly flagged uncertainty from the
+/// accepted-note contract (`conflict:` / `gap:` note lines render here).
+const CONFLICT_GAP_SECTIONS: &[&str] = &["conflicting claims", "missing evidence"];
+
+fn is_conflict_gap_heading(heading: Option<&str>) -> bool {
+    heading.is_some_and(|heading| {
+        CONFLICT_GAP_SECTIONS.contains(&heading.trim().to_ascii_lowercase().as_str())
+    })
+}
+
+fn has_conflict_gap_prefix(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        "conflict:",
+        "conflicting claim:",
+        "gap:",
+        "missing evidence:",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
 }
 
 fn ignored_claim_line(line: &str) -> bool {

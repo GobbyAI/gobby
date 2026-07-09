@@ -75,6 +75,7 @@ mod tests {
             command: "audit",
             scope: ScopeIdentity::project("proj"),
             root: root.to_path_buf(),
+            claims: Vec::new(),
             unsupported_claims: unsupported_paths
                 .iter()
                 .map(|path| audit::UnsupportedClaim {

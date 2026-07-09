@@ -528,6 +528,7 @@ mod tests {
             command: "audit",
             scope: scope.clone(),
             root: "wiki-root".into(),
+            claims: Vec::new(),
             unsupported_claims: Vec::new(),
             source_context: Arc::new(Vec::new()),
         };

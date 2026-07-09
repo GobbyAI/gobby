@@ -92,6 +92,7 @@ pub struct AuditReport {
     pub command: &'static str,
     pub scope: ScopeIdentity,
     pub root: PathBuf,
+    pub claims: Vec<ClassifiedClaim>,
     pub unsupported_claims: Vec<UnsupportedClaim>,
     pub source_context: Arc<Vec<AuditSourceContext>>,
 }
@@ -104,6 +105,32 @@ pub struct UnsupportedClaim {
     pub claim: String,
     pub reason: String,
     pub source_context: Arc<Vec<AuditSourceContext>>,
+}
+
+/// Provenance classification for every claim line the audit examines.
+///
+/// `Extracted` claims carry direct per-claim support (a provenance-graph
+/// section link or an inline citation). `Inferred` claims have page-level
+/// grounding without a per-claim citation (structural lines on codewiki pages
+/// whose frontmatter records code source spans, or daemon-synthesis sections
+/// attributed to sources). `Ambiguous` covers explicitly flagged uncertainty
+/// (`Conflicting claims` / `Missing evidence` territory) and claims with no
+/// discernible provenance — the latter are also reported as unsupported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ClaimClassification {
+    Extracted,
+    Inferred,
+    Ambiguous,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClassifiedClaim {
+    pub path: PathBuf,
+    pub line: usize,
+    pub heading: Option<String>,
+    pub claim: String,
+    pub classification: ClaimClassification,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -136,23 +163,25 @@ pub fn run_with_options(
         .collect::<BTreeSet<_>>();
     let source_context = Arc::new(source_context(manifest));
     let provenance = load_provenance(vault_root)?;
-    let unsupported_claims = pages
-        .iter()
-        .flat_map(|page| {
-            claims::unsupported_claims(
-                page,
-                &provenance,
-                &source_context,
-                &manifest_hashes,
-                &options,
-            )
-        })
-        .collect();
+    let mut classified_claims = Vec::new();
+    let mut unsupported_claims = Vec::new();
+    for page in &pages {
+        let analysis = claims::analyze_claims(
+            page,
+            &provenance,
+            &source_context,
+            &manifest_hashes,
+            &options,
+        );
+        classified_claims.extend(analysis.classified);
+        unsupported_claims.extend(analysis.unsupported);
+    }
 
     Ok(AuditReport {
         command: "audit",
         scope,
         root: vault_root.to_path_buf(),
+        claims: classified_claims,
         unsupported_claims,
         source_context,
     })
