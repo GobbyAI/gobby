@@ -16,10 +16,7 @@ pub fn find_project_root(start: &Path) -> Option<PathBuf> {
         if gobby_dir.join("project.json").exists() || gobby_dir.join("gcode.json").exists() {
             return Some(dir.to_path_buf());
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 
