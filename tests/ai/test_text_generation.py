@@ -1671,7 +1671,7 @@ async def test_text_generation_service_aggregates_all_unavailable_json_candidate
 async def test_text_generation_service_json_candidates_do_not_fallback_to_profile_defaults() -> (
     None
 ):
-    from gobby.llm.claude import ClaudeSDKProviderFailure
+    from gobby.llm.claude_errors import ClaudeSDKProviderFailure
 
     registry = AICapabilityRegistry(
         [

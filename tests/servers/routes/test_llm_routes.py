@@ -1421,13 +1421,13 @@ def test_chat_completions_returns_503_without_service(
 
 
 def test_strip_leading_preamble_drops_non_markdown_prefix() -> None:
-    from gobby.llm.claude import _strip_leading_preamble
+    from gobby.llm.claude_payloads import strip_leading_preamble
 
     prefixed = "Now I have the evidence I need.\n\n## Overview\n\nBody."
-    assert _strip_leading_preamble(prefixed) == "## Overview\n\nBody."
+    assert strip_leading_preamble(prefixed) == "## Overview\n\nBody."
 
     top_level = "Preamble line\n# Title\n\nBody."
-    assert _strip_leading_preamble(top_level) == "# Title\n\nBody."
+    assert strip_leading_preamble(top_level) == "# Title\n\nBody."
 
     no_heading = "   Just prose, no heading.   "
-    assert _strip_leading_preamble(no_heading) == "Just prose, no heading."
+    assert strip_leading_preamble(no_heading) == "Just prose, no heading."

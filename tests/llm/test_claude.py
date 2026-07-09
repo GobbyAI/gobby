@@ -105,12 +105,12 @@ def mock_claude_sdk(mock_query_func: Any) -> Generator[None]:
         patch("gobby.llm.claude_cli.shutil.which", return_value="/usr/bin/claude"),
         patch("os.path.exists", return_value=True),
         patch("os.access", return_value=True),
-        patch("gobby.llm.claude.query", mock_query_func),
-        patch("gobby.llm.claude.AssistantMessage", MockAssistantMessage),
-        patch("gobby.llm.claude.ResultMessage", MockResultMessage),
-        patch("gobby.llm.claude.TextBlock", MockTextBlock),
-        patch("gobby.llm.claude.ToolUseBlock", MockToolUseBlock),
-        patch("gobby.llm.claude.ClaudeAgentOptions", MockClaudeAgentOptions),
+        patch("gobby.llm.claude_sdk.query", mock_query_func),
+        patch("gobby.llm.claude_sdk.AssistantMessage", MockAssistantMessage),
+        patch("gobby.llm.claude_sdk.ResultMessage", MockResultMessage),
+        patch("gobby.llm.claude_sdk.TextBlock", MockTextBlock),
+        patch("gobby.llm.claude_sdk.ToolUseBlock", MockToolUseBlock),
+        patch("gobby.llm.claude_sdk.ClaudeAgentOptions", MockClaudeAgentOptions),
     ):
         yield
 
@@ -139,56 +139,50 @@ class TestIsTransientError:
 
     def test_permanent_errors(self) -> None:
         """Auth/permission errors are permanent (not transient)."""
-        from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import is_transient_error
 
-        assert ClaudeLLMProvider._is_transient_error(Exception("401 Unauthorized")) is False
-        assert ClaudeLLMProvider._is_transient_error(Exception("403 Forbidden")) is False
-        assert ClaudeLLMProvider._is_transient_error(Exception("invalid_api_key")) is False
-        assert ClaudeLLMProvider._is_transient_error(Exception("authentication failed")) is False
-        assert ClaudeLLMProvider._is_transient_error(Exception("permission denied")) is False
-        assert ClaudeLLMProvider._is_transient_error(Exception("not_found 404")) is False
+        assert is_transient_error(Exception("401 Unauthorized")) is False
+        assert is_transient_error(Exception("403 Forbidden")) is False
+        assert is_transient_error(Exception("invalid_api_key")) is False
+        assert is_transient_error(Exception("authentication failed")) is False
+        assert is_transient_error(Exception("permission denied")) is False
+        assert is_transient_error(Exception("not_found 404")) is False
 
     def test_transient_errors(self) -> None:
         """Timeout/server errors are transient."""
-        from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import is_transient_error
 
-        assert ClaudeLLMProvider._is_transient_error(Exception("timeout")) is True
-        assert ClaudeLLMProvider._is_transient_error(Exception("rate limit exceeded")) is True
-        assert ClaudeLLMProvider._is_transient_error(Exception("500 Internal Server Error")) is True
-        assert ClaudeLLMProvider._is_transient_error(Exception("connection reset")) is True
+        assert is_transient_error(Exception("timeout")) is True
+        assert is_transient_error(Exception("rate limit exceeded")) is True
+        assert is_transient_error(Exception("500 Internal Server Error")) is True
+        assert is_transient_error(Exception("connection reset")) is True
 
     def test_error_result_success_is_not_retried(self) -> None:
         """Known Claude SDK error-result-success failures are not retried noisily."""
-        from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import is_transient_error
 
         error = Exception("Claude Code returned an error result: success")
-        assert ClaudeLLMProvider._is_transient_error(error) is False
+        assert is_transient_error(error) is False
 
     def test_classified_provider_failures_are_not_transient(self) -> None:
         """Typed provider failures (incl. rate limits) fail fast without retry."""
-        from gobby.llm.claude import (
-            ClaudeLLMProvider,
-            ClaudeSDKProviderFailure,
-            ClaudeSDKRateLimited,
-        )
+        from gobby.llm.claude_errors import ClaudeSDKProviderFailure, ClaudeSDKRateLimited
+        from gobby.llm.claude_runtime import is_transient_error
 
-        assert ClaudeLLMProvider._is_transient_error(ClaudeSDKProviderFailure("x")) is False
-        assert (
-            ClaudeLLMProvider._is_transient_error(ClaudeSDKRateLimited("x", retry_after=120.0))
-            is False
-        )
+        assert is_transient_error(ClaudeSDKProviderFailure("x")) is False
+        assert is_transient_error(ClaudeSDKRateLimited("x", retry_after=120.0)) is False
 
     def test_sigterm_exit_code_is_not_retried(self) -> None:
         """Claude SDK SIGTERM exits are shutdown cancellation, not transient LLM errors."""
-        from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import is_sdk_sigterm_shutdown, is_transient_error
 
         attr_error = MockExitCodeError("Claude process exited", 143)
         message_error = Exception("Claude process exited with exit code 143")
 
-        assert ClaudeLLMProvider._is_sdk_sigterm_shutdown(attr_error) is True
-        assert ClaudeLLMProvider._is_sdk_sigterm_shutdown(message_error) is True
-        assert ClaudeLLMProvider._is_transient_error(attr_error) is False
-        assert ClaudeLLMProvider._is_transient_error(message_error) is False
+        assert is_sdk_sigterm_shutdown(attr_error) is True
+        assert is_sdk_sigterm_shutdown(message_error) is True
+        assert is_transient_error(attr_error) is False
+        assert is_transient_error(message_error) is False
 
 
 # ─── _retry_async tests ─────────────────────────────────────────────────
@@ -200,98 +194,84 @@ class TestRetryAsync:
     @pytest.mark.asyncio
     async def test_retry_succeeds_first_attempt(self, claude_config: DaemonConfig) -> None:
         """No retries needed when first attempt succeeds."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import retry_async
 
-            provider = ClaudeLLMProvider(claude_config)
+        async def success() -> str:
+            return "ok"
 
-            async def success() -> str:
-                return "ok"
-
-            result = await provider._retry_async(success, max_retries=3)
-            assert result == "ok"
+        result = await retry_async(success, max_retries=3)
+        assert result == "ok"
 
     @pytest.mark.asyncio
     async def test_retry_on_transient_error(self, claude_config: DaemonConfig) -> None:
         """Retries on transient errors with exponential backoff."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import retry_async
 
-            provider = ClaudeLLMProvider(claude_config)
+        call_count = 0
 
-            call_count = 0
+        async def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise Exception("timeout")
+            return "ok"
 
-            async def flaky() -> str:
-                nonlocal call_count
-                call_count += 1
-                if call_count < 3:
-                    raise Exception("timeout")
-                return "ok"
+        with patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock):
+            result = await retry_async(flaky, max_retries=3, delay=0.01)
 
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await provider._retry_async(flaky, max_retries=3, delay=0.01)
-
-            assert result == "ok"
-            assert call_count == 3
+        assert result == "ok"
+        assert call_count == 3
 
     @pytest.mark.asyncio
     async def test_no_retry_on_permanent_error(self, claude_config: DaemonConfig) -> None:
         """Permanent errors raise immediately without retry."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import retry_async
 
-            provider = ClaudeLLMProvider(claude_config)
+        async def permanent_fail() -> str:
+            raise Exception("401 Unauthorized")
 
-            async def permanent_fail() -> str:
-                raise Exception("401 Unauthorized")
-
-            with pytest.raises(Exception, match="401 Unauthorized"):
-                await provider._retry_async(permanent_fail, max_retries=3)
+        with pytest.raises(Exception, match="401 Unauthorized"):
+            await retry_async(permanent_fail, max_retries=3)
 
     @pytest.mark.asyncio
     async def test_retry_exhausted_raises(self, claude_config: DaemonConfig) -> None:
         """After max retries, the last exception is raised."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import retry_async
 
-            provider = ClaudeLLMProvider(claude_config)
+        async def always_fail() -> str:
+            raise Exception("timeout again")
 
-            async def always_fail() -> str:
-                raise Exception("timeout again")
-
-            with (
-                patch("asyncio.sleep", new_callable=AsyncMock),
-                pytest.raises(Exception, match="timeout again"),
-            ):
-                await provider._retry_async(always_fail, max_retries=2, delay=0.01)
+        with (
+            patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(Exception, match="timeout again"),
+        ):
+            await retry_async(always_fail, max_retries=2, delay=0.01)
 
     @pytest.mark.asyncio
     async def test_retry_calls_on_retry_callback(self, claude_config: DaemonConfig) -> None:
         """on_retry callback is called on each retry attempt."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_runtime import retry_async
 
-            provider = ClaudeLLMProvider(claude_config)
-            retry_calls: list[tuple[int, Exception]] = []
+        retry_calls: list[tuple[int, Exception]] = []
 
-            def on_retry(attempt: int, error: Exception) -> None:
-                retry_calls.append((attempt, error))
+        def on_retry(attempt: int, error: Exception) -> None:
+            retry_calls.append((attempt, error))
 
-            call_count = 0
+        call_count = 0
 
-            async def flaky() -> str:
-                nonlocal call_count
-                call_count += 1
-                if call_count < 3:
-                    raise Exception("timeout")
-                return "ok"
+        async def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise Exception("timeout")
+            return "ok"
 
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                await provider._retry_async(flaky, max_retries=3, delay=0.01, on_retry=on_retry)
+        with patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock):
+            await retry_async(flaky, max_retries=3, delay=0.01, on_retry=on_retry)
 
-            assert len(retry_calls) == 2
-            assert retry_calls[0][0] == 0
-            assert retry_calls[1][0] == 1
+        assert len(retry_calls) == 2
+        assert retry_calls[0][0] == 0
+        assert retry_calls[1][0] == 1
 
 
 class TestExecuteSdkQuery:
@@ -302,31 +282,33 @@ class TestExecuteSdkQuery:
         self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Exit code 143 is raised as cancellation without retry warning noise."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKShutdownCancellation
+        from gobby.llm.claude_runtime import (
+            ClaudeSDKShutdownCancellation,
+            execute_sdk_query,
+        )
 
-            provider = ClaudeLLMProvider(claude_config)
-            options = MockClaudeAgentOptions()
-            call_count = 0
-            caplog.clear()
+        options = MockClaudeAgentOptions()
+        call_count = 0
+        caplog.clear()
 
-            async def terminated() -> str:
-                nonlocal call_count
-                call_count += 1
-                raise MockExitCodeError("Claude process exited", 143)
+        async def terminated() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise MockExitCodeError("Claude process exited", 143)
 
-            with (
-                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
-                caplog.at_level(logging.INFO, logger="gobby.llm.claude"),
-                pytest.raises(ClaudeSDKShutdownCancellation, match="generate_json cancelled"),
-            ):
-                await provider._execute_sdk_query(
-                    "generate_json",
-                    terminated,
-                    options,
-                    max_retries=3,
-                    retry_delay=0.01,
-                )
+        with (
+            patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock) as sleep,
+            caplog.at_level(logging.INFO, logger="gobby.llm.claude"),
+            pytest.raises(ClaudeSDKShutdownCancellation, match="generate_json cancelled"),
+        ):
+            await execute_sdk_query(
+                "generate_json",
+                terminated,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=3,
+                retry_delay=0.01,
+            )
 
         sleep.assert_not_awaited()
         assert call_count == 1
@@ -345,56 +327,48 @@ class TestPrepareImageData:
 
     def test_image_not_found(self, claude_config: DaemonConfig) -> None:
         """Returns error string when image doesn't exist."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_payloads import prepare_image_data
 
-            provider = ClaudeLLMProvider(claude_config)
-            result = provider._prepare_image_data("/nonexistent/image.png")
-            assert isinstance(result, str)
-            assert "not found" in result.lower()
+        result = prepare_image_data("/nonexistent/image.png")
+        assert isinstance(result, str)
+        assert "not found" in result.lower()
 
     def test_valid_image(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Returns (base64, mime_type) for valid image."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_payloads import prepare_image_data
 
-            provider = ClaudeLLMProvider(claude_config)
-            img_path = tmp_path / "test.png"
-            img_path.write_bytes(b"\x89PNG\r\n")
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"\x89PNG\r\n")
 
-            result = provider._prepare_image_data(str(img_path))
-            assert isinstance(result, tuple)
-            assert len(result) == 2
-            assert result[1] == "image/png"
+        result = prepare_image_data(str(img_path))
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[1] == "image/png"
 
     def test_unknown_mime_defaults_to_png(
         self, claude_config: DaemonConfig, tmp_path: Path
     ) -> None:
         """Unknown extensions default to image/png."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_payloads import prepare_image_data
 
-            provider = ClaudeLLMProvider(claude_config)
-            img_path = tmp_path / "test.xyz"
-            img_path.write_bytes(b"data")
+        img_path = tmp_path / "test.xyz"
+        img_path.write_bytes(b"data")
 
-            result = provider._prepare_image_data(str(img_path))
-            assert isinstance(result, tuple)
-            assert result[1] == "image/png"
+        result = prepare_image_data(str(img_path))
+        assert isinstance(result, tuple)
+        assert result[1] == "image/png"
 
     def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Returns error string when file can't be read."""
-        with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
-            from gobby.llm.claude import ClaudeLLMProvider
+        from gobby.llm.claude_payloads import prepare_image_data
 
-            provider = ClaudeLLMProvider(claude_config)
-            img_path = tmp_path / "test.png"
-            img_path.write_bytes(b"data")
+        img_path = tmp_path / "test.png"
+        img_path.write_bytes(b"data")
 
-            with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
-                result = provider._prepare_image_data(str(img_path))
-                assert isinstance(result, str)
-                assert "Failed to read" in result
+        with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
+            result = prepare_image_data(str(img_path))
+            assert isinstance(result, str)
+            assert "Failed to read" in result
 
 
 # ─── generate_json tests ────────────────────────────────────────────────
@@ -417,7 +391,7 @@ class TestGenerateText:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._generate_text_sdk("Generate text", reasoning_effort="xhigh")
+            result = await provider.generate_text_result("Generate text", reasoning_effort="xhigh")
 
         assert result.text == "reply"
         assert result.applied_reasoning_effort == "xhigh"
@@ -442,7 +416,7 @@ class TestGenerateText:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._generate_text_sdk("Generate a long page")
+            result = await provider.generate_text_result("Generate a long page")
 
         assert result.text == "reply"
         assert captured_kwargs[0]["max_turns"] > 1
@@ -464,11 +438,11 @@ class TestGenerateText:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            auto_result = await provider._generate_text_sdk(
+            auto_result = await provider.generate_text_result(
                 "Generate text",
                 reasoning_effort="auto",
             )
-            unset_result = await provider._generate_text_sdk("Generate text")
+            unset_result = await provider.generate_text_result("Generate text")
 
         assert auto_result.text == "auto reply"
         assert unset_result.text == "default reply"
@@ -488,7 +462,7 @@ class TestGenerateText:
 
             provider = ClaudeLLMProvider(claude_config)
             with pytest.raises(ValueError, match="Unsupported Claude reasoning effort"):
-                await provider._generate_text_sdk("Generate text", reasoning_effort="extreme")
+                await provider.generate_text_result("Generate text", reasoning_effort="extreme")
 
 
 class TestGenerateAgentic:
@@ -544,7 +518,7 @@ class TestGenerateJson:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._generate_json_sdk("Generate JSON")
+            result = await provider.generate_json("Generate JSON")
 
             assert result == {"key": "value"}
 
@@ -563,7 +537,7 @@ class TestGenerateJson:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._generate_json_sdk("Generate JSON")
+            result = await provider.generate_json("Generate JSON")
 
         assert result == {"isolated": True}
         assert captured_sources == [[]]
@@ -586,6 +560,7 @@ class TestGenerateJson:
             operation: str,
             query_fn: Any,
             options: object,
+            logger: logging.Logger,
             **kwargs: object,
         ) -> str:
             captured["operation"] = operation
@@ -595,8 +570,8 @@ class TestGenerateJson:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            with patch.object(provider, "_execute_sdk_query", side_effect=execute_sdk_query):
-                result = await provider._generate_json_sdk(
+            with patch("gobby.llm.claude_sdk.execute_sdk_query", side_effect=execute_sdk_query):
+                result = await provider.generate_json(
                     "rendered entity extraction prompt",
                     "strict entity extraction system prompt",
                     "haiku",
@@ -626,7 +601,7 @@ class TestGenerateJson:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._generate_json_sdk(
+            result = await provider.generate_json(
                 "Generate JSON",
                 reasoning_effort="auto",
             )
@@ -647,7 +622,7 @@ class TestGenerateJson:
             provider = ClaudeLLMProvider(claude_config)
 
             with pytest.raises(ValueError, match="not json"):
-                await provider._generate_json_sdk("Generate JSON")
+                await provider.generate_json("Generate JSON")
 
     @pytest.mark.asyncio
     async def test_generate_json_sdk_markdown_fence_fallback(
@@ -662,7 +637,7 @@ class TestGenerateJson:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._generate_json_sdk("Generate JSON")
+            result = await provider.generate_json("Generate JSON")
 
             assert result == {"entities": []}
 
@@ -677,16 +652,17 @@ class TestGenerateJson:
             yield
 
         with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKProviderFailure
+            from gobby.llm.claude import ClaudeLLMProvider
+            from gobby.llm.claude_errors import ClaudeSDKProviderFailure
 
             provider = ClaudeLLMProvider(claude_config)
 
             with (
-                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock) as sleep,
                 caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
                 pytest.raises(ClaudeSDKProviderFailure, match="generate_json provider degraded"),
             ):
-                await provider._generate_json_sdk("Generate JSON")
+                await provider.generate_json("Generate JSON")
 
         sleep.assert_not_awaited()
         assert "provider degraded: Claude SDK returned error-result-success" in caplog.text
@@ -708,12 +684,13 @@ class TestGenerateTextProviderFailures:
             yield
 
         with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKProviderFailure
+            from gobby.llm.claude import ClaudeLLMProvider
+            from gobby.llm.claude_errors import ClaudeSDKProviderFailure
 
             provider = ClaudeLLMProvider(claude_config)
 
             with (
-                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock) as sleep,
                 caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
                 pytest.raises(
                     ClaudeSDKProviderFailure,
@@ -751,12 +728,13 @@ class TestGenerateTextProviderFailures:
             )
 
         with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+            from gobby.llm.claude import ClaudeLLMProvider
+            from gobby.llm.claude_errors import ClaudeSDKRateLimited
 
             provider = ClaudeLLMProvider(claude_config)
 
             with (
-                patch("gobby.llm.claude.asyncio.sleep", new_callable=AsyncMock) as sleep,
+                patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock) as sleep,
                 caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
                 pytest.raises(ClaudeSDKRateLimited) as excinfo,
             ):
@@ -779,7 +757,8 @@ class TestGenerateTextProviderFailures:
             yield MockResultMessage(result="", is_error=True, api_error_status=429)
 
         with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+            from gobby.llm.claude import ClaudeLLMProvider
+            from gobby.llm.claude_errors import ClaudeSDKRateLimited
 
             provider = ClaudeLLMProvider(claude_config)
 
@@ -800,8 +779,8 @@ class TestGenerateTextProviderFailures:
             )
 
         with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import (
-                ClaudeLLMProvider,
+            from gobby.llm.claude import ClaudeLLMProvider
+            from gobby.llm.claude_errors import (
                 ClaudeSDKProviderFailure,
                 ClaudeSDKRateLimited,
             )
@@ -833,7 +812,7 @@ class TestDescribeImage:
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider._describe_image_sdk("/path/to/image.png")
+            result = await provider.describe_image("/path/to/image.png")
             assert "unavailable" in result.lower()
 
 

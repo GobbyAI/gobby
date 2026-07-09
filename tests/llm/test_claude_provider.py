@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.llm.claude import ClaudeLLMProvider, _normalize_claude_usage
+from gobby.llm.claude import ClaudeLLMProvider
+from gobby.llm.claude_payloads import normalize_claude_usage
 
 pytestmark = pytest.mark.unit
 
@@ -69,12 +70,12 @@ def mock_claude_sdk(
         patch("gobby.llm.claude_cli.shutil.which", return_value="/mock/claude"),
         patch("os.path.exists", return_value=True),
         patch("os.access", return_value=True),
-        patch("gobby.llm.claude.query", query_wrapper),
-        patch("gobby.llm.claude.AssistantMessage", MockAssistantMessage),
-        patch("gobby.llm.claude.ResultMessage", MockResultMessage),
-        patch("gobby.llm.claude.TextBlock", MockTextBlock),
-        patch("gobby.llm.claude.ToolUseBlock", MockToolUseBlock),
-        patch("gobby.llm.claude.ClaudeAgentOptions", MockClaudeAgentOptions),
+        patch("gobby.llm.claude_sdk.query", query_wrapper),
+        patch("gobby.llm.claude_sdk.AssistantMessage", MockAssistantMessage),
+        patch("gobby.llm.claude_sdk.ResultMessage", MockResultMessage),
+        patch("gobby.llm.claude_sdk.TextBlock", MockTextBlock),
+        patch("gobby.llm.claude_sdk.ToolUseBlock", MockToolUseBlock),
+        patch("gobby.llm.claude_sdk.ClaudeAgentOptions", MockClaudeAgentOptions),
     ):
         yield
 
@@ -118,7 +119,7 @@ async def test_generate_text(claude_config: DaemonConfig) -> None:
 
 
 def test_normalize_claude_usage_maps_anthropic_fields() -> None:
-    assert _normalize_claude_usage({"input_tokens": 10, "output_tokens": 5}) == {
+    assert normalize_claude_usage({"input_tokens": 10, "output_tokens": 5}) == {
         "prompt_tokens": 10,
         "completion_tokens": 5,
         "total_tokens": 15,
@@ -128,7 +129,7 @@ def test_normalize_claude_usage_maps_anthropic_fields() -> None:
 
 
 def test_normalize_claude_usage_preserves_openai_total_and_cache_fields() -> None:
-    assert _normalize_claude_usage(
+    assert normalize_claude_usage(
         {
             "prompt_tokens": 10,
             "completion_tokens": 5,
@@ -144,7 +145,7 @@ def test_normalize_claude_usage_preserves_openai_total_and_cache_fields() -> Non
 
 
 def test_normalize_claude_usage_counts_cache_tokens_in_computed_total() -> None:
-    assert _normalize_claude_usage(
+    assert normalize_claude_usage(
         {
             "input_tokens": 100,
             "cache_read_input_tokens": 40,
@@ -163,9 +164,9 @@ def test_normalize_claude_usage_counts_cache_tokens_in_computed_total() -> None:
 
 
 def test_normalize_claude_usage_returns_none_without_counts() -> None:
-    assert _normalize_claude_usage(None) is None
-    assert _normalize_claude_usage({}) is None
-    assert _normalize_claude_usage({"foo": "bar"}) is None
+    assert normalize_claude_usage(None) is None
+    assert normalize_claude_usage({}) is None
+    assert normalize_claude_usage({"foo": "bar"}) is None
 
 
 @pytest.mark.asyncio
@@ -217,9 +218,8 @@ async def test_generate_text_threads_caller_into_operation_name(
 
     with mock_claude_sdk(mock_query):
         provider = ClaudeLLMProvider(claude_config)
-        with patch.object(
-            provider,
-            "_execute_sdk_query",
+        with patch(
+            "gobby.llm.claude_sdk.execute_sdk_query",
             AsyncMock(return_value="Generated text"),
         ) as mock_execute:
             text = await provider.generate_text("prompt", caller="code_index.symbol_summary")

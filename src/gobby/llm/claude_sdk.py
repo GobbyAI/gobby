@@ -1,0 +1,418 @@
+"""Claude Agent SDK client flows."""
+
+import json
+import logging
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
+
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+    query,
+)
+
+from gobby.llm.base import LLMTextResult
+from gobby.llm.claude_models import AgenticGenerationResult
+from gobby.llm.claude_payloads import (
+    claude_reasoning_options,
+    normalize_claude_usage,
+    prepare_image_data,
+    strip_leading_preamble,
+)
+from gobby.llm.claude_runtime import (
+    execute_sdk_query,
+    is_max_turns_error,
+    raise_for_error_result,
+)
+from gobby.llm.textgen_cwd import neutral_textgen_cwd
+from gobby.utils.json_helpers import extract_json_from_text
+
+_FEATURE_TEXTGEN_MAX_TURNS = 8
+
+
+class ClaudeSDKClient:
+    """Owns Claude Agent SDK text, agentic, JSON, and vision flows."""
+
+    def __init__(
+        self,
+        default_model: str,
+        verify_cli_path: Callable[[], Awaitable[str | None]],
+        logger: logging.Logger,
+    ) -> None:
+        self._default_model = default_model
+        self._verify_cli_path = verify_cli_path
+        self.logger = logger
+
+    async def generate_text_result(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        caller: str | None = None,
+    ) -> LLMTextResult:
+        """Generate text using Claude Agent SDK."""
+        cli_path = await self._verify_cli_path()
+        if not cli_path:
+            raise RuntimeError("Generation unavailable (Claude CLI not found)")
+
+        with neutral_textgen_cwd() as neutral_cwd:
+            reasoning_options = claude_reasoning_options(reasoning_effort)
+            applied_reasoning_effort = reasoning_options.get("effort")
+            options = ClaudeAgentOptions(
+                system_prompt=system_prompt or "You are a helpful assistant.",
+                max_turns=_FEATURE_TEXTGEN_MAX_TURNS,
+                model=model or self._default_model,
+                tools=[],
+                allowed_tools=[],
+                mcp_servers={},
+                permission_mode="default",
+                cli_path=cli_path,
+                cwd=str(neutral_cwd),
+                **reasoning_options,
+            )
+
+            captured_usage: dict[str, int] | None = None
+            operation = f"generate_text[{caller}]" if caller else "generate_text"
+
+            async def _run_query() -> str:
+                nonlocal captured_usage
+                result_text = ""
+                message_count = 0
+                rate_limit_info: Any | None = None
+                async for message in query(prompt=prompt, options=options):
+                    message_count += 1
+                    self.logger.debug(
+                        "generate_text message %d: %s",
+                        message_count,
+                        type(message).__name__,
+                    )
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                self.logger.debug("  TextBlock: %s...", block.text[:100])
+                                result_text += block.text
+                            elif isinstance(block, ToolUseBlock):
+                                self.logger.debug("  ToolUseBlock: %s", block.name)
+                    elif isinstance(message, ResultMessage):
+                        self.logger.debug(
+                            "  ResultMessage: result=%s, type=%s",
+                            message.result,
+                            type(message.result),
+                        )
+                        raise_for_error_result(message, operation, rate_limit_info=rate_limit_info)
+                        if message.result:
+                            result_text = message.result
+                        usage = normalize_claude_usage(getattr(message, "usage", None))
+                        if usage is not None:
+                            captured_usage = usage
+                if message_count == 0:
+                    self.logger.warning("generate_text: No messages received from Claude SDK")
+                elif not result_text:
+                    self.logger.warning(
+                        "generate_text: %d messages but no text content", message_count
+                    )
+                return result_text
+
+            result: str = await execute_sdk_query(
+                operation, _run_query, options, self.logger, max_retries=3
+            )
+
+        if max_tokens and len(result) > max_tokens * 4:
+            result = result[: max_tokens * 4]
+        return LLMTextResult(
+            text=result,
+            usage=captured_usage,
+            applied_reasoning_effort=applied_reasoning_effort,
+        )
+
+    async def generate_agentic(
+        self,
+        *,
+        system_prompt: str | None,
+        prompt: str,
+        project_path: str,
+        model: str | None = None,
+        max_turns: int = 60,
+        reasoning_effort: str | None = None,
+        allowed_tools: Sequence[str] = ("Read", "Grep", "Glob"),
+        disallowed_tools: Sequence[str] | None = None,
+        mcp_servers: dict[str, Any] | None = None,
+        caller: str | None = None,
+    ) -> AgenticGenerationResult:
+        """Run a tool-enabled agentic investigation."""
+        if not prompt or not prompt.strip():
+            raise ValueError("Agentic generation requires a non-empty prompt")
+
+        cli_path = await self._verify_cli_path()
+        if not cli_path:
+            raise RuntimeError("Agentic generation unavailable (Claude CLI not found)")
+
+        reasoning_options = claude_reasoning_options(reasoning_effort)
+        applied_reasoning_effort = reasoning_options.get("effort")
+        resolved_model = model or self._default_model
+        options = ClaudeAgentOptions(
+            system_prompt=system_prompt or "You are a helpful assistant.",
+            max_turns=max_turns,
+            model=resolved_model,
+            allowed_tools=list(allowed_tools),
+            disallowed_tools=list(disallowed_tools) if disallowed_tools else [],
+            mcp_servers=dict(mcp_servers) if mcp_servers else {},
+            permission_mode="bypassPermissions",
+            setting_sources=[],
+            cli_path=cli_path,
+            cwd=project_path,
+            **reasoning_options,
+        )
+
+        captured_usage: dict[str, int] | None = None
+        tool_breakdown: dict[str, int] = {}
+        tool_use_count = 0
+        turn_count = 0
+        operation = f"generate_agentic[{caller}]" if caller else "generate_agentic"
+
+        async def _run_query() -> str:
+            nonlocal captured_usage, tool_use_count, turn_count
+            result_text = ""
+            message_count = 0
+            rate_limit_info: Any | None = None
+            try:
+                async for message in query(prompt=prompt, options=options):
+                    message_count += 1
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
+                    if isinstance(message, AssistantMessage):
+                        turn_count += 1
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                result_text += block.text
+                            elif isinstance(block, ToolUseBlock):
+                                tool_use_count += 1
+                                tool_breakdown[block.name] = tool_breakdown.get(block.name, 0) + 1
+                    elif isinstance(message, ResultMessage):
+                        raise_for_error_result(message, operation, rate_limit_info=rate_limit_info)
+                        if message.result:
+                            result_text = message.result
+                        usage = normalize_claude_usage(getattr(message, "usage", None))
+                        if usage is not None:
+                            captured_usage = usage
+            except Exception as exc:  # noqa: BLE001 - re-raised unless max-turns
+                if is_max_turns_error(exc) and result_text.strip():
+                    self.logger.info(
+                        "generate_agentic reached max_turns=%s; returning accumulated "
+                        "text (%d chars, %d turns, %d tool uses)",
+                        max_turns,
+                        len(result_text),
+                        turn_count,
+                        tool_use_count,
+                    )
+                    return result_text
+                raise
+            if message_count == 0:
+                self.logger.warning("generate_agentic: No messages received from Claude SDK")
+            elif not result_text:
+                self.logger.warning(
+                    "generate_agentic: %d messages but no text content", message_count
+                )
+            return result_text
+
+        raw_text: str = await execute_sdk_query(
+            operation, _run_query, options, self.logger, max_retries=1
+        )
+        return AgenticGenerationResult(
+            text=strip_leading_preamble(raw_text),
+            model=resolved_model,
+            tool_use_count=tool_use_count,
+            turns=turn_count,
+            tools=dict(tool_breakdown),
+            usage=captured_usage,
+            applied_reasoning_effort=applied_reasoning_effort,
+        )
+
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
+        caller: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate JSON using Claude Agent SDK with output_format constraint."""
+        cli_path = await self._verify_cli_path()
+        if not cli_path:
+            raise RuntimeError("Generation unavailable (Claude CLI not found)")
+
+        with neutral_textgen_cwd() as neutral_cwd:
+            reasoning_options = claude_reasoning_options(reasoning_effort)
+            applied_reasoning_effort = reasoning_options.get("effort")
+            if applied_reasoning_effort is not None:
+                self.logger.debug(
+                    "generate_json using Claude reasoning_effort=%s",
+                    applied_reasoning_effort,
+                )
+            options = ClaudeAgentOptions(
+                system_prompt=system_prompt or "You are a helpful assistant.",
+                max_turns=1,
+                model=model or self._default_model,
+                tools=[],
+                allowed_tools=[],
+                mcp_servers={},
+                permission_mode="default",
+                cli_path=cli_path,
+                output_format={"type": "json_object"},
+                cwd=str(neutral_cwd),
+                **reasoning_options,
+            )
+            operation = f"generate_json[{caller}]" if caller else "generate_json"
+
+            async def _run_query() -> str:
+                result_text = ""
+                message_count = 0
+                rate_limit_info: Any | None = None
+                async for message in query(prompt=prompt, options=options):
+                    message_count += 1
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
+                    self.logger.debug(
+                        "generate_json message %d: %s",
+                        message_count,
+                        type(message).__name__,
+                    )
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                result_text += block.text
+                    elif isinstance(message, ResultMessage):
+                        raise_for_error_result(message, operation, rate_limit_info=rate_limit_info)
+                        if message.result:
+                            result_text = message.result
+                if message_count == 0:
+                    self.logger.warning("generate_json: No messages received from Claude SDK")
+                elif not result_text:
+                    self.logger.warning(
+                        "generate_json: %d messages but no text content", message_count
+                    )
+                return result_text
+
+            text = await execute_sdk_query(
+                operation, _run_query, options, self.logger, max_retries=3
+            )
+
+        text = str(text).strip()
+        self.logger.debug("generate_json raw response (%d chars): %s", len(text), text[:500])
+        if not text:
+            raise ValueError("Claude SDK returned empty response for JSON generation")
+
+        try:
+            result: dict[str, Any] = json.loads(text)
+            return result
+        except json.JSONDecodeError as exc:
+            self.logger.debug("Direct JSON parse failed, trying extract_json_from_text fallback")
+            extracted = extract_json_from_text(text)
+            if extracted:
+                try:
+                    result = json.loads(extracted)
+                    self.logger.debug(
+                        "Fallback extracted JSON (%d chars): %s",
+                        len(extracted),
+                        extracted[:200],
+                    )
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            raise ValueError(f"Failed to parse Claude response as JSON: {text[:200]}") from exc
+
+    async def describe_image(
+        self,
+        image_path: str,
+        context: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        """Describe an image using Claude Agent SDK."""
+        cli_path = await self._verify_cli_path()
+        if not cli_path:
+            return "Image description unavailable (Claude CLI not found)"
+
+        image_result = prepare_image_data(image_path, self.logger)
+        if isinstance(image_result, str):
+            return image_result
+        image_base64, mime_type = image_result
+
+        text_prompt = (
+            "Please describe this image in detail, focusing on the key visual "
+            "elements and any text visible."
+        )
+        if context:
+            text_prompt = f"{context}\n\n{text_prompt}"
+
+        options = ClaudeAgentOptions(
+            system_prompt="You are a vision assistant that describes images in detail.",
+            max_turns=1,
+            model=model or self._default_model,
+            tools=[],
+            allowed_tools=[],
+            mcp_servers={},
+            permission_mode="default",
+            cli_path=cli_path,
+        )
+
+        async def _message_generator() -> Any:
+            yield {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": text_prompt},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime_type,
+                                "data": image_base64,
+                            },
+                        },
+                    ],
+                },
+            }
+
+        async def _run_query() -> str:
+            result_text = ""
+            message_count = 0
+            rate_limit_info: Any | None = None
+            async for message in query(prompt=_message_generator(), options=options):
+                message_count += 1
+                event_rate_limit = getattr(message, "rate_limit_info", None)
+                if event_rate_limit is not None:
+                    rate_limit_info = event_rate_limit
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            result_text += block.text
+                elif isinstance(message, ResultMessage):
+                    raise_for_error_result(
+                        message, "describe_image", rate_limit_info=rate_limit_info
+                    )
+                    if message.result:
+                        result_text = message.result
+            if not result_text:
+                self.logger.warning(
+                    "describe_image: SDK returned no text content (messages=%d)",
+                    message_count,
+                )
+            return result_text
+
+        try:
+            return str(await execute_sdk_query("describe_image", _run_query, options, self.logger))
+        except RuntimeError as exc:
+            return f"Image description failed: {exc}"
