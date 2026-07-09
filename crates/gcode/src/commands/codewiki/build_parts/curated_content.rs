@@ -781,7 +781,7 @@ fn resolve_flow_stages(
                 let stage = components.len();
                 components.push(component_from(&doc.path, &doc.summary));
                 for component in &doc.component_ids {
-                    component_owner.entry(component.clone()).or_insert(stage);
+                    component_owner.insert(component.clone(), stage);
                 }
             }
         }

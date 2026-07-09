@@ -1551,3 +1551,45 @@ class TestImportSeqNumPreservation:
         assert c.seq_num == 51
         assert p.path_cache == "50"
         assert c.path_cache == "50.51"
+
+    @pytest.mark.integration
+    def test_import_path_cache_ignores_parent_from_other_project(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """A foreign-project parent id must not shape imported task path_cache."""
+        other_project = LocalProjectManager(sync_manager.db).create(
+            name="other-project",
+            repo_path="/tmp/other-project",
+        )
+        now = "2023-01-02T00:00:00+00:00"
+        foreign_parent_id = _task_id("foreign-parent")
+        sync_manager.db.execute(
+            """
+            INSERT INTO tasks (id, project_id, title, created_at, updated_at, seq_num, path_cache)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (foreign_parent_id, other_project.id, "Foreign Parent", now, now, 77, "77"),
+        )
+        child = {
+            "id": _task_id("foreign-parent-child"),
+            "title": "Child",
+            "description": "Desc",
+            "status": "open",
+            "created_at": now,
+            "updated_at": now,
+            "project_id": sample_project["id"],
+            "parent_id": foreign_parent_id,
+            "deps_on": [],
+            "seq_num": 78,
+        }
+
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(sync_manager.export_path, "w") as f:
+            f.write(json.dumps(child) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        imported = task_manager.get_task(_task_id("foreign-parent-child"))
+        assert imported is not None
+        assert imported.seq_num == 78
+        assert imported.path_cache == "78"

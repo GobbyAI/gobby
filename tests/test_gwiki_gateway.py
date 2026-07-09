@@ -739,11 +739,13 @@ async def test_vault_lock_key_unifies_repo_root_and_vault_dir(tmp_path: Path) ->
     watcher_style = GwikiGateway(binary="/bin/gwiki", project_root=vault)
     other = GwikiGateway(binary="/bin/gwiki", project_root=other_repo)
 
-    assert cron_style._vault_lock_key() == watcher_style._vault_lock_key()
-    assert cron_style._vault_lock_key() != other._vault_lock_key()
+    assert await cron_style._vault_lock_key() == await watcher_style._vault_lock_key()
+    assert await cron_style._vault_lock_key() != await other._vault_lock_key()
     assert (
-        GwikiGateway(binary="/bin/gwiki", topic="research")._vault_lock_key()
-        == GwikiGateway(binary="/bin/gwiki", project_root=repo, topic="research")._vault_lock_key()
+        await GwikiGateway(binary="/bin/gwiki", topic="research")._vault_lock_key()
+        == await GwikiGateway(
+            binary="/bin/gwiki", project_root=repo, topic="research"
+        )._vault_lock_key()
     )
 
 

@@ -84,6 +84,10 @@ def is_removed_automation_job(job: CronJob) -> bool:
     return job.name in REMOVED_AUTOMATION_JOB_NAMES
 
 
+def _escape_like_prefix(prefix: str) -> str:
+    return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
 def compute_next_run(job: CronJob) -> datetime | None:
     """Compute the next run time for a cron job.
 
@@ -298,7 +302,7 @@ class CronJobStorage(CronRunStorageMixin):
         """List gobby-managed system cron rows whose name starts with prefix."""
         if not prefix:
             raise ValueError("prefix must not be empty")
-        pattern = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        pattern = _escape_like_prefix(prefix)
         conditions = ["is_system = TRUE", "name LIKE %s ESCAPE '\\'"]
         params: list[Any] = [pattern]
         if enabled is not None:
@@ -632,7 +636,7 @@ class CronJobStorage(CronRunStorageMixin):
         """
         if not prefix:
             raise ValueError("prefix must not be empty")
-        pattern = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        pattern = _escape_like_prefix(prefix)
         with self.db.transaction() as conn:
             conn.execute(
                 """

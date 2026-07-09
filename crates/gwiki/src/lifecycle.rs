@@ -77,12 +77,12 @@ pub(crate) fn apply_lifecycle_transition(
     let timestamp = crate::support::time::collect_timestamp()?;
     let updated = match to {
         WikiLifecycle::Stale => {
-            mark_stale_markdown_at(&markdown, reason, &chrono::Utc::now().to_rfc3339()).map_err(
-                |error| WikiError::InvalidInput {
+            mark_stale_markdown_at(&markdown, reason, &timestamp).map_err(|error| {
+                WikiError::InvalidInput {
                     field: "frontmatter",
                     message: format!("{}: {error}", relative.display()),
-                },
-            )?
+                }
+            })?
         }
         _ => {
             let mut metadata = parsed.metadata.clone();
@@ -91,7 +91,7 @@ pub(crate) fn apply_lifecycle_transition(
                 metadata
                     .unknown
                     .entry("archived_at".to_string())
-                    .or_insert_with(|| serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
+                    .or_insert_with(|| serde_json::Value::String(timestamp.clone()));
             }
             render_markdown_with_metadata(parsed.format, &metadata, parsed.body).map_err(
                 |error| WikiError::InvalidInput {
@@ -274,6 +274,13 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("stale_after due")
         );
-        assert!(parsed.metadata.unknown.contains_key("stale_at"));
+        let stale_at = parsed
+            .metadata
+            .unknown
+            .get("stale_at")
+            .and_then(serde_json::Value::as_str)
+            .expect("stale_at");
+        let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
+        assert!(log.contains(stale_at), "{log}");
     }
 }

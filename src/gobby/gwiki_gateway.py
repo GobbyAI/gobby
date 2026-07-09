@@ -324,7 +324,7 @@ class GwikiGateway:
         scope_args = self._scope_args() if include_scope else []
         argv = [binary, *args, *scope_args, "--format", "json"]
         if command_name in SERIALIZED_WRITE_COMMANDS:
-            async with _vault_write_lock(self._vault_lock_key()):
+            async with _vault_write_lock(await self._vault_lock_key()):
                 outcome = await self._run_command(command_name, argv)
         else:
             outcome = await self._run_command(command_name, argv)
@@ -335,7 +335,7 @@ class GwikiGateway:
         payload = self._parse_success_payload(command_name, stdout)
         return self._success_envelope(command_name, payload, stderr)
 
-    def _vault_lock_key(self) -> str:
+    async def _vault_lock_key(self) -> str:
         """Identity of the vault this gateway mutates, shared across callers.
 
         Callers name the same vault differently: cron and MCP/HTTP gateways
@@ -346,6 +346,9 @@ class GwikiGateway:
         """
         if self._topic is not None:
             return f"topic:{self._topic}"
+        return await asyncio.to_thread(self._vault_lock_key_sync)
+
+    def _vault_lock_key_sync(self) -> str:
         root = Path(self._project_root).expanduser() if self._project_root else Path.cwd()
         try:
             root = root.resolve()

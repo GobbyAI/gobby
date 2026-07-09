@@ -428,6 +428,21 @@ class TestProgressTrackerToolCall:
         assert event.progress_type == ProgressType.TOOL_CALL
         assert event.is_high_value is False
 
+    def test_record_tool_call_mcp_can_prefix_is_readonly(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Read-only prefixes that already end in '_' match can_* tool names."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="mcp__gobby__call_tool",
+            tool_args={"server_name": "gobby-tasks", "tool_name": "can_close_task"},
+            tool_result='{"success":true,"result":{"allowed":true}}',
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
     def test_record_tool_call_mcp_failed_mutation_is_low_value(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:

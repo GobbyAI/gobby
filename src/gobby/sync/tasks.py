@@ -104,6 +104,34 @@ def _github_issue_uuid_seed(project_id: str, owner: str, repo: str, issue_num: i
     return f"{project_id}/github/{_legacy_github_issue_uuid_seed(owner, repo, issue_num)}"
 
 
+def _compute_path_cache(
+    conn: Any,
+    project_id: str | None,
+    seq_num: int,
+    parent_task_id: str | None,
+) -> str:
+    path_parts = [str(seq_num)]
+    current_parent = parent_task_id
+    for _ in range(100):
+        if not current_parent:
+            break
+        if project_id is None:
+            parent_row = conn.execute(
+                "SELECT seq_num, parent_task_id FROM tasks WHERE project_id IS NULL AND id = %s",
+                (current_parent,),
+            ).fetchone()
+        else:
+            parent_row = conn.execute(
+                "SELECT seq_num, parent_task_id FROM tasks WHERE project_id = %s AND id = %s",
+                (project_id, current_parent),
+            ).fetchone()
+        if not parent_row or parent_row["seq_num"] is None:
+            break
+        path_parts.insert(0, str(parent_row["seq_num"]))
+        current_parent = parent_row["parent_task_id"]
+    return ".".join(path_parts)
+
+
 def _ensure_task_sequence_metadata(
     conn: Any,
     *,
@@ -138,23 +166,14 @@ def _ensure_task_sequence_metadata(
     if row["path_cache"]:
         return
 
-    path_parts = [str(seq_num)]
-    current_parent = row["parent_task_id"]
-    for _ in range(100):
-        if not current_parent:
-            break
-        parent_row = conn.execute(
-            "SELECT seq_num, parent_task_id FROM tasks WHERE project_id = %s AND id = %s",
-            (project_id, current_parent),
-        ).fetchone()
-        if not parent_row or parent_row["seq_num"] is None:
-            break
-        path_parts.insert(0, str(parent_row["seq_num"]))
-        current_parent = parent_row["parent_task_id"]
-
     conn.execute(
         "UPDATE tasks SET path_cache = %s, updated_at = %s WHERE project_id = %s AND id = %s",
-        (".".join(path_parts), updated_at, project_id, task_id),
+        (
+            _compute_path_cache(conn, project_id, seq_num, row["parent_task_id"]),
+            updated_at,
+            project_id,
+            task_id,
+        ),
     )
 
 
@@ -541,23 +560,13 @@ class TaskSyncManager:
                                 max_seq_tracker.get(task_project_id, 0), final_seq
                             )
 
-                            # Rebuild path_cache from the final seq_num
-                            parent_id = synced_values.get("parent_task_id")
-                            path_parts: list[str] = [str(final_seq)]
-                            current_parent = parent_id
-                            max_depth = 100
-                            depth = 0
-                            while current_parent and depth < max_depth:
-                                parent_row = conn.execute(
-                                    "SELECT seq_num, parent_task_id FROM tasks WHERE id = %s",
-                                    (current_parent,),
-                                ).fetchone()
-                                if not parent_row or parent_row["seq_num"] is None:
-                                    break
-                                path_parts.insert(0, str(parent_row["seq_num"]))
-                                current_parent = parent_row["parent_task_id"]
-                                depth += 1
-                            synced_values["path_cache"] = ".".join(path_parts)
+                            # Rebuild path_cache from the final seq_num.
+                            synced_values["path_cache"] = _compute_path_cache(
+                                conn,
+                                task_project_id,
+                                final_seq,
+                                synced_values.get("parent_task_id"),
+                            )
 
                             # INSERT with all synced fields
                             columns = ", ".join(["id"] + list(synced_values.keys()))

@@ -10,21 +10,10 @@ from typing import Any
 import click
 import httpx
 
-from gobby.cli.workflows.common import create_workflow_loader
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.cli.workflows.common import get_workflow_loader
 from gobby.utils.json_helpers import json_dumps
-from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
-
-
-def get_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
-    """Get a DB-backed workflow loader.
-
-    Pipeline definitions live in the DB registry; a loader without a database
-    cannot see bundled pipelines such as wiki-research.
-    """
-    return create_workflow_loader(db)
 
 
 def get_project_path() -> Path | None:

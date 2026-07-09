@@ -410,3 +410,22 @@ def test_delete_retired_jobs_by_name_prefix_escapes_like_wildcards(
 
     assert deleted == 0
     assert cron_storage.get_job(lookalike.id) is not None
+
+
+def test_list_system_jobs_by_name_prefix_escapes_like_wildcards(
+    cron_storage: CronJobStorage,
+) -> None:
+    cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobbyXwiki-research:project:alpha",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "unrelated"},
+        interval_seconds=3600,
+        is_system=True,
+    )
+
+    with pytest.raises(ValueError, match="prefix"):
+        cron_storage.list_system_jobs_by_name_prefix("")
+
+    assert cron_storage.list_system_jobs_by_name_prefix("gobby_wiki-research:") == []

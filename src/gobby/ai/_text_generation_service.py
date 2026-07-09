@@ -269,7 +269,6 @@ class TextGenerationService:
         expired = [key for key, open_until in self._breaker_open_until.items() if open_until <= now]
         for key in expired:
             self._breaker_open_until.pop(key, None)
-            self._breaker_failures.pop(key, None)
 
         keys = list(dict.fromkeys([*self._breaker_failures, *self._breaker_open_until]))
         overflow = len(keys) - _CIRCUIT_BREAKER_MAX_KEYS

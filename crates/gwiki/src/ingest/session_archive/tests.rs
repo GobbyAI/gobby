@@ -273,6 +273,50 @@ fn synthesis_first_ingests_wiki_page() {
 }
 
 #[test]
+fn sync_session_archives_skips_connections_enrichment_when_disabled() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path();
+    let wiki_dir = vault.join("session_wiki");
+    fs::create_dir(&wiki_dir).expect("wiki dir");
+    let external_id = "bbbbcccc-dddd-eeee-ffff-000011112222";
+    let body = "## Summary\n\nLinked [[Connections]] should stay inline only.\n\n## Key Claims\n\n- Enrichment is disabled.\n";
+    assert!(
+        ConnectionsEnricher::resolve().enrich_body(body).is_some(),
+        "fixture must prove enrichment would add a connections section"
+    );
+    write_session_wiki(&wiki_dir, external_id, body);
+
+    let mut store = MemoryWikiStore::default();
+    let report = sync_session_transcript_archives(
+        vault,
+        &mut store,
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            enrich: false,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("sync");
+
+    assert_eq!(report.accepted.len(), 1);
+    let record = &report.accepted[0].result.record;
+    let derived = fs::read_to_string(
+        vault
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{}.md", record.id)),
+    )
+    .expect("derived markdown");
+    assert!(derived.contains("Linked [[Connections]] should stay inline only."));
+    assert!(!derived.contains("## Connections"), "{derived}");
+    assert!(!derived.contains("\n- [[Connections]]"), "{derived}");
+}
+
+#[test]
 fn raw_archive_without_synthesis_uses_session_location() {
     let temp = tempfile::tempdir().expect("tempdir");
     let vault = temp.path();

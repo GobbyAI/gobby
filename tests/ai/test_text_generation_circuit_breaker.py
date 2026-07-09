@@ -162,6 +162,33 @@ async def test_breaker_probes_again_after_cooldown(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_breaker_reopens_immediately_when_probe_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        "gobby.ai._text_generation_service.time.monotonic",
+        lambda: clock["now"],
+    )
+    adapter = _CountingFailAdapter()
+    service = _breaker_service(adapter, threshold=2, cooldown=30.0)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            await _call(service)
+    assert adapter.calls == 2
+
+    clock["now"] += 31.0
+    with pytest.raises(RuntimeError):
+        await _call(service)
+    assert adapter.calls == 3
+
+    with pytest.raises(_CircuitOpenError):
+        await _call(service)
+    assert adapter.calls == 3
+
+
+@pytest.mark.asyncio
 async def test_breaker_disabled_when_threshold_not_positive() -> None:
     adapter = _CountingFailAdapter()
     service = _breaker_service(adapter, threshold=0, cooldown=60.0)

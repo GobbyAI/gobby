@@ -166,16 +166,15 @@ def _mcp_result_indicates_failure(result_str: str) -> bool:
     return bool(payload.get("error") or payload.get("errors"))
 
 
+def _tool_matches_prefix(tool_name: str, prefix: str) -> bool:
+    separator = "" if prefix.endswith("_") else "_"
+    return tool_name == prefix or tool_name.startswith(f"{prefix}{separator}")
+
+
 def _is_readonly_mcp_tool(tool_name: str) -> bool:
-    if any(
-        tool_name == prefix or tool_name.startswith(f"{prefix}_")
-        for prefix in MCP_MUTATING_TOOL_PREFIX_DENYLIST
-    ):
+    if any(_tool_matches_prefix(tool_name, prefix) for prefix in MCP_MUTATING_TOOL_PREFIX_DENYLIST):
         return False
-    return any(
-        tool_name == prefix or tool_name.startswith(f"{prefix}_")
-        for prefix in MCP_READONLY_TOOL_PREFIXES
-    )
+    return any(_tool_matches_prefix(tool_name, prefix) for prefix in MCP_READONLY_TOOL_PREFIXES)
 
 
 def _classify_mcp_call(tool_args: dict[str, Any] | None, tool_result: Any) -> ProgressType:

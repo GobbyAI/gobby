@@ -23,11 +23,12 @@ def _write_jsonl(path: Path, row: dict[str, object]) -> None:
 def test_import_persists_supported_fields_from_current_shape(temp_db, tmp_path: Path) -> None:
     project = LocalProjectManager(temp_db).create("jsonl-shape", repo_path=str(tmp_path))
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
+    task_id = "11111111-1111-4111-8111-111111111111"
     now = datetime.now(UTC).isoformat()
     _write_jsonl(
         export_path,
         {
-            "id": "task-jsonl-shape-1",
+            "id": task_id,
             "title": "Imported task",
             "description": "Imported from JSONL",
             "state": {},
@@ -52,7 +53,7 @@ def test_import_persists_supported_fields_from_current_shape(temp_db, tmp_path: 
 
     TaskSyncManager(manager).import_from_jsonl(project_id=project.id)
 
-    task = manager.get_task("task-jsonl-shape-1")
+    task = manager.get_task(task_id)
     assert task is not None
     assert task.task_type == "task"
     assert task.validation_status == "valid"
@@ -63,11 +64,12 @@ def test_import_persists_supported_fields_from_current_shape(temp_db, tmp_path: 
 def test_import_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
     project = LocalProjectManager(temp_db).create("jsonl-legacy", repo_path=str(tmp_path))
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
+    task_id = "22222222-2222-4222-8222-222222222222"
     now = datetime.now(UTC).isoformat()
     _write_jsonl(
         export_path,
         {
-            "id": "task-jsonl-shape-2",
+            "id": task_id,
             "title": "Legacy keys",
             "state": {},
             "status": "closed",
@@ -89,7 +91,7 @@ def test_import_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
 
     TaskSyncManager(manager).import_from_jsonl(project_id=project.id)
 
-    task = manager.get_task("task-jsonl-shape-2")
+    task = manager.get_task(task_id)
     assert task is not None
     assert task.task_type == "bug"
     assert task.validation_status == "valid"

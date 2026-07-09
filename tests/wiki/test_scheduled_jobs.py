@@ -384,6 +384,36 @@ async def test_gwiki_timeout_envelope_marks_history_failed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_degraded_index_handoff_marks_history_failed() -> None:
+    class DegradedIndexCoordinator:
+        async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]:
+            return {
+                **result,
+                "index_handoff": {
+                    "status": "degraded",
+                    "degradation": {
+                        "type": "index_handoff_failed",
+                        "message": "gwiki index timed out",
+                    },
+                },
+            }
+
+    gateway = RecordingGateway()
+    handler = create_wiki_refresh_handler(
+        gateway=gateway,
+        coordinator=DegradedIndexCoordinator(),  # type: ignore[arg-type]
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("refresh")))
+
+    assert output["status"] == "completed"
+    assert output["ok"] is False
+    assert output["error"] == "index handoff degraded: gwiki index timed out"
+    assert output["result"]["index_handoff"]["status"] == "degraded"
+
+
+@pytest.mark.asyncio
 async def test_gwiki_ok_false_envelope_marks_history_failed() -> None:
     class FailingAuditGateway(RecordingGateway):
         async def audit(self) -> dict[str, Any]:

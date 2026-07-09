@@ -657,7 +657,13 @@ fn migrate_reserved_pages(
     let mut completed: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (old, new) in &renames {
         if let Err(error) = fs::rename(vault_root.join(old), vault_root.join(new)) {
-            retarget_completed_reserved_renames(vault_root, &completed, notes)?;
+            if let Err(cleanup_error) =
+                retarget_completed_reserved_renames(vault_root, &completed, notes)
+            {
+                notes.push(format!(
+                    "reserved-slug migration: failed to retarget completed renames after rename failure: {cleanup_error}"
+                ));
+            }
             return Err(WikiError::Io {
                 action: "rename reserved-slug page",
                 path: Some(vault_root.join(old)),
@@ -1713,19 +1719,9 @@ mod tests {
         );
         write_file(
             root,
-            "knowledge/concepts/CLAUDE.md",
-            "---\ntitle: \"CLAUDE\"\n---\n\n# CLAUDE\n",
+            "knowledge/concepts/agents.md",
+            "---\ntitle: \"Agents\"\n---\n\n# Agents\n",
         );
-        let source_count = fs::read_dir(root.join("knowledge/concepts"))
-            .expect("read concepts")
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case("claude.md")
-            })
-            .count();
 
         run(
             research_scope(root),
@@ -1738,11 +1734,9 @@ mod tests {
         .expect("upkeep run");
 
         assert!(root.join("knowledge/concepts/claude-concept.md").exists());
-        if source_count > 1 {
-            assert!(root.join("knowledge/concepts/claude-concept-2.md").exists());
-        }
+        assert!(root.join("knowledge/concepts/agents-concept.md").exists());
         assert!(!root.join("knowledge/concepts/claude.md").exists());
-        assert!(!root.join("knowledge/concepts/CLAUDE.md").exists());
+        assert!(!root.join("knowledge/concepts/agents.md").exists());
     }
 
     #[test]

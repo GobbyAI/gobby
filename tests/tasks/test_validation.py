@@ -37,7 +37,11 @@ from gobby.tasks.validation import (
     read_files_content,
     run_git_command,
 )
-from gobby.tasks.validation_evidence import build_diff_validation_evidence
+from gobby.tasks.validation_evidence import (
+    ChangedFileEvidence,
+    _excerpt_file_diff,
+    build_diff_validation_evidence,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -160,6 +164,37 @@ class TestValidationPromptBudget:
         assert "middle lines omitted" in evidence.text
         assert "omitted definitions: test_case_40" in evidence.text
         assert "Omitted Evidence:" in evidence.text
+
+    def test_diff_excerpt_budgets_actual_signature_marker(self) -> None:
+        """Signature-rich truncation markers must stay inside the caller budget."""
+        path = "src/" + ("deep_component_" * 8) + "module.py"
+        diff = (
+            f"diff --git a/{path} b/{path}\n"
+            "index abc..def 100644\n"
+            f"--- a/{path}\n"
+            f"+++ b/{path}\n"
+            "@@ -1 +1,160 @@\n"
+            + "".join(
+                (
+                    f"+def test_extremely_descriptive_case_{line}_with_context():\n"
+                    if line % 17 == 0
+                    else f"+line_{line}_{'x' * 40}\n"
+                )
+                for line in range(160)
+            )
+        )
+        file = ChangedFileEvidence(
+            path=path,
+            additions=160,
+            deletions=0,
+            category="source",
+            diff=diff,
+        )
+
+        excerpt, omissions = _excerpt_file_diff(file, max_chars=320, max_hunk_lines=200)
+
+        assert len(excerpt) <= 320
+        assert omissions
 
     def test_diff_evidence_names_omitted_files(self) -> None:
         diff = "\n".join(

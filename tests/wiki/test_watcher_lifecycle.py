@@ -173,6 +173,23 @@ def test_watch_scope_names_disambiguate_project_roots(
     assert str(first_root) in duplicate_warnings[0]
 
 
+def test_roots_by_watch_scope_expands_user_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    wiki_root = home / "wiki"
+    wiki_root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    config = WikiConfig(roots=[WikiRootConfig(scope="project", path=Path("~/wiki"))])
+
+    roots = runner_lifecycle_periodic._roots_by_watch_scope(config)
+
+    assert {name: root.path for name, root in roots.items()} == {
+        f"project:{wiki_root.resolve()}": wiki_root
+    }
+
+
 @pytest.mark.asyncio
 async def test_startup_watches_all_duplicate_scope_project_roots(
     tmp_path: Path,

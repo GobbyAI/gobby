@@ -366,6 +366,9 @@ def _excerpt_file_diff(
     if len(excerpt) <= max_chars:
         return excerpt, omissions
 
+    omissions.append(
+        EvidenceOmission(file.path, "diff excerpt shortened to fit validation evidence budget")
+    )
     base_marker = f"\n... [diff excerpt truncated for {file.path}; middle omitted] ...\n"
     keep_chars = max(0, max_chars - len(base_marker))
     head_chars = keep_chars * 3 // 5
@@ -379,9 +382,25 @@ def _excerpt_file_diff(
         if signatures
         else base_marker
     )
-    omissions.append(
-        EvidenceOmission(file.path, "diff excerpt shortened to fit validation evidence budget")
+    if len(marker) >= max_chars:
+        return marker[:max_chars], omissions
+    keep_chars = max_chars - len(marker)
+    head_chars = keep_chars * 3 // 5
+    tail_chars = keep_chars - head_chars
+    signatures = _added_signature_names(
+        excerpt[head_chars : len(excerpt) - tail_chars].splitlines()
     )
+    marker = (
+        f"\n... [diff excerpt truncated for {file.path}; middle omitted; "
+        f"omitted definitions: {', '.join(signatures)}] ...\n"
+        if signatures
+        else base_marker
+    )
+    if len(marker) >= max_chars:
+        return marker[:max_chars], omissions
+    keep_chars = max_chars - len(marker)
+    head_chars = keep_chars * 3 // 5
+    tail_chars = keep_chars - head_chars
     head = excerpt[:head_chars].rstrip()
     tail = excerpt[len(excerpt) - tail_chars :].lstrip() if tail_chars > 0 else ""
     return head + marker + tail, omissions

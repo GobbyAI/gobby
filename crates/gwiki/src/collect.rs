@@ -844,6 +844,48 @@ mod tests {
     }
 
     #[test]
+    fn collect_asset_write_failure_rolls_back_new_manifest_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bytes = b"%PDF-1.7\nfresh\n%%EOF\n".to_vec();
+        write_file(temp.path(), "inbox/paper.pdf", &bytes);
+        let relative = "inbox/paper.pdf";
+        let record = SourceManifest::register(
+            temp.path(),
+            SourceDraft::new(
+                relative.to_string(),
+                SourceKind::Pdf,
+                "2026-05-29T18:00:00Z".to_string(),
+                bytes,
+            )
+            .with_title(markdown_title("paper.pdf"))
+            .with_citation(relative.to_string()),
+        )
+        .expect("pre-register source");
+        let asset_path = source_asset_path(&record, "paper.pdf");
+        SourceManifest {
+            entries: Vec::new(),
+        }
+        .write(temp.path())
+        .expect("reset manifest");
+        let asset_parent = asset_path.parent().expect("asset parent");
+        fs::create_dir_all(
+            temp.path()
+                .join(asset_parent.parent().expect("asset grandparent")),
+        )
+        .expect("asset grandparent dir");
+        fs::write(temp.path().join(asset_parent), b"not a directory")
+            .expect("asset parent obstruction");
+
+        let error =
+            collect_inbox(temp.path(), "2026-05-29T18:00:00Z").expect_err("asset write fails");
+
+        assert_eq!(error.code(), "io_error");
+        assert!(!temp.path().join(&asset_path).exists());
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert!(manifest.entries.is_empty());
+    }
+
+    #[test]
     fn collect_indexes_accepted_sources() {
         let temp = tempfile::tempdir().expect("tempdir");
         write_file(temp.path(), "inbox/note.txt", b"accepted source text\n");

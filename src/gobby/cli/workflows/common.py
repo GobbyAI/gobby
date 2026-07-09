@@ -25,8 +25,8 @@ def create_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
     return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
 
 
-def get_workflow_loader() -> WorkflowLoader:
-    return create_workflow_loader()
+def get_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
+    return create_workflow_loader(db)
 
 
 def get_session_var_manager(db: HubDatabase | None = None) -> SessionVariableManager:

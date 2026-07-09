@@ -126,8 +126,11 @@ def _watch_scope_name(root: WikiRootConfig) -> str:
 def _roots_by_watch_scope(wiki_config: WikiConfig) -> dict[str, WikiRootConfig]:
     roots: dict[str, WikiRootConfig] = {}
     for root in wiki_config.roots:
-        if not root.path.exists():
+        expanded_path = root.path.expanduser()
+        if not expanded_path.exists():
             continue
+        if expanded_path != root.path:
+            root = root.model_copy(update={"path": expanded_path})
         name = _watch_scope_name(root)
         existing = roots.get(name)
         if existing is not None:

@@ -402,22 +402,28 @@ fn omitted_when_no_generator_is_available() {
 
 #[test]
 fn falls_back_to_files_without_enough_modules() {
-    let files = [
-        file_doc(
-            "src/bm25.rs",
-            "Runs BM25 keyword search. Flow: bm25 -> rrf.",
-        ),
-        file_doc("src/rrf.rs", "Fuses ranked results."),
-    ];
+    let modules = [module_doc("search", "Coordinates search ranking.")];
+    let mut bm25 = file_doc(
+        "src/bm25.rs",
+        "Runs BM25 keyword search. Flow: bm25 -> rrf.",
+    );
+    bm25.module = "search".to_string();
+    bm25.component_ids = vec!["comp_bm25".to_string()];
+    let mut rrf = file_doc("src/rrf.rs", "Fuses ranked results.");
+    rrf.module = "search".to_string();
+    rrf.component_ids = vec!["comp_rrf".to_string()];
+    let files = [bm25, rrf];
+    let member_modules = vec!["search".to_string()];
     let member_files = vec!["src/bm25.rs".to_string(), "src/rrf.rs".to_string()];
+    let graph_edges = [CodewikiGraphEdge::call("comp_bm25", "comp_rrf")];
 
     let section = compose_flow(
-        &["flowchart LR\n    s0 --> s1\n"],
-        &[],
+        &["flowchart LR\n    s1 -->|\"calls\"| s2\n"],
+        &member_modules,
         &member_files,
-        &[],
+        &modules,
         &files,
-        &[],
+        &graph_edges,
     )
     .expect("flow drawn from files");
 
@@ -426,6 +432,10 @@ fn falls_back_to_files_without_enough_modules() {
         "{section}"
     );
     assert!(section.contains("rrf — Fuses ranked results"), "{section}");
+    assert!(
+        section.contains("s1 --> s2"),
+        "fallback file stages must own their components: {section}"
+    );
 }
 
 #[test]
