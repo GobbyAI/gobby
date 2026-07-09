@@ -168,10 +168,15 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         description="Maximum memories to surface from daemon-owned recall.",
     )
     min_score: float = Field(
-        default=0.7,
-        ge=0.7,
+        default=0.0,
+        ge=0.0,
         le=1.0,
-        description="Minimum candidate relevance score for memory recall.",
+        description=(
+            "Minimum decayed semantic similarity for recall candidates. Applies only "
+            "to hits carrying a numeric similarity; keyword/RRF-ranked hits pass "
+            "through to the LLM selector, which is the quality gate. Default 0.0 "
+            "keeps the full score distribution flowing for adaptive tuning (#17099)."
+        ),
     )
     query_synthesis_threshold: int = Field(
         default=8_000,

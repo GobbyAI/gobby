@@ -32,13 +32,15 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
     assert cfg.selected_limit == 3
-    assert cfg.min_score == 0.7
+    assert cfg.min_score == 0.0
     assert cfg.query_synthesis_threshold == 8_000
     assert cfg.query_max_chars == 1_200
     assert DaemonConfig().memory_recall.enabled is True
     assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
     with pytest.raises(ValueError):
-        MemoryRecallConfig(min_score=0.69)
+        MemoryRecallConfig(min_score=-0.1)
+    with pytest.raises(ValueError):
+        MemoryRecallConfig(min_score=1.1)
 
     disabled_config_file = temp_dir / "disabled.yaml"
     disabled_config_file.write_text(

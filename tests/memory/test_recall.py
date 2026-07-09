@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -487,19 +488,20 @@ async def test_runner_excludes_review_lessons_from_prompt_recall(
 
 
 @pytest.mark.asyncio
-async def test_runner_filters_low_missing_and_nonnumeric_scores_before_llm(
+async def test_runner_filters_low_and_nonnumeric_scores_but_keeps_keyword_hits(
     temp_db: HubDatabase,
 ) -> None:
+    """Keyword/RRF hits carry similarity=None and must reach the selector (#17772)."""
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     memory_manager = FakeMemoryManager(
         [
             _memory("weak", "Weak match should stay out.", similarity=0.42),
-            _memory("missing", "Missing score should stay out.", similarity=None),
+            _memory("keyword", "Keyword-ranked hit must pass through.", similarity=None),
             _memory("nonnumeric", "Nonnumeric score should stay out.", similarity="high"),
             _memory("strong", "Strong match should reach recall.", similarity=0.91),
         ]
     )
-    llm = FakeLLMService({"memory_ids": ["weak", "missing", "nonnumeric", "strong"]})
+    llm = FakeLLMService({"memory_ids": ["weak", "keyword", "nonnumeric", "strong"]})
     runner = MemoryRecallRunner(
         db=temp_db,
         memory_manager=memory_manager,  # type: ignore[arg-type]
@@ -510,12 +512,82 @@ async def test_runner_filters_low_missing_and_nonnumeric_scores_before_llm(
     payload = await runner.run(_event(), SESSION_ID, _variables())
 
     assert payload is not None
-    assert [memory["id"] for memory in payload.memories] == ["strong"]
+    assert [memory["id"] for memory in payload.memories] == ["keyword", "strong"]
     prompt = llm.calls[0]["prompt"]
     assert '"strong"' in prompt
+    assert '"keyword"' in prompt
     assert '"weak"' not in prompt
-    assert '"missing"' not in prompt
     assert '"nonnumeric"' not in prompt
+
+
+@pytest.mark.asyncio
+async def test_runner_keyword_only_candidates_reach_recall(temp_db: HubDatabase) -> None:
+    """A pure-keyword result set (semantic outage or degraded search) still delivers."""
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    memory_manager = FakeMemoryManager(
+        [
+            _memory("kw-1", "First keyword hit.", similarity=None),
+            _memory("kw-2", "Second keyword hit.", similarity=None),
+        ]
+    )
+    llm = FakeLLMService({"memory_ids": ["kw-2"]})
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallConfig(candidate_limit=8, selected_limit=3),
+    )
+
+    payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is not None
+    assert [memory["id"] for memory in payload.memories] == ["kw-2"]
+    assert payload.memories[0].get("similarity") is None
+
+
+@pytest.mark.asyncio
+async def test_runner_logs_funnel_skip_reasons_at_info(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Post-eligibility skip reasons must be observable at INFO level (#17772)."""
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=FakeMemoryManager([]),  # type: ignore[arg-type]
+        llm_service=FakeLLMService({"memory_ids": []}),
+        config=MemoryRecallConfig(),
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.memory.recall"):
+        payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is None
+    skip_records = [r for r in caplog.records if "no_candidate_memories" in r.getMessage()]
+    assert skip_records
+    assert skip_records[0].levelno == logging.INFO
+    assert "recall_request_id=" in skip_records[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_runner_logs_ineligible_prompt_skips_at_debug(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Pre-eligibility skips fire on every turn and must stay below INFO."""
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
+        llm_service=FakeLLMService({"memory_ids": ["mem-1"]}),
+        config=MemoryRecallConfig(),
+    )
+    with caplog.at_level(logging.DEBUG, logger="gobby.memory.recall"):
+        payload = await runner.run(_event(prompt="too short"), SESSION_ID, _variables())
+
+    assert payload is None
+    skip_records = [r for r in caplog.records if "prompt_too_short" in r.getMessage()]
+    assert skip_records
+    assert all(r.levelno == logging.DEBUG for r in skip_records)
 
 
 @pytest.mark.asyncio

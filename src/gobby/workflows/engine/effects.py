@@ -404,7 +404,13 @@ class EffectsMixin:
         platform_session_id: str | None,
         variables: dict[str, Any],
     ) -> str | None:
-        """Validate and format a deferred daemon memory recall payload."""
+        """Validate and format a deferred daemon memory recall payload.
+
+        Drops and deliveries log at INFO with the recall_request_id so the
+        delivery half of the recall funnel is quantifiable from daemon logs
+        and joinable to recall signal events (#17772).
+        """
+        recall_request_id = payload.get("recall_request_id")
         if payload.get("producer") != MEMORY_RECALL_PRODUCER:
             logger.debug("Dropping memory_recall delivery with non-daemon producer")
             return None
@@ -420,11 +426,19 @@ class EffectsMixin:
             or not isinstance(parent_turn_seq, int)
             or isinstance(parent_turn_seq, bool)
         ):
-            logger.debug("Dropping memory_recall delivery without valid turn sequence")
+            logger.info(
+                "Dropping memory_recall delivery without valid turn sequence: "
+                "recall_request_id=%s origin=%s parent=%s",
+                recall_request_id,
+                origin_turn_seq,
+                parent_turn_seq,
+            )
             return None
         if origin_turn_seq != parent_turn_seq - 1:
-            logger.debug(
-                "Dropping stale memory_recall delivery: origin=%s parent=%s",
+            logger.info(
+                "Dropping stale memory_recall delivery: recall_request_id=%s "
+                "origin=%s parent=%s reason=delivery_turn_seq_mismatch",
+                recall_request_id,
                 origin_turn_seq,
                 parent_turn_seq,
             )
@@ -432,13 +446,32 @@ class EffectsMixin:
 
         memories = payload.get("memories")
         if not isinstance(memories, list):
-            logger.debug("Dropping memory_recall delivery with malformed memories")
+            logger.info(
+                "Dropping memory_recall delivery with malformed memories: recall_request_id=%s",
+                recall_request_id,
+            )
             return None
-        return self._format_search_memories_result(
+        formatted = self._format_search_memories_result(
             {"memories": memories},
             platform_session_id,
             variables,
         )
+        if formatted is None:
+            logger.info(
+                "Dropping memory_recall delivery emptied by review-lesson filter or "
+                "delivery dedup: recall_request_id=%s memories=%d reason=delivery_dedup",
+                recall_request_id,
+                len(memories),
+            )
+            return None
+        logger.info(
+            "Delivered memory_recall injection: recall_request_id=%s payload_memories=%d "
+            "origin_turn_seq=%s",
+            recall_request_id,
+            len(memories),
+            origin_turn_seq,
+        )
+        return formatted
 
     def _format_search_memories_result(
         self,

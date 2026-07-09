@@ -199,7 +199,9 @@ class MemoryRecallRunner:
         recall_request_id = str(uuid4())
 
         deadline = time.monotonic() + self.config.timeout
-        query = await self._query_for_prompt(prompt, decision, session_id, event, deadline)
+        query = await self._query_for_prompt(
+            prompt, decision, session_id, event, deadline, recall_request_id=recall_request_id
+        )
         retrieval_start = time.monotonic()
         candidates = await self._search_candidates(
             query.text,
@@ -213,6 +215,7 @@ class MemoryRecallRunner:
             decision=decision,
             session_id=session_id,
             query=query,
+            recall_request_id=recall_request_id,
             retrieval_latency_ms=retrieval_latency_ms,
             candidate_count=len(candidates),
             event=event,
@@ -224,7 +227,9 @@ class MemoryRecallRunner:
                 decision=decision,
                 session_id=session_id,
                 query=query,
+                recall_request_id=recall_request_id,
                 retrieval_latency_ms=retrieval_latency_ms,
+                candidate_count=len(candidates),
                 reason="no_candidate_memories",
                 event=event,
             )
@@ -232,7 +237,12 @@ class MemoryRecallRunner:
 
         selector_start = time.monotonic()
         selected_ids = await self._select_candidate_ids(
-            query.text, candidate_dicts, decision, event, deadline
+            query.text,
+            candidate_dicts,
+            decision,
+            event,
+            deadline,
+            recall_request_id=recall_request_id,
         )
         selector_latency_ms = _elapsed_ms(selector_start)
         self._log_recall_diagnostic(
@@ -240,6 +250,7 @@ class MemoryRecallRunner:
             decision=decision,
             session_id=session_id,
             query=query,
+            recall_request_id=recall_request_id,
             retrieval_latency_ms=retrieval_latency_ms,
             selector_latency_ms=selector_latency_ms,
             selected_count=len(selected_ids),
@@ -251,6 +262,7 @@ class MemoryRecallRunner:
                 decision=decision,
                 session_id=session_id,
                 query=query,
+                recall_request_id=recall_request_id,
                 retrieval_latency_ms=retrieval_latency_ms,
                 selector_latency_ms=selector_latency_ms,
                 reason="no_selected_memories",
@@ -278,6 +290,7 @@ class MemoryRecallRunner:
                 decision=decision,
                 session_id=session_id,
                 query=query,
+                recall_request_id=recall_request_id,
                 retrieval_latency_ms=retrieval_latency_ms,
                 selector_latency_ms=selector_latency_ms,
                 reason="selected_ids_not_in_candidates",
@@ -290,6 +303,7 @@ class MemoryRecallRunner:
                 decision=decision,
                 session_id=session_id,
                 query=query,
+                recall_request_id=recall_request_id,
                 retrieval_latency_ms=retrieval_latency_ms,
                 selector_latency_ms=selector_latency_ms,
                 reason="stale_turn",
@@ -298,6 +312,14 @@ class MemoryRecallRunner:
             )
             return None
 
+        self.logger.info(
+            "Memory recall selected %d memories: recall_request_id=%s session=%s "
+            "origin_turn_seq=%s",
+            len(selected),
+            recall_request_id,
+            session_id,
+            origin_turn_seq,
+        )
         return MemoryRecallResult(
             origin_turn_seq=origin_turn_seq,
             recall_request_id=recall_request_id,
@@ -311,6 +333,8 @@ class MemoryRecallRunner:
         session_id: str,
         event: HookEvent,
         deadline: float,
+        *,
+        recall_request_id: str | None = None,
     ) -> MemoryRecallQuery:
         if len(prompt) <= self.config.query_synthesis_threshold:
             return MemoryRecallQuery(text=prompt, kind="original", latency_ms=0.0)
@@ -344,6 +368,7 @@ class MemoryRecallRunner:
                     timeout_reason="query_synthesis_timeout",
                 ),
                 reason="query_synthesis_timeout",
+                recall_request_id=recall_request_id,
                 event=event,
             )
             return MemoryRecallQuery(
@@ -393,12 +418,16 @@ class MemoryRecallRunner:
         seen: set[str] = set()
         filtered: list[dict[str, Any]] = []
         for memory in candidates:
+            # Keyword/RRF-ranked hits legitimately carry similarity=None; only hits
+            # with a numeric similarity are score-gated. Requiring a numeric score
+            # here silently zeroed delivery once the hook path went semantic (#17772).
             similarity = getattr(memory, "similarity", None)
-            if not isinstance(similarity, int | float) or isinstance(similarity, bool):
-                continue
-            score = float(similarity)
-            if not math.isfinite(score) or score < self.config.min_score:
-                continue
+            if similarity is not None:
+                if not isinstance(similarity, int | float) or isinstance(similarity, bool):
+                    continue
+                score = float(similarity)
+                if not math.isfinite(score) or score < self.config.min_score:
+                    continue
 
             memory_id = getattr(memory, "id", None)
             if not isinstance(memory_id, str) or not memory_id:
@@ -418,6 +447,8 @@ class MemoryRecallRunner:
         decision: MemoryRecallPromptDecision,
         event: HookEvent,
         deadline: float,
+        *,
+        recall_request_id: str | None = None,
     ) -> list[str]:
         if self.llm_service is None:
             self.logger.debug("Memory recall skipped: LLM service unavailable")
@@ -431,6 +462,7 @@ class MemoryRecallRunner:
                 decision=decision,
                 session_id=str(event.metadata.get("_platform_session_id") or ""),
                 reason="selection_timeout",
+                recall_request_id=recall_request_id,
                 event=event,
             )
             return []
@@ -445,6 +477,7 @@ class MemoryRecallRunner:
                 decision=decision,
                 session_id=str(event.metadata.get("_platform_session_id") or ""),
                 reason="selection_timeout",
+                recall_request_id=recall_request_id,
                 event=event,
             )
             return []
@@ -559,22 +592,30 @@ class MemoryRecallRunner:
         event: HookEvent,
         query: MemoryRecallQuery | None = None,
         reason: str | None = None,
+        recall_request_id: str | None = None,
         retrieval_latency_ms: float | None = None,
         selector_latency_ms: float | None = None,
         candidate_count: int | None = None,
         selected_count: int | None = None,
         origin_turn_seq: int | None = None,
     ) -> None:
-        self.logger.debug(
+        # Post-eligibility funnel outcomes (skips, drops, timeouts) must be visible
+        # at the daemon's default log level so drop causes are quantifiable (#17772).
+        # Pre-eligibility skips fire on every turn and stay at debug.
+        level = logging.INFO if reason is not None and decision.eligible else logging.DEBUG
+        self.logger.log(
+            level,
             (
-                "%s: prompt_kind=%s source=%s session=%s raw_len=%d query_kind=%s "
-                "query_len=%d retrieval_ms=%s selector_ms=%s timeout_reason=%s "
-                "reason=%s candidates=%s selected=%s origin_turn_seq=%s caller_metadata=%s"
+                "%s: prompt_kind=%s source=%s session=%s recall_request_id=%s "
+                "raw_len=%d query_kind=%s query_len=%d retrieval_ms=%s selector_ms=%s "
+                "timeout_reason=%s reason=%s candidates=%s selected=%s "
+                "origin_turn_seq=%s caller_metadata=%s"
             ),
             message,
             decision.kind,
             decision.source,
             session_id,
+            recall_request_id,
             decision.raw_length,
             query.kind if query else None,
             len(query.text) if query else 0,

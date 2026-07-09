@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -306,6 +307,37 @@ def test_stale_memory_recall_delivery_payloads_ignored(
     assert "content-sentinel-malformed" not in result
     assert "content-sentinel-disabled" not in result
     assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["fresh"]
+
+
+def test_memory_recall_delivery_drops_and_success_log_at_info(
+    engine: RuleEngine,
+    db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Delivery-side funnel outcomes are observable at INFO with the request id (#17772)."""
+    _set_injected(db, PLATFORM_SESSION_ID, ["m-dup"])
+
+    with caplog.at_level(logging.INFO, logger="gobby.workflows.engine.effects"):
+        result = engine._format_delivery_result(
+            {
+                "messages": [
+                    _memory_recall_message([_memory("m-new")], recall_request_id="rid-ok"),
+                    _memory_recall_message(
+                        [_memory("m-stale")], origin_turn_seq=3, recall_request_id="rid-stale"
+                    ),
+                    _memory_recall_message([_memory("m-dup")], recall_request_id="rid-dup"),
+                ],
+                "count": 3,
+            },
+            PLATFORM_SESSION_ID,
+            _variables(),
+        )
+
+    assert result is not None
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("Delivered memory_recall injection" in m and "rid-ok" in m for m in messages)
+    assert any("delivery_turn_seq_mismatch" in m and "rid-stale" in m for m in messages)
+    assert any("delivery_dedup" in m and "rid-dup" in m for m in messages)
 
 
 def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
