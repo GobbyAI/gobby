@@ -116,7 +116,7 @@ def test_bundled_agent_mcp_references_match_registered_tool_inventory(
                 for ref in _handler_refs(step.get(field_name)):
                     if not _tool_ref_exists(ref, inventory):
                         missing.append(f"{path.name}:{step_name}:{field_name}:{ref}")
-                    if allowed_set is not None and ref not in allowed_set:
+                    if allowed_set is not None and not _handler_ref_allowed(ref, allowed_set):
                         handler_not_allowed.append(f"{path.name}:{step_name}:{field_name}:{ref}")
 
     assert missing == []
@@ -207,6 +207,11 @@ def _handler_refs(value: object) -> list[str]:
         if isinstance(server, str) and isinstance(tool, str):
             refs.append(f"{server}:{tool}")
     return refs
+
+
+def _handler_ref_allowed(ref: str, allowed_tools: set[str]) -> bool:
+    server, _tool = ref.split(":", 1)
+    return ref in allowed_tools or f"{server}:*" in allowed_tools
 
 
 def _tool_ref_exists(ref: str, inventory: dict[str, set[str]]) -> bool:

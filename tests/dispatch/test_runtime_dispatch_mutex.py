@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 pytestmark = pytest.mark.unit
 
+_STAGE_UPDATED_AT = datetime(2026, 5, 2, tzinfo=UTC)
 
-def _stage(stage_name: str, state: str, updated_at: str) -> SimpleNamespace:
+
+def _stage(stage_name: str, state: str, updated_at: datetime) -> SimpleNamespace:
     return SimpleNamespace(
         name=stage_name,
         stage_name=stage_name,
@@ -19,7 +22,7 @@ def _stage(stage_name: str, state: str, updated_at: str) -> SimpleNamespace:
 
 
 def _candidate(stage_state: str = "in_progress") -> SimpleNamespace:
-    stage = _stage("development", stage_state, "2026-05-02T00:00:00+00:00")
+    stage = _stage("development", stage_state, _STAGE_UPDATED_AT)
     return SimpleNamespace(
         id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         parent_task_id=None,
@@ -46,19 +49,19 @@ def test_snapshot_match_api() -> None:
         _candidate(),
         stage_name="development",
         stage_state="in_progress",
-        stage_updated_at="2026-05-02T00:00:00+00:00",
+        stage_updated_at=_STAGE_UPDATED_AT,
     )
     assert not RuntimeDispatchMutex.candidate_snapshot_matches(
         _candidate("ready"),
         stage_name="development",
         stage_state="in_progress",
-        stage_updated_at="2026-05-02T00:00:00+00:00",
+        stage_updated_at=_STAGE_UPDATED_AT,
     )
     assert not RuntimeDispatchMutex.candidate_snapshot_matches(
         _candidate("done"),
         stage_name="development",
         stage_state="done",
-        stage_updated_at="2026-05-02T00:00:00+00:00",
+        stage_updated_at=_STAGE_UPDATED_AT,
     )
     assert not hasattr(RuntimeDispatchMutex, "candidate_tuple_matches")
 
@@ -134,7 +137,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.skipped == 1
     assert captured["expected_stage_name"] == "development"
     assert captured["expected_stage_state"] == "needs_review"
-    assert captured["expected_stage_updated_at"] == "2026-05-02T00:00:00+00:00"
+    assert captured["expected_stage_updated_at"] == _STAGE_UPDATED_AT
     assert captured["write_set_db"] is heartbeat_db
     assert captured["write_set_project_id"] == "0e27d5b7-167e-5a64-8bd9-6b980bd88f06"
     assert "expected_lifecycle" not in captured

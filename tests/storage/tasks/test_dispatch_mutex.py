@@ -59,7 +59,7 @@ def test_acquire_release_round_trip(
     assert mutex is not None
     assert mutex.lease_holder == "state-dispatcher:1"
     assert mutex.action_kind == "lifecycle"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=130)
+    assert mutex.lease_until == now + timedelta(seconds=130)
 
     assert manager.release_mutex(task.id, holder="state-dispatcher:1")
     assert manager.get_mutex(task.id) is None
@@ -112,7 +112,7 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
     assert mutex.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddddd01"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=140)
+    assert mutex.lease_until == now + timedelta(seconds=140)
 
 
 def test_same_holder_can_attach_run_to_no_run_mutex(
@@ -146,7 +146,7 @@ def test_same_holder_can_attach_run_to_no_run_mutex(
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
     assert mutex.run_id == "dddddddd-dddd-4ddd-8ddd-dddddddddd01"
-    assert datetime.fromisoformat(mutex.lease_until) == now + timedelta(seconds=135)
+    assert mutex.lease_until == now + timedelta(seconds=135)
 
 
 def test_expired_mutex_can_be_reacquired_by_new_holder(temp_db, sample_project) -> None:
@@ -298,13 +298,13 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
 
     mutex = manager.get_mutex(task.id)
     assert mutex is not None
-    assert datetime.fromisoformat(mutex.lease_until) == refresh_at + timedelta(seconds=600)
+    assert mutex.lease_until == refresh_at + timedelta(seconds=600)
     assert mutex.lease_holder == "dispatcher"
     assert mutex.action_kind == "heartbeat"
 
     other_mutex = manager.get_mutex(other.id)
     assert other_mutex is not None
-    assert datetime.fromisoformat(other_mutex.lease_until) == past + timedelta(seconds=60)
+    assert other_mutex.lease_until == past + timedelta(seconds=60)
 
 
 def test_ensure_table_creates_run_id_index(temp_db) -> None:

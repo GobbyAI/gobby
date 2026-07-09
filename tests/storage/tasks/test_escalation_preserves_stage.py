@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -96,7 +97,7 @@ def test_de_escalate_can_reset_current_stage_work_attempts(temp_db, sample_proje
     assert row["state"] == "in_progress"
     assert row["work_attempt_count"] == 0
     assert row["review_round_count"] == 2
-    assert row["entered_at"] == "2026-05-02T00:00:00+00:00"
+    assert row["entered_at"] == datetime(2026, 5, 2, tzinfo=UTC)
 
 
 def test_de_escalate_can_restore_stopped_approved_stage_from_history(
