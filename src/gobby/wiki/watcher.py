@@ -191,7 +191,10 @@ class WikiWatcher:
         for scope in self._scopes:
             previous = self._snapshots.get(scope.name, {})
             try:
-                current = self._snapshot(scope)
+                # The full rglob/stat walk must stay off the event loop; with
+                # the default 0.25s poll interval a large wiki would otherwise
+                # stall HTTP/WS/MCP serving on every tick.
+                current = await asyncio.to_thread(self._snapshot, scope)
             except (OSError, RuntimeError, ValueError):
                 logger.warning(
                     "Failed to scan wiki watcher scope %s",

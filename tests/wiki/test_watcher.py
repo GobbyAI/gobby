@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -439,6 +440,44 @@ async def test_scan_once_continues_after_scope_snapshot_value_error(
 
     assert "failed" not in watcher._snapshots
     assert coordinator.calls == [{"project": ["note.md"], "topic:notes": ["guide.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_scan_once_runs_snapshot_off_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poll-tick filesystem walk must not block the event loop."""
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=RecordingCoordinator(),
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    walk_started = threading.Event()
+    release_walk = threading.Event()
+
+    def blocking_snapshot(scope: WikiWatchScope) -> dict[Path, tuple[int, int]]:
+        walk_started.set()
+        # Held open until the loop proves it stayed responsive; on the event
+        # loop this wait would freeze every coroutine below until timeout.
+        release_walk.wait(timeout=5.0)
+        return {}
+
+    monkeypatch.setattr(watcher, "_snapshot", blocking_snapshot)
+
+    scan = asyncio.create_task(watcher._scan_once())
+    try:
+        await asyncio.wait_for(asyncio.to_thread(walk_started.wait, 5.0), timeout=6.0)
+        # The walk is mid-flight in a worker thread; the loop must still
+        # process callbacks and the scan must not have finished.
+        loop_responsive = asyncio.Event()
+        asyncio.get_running_loop().call_soon(loop_responsive.set)
+        await asyncio.wait_for(loop_responsive.wait(), timeout=1.0)
+        assert not scan.done()
+    finally:
+        release_walk.set()
+        await scan
 
 
 @pytest.mark.asyncio
