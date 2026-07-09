@@ -29,11 +29,21 @@ _SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|", "&", "\n"})
 # another command via these is not, so those stay classified as ``execute``.
 _SHELL_SEQUENCING_TOKENS = frozenset({"&&", "||", ";", "&", "\n"})
 _SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<<"})
-_SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset({">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>"})
+# ``>&`` (csh-style redirect stdout+stderr to a file) only reaches token form when
+# it is *not* followed by digits or ``-``; those forms scan as fd duplication.
+_SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset(
+    {">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", ">&"}
+)
 _SHELL_CONTROL_TOKENS = (
     _SHELL_CHAIN_TOKENS | _SHELL_INPUT_REDIRECTION_TOKENS | _SHELL_OUTPUT_REDIRECTION_TOKENS
 )
 _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
+# Fd duplication (``2>&1``, ``>&2``, ``0<&3``, ``2>&-``) rebinds descriptors without
+# opening files, so it is neither a mutating redirection nor a segment separator.
+# The scan variant's lookahead keeps ``>&2file`` (bash: redirect to the *file*
+# ``2file``) out of fd-dup territory: the fd digits must end at a delimiter.
+_FD_DUP_SCAN_RE = re.compile(r"\d*[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
+_FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
 _BENIGN_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
@@ -142,6 +152,12 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
     char = command[index]
     if char == "\n":
         return "\n"
+    # Like the ``N>`` branch below, this fires on digits adjacent to a word
+    # (``src2>&1`` scans as ``src`` + ``2>&1`` where bash reads ``src2`` + ``>&1``);
+    # fd duplication is classification-neutral either way.
+    fd_dup = _FD_DUP_SCAN_RE.match(command, index)
+    if fd_dup:
+        return fd_dup.group(0)
     if char.isdigit():
         cursor = index
         while cursor < len(command) and command[cursor].isdigit():
@@ -151,7 +167,7 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
         if command.startswith(">", cursor):
             return f"{command[index:cursor]}>"
         return None
-    for operator in ("<<<", "&>>", "&&", "||", "<<", ">>", "&>", ";", "|", "&", "<", ">"):
+    for operator in ("<<<", "&>>", "&&", "||", "<<", ">>", "&>", ";", "|", "&", "<", ">&", ">"):
         if command.startswith(operator, index):
             return operator
     return None
@@ -161,10 +177,16 @@ def shell_token_values(tokens: list[ShellToken]) -> list[str]:
     return [token.value for token in tokens]
 
 
+def is_fd_duplication_token(token: ShellToken) -> bool:
+    """Return True for unquoted fd-duplication operators like ``2>&1`` or ``<&3``."""
+    return not token.quoted and _FD_DUP_TOKEN_RE.match(token.value) is not None
+
+
 def is_unquoted_shell_control_token(token: ShellToken) -> bool:
     return not token.quoted and (
         token.value in _SHELL_CONTROL_TOKENS
         or _FD_OUTPUT_REDIRECTION_RE.match(token.value) is not None
+        or is_fd_duplication_token(token)
     )
 
 
@@ -208,12 +230,17 @@ def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
 
 
 def strip_output_redirections(tokens: list[ShellToken]) -> list[ShellToken]:
-    """Drop output-redirection operators and their immediate targets from tokens."""
+    """Drop output-redirection operators and their immediate targets from tokens.
+
+    Fd-duplication operators are dropped too; they carry no target argument.
+    """
     stripped: list[ShellToken] = []
     skip_next = False
     for idx, token in enumerate(tokens):
         if skip_next:
             skip_next = False
+            continue
+        if is_fd_duplication_token(token):
             continue
         if is_shell_output_redirection_token(token):
             if idx + 1 < len(tokens) and not is_unquoted_shell_control_token(tokens[idx + 1]):

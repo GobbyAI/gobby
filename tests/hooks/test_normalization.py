@@ -4,6 +4,12 @@ import json
 
 import pytest
 
+from gobby.hooks._normalization_shell import (
+    has_mutating_output_redirection,
+    shell_token_values,
+    strip_output_redirections,
+    tokenize_shell_command,
+)
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
 
 pytestmark = pytest.mark.unit
@@ -726,6 +732,18 @@ class TestCanonicalToolMetadata:
             ('gcode grep "pattern" src -m 50 2>/dev/null', "search"),
             ("gcode outline src/app.py 2>/dev/null", "read"),
             ('gcode grep "a" src 2>/dev/null | rg fn', "search"),
+            # Fd duplication (gobby-#17743) rebinds descriptors without opening
+            # files, so it keeps the exemption, as does a benign `>&` sink.
+            ('gcode grep "a" src 2>&1', "search"),
+            ("gcode outline src/app.py 2>&1", "read"),
+            ('gcode grep "a" src 1>&2', "search"),
+            ('gcode grep "a" src >&2', "search"),
+            ('gcode grep "a" src 2>&-', "search"),
+            ('gcode grep "a" src >& /dev/null', "search"),
+            (
+                "gcode symbol 00000000-0000-0000-0000-000000000000 | jq -r .source 2>&1",
+                "read",
+            ),
         ],
     )
     def test_exec_command_gcode_navigation_is_canonical(
@@ -751,6 +769,7 @@ class TestCanonicalToolMetadata:
             'gcode grep "a" src ; echo $(date)',
             'gcode grep "a" src ; echo done > out.txt',
             'gcode grep "a" src > results.txt',
+            'gcode grep "a" src > out.txt 2>&1',
         ],
     )
     def test_exec_command_gcode_with_side_effects_loses_pure_navigation(self, command: str) -> None:
@@ -765,9 +784,9 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] in {"read", "search", "write"}
         assert "canonical_code_index_navigation" not in data
 
-    def test_exec_command_gcode_with_fd_dup_loses_pure_navigation(self) -> None:
-        # Known limitation (gobby-#17743): `2>&1` tokenizes as `2>` + `&` + `1`,
-        # so fd duplication still drops the code-index exemption.
+    def test_exec_command_gcode_with_fd_dup_keeps_pure_navigation(self) -> None:
+        # gobby-#17743: `2>&1` scans as a single fd-duplication token, so it
+        # neither splits the segment nor counts as a mutating redirection.
         data = {
             "tool_name": "exec_command",
             "tool_input": {"command": 'gcode grep "a" src 2>&1'},
@@ -775,8 +794,8 @@ class TestCanonicalToolMetadata:
 
         normalize_tool_fields(data)
 
-        assert data["canonical_tool_kind"] == "execute"
-        assert "canonical_code_index_navigation" not in data
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_index_navigation"] is True
 
     def test_exec_command_gcode_with_broad_read_loses_pure_navigation(self) -> None:
         data = {
@@ -927,6 +946,7 @@ class TestCanonicalToolMetadata:
             ("find src -name '*.py' 2>/dev/null", "search"),
             ("cat src/app.py > /dev/null", "read"),
             ("rg pattern src >/dev/null 2>&1", "search"),
+            ("rg pattern src >&/dev/null", "search"),
             ("head -n 40 src/app.py 2>>/dev/null", "read"),
         ],
     )
@@ -949,6 +969,11 @@ class TestCanonicalToolMetadata:
             "grep pattern src > results.txt",
             "grep pattern src 2> errors.log",
             "echo hi > src/notes.txt",
+            # csh-style `>&file` writes stdout+stderr to the file; `>&2file` is
+            # a redirect to the file `2file` (non-numeric word), not fd dup.
+            "grep pattern src >&results.txt",
+            "grep pattern src >&2file",
+            "> out.txt",
         ],
     )
     def test_exec_command_redirect_to_real_file_is_still_write(self, command: str) -> None:
@@ -958,6 +983,15 @@ class TestCanonicalToolMetadata:
 
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
+
+    def test_exec_command_bare_fd_dup_segment_is_execute(self) -> None:
+        # A segment reduced to only fd-dup tokens must classify, not crash.
+        data = {"tool_name": "exec_command", "tool_input": {"command": "echo hi; <&3"}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_repo_mutation" not in data
 
     def test_exec_command_pipeline_tee_sets_canonical_write_fields(self) -> None:
         data = {
@@ -1203,6 +1237,60 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "search"
         assert data["canonical_code_navigation_broad"] is True
         assert data["canonical_code_navigation_repo_scope"] is True
+
+
+class TestFdDuplicationTokens:
+    """Tests for fd-duplication (`N>&M`) scanning in the shell tokenizer (gobby-#17743)."""
+
+    @pytest.mark.parametrize(
+        ("command", "expected_values"),
+        [
+            ("gcode grep a src 2>&1", ["gcode", "grep", "a", "src", "2>&1"]),
+            ("foo 1>&2", ["foo", "1>&2"]),
+            ("foo >&2", ["foo", ">&2"]),
+            ("foo 12>&13", ["foo", "12>&13"]),
+            ("foo 2>&-", ["foo", "2>&-"]),
+            ("foo >&-", ["foo", ">&-"]),
+            ("cat 0<&3", ["cat", "0<&3"]),
+            ("cat <&3", ["cat", "<&3"]),
+        ],
+    )
+    def test_fd_duplication_scans_as_single_token(
+        self, command: str, expected_values: list[str]
+    ) -> None:
+        tokens = tokenize_shell_command(command)
+
+        assert shell_token_values(tokens) == expected_values
+        assert has_mutating_output_redirection(tokens) is False
+
+    def test_fd_dup_with_trailing_word_is_not_fd_dup(self) -> None:
+        # bash reads `2>&1x` as an ambiguous redirect, not fd duplication;
+        # the split tokenization keeps the fail-closed mutating classification.
+        tokens = tokenize_shell_command("foo 2>&1x")
+
+        assert shell_token_values(tokens) == ["foo", "2>", "&", "1x"]
+        assert has_mutating_output_redirection(tokens) is True
+
+    def test_redirect_both_to_file_is_mutating(self) -> None:
+        # `>&word` with a non-numeric word writes stdout+stderr to the file.
+        tokens = tokenize_shell_command("foo >&2file")
+
+        assert shell_token_values(tokens) == ["foo", ">&", "2file"]
+        assert has_mutating_output_redirection(tokens) is True
+
+    def test_quoted_fd_dup_is_a_word(self) -> None:
+        tokens = tokenize_shell_command("grep '2>&1' log.txt")
+
+        assert shell_token_values(tokens) == ["grep", "2>&1", "log.txt"]
+        assert tokens[1].quoted is True
+        assert has_mutating_output_redirection(tokens) is False
+
+    def test_strip_output_redirections_drops_fd_dup_without_target(self) -> None:
+        tokens = tokenize_shell_command("rg pattern src >/dev/null 2>&1")
+
+        stripped = shell_token_values(strip_output_redirections(tokens))
+
+        assert stripped == ["rg", "pattern", "src"]
 
 
 class TestToolErrorDetection:

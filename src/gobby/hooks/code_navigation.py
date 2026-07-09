@@ -134,7 +134,7 @@ def search_navigation_metadata() -> dict[str, Any]:
 
 
 def gcode_navigation_metadata(parts: list[str]) -> tuple[str, dict[str, Any]] | None:
-    if shell_command_name(parts[0]) != "gcode" or len(parts) < 2:
+    if len(parts) < 2 or shell_command_name(parts[0]) != "gcode":
         return None
     subcommand = parts[1]
     if subcommand not in GCODE_NAVIGATION_COMMANDS:
