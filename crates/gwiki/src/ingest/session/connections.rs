@@ -21,8 +21,14 @@ const MAX_ENTITY_CHARS: usize = 64;
 #[cfg(any(feature = "ai", test))]
 const EXTRACTION_BODY_BUDGET: usize = 6_000;
 
+// Thread-local so a test asserting on the count only observes its own
+// thread's `resolve()` calls — a process-global counter races every other
+// test in the parallel run. The sync path constructs the enricher on its
+// caller's thread, so a test always sees its own sync's calls.
 #[cfg(test)]
-static RESOLVE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    static RESOLVE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Per-batch Connections enricher.
 ///
@@ -47,17 +53,17 @@ struct AiRouted {
 impl ConnectionsEnricher {
     #[cfg(test)]
     pub(crate) fn reset_resolve_count_for_test() {
-        RESOLVE_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
+        RESOLVE_COUNT.with(|count| count.set(0));
     }
 
     #[cfg(test)]
     pub(crate) fn resolve_count_for_test() -> usize {
-        RESOLVE_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+        RESOLVE_COUNT.with(std::cell::Cell::get)
     }
 
     #[cfg(test)]
     fn count_resolve_for_test() {
-        RESOLVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        RESOLVE_COUNT.with(|count| count.set(count.get() + 1));
     }
 
     /// Resolve AI config once for the whole sync batch. AI being unresolvable
