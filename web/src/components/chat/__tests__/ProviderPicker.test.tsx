@@ -51,8 +51,8 @@ describe("ProviderPicker", () => {
       ok: true,
       json: async () =>
         buildCatalog([
-          { value: "coder-model(qwen-oauth)", label: "coder-model (qwen-oauth)" },
-          { value: "gpt-5(openai)", label: "gpt-5 (openai)" },
+          { value: "coder-model(qwen-oauth)", label: "Qwen Coder (OAuth)" },
+          { value: "gpt-5(openai)", label: "gpt-5" },
         ]),
     }) as typeof fetch;
   });
@@ -84,7 +84,7 @@ describe("ProviderPicker", () => {
       expect(screen.getByText("GPT 5.4")).toBeTruthy();
       expect(screen.getByText("GPT 5.4 Mini")).toBeTruthy();
       expect(screen.getByText("GPT 5.3 Codex")).toBeTruthy();
-      expect(screen.getByText("Coder Model")).toBeTruthy();
+      expect(screen.getByText("Qwen Coder (OAuth)")).toBeTruthy();
       expect(screen.getByText("GPT 5")).toBeTruthy();
       expect(screen.queryByText(/qwen oauth/i)).toBeNull();
       expect(screen.queryByText(/openai/i)).toBeNull();

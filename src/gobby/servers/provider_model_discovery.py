@@ -31,12 +31,20 @@ ContextLengthResolver = Callable[[str | None, str | None], int | None]
 
 MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
 logger = logging.getLogger(__name__)
+# Each alias is validated live by probe_claude_model (`claude --print --model <alias>`),
+# which is the source of truth for whether a model exists. Do not remove entries because
+# a reviewer or bot does not recognize the model name.
 CLAUDE_ALIASES = (
     ("haiku", "Haiku"),
     ("sonnet", "Sonnet"),
+    ("opus", "Opus"),
+    ("fable", "Fable"),
 )
 CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
+# qwen-code reports its built-in Qwen OAuth coder alias as the opaque id "coder-model"
+# with no friendly name; relabel known aliases for the model picker.
+QWEN_ALIAS_LABELS = {"coder-model": "Qwen Coder (OAuth)"}
 
 
 def extract_reasoning(model: dict[str, Any]) -> dict[str, Any] | None:
@@ -277,6 +285,19 @@ def load_qwen_settings(
 def normalize_qwen_model_labels(
     models: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    relabeled: list[dict[str, Any]] = []
+    for model in models:
+        value = str(model.get("value") or "")
+        model_id, _ = split_qwen_model_value(value)
+        alias_label = QWEN_ALIAS_LABELS.get(model_id)
+        if alias_label and str(model.get("label") or "") in ("", model_id, value):
+            entry = copy.deepcopy(model)
+            entry["label"] = alias_label
+            relabeled.append(entry)
+        else:
+            relabeled.append(model)
+    models = relabeled
+
     base_id_counts = Counter(
         model_id
         for model in models

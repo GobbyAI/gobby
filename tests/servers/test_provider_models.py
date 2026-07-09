@@ -15,6 +15,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.servers.provider_model_defaults import AGY_MODELS
+from gobby.servers.provider_model_discovery import CLAUDE_ALIASES
 from gobby.servers.provider_models import (
     ProviderModelCatalog,
     _model_discovery_cwd_path,
@@ -139,6 +140,20 @@ class TestProviderModelCatalog:
 
         assert models == [
             {"value": "sonnet", "label": "Sonnet", "canonical_id": "claude-sonnet"},
+            {"value": "opus", "label": "Opus", "canonical_id": "claude-opus"},
+            {"value": "fable", "label": "Fable", "canonical_id": "claude-fable"},
+        ]
+
+    def test_claude_aliases_cover_all_current_model_families(self) -> None:
+        """Regression guard (task #17775): probed aliases must cover every current
+        Claude family. probe_claude_model validates each alias against the real CLI,
+        so entries must not be removed because a reviewer or bot does not recognize
+        the model name."""
+        assert [alias for alias, _ in CLAUDE_ALIASES] == [
+            "haiku",
+            "sonnet",
+            "opus",
+            "fable",
         ]
 
     @pytest.mark.asyncio
@@ -625,7 +640,7 @@ class TestProviderModelCatalog:
             models = await catalog._discover_qwen_models()
 
         assert models == [
-            {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+            {"value": "coder-model(qwen-oauth)", "label": "Qwen Coder (OAuth)"},
             {"value": "gpt-5(openai)", "label": "gpt-5"},
             {
                 "value": "claude-sonnet-4-5(anthropic)",
@@ -642,16 +657,32 @@ class TestProviderModelCatalog:
 
         normalized = catalog._normalize_qwen_model_labels(
             [
-                {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+                {"value": "qwen3-coder(qwen-oauth)", "label": "qwen3-coder"},
                 {"value": "gpt-5(openai)", "label": "gpt-5"},
                 {"value": "gpt-5(anthropic)", "label": "gpt-5"},
             ]
         )
 
         assert normalized == [
-            {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+            {"value": "qwen3-coder(qwen-oauth)", "label": "qwen3-coder"},
             {"value": "gpt-5(openai)", "label": "gpt-5 (openai)"},
             {"value": "gpt-5(anthropic)", "label": "gpt-5 (anthropic)"},
+        ]
+
+    def test_normalize_qwen_model_labels_relabels_known_cli_aliases(self, temp_dir: Path) -> None:
+        """The opaque qwen-code "coder-model" alias gets a friendly picker label."""
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+
+        normalized = catalog._normalize_qwen_model_labels(
+            [
+                {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+                {"value": "gemma-4-31b-q8-local(openai)", "label": "Gemma 4 31B Q8 (LM Studio)"},
+            ]
+        )
+
+        assert normalized == [
+            {"value": "coder-model(qwen-oauth)", "label": "Qwen Coder (OAuth)"},
+            {"value": "gemma-4-31b-q8-local(openai)", "label": "Gemma 4 31B Q8 (LM Studio)"},
         ]
 
     @pytest.mark.asyncio

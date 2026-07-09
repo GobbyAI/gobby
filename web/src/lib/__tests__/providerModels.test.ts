@@ -81,11 +81,11 @@ const catalog: ProviderModelEntry[] = [
     models: [
       {
         value: "coder-model(qwen-oauth)",
-        label: "coder-model (qwen-oauth)",
+        label: "Qwen Coder (OAuth)",
       },
       {
         value: "gpt-5(openai)",
-        label: "gpt-5 (openai)",
+        label: "gpt-5",
       },
     ],
   },
@@ -266,14 +266,14 @@ describe("providerModels", () => {
     expect(entries[1].source).toBe("unsupported");
   });
 
-  it("strips Qwen transport suffixes from live catalog labels", () => {
+  it("uses curated backend Qwen labels and humanizes raw-id labels", () => {
     expect(getModelsForProvider(catalog, "qwen").map((model) => model.label)).toEqual([
       "GPT 5",
-      "Coder Model",
+      "Qwen Coder (OAuth)",
     ]);
     expect(getModelLabel(catalog, "qwen", "gpt-5(openai)")).toBe("GPT 5");
     expect(getModelLabel(catalog, "qwen", "coder-model(qwen-oauth)")).toBe(
-      "Coder Model",
+      "Qwen Coder (OAuth)",
     );
   });
 

@@ -398,10 +398,11 @@ function parseModelInfo(
 
 function parseClaudeModelInfo(model: ProviderModelOption): ParsedModelInfo {
   const tokens = tokenizeModel(model.canonical_id || model.value || model.label);
-  const family = tokens.find((token) => ["opus", "sonnet", "haiku"].includes(token));
+  const family = tokens.find((token) => ["fable", "opus", "sonnet", "haiku"].includes(token));
   const versionParts = extractVersionParts(tokens, family);
   const releaseDate = extractReleaseDate(tokens);
-  const familyScore = family === "opus" ? 300 : family === "sonnet" ? 200 : 100;
+  const familyScore =
+    family === "fable" ? 400 : family === "opus" ? 300 : family === "sonnet" ? 200 : 100;
 
   return {
     displayLabel: family
@@ -477,7 +478,14 @@ function stripTrailingParentheticalGroups(value: string): string {
 function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
   const rawValue = model.value || model.label;
   const modelId = stripTrailingParentheticalGroups(rawValue);
-  const displayLabel = humanizeFallbackModelLabel(modelId);
+  const backendLabel = (model.label ?? "").trim();
+  // The backend curates qwen labels (configured display names, relabeled CLI
+  // aliases); only fall back to humanizing the raw id when the label is just
+  // the id itself.
+  const displayLabel =
+    backendLabel && backendLabel !== rawValue && backendLabel !== modelId
+      ? backendLabel
+      : humanizeFallbackModelLabel(modelId);
   const normalized = normalizeModelIdentifier(modelId) ?? "";
 
   let strengthRank = 0;
