@@ -129,7 +129,7 @@ class WikiWatcher:
                 return
             try:
                 snapshots = await asyncio.to_thread(self._snapshot_all_scopes)
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, ValueError):
                 logger.warning("Failed to initialize wiki watcher snapshots", exc_info=True)
                 self._snapshots = {}
             else:
@@ -144,7 +144,7 @@ class WikiWatcher:
             previous = self._snapshots.get(scope.name, {})
             try:
                 current = self._snapshot(scope)
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, ValueError):
                 logger.warning(
                     "Failed to scan wiki watcher scope %s",
                     scope.name,
@@ -175,7 +175,7 @@ class WikiWatcher:
         try:
             if not scope.root.exists():
                 return {}
-        except OSError:
+        except (OSError, ValueError):
             return {}
         snapshot: dict[Path, tuple[int, int]] = {}
         for path in scope.root.rglob("*"):
@@ -185,6 +185,14 @@ class WikiWatcher:
                 stat = path.stat()
                 snapshot[path.resolve()] = (stat.st_mtime_ns, stat.st_size)
             except OSError:
+                continue
+            except ValueError:
+                logger.debug(
+                    "Skipping malformed wiki watcher path %s in scope %s",
+                    path,
+                    scope.name,
+                    exc_info=True,
+                )
                 continue
         return snapshot
 
@@ -200,7 +208,16 @@ class WikiWatcher:
         return max(matches, key=lambda scope: len(scope.root.parts))
 
     def _ignored(self, scope: WikiWatchScope, path: Path) -> bool:
-        relative = path.expanduser().resolve().relative_to(scope.root).as_posix()
+        resolved = path.expanduser().resolve()
+        try:
+            relative = resolved.relative_to(scope.root).as_posix()
+        except ValueError:
+            logger.debug(
+                "Ignoring wiki watcher path %s that resolves outside scope %s",
+                path,
+                scope.name,
+            )
+            return True
         return any(_matches_glob(relative, pattern) for pattern in self._ignore_globs)
 
 

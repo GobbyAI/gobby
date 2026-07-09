@@ -309,3 +309,135 @@ async def test_ignores_noncanonical_churn(tmp_path: Path) -> None:
     await watcher.flush_pending()
 
     assert coordinator.calls == [{"project": ["hooks.md"]}]
+
+
+def test_ignored_treats_out_of_scope_resolution_as_ignored(tmp_path: Path) -> None:
+    scope_root = tmp_path / "wiki"
+    scope_root.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    link = scope_root / "escape.md"
+    link.symlink_to(outside)
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=scope_root)],
+        coordinator=RecordingCoordinator(),
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    scope = watcher._scopes[0]
+
+    assert watcher._ignored(scope, link) is True
+    assert watcher._ignored(scope, scope_root / "note.md") is False
+
+
+@pytest.mark.asyncio
+async def test_scan_survives_out_of_scope_symlink(tmp_path: Path) -> None:
+    scope_root = tmp_path / "wiki"
+    scope_root.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    (scope_root / "escape.md").symlink_to(outside)
+    (scope_root / "note.md").write_text("note", encoding="utf-8")
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=scope_root)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    watcher._snapshots["project"] = {}
+
+    await watcher._scan_once()
+    await watcher.flush_pending()
+
+    assert coordinator.calls == [{"project": ["note.md"]}]
+
+
+def test_snapshot_skips_malformed_path_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = tmp_path / "bad.md"
+    good = tmp_path / "good.md"
+    bad.write_text("bad", encoding="utf-8")
+    good.write_text("good", encoding="utf-8")
+    watcher = WikiWatcher(
+        scopes=[],
+        coordinator=RecordingCoordinator(),
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    original_resolve = Path.resolve
+
+    def flaky_resolve(path: Path, *args: Any, **kwargs: Any) -> Path:
+        if path.name == "bad.md":
+            raise ValueError("embedded null byte")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", flaky_resolve)
+
+    snapshot = watcher._snapshot(WikiWatchScope(name="project", root=tmp_path))
+
+    assert set(snapshot) == {good.resolve()}
+
+
+@pytest.mark.asyncio
+async def test_scan_once_continues_after_scope_snapshot_value_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failed_root = tmp_path / "failed"
+    project_root = tmp_path / "project"
+    topic_root = tmp_path / "topic"
+    for root in (failed_root, project_root, topic_root):
+        root.mkdir()
+    (project_root / "note.md").write_text("note", encoding="utf-8")
+    (topic_root / "guide.md").write_text("guide", encoding="utf-8")
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[
+            WikiWatchScope(name="failed", root=failed_root),
+            WikiWatchScope(name="project", root=project_root),
+            WikiWatchScope(name="topic:notes", root=topic_root),
+        ],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    original_snapshot = watcher._snapshot
+
+    def flaky_snapshot(scope: WikiWatchScope) -> dict[Path, tuple[int, int]]:
+        if scope.name == "failed":
+            raise ValueError("embedded null byte")
+        return original_snapshot(scope)
+
+    monkeypatch.setattr(watcher, "_snapshot", flaky_snapshot)
+
+    await watcher._scan_once()
+    await watcher.flush_pending()
+
+    assert "failed" not in watcher._snapshots
+    assert coordinator.calls == [{"project": ["note.md"], "topic:notes": ["guide.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_initialize_snapshots_survives_value_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=RecordingCoordinator(),
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+
+    def failing_scopes() -> dict[str, dict[Path, tuple[int, int]]]:
+        raise ValueError("embedded null byte")
+
+    monkeypatch.setattr(watcher, "_snapshot_all_scopes", failing_scopes)
+
+    await watcher._initialize_snapshots()
+
+    assert watcher._snapshots == {}
+    assert watcher._snapshots_initialized is True

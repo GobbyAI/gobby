@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -205,3 +206,52 @@ def test_watcher_health_accessor(tmp_path: Path) -> None:
         "pending_debounce": False,
         "pending_changes": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_watcher_task_failure_is_logged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = DaemonConfig(
+        wiki=WikiConfig(
+            roots=[WikiRootConfig(scope="project", path=tmp_path)],
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+    )
+    runner = _runner(config)
+
+    async def failing_run(self: WikiWatcher) -> None:
+        raise RuntimeError("watcher exploded")
+
+    monkeypatch.setattr(WikiWatcher, "run", failing_run)
+
+    with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle_periodic"):
+        start_periodic_tasks(runner, tracker=None, **_loops())
+        try:
+            with pytest.raises(RuntimeError, match="watcher exploded"):
+                await runner._wiki_watcher_task
+        finally:
+            await _cancel_periodic_tasks(runner)
+
+    failures = [
+        record for record in caplog.records if record.getMessage() == "Wiki watcher task failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None
+    assert "watcher exploded" in str(failures[0].exc_info[1])
+
+
+@pytest.mark.asyncio
+async def test_watcher_task_cancellation_is_not_logged_as_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    task = asyncio.create_task(asyncio.Event().wait())
+    task.add_done_callback(runner_lifecycle_periodic._log_wiki_watcher_failure)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert all(record.getMessage() != "Wiki watcher task failed" for record in caplog.records)

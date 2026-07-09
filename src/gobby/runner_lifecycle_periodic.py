@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -17,8 +18,25 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
 DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
+
+
+def _log_wiki_watcher_failure(task: asyncio.Task[None]) -> None:
+    """Log wiki watcher task failures so a dead watcher is visible in daemon logs."""
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        logger.error(
+            "Wiki watcher task failed",
+            exc_info=(type(error), error, error.__traceback__),
+        )
 
 
 def _default_loops() -> dict[str, Any]:
@@ -232,6 +250,7 @@ def start_periodic_tasks(
                 runner._wiki_watcher.run(),
                 name="wiki-watcher",
             )
+            runner._wiki_watcher_task.add_done_callback(_log_wiki_watcher_failure)
 
     task_count = sum(
         1
