@@ -1,15 +1,17 @@
-# gobby-cli Release Guide
+# Rust Helper Release Guide
 
-This guide covers the multi-crate Rust release flow for maintainers.
+This guide covers the multi-crate Rust release flow for maintainers. Releases
+are cut from the `GobbyAI/gobby` monorepo; the legacy `GobbyAI/gobby-cli` repo
+holds pre-monorepo release history only.
 
 ## Current Release Set
 
 | Crate | Binary | Version | Tag | Publishes? |
 |---|---|---:|---|---|
-| `gobby-core` | n/a | `0.7.0` | `gobby-core-v0.7.0` | crates.io only |
-| `gobby-code` | `gcode` | `1.4.0` | `gcode-v1.4.0` | crates.io + GitHub binaries |
-| `gobby-hooks` | `ghook` | `0.7.0` | `ghook-v0.7.0` | crates.io + GitHub binaries |
-| `gobby-wiki` | `gwiki` | `0.7.0` | `gwiki-v0.7.0` | crates.io + GitHub binaries |
+| `gobby-core` | n/a | `0.8.0` | `gobby-core-v0.8.0` | crates.io only |
+| `gobby-code` | `gcode` | `1.5.0` | `gcode-v1.5.0` | crates.io + GitHub binaries |
+| `gobby-hooks` | `ghook` | `0.7.1` | `ghook-v0.7.1` | crates.io + GitHub binaries |
+| `gobby-wiki` | `gwiki` | `0.8.0` | `gwiki-v0.8.0` | crates.io + GitHub binaries |
 
 ## Version Rules
 
@@ -25,11 +27,12 @@ This guide covers the multi-crate Rust release flow for maintainers.
 
 ## Merge Order
 
-Release prep lands on `dev` first. After validation passes, push `dev`, sync
-`main`, merge `dev` into `main` with:
+Release prep lands on the active development branch first (currently `0.5.0`).
+After validation passes, push the branch, sync `main`, and merge it into
+`main` with:
 
 ```text
-Merge dev into main for release: gobby-core 0.7.0, gcode 1.4.0, ghook 0.7.0, gwiki 0.7.0
+Merge 0.5.0 into main for release: gobby-core 0.8.0, gcode 1.5.0, ghook 0.7.1, gwiki 0.8.0
 ```
 
 Push `main` and wait for main CI to pass before tagging. Tags are lightweight
@@ -43,20 +46,20 @@ time, so the new core version must be indexed first. `gwiki` additionally
 re-verifies that the published `gobby-core` exposes the `ai` feature.
 
 ```bash
-git tag gobby-core-v0.7.0
-git push origin gobby-core-v0.7.0
+git tag gobby-core-v0.8.0
+git push origin gobby-core-v0.8.0
 
-# Wait for crates.io to index gobby-core 0.7.0.
+# Wait for crates.io to index gobby-core 0.8.0.
 
-git tag gcode-v1.4.0
-git tag ghook-v0.7.0
-git tag gwiki-v0.7.0
+git tag gcode-v1.5.0
+git tag ghook-v0.7.1
+git tag gwiki-v0.8.0
 
 # Push the tags ONE AT A TIME. GitHub Actions does not create push events for
 # any tag when more than three tags arrive in a single push, so a batched
 # `git push origin <tag> <tag> <tag> <tag> ...` silently triggers NO release
 # workflows. Push each tag in its own invocation:
-for tag in gcode-v1.4.0 ghook-v0.7.0 gwiki-v0.7.0; do
+for tag in gcode-v1.5.0 ghook-v0.7.1 gwiki-v0.8.0; do
   git push origin "refs/tags/$tag"
 done
 ```
@@ -124,4 +127,4 @@ cargo build --release -p gobby-code -p gobby-hooks -p gobby-wiki
 The repository CI still owns cross-target release packaging. Local validation
 only proves manifests, lockfile resolution, and native release binaries.
 
-_Last verified: 2026-07-01_
+_Last verified: 2026-07-09_

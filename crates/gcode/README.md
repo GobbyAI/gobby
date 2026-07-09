@@ -60,7 +60,7 @@ codebase → tree-sitter AST + safe text chunks → PostgreSQL hub → search / 
 Download versioned assets from [GitHub Releases](https://github.com/GobbyAI/gobby/releases):
 
 ```bash
-VERSION=1.4.0
+VERSION=1.5.0
 
 # macOS (Apple Silicon)
 curl -L "https://github.com/GobbyAI/gobby/releases/download/gcode-v${VERSION}/gcode-aarch64-apple-darwin.tar.gz" | tar xz
@@ -79,7 +79,7 @@ curl -L "https://github.com/GobbyAI/gobby/releases/download/gcode-v${VERSION}/gc
 sudo mv gcode /usr/local/bin/
 
 # Windows (x86_64) — PowerShell
-Invoke-WebRequest -Uri "https://github.com/GobbyAI/gobby/releases/download/gcode-v1.4.0/gcode-x86_64-pc-windows-msvc.zip" -OutFile gcode.zip
+Invoke-WebRequest -Uri "https://github.com/GobbyAI/gobby/releases/download/gcode-v1.5.0/gcode-x86_64-pc-windows-msvc.zip" -OutFile gcode.zip
 Expand-Archive gcode.zip -DestinationPath .
 ```
 

@@ -9,6 +9,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] — gcode — 2026-07-09
+
+First gcode release published from the `GobbyAI/gobby` monorepo
+(`gcode-v1.5.0` tag and binaries live on `GobbyAI/gobby`).
+
+### Added
+
+#### gcode
+
+- **Wiki-aware vault layout** — the generated vault moved to `wiki/` and the
+  index/publisher pipeline is vault-aware, using the shared `gobby-core` vault
+  resolver and layout constants.
+- **LLM-composed mermaid diagrams** — CodeWiki diagrams are composed under an
+  evidence contract and validated against the real mermaid parser instead of
+  being emitted as unchecked prose.
+- **CLI progress bars** — long-running index and generation commands render
+  shared gcore progress bars.
+- **Aggregate candidate pinning** — `--ai-aggregate-candidate` pins aggregate
+  CodeWiki page candidates through gcode → gcore → daemon generation.
+
+### Fixed
+
+#### gcode
+
+- **Index/projection locking** — the per-project index lock is held across
+  projection sync, lock waits are bounded and fail loudly, daemon index flushes
+  skip-if-busy instead of piling up advisory-lock waiters, and codewiki
+  generation takes a per-out_dir single-writer lock.
+- **Bounded graph I/O** — FalkorDB socket I/O, codewiki graph reads,
+  projection-sync phases, and graph-report symbol-hotspot queries are all
+  bounded with explicit timeouts on large graphs.
+- **CodeWiki link healing** — module links heal across cluster renames, module
+  pages are emitted for cross-directory cluster link targets, scoped runs
+  synthesize breadcrumb-closure stubs, and generated mermaid output is grounded
+  in evidence.
+- **Native-UUID identity** — identity columns converted to native UUID
+  consistently across Python, SQL, and Rust surfaces.
+
+## [0.8.0] — gobby-core — 2026-07-09
+
+First gobby-core release published from the `GobbyAI/gobby` monorepo. Pre-1.0
+minor bump: consumer crates must move their `gobby-core` path-dependency
+`version` pins to `0.8.0`.
+
+### Added
+
+#### gobby-core
+
+- **Shared vault core** — vault-dir resolver, layout constants, and the shared
+  vault lint core now live in `gobby_core::vault` for gcode and gwiki.
+- **CLI progress bars** — shared progress-bar primitives for long-running
+  helper commands.
+- **Aggregate candidate pinning** — daemon generation requests carry pinned
+  aggregate-candidate metadata end to end.
+
+### Fixed
+
+#### gobby-core
+
+- **Bounded FalkorDB socket I/O** — graph socket reads/writes carry explicit
+  timeouts instead of blocking indefinitely.
+- **Daemon Lane B transport** — gwiki's daemon Lane B generation is ported to
+  `daemon_agentic_chat`, and codewiki reuse is invalidated when AI generation
+  settings change.
+- **Shared link-resolution rule** — lint's link-resolution rule is shared with
+  the gwiki graph builders; title-equal aliases, slug collisions with agent
+  instruction filenames, and mermaid entity codes are handled consistently.
+- **Native-UUID identity** — shared identity handling converted to native UUID
+  across the workspace.
+
+## [0.7.1] — ghook — 2026-07-09
+
+First ghook release published from the `GobbyAI/gobby` monorepo
+(`ghook-v0.7.1` tag and binaries live on `GobbyAI/gobby`; `0.7.0` was
+published from the legacy `GobbyAI/gobby-cli` repo).
+
+### Changed
+
+#### ghook
+
+- **Rebuilt against gobby-core 0.8.0** — no functional ghook changes; the
+  version bump exists because crates.io rejects republishing the
+  already-published `0.7.0`.
+
+## [0.8.0] — gwiki — 2026-07-09
+
+First gwiki release published from the `GobbyAI/gobby` monorepo
+(`gwiki-v0.8.0` tag and binaries live on `GobbyAI/gobby`).
+
+### Added
+
+#### gwiki
+
+- **Audit claim classification** — trust-audit claims are classified as
+  EXTRACTED, INFERRED, or AMBIGUOUS instead of a single unsupported bucket.
+- **Page lifecycle field** — wiki pages carry a lifecycle field with a shared
+  default-surface exclusion, and deterministic catalog surfaces are exempt from
+  claim audit.
+- **Connections enrichment** — the session-ingest funnel enriches Connections
+  metadata.
+
+### Fixed
+
+#### gwiki
+
+- **Replay refresh repairs** — bulk wiki refresh skips missing replay metadata
+  and replay refresh failures are repaired instead of aborting the run.
+- **Source-stub healing** — recompile overwrites source stubs in place, stubs
+  resolve by stable location slug across content-hash rotation, re-capture of
+  the same location supersedes stale manifest records, unchanged re-ingest
+  dedups to the existing raw capture, and uncompiled research sources
+  self-drain.
+- **Link hygiene** — unresolved session-digest concept links heal to ~0 broken
+  links, upkeep skips path-shaped broken-link targets, absolute filesystem
+  targets are excluded from link suggestions, and the vault catalog regenerates
+  after `gwiki index`.
+- **Trust gating** — trust gates attention on curated broken links only, and
+  daemon-synthesis concept prose is credited with resolved rotated source
+  links.
+
 ## [1.4.0] — gcode — 2026-07-01
 
 ### Added
