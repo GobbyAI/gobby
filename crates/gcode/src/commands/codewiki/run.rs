@@ -132,6 +132,30 @@ pub fn run(
     };
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
+    // Destructive-downgrade guard (#17776): `--ai auto` that resolves NO
+    // generator on either lane must not rewrite a previously AI-generated
+    // vault as structural docs — the #17530 settings invalidation would
+    // regenerate every page and clobber the AI prose (a transient daemon
+    // outage once erased a full vault this way). Explicit `--ai off`
+    // (route Off without the auto fallback) keeps the intentional
+    // structural-rewrite path.
+    if generator.is_none()
+        && tool_loop_generator.is_none()
+        && ai_outcome.route == AiRouting::Off
+        && ai_outcome.fallback
+    {
+        let previous = super::io::read_codewiki_meta(out_path)?;
+        let ai_pages = ai_generated_page_count(&previous);
+        if ai_pages > 0 {
+            anyhow::bail!(
+                "--ai auto found no usable AI route, but {ai_pages} existing pages in {} \
+                 were AI-generated; refusing to rewrite them as structural docs. Fix the \
+                 AI route (is the daemon running?) or pass --ai off to downgrade \
+                 intentionally.",
+                out_path.display(),
+            );
+        }
+    }
     let doc_scope = DocPruneScope::from_scopes(&scopes);
     // `--since <ref>` scopes regeneration to the files git reports changed since
     // the ref plus their dependents, instead of a full content-hash scan of
@@ -385,6 +409,17 @@ pub(crate) fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
         return Ok(());
     }
     anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
+}
+
+/// Pages in the previous run's meta that were written by an AI route
+/// (#17776). A nonzero count blocks a no-generator `--ai auto` run from
+/// rewriting the vault structurally; pages already structural (`off`) or
+/// pre-AI entries never block.
+pub(crate) fn ai_generated_page_count(meta: &super::types::CodewikiMeta) -> usize {
+    meta.docs
+        .values()
+        .filter(|doc| matches!(doc.ai_route.as_str(), "daemon" | "direct"))
+        .count()
 }
 
 /// Repo-relative paths git reports changed between `since_ref` and the working

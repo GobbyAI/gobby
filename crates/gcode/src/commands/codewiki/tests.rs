@@ -137,3 +137,33 @@ fn test_fence_closes(line: &str, marker: u8, fence_len: usize) -> bool {
     let len = trimmed.bytes().take_while(|byte| *byte == marker).count();
     len >= fence_len && trimmed[len..].trim().is_empty()
 }
+
+#[test]
+fn ai_generated_page_count_blocks_only_on_ai_routes() {
+    use super::run::ai_generated_page_count;
+    use super::types::{CodewikiDocMeta, CodewikiMeta};
+
+    let doc = |route: &str| CodewikiDocMeta {
+        ai_route: route.to_string(),
+        ..CodewikiDocMeta::default()
+    };
+
+    // Fresh vault: nothing blocks a structural auto run.
+    assert_eq!(ai_generated_page_count(&CodewikiMeta::default()), 0);
+
+    // Structural and pre-AI entries never block; daemon/direct pages do.
+    let mut meta = CodewikiMeta::default();
+    meta.docs.insert("code/files/a.md".to_string(), doc("off"));
+    meta.docs.insert("code/files/b.md".to_string(), doc(""));
+    assert_eq!(ai_generated_page_count(&meta), 0);
+
+    meta.docs
+        .insert("code/files/c.md".to_string(), doc("daemon"));
+    meta.docs
+        .insert("code/files/d.md".to_string(), doc("direct"));
+    assert_eq!(
+        ai_generated_page_count(&meta),
+        2,
+        "a no-generator --ai auto run must refuse to rewrite these pages (#17776)"
+    );
+}
