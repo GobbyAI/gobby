@@ -12,6 +12,7 @@ from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
 )
 from gobby.servers.routes import wiki as wiki_routes
@@ -311,6 +312,7 @@ def test_backlinks_health_and_sources_passthrough(client: TestClient) -> None:
         client.get("/api/wiki/backlinks", params={"target": "A"}).json()["payload"]["target"] == "A"
     )
     assert client.get("/api/wiki/health").json()["payload"]["status"] == "healthy"
+    assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS
     assert client.get("/api/wiki/sources").json()["payload"]["sources"] == [{"id": "src-1"}]
 
 

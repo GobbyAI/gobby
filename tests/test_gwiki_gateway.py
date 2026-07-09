@@ -12,6 +12,17 @@ from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiReadSelect
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
+class FakeStream:
+    def __init__(self, process: FakeProcess, payload: bytes) -> None:
+        self._process = process
+        self._payload = payload
+
+    async def read(self) -> bytes:
+        while self._process.timeout and not self._process.terminated and not self._process.killed:
+            await asyncio.sleep(0.01)
+        return self._payload
+
+
 class FakeProcess:
     def __init__(
         self,
@@ -22,8 +33,10 @@ class FakeProcess:
         timeout: bool = False,
     ) -> None:
         self.returncode = returncode
-        self.stdout = stdout if stdout is not None else b'{"status": "ok"}'
-        self.stderr = stderr
+        self.stdout_payload = stdout if stdout is not None else b'{"status": "ok"}'
+        self.stderr_payload = stderr
+        self.stdout = FakeStream(self, self.stdout_payload)
+        self.stderr = FakeStream(self, self.stderr_payload)
         self.timeout = timeout
         self.terminated = False
         self.killed = False
@@ -32,7 +45,7 @@ class FakeProcess:
     async def communicate(self) -> tuple[bytes, bytes]:
         if self.timeout:
             raise TimeoutError
-        return self.stdout, self.stderr
+        return self.stdout_payload, self.stderr_payload
 
     def kill(self) -> None:
         self.killed = True
@@ -42,6 +55,8 @@ class FakeProcess:
 
     async def wait(self) -> None:
         self.waited = True
+        while self.timeout and not self.terminated and not self.killed:
+            await asyncio.sleep(0.01)
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:
@@ -303,7 +318,7 @@ async def test_resolve_binary_serializes_concurrent_resolution(
     assert calls == 1
 
 
-async def test_health_omits_gateway_scope_args(
+async def test_health_uses_gateway_scope_args(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -323,7 +338,16 @@ async def test_health_omits_gateway_scope_args(
 
     result = await gateway.health()
 
-    assert calls[0] == ("/bin/gwiki", "health", "--format", "json")
+    assert calls[0] == (
+        "/bin/gwiki",
+        "health",
+        "--project",
+        "/repo",
+        "--topic",
+        "docs",
+        "--format",
+        "json",
+    )
     assert result == {
         "ok": True,
         "command": "health",
@@ -430,26 +454,46 @@ async def test_error_parses_structured_stderr_when_stdout_is_empty(
 
 
 async def test_timeout_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
-    process = FakeProcess(timeout=True)
+    process = FakeProcess(
+        stdout=b"partial output\n",
+        stderr=b"still working\n",
+        timeout=True,
+    )
     calls = _patch_subprocess(monkeypatch, [process])
 
-    result = await GwikiGateway(binary="/bin/gwiki", timeout_seconds=0.01).health()
+    result = await GwikiGateway(
+        binary="/bin/gwiki",
+        project_root="/repo",
+        topic="docs",
+        timeout_seconds=0.01,
+    ).health()
 
-    assert calls == [("/bin/gwiki", "health", "--format", "json")]
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "health",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
     assert process.terminated is True
     assert process.killed is False
     assert process.waited is True
-    assert result == {
-        "ok": False,
-        "command": "health",
-        "status": "degraded",
-        "payload": None,
-        "stderr": "",
-        "error": {
-            "type": "timeout",
-            "message": "gwiki command timed out",
-        },
-    }
+    assert result["ok"] is False
+    assert result["command"] == "health"
+    assert result["status"] == "degraded"
+    assert result["payload"] is None
+    assert result["stdout"] == "partial output"
+    assert result["stderr"] == "still working"
+    assert result["scope"] == {"project_root": "/repo", "topic": "docs"}
+    assert result["error"]["type"] == "timeout"
+    assert result["error"]["message"] == "gwiki command timed out"
+    assert result["error"]["timeout_seconds"] == 0.01
+    assert result["error"]["elapsed_seconds"] >= 0
 
 
 async def test_read_status_payloads_are_not_subprocess_failures(

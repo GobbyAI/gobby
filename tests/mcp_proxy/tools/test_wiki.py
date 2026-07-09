@@ -9,6 +9,7 @@ from gobby.config.app import DaemonConfig
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
 )
 from gobby.mcp_proxy.registries import setup_internal_registries
@@ -697,3 +698,12 @@ async def test_wiki_search_keeps_interactive_gateway_timeout() -> None:
 
     assert result["success"] is True
     assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+
+
+async def test_wiki_health_uses_health_gateway_timeout() -> None:
+    registry = _registry()
+
+    result = await registry.call("wiki_health", {})
+
+    assert result["success"] is True
+    assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS

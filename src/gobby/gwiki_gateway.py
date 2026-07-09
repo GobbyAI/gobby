@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,7 @@ def _vault_write_lock(key: str) -> asyncio.Lock:
 # timeout (MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS) so gwiki's structured
 # timeout envelope reaches the caller before the transport gives up.
 INTERACTIVE_GWIKI_TIMEOUT_SECONDS = 30.0
+INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS = 25.0
 GENERATION_GWIKI_TIMEOUT_SECONDS = 270.0
 
 
@@ -249,7 +251,7 @@ class GwikiGateway:
         return await self._run_json("trust", ["trust"])
 
     async def health(self) -> dict[str, Any]:
-        result = await self._run_json("health", ["health"], include_scope=False)
+        result = await self._run_json("health", ["health"])
         self._normalize_health_report_heading(result)
         return result
 
@@ -406,10 +408,39 @@ class GwikiGateway:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=self._timeout_seconds,
-            )
+            stdout_pipe = getattr(proc, "stdout", None)
+            stderr_pipe = getattr(proc, "stderr", None)
+            if (
+                stdout_pipe is not None
+                and stderr_pipe is not None
+                and hasattr(stdout_pipe, "read")
+                and hasattr(stderr_pipe, "read")
+            ):
+                stdout_task = asyncio.create_task(stdout_pipe.read())
+                stderr_task = asyncio.create_task(stderr_pipe.read())
+                started_at = time.monotonic()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=self._timeout_seconds)
+                except TimeoutError:
+                    elapsed_seconds = time.monotonic() - started_at
+                    await self._kill_process(proc)
+                    stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
+                    return self._timeout_envelope(
+                        command_name,
+                        stdout=stdout,
+                        stderr=stderr,
+                        elapsed_seconds=elapsed_seconds,
+                    )
+                except asyncio.CancelledError:
+                    await self._kill_process(proc)
+                    await self._cancel_streams(stdout_task, stderr_task)
+                    raise
+                stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
+            else:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=self._timeout_seconds,
+                )
         except FileNotFoundError as exc:
             raise GwikiUnavailableError(f"gwiki binary not found: {argv[0]}") from exc
         except asyncio.CancelledError:
@@ -433,6 +464,29 @@ class GwikiGateway:
             )
 
         return stdout, stderr_text
+
+    async def _collect_streams(
+        self,
+        stdout_task: asyncio.Task[bytes],
+        stderr_task: asyncio.Task[bytes],
+    ) -> tuple[bytes, bytes]:
+        stdout_result, stderr_result = await asyncio.gather(
+            stdout_task,
+            stderr_task,
+            return_exceptions=True,
+        )
+        stdout = stdout_result if isinstance(stdout_result, bytes) else b""
+        stderr = stderr_result if isinstance(stderr_result, bytes) else b""
+        return stdout, stderr
+
+    async def _cancel_streams(
+        self,
+        stdout_task: asyncio.Task[bytes],
+        stderr_task: asyncio.Task[bytes],
+    ) -> None:
+        for task in (stdout_task, stderr_task):
+            task.cancel()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
 
     async def _kill_process(self, proc: asyncio.subprocess.Process) -> None:
         try:
@@ -485,17 +539,38 @@ class GwikiGateway:
             "stderr": stderr,
         }
 
-    def _timeout_envelope(self, command_name: str) -> dict[str, Any]:
+    def _timeout_envelope(
+        self,
+        command_name: str,
+        *,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+        elapsed_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        error: dict[str, Any] = {
+            "type": "timeout",
+            "message": "gwiki command timed out",
+            "timeout_seconds": self._timeout_seconds,
+        }
+        if elapsed_seconds is not None:
+            error["elapsed_seconds"] = elapsed_seconds
         return {
             "ok": False,
             "command": command_name,
             "status": "degraded",
             "payload": None,
-            "stderr": "",
-            "error": {
-                "type": "timeout",
-                "message": "gwiki command timed out",
-            },
+            "stdout": stdout.decode(errors="replace").strip(),
+            "stderr": stderr.decode(errors="replace").strip(),
+            "scope": self._scope_envelope(),
+            "error": error,
+        }
+
+    def _scope_envelope(self) -> dict[str, str | None]:
+        if self._project_root is None and self._topic is None:
+            return {"cwd": str(Path.cwd())}
+        return {
+            "project_root": self._project_root,
+            "topic": self._topic,
         }
 
     def _normalize_health_report_heading(self, result: dict[str, Any]) -> None:

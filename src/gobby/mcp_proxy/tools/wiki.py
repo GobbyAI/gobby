@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
@@ -283,7 +284,14 @@ def create_wiki_registry(
         project: str | None = None,
         topic: str | None = None,
     ) -> dict[str, Any]:
-        return await _guard(lambda: read_call(project, topic, lambda gwiki: gwiki.health()))
+        return await _guard(
+            lambda: read_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.health(),
+                timeout_seconds=INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
+            )
+        )
 
     @registry.tool(
         name="wiki_sync_sessions",

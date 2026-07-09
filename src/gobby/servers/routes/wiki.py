@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
@@ -128,7 +129,13 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        return await _read(server, project, topic, lambda gateway: gateway.health())
+        return await _read(
+            server,
+            project,
+            topic,
+            lambda gateway: gateway.health(),
+            timeout_seconds=INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
+        )
 
     @router.get("/sources")
     async def sources(
