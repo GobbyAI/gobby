@@ -5,6 +5,13 @@ from typing import Any
 
 _FAILED_RUN_STATUSES = frozenset({"failed", "failure", "error", "timeout", "degraded"})
 WIKI_HEALTH_HISTORY_SAMPLE_SIZE = 10
+WIKI_REFRESH_HISTORY_SAMPLE_SIZE = 5
+
+# Refresh payloads enumerate every catalog source per run; stored history keeps
+# counts (and per-code samples) instead so cron output stays inside executor
+# limits. `refreshed` stays verbatim — it holds only what actually changed.
+_REFRESH_GROUPED_LIST_FIELDS = ("failed", "skipped")
+_REFRESH_COUNTED_LIST_FIELDS = ("planned", "unchanged")
 
 _HEALTH_HISTORY_LIST_FIELDS = (
     "broken_links",
@@ -30,13 +37,14 @@ def _history_output(
     error = _run_error(gwiki_result, payload, command=command, status=status)
     if extra_error:
         error = f"{error}; {extra_error}" if error else extra_error
+    visible_payload = _compact_refresh_payload(payload) if command == "refresh" else payload
     return _history_output_json(
         purpose=purpose,
         scope=scope,
         command=command,
         status=status,
         error=error,
-        result=_visible_result(gwiki_result, payload),
+        result=_visible_result(gwiki_result, visible_payload),
         changed_paths=changed_paths,
     )
 
@@ -50,7 +58,7 @@ def _librarian_history_output(
 ) -> str:
     """Compact librarian history so cron output stays inside executor limits."""
     payload = _payload(gwiki_result)
-    result = _visible_health_result(gwiki_result, _compact_librarian_payload(payload))
+    result = _visible_result(gwiki_result, _compact_librarian_payload(payload))
     result["task_filing"] = task_filing
     status = _status(gwiki_result, payload)
     return _history_output_json(
@@ -114,7 +122,7 @@ def _health_history_output(
         command=command,
         status=status,
         error=_run_error(gwiki_result, payload, command=command, status=status),
-        result=_visible_health_result(gwiki_result, _compact_health_payload(payload)),
+        result=_visible_result(gwiki_result, _compact_health_payload(payload)),
     )
 
 
@@ -151,7 +159,6 @@ def _visible_result(result: dict[str, Any], payload: dict[str, Any]) -> dict[str
     visible["gwiki"] = {
         "ok": result.get("ok"),
         "command": result.get("command"),
-        "payload": payload,
         "stderr": result.get("stderr", ""),
     }
     for passthrough in ("index_handoff", "task_filing", "presync"):
@@ -160,14 +167,33 @@ def _visible_result(result: dict[str, Any], payload: dict[str, Any]) -> dict[str
     return visible
 
 
-def _visible_health_result(result: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    visible = dict(payload)
-    visible["gwiki"] = {
-        "ok": result.get("ok"),
-        "command": result.get("command"),
-        "stderr": result.get("stderr", ""),
-    }
-    return visible
+def _grouped_by_code(entries: list[Any], sample_size: int) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        code = entry.get("code") if isinstance(entry, dict) else None
+        key = code if isinstance(code, str) and code else "unknown"
+        group = groups.setdefault(key, {"code": key, "count": 0, "sample": []})
+        group["count"] += 1
+        if len(group["sample"]) < sample_size:
+            group["sample"].append(entry)
+    return list(groups.values())
+
+
+def _compact_refresh_payload(
+    payload: dict[str, Any],
+    *,
+    sample_size: int = WIKI_REFRESH_HISTORY_SAMPLE_SIZE,
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key in _REFRESH_GROUPED_LIST_FIELDS and isinstance(value, list):
+            compact[f"{key}_count"] = len(value)
+            compact[key] = _grouped_by_code(value, sample_size)
+        elif key in _REFRESH_COUNTED_LIST_FIELDS and isinstance(value, list):
+            compact[f"{key}_count"] = len(value)
+        else:
+            compact[key] = value
+    return compact
 
 
 def _compact_health_payload(

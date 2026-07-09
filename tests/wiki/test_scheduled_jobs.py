@@ -311,6 +311,88 @@ async def test_cron_history_is_user_visible() -> None:
     assert output["changed_paths"] == ["raw/changed.md"]
     assert output["result"]["indexed"] == {"documents": 1, "chunks": 3}
     assert output["result"]["gwiki"]["command"] == "refresh"
+    assert "payload" not in output["result"]["gwiki"]
+
+
+class LargeRefreshGateway(RecordingGateway):
+    """Refresh result shaped like a real bulk sweep over a large catalog."""
+
+    def __init__(self, *, skipped: list[dict[str, Any]], failed: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.skipped = skipped
+        self.failed = failed
+
+    async def refresh(
+        self,
+        *,
+        source_ids: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        self.calls.append(("refresh", {"source_ids": source_ids, "dry_run": dry_run}))
+        return _result(
+            "refresh",
+            {
+                "status": "unchanged",
+                "planned": [{"id": f"src-planned-{index}"} for index in range(60)],
+                "refreshed": [{"raw_path": "raw/changed.md", "changed": True}],
+                "unchanged": [
+                    {"id": f"src-unchanged-{index}", "raw_path": f"raw/source-{index}.md"}
+                    for index in range(60)
+                ],
+                "failed": self.failed,
+                "skipped": self.skipped,
+                "indexed": {"documents": 1, "chunks": 3},
+                "index_status": {"index_required": False},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_cron_history_compacts_per_source_arrays() -> None:
+    skipped = [
+        {
+            "id": f"src-{index}-session",
+            "location": f"session:{index}",
+            "source_kind": "session",
+            "code": "missing_replay_metadata",
+            "message": (
+                f"source `src-{index}-session` has kind `session` but no local replay metadata"
+            ),
+        }
+        for index in range(213)
+    ]
+    failed = [
+        {"id": f"src-broken-{index}", "code": "replay_failed", "message": "replay error"}
+        for index in range(7)
+    ]
+    gateway = LargeRefreshGateway(skipped=skipped, failed=failed)
+    handler = create_wiki_refresh_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    raw_output = await handler(_job("refresh"))
+    output = json.loads(raw_output)
+
+    result = output["result"]
+    assert result["planned_count"] == 60
+    assert "planned" not in result
+    assert result["unchanged_count"] == 60
+    assert "unchanged" not in result
+    assert result["refreshed"] == [{"raw_path": "raw/changed.md", "changed": True}]
+    assert result["skipped_count"] == 213
+    assert result["skipped"] == [
+        {
+            "code": "missing_replay_metadata",
+            "count": 213,
+            "sample": skipped[:5],
+        }
+    ]
+    assert result["failed_count"] == 7
+    assert result["failed"] == [{"code": "replay_failed", "count": 7, "sample": failed[:5]}]
+    assert "payload" not in result["gwiki"]
+    assert len(raw_output) < 10_000
 
 
 @pytest.mark.asyncio
