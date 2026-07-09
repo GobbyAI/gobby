@@ -467,9 +467,14 @@ def test_emit_and_reparse_round_trips_with_no_plan_id(tmp_path: Path) -> None:
     assert resolved_missing_id == "unknown"
     assert resolve_plan_id("demo-plan") == "demo-plan"
     assert MISSING_PLAN_ID_SENTINEL == "unknown"
-    document = parse_plan(plan, parse_mode="expansion")
+    document = parse_plan(plan, parse_mode="draft")
+    assert len(document.warnings) == 1
+    assert "covers:unknown:*" in document.warnings[0]
     labels = [label for entry in document.manifest_entries for label in entry.labels]
     assert labels == [f"covers:{resolved_missing_id}:1.1:1.1.1"]
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode="expansion")
+    assert "real **Plan ID:**" in str(excinfo.value)
 
     plan_with_id = _write(
         tmp_path / "with-plan-id.md",

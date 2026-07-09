@@ -182,6 +182,16 @@ class TestAdversaryInstructionsPreserveContracts:
         assert "reject_review" in instructions
         assert "needs_requirements:" in instructions
 
+    def test_plan_identity_precondition_blocks_unknown_covers(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        instructions = agent.instructions or ""
+        assert "PLAN IDENTITY PRECONDITION" in instructions
+        assert "**Plan ID:** <id>" in instructions
+        assert "outside fenced code" in instructions
+        assert "literal `unknown`" in instructions
+        assert "covers:unknown:" in instructions
+
     def test_round_scoped_findings_header_referenced(self, agent: AgentDefinitionBody) -> None:
         """Output goes under ## Adversary Findings — Round N; the inline
         instructions reinforce plan-review's format so a sloppy adversary

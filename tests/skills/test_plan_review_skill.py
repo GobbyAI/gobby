@@ -106,6 +106,13 @@ class TestPlanReviewContent:
         ):
             assert check in body, f"Missing gobby-specific check: {check}"
 
+    def test_plan_identity_precondition_blocks_unknown_covers(self, body: str) -> None:
+        assert "Plan Identity Precondition" in body
+        assert "**Plan ID:** <id>" in body
+        assert "outside fenced code" in body
+        assert "literal\n`unknown`" in body
+        assert "covers:unknown:" in body
+
     # --- escalation ---------------------------------------------------------
 
     def test_blocking_findings_use_review_rejection(self, body: str) -> None:

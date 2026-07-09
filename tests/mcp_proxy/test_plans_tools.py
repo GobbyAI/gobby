@@ -42,6 +42,32 @@ def _write_plan(root: Path) -> Path:
     return path
 
 
+def _write_plan_without_plan_id(root: Path) -> Path:
+    plan_dir = root / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    path = plan_dir / "missing-id.md"
+    path.write_text(
+        textwrap.dedent(
+            """
+            ## P1 Phase
+            `kind: framing`
+
+            ### 1.1 Work [category: docs]
+            `kind: deliverable`
+
+            Target: `docs/demo.md`
+
+            Body.
+
+            **Acceptance:**
+            - 1.1.1 — Docs exist. file: `docs/demo.md`
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    return path
+
+
 @pytest.mark.asyncio
 async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
@@ -127,6 +153,7 @@ async def test_validate_plan_returns_valid_for_canonical_plan(
     assert result["valid"] is True
     assert result["phase_count"] >= 1
     assert result["deliverable_count"] >= 1
+    assert result["warnings"] == []
 
 
 @pytest.mark.asyncio
@@ -148,6 +175,22 @@ async def test_validate_plan_returns_same_payload_as_tasks_ops(
     tasks_ops_result = service.validate_plan_file(plan_path)
 
     assert plans_result == tasks_ops_result
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_returns_warnings_for_missing_plan_id(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    plan_path = _write_plan_without_plan_id(tmp_path)
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+
+    assert result["valid"] is False
+    assert result["errors"] == result["warnings"]
+    assert len(result["warnings"]) == 1
+    assert "real **Plan ID:**" in result["warnings"][0]
+    assert "covers:unknown:*" in result["warnings"][0]
 
 
 @pytest.mark.asyncio

@@ -74,7 +74,11 @@ def validate_plan_cmd(plan_file: str) -> None:
     if not result["valid"]:
         for error in result["errors"]:
             click.echo(f"Error: {error}", err=True)
+        for warning in result.get("warnings", []):
+            click.echo(f"Warning: {warning}", err=True)
         raise click.ClickException("Plan validation failed")
+    for warning in result.get("warnings", []):
+        click.echo(f"Warning: {warning}", err=True)
     click.echo(f"Plan: {result['path']}")
     click.echo(f"Phases: {result['phase_count']}")
     for phase_num, title in result["phases"].items():

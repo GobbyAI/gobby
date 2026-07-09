@@ -294,25 +294,35 @@ See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the entry schema
 and parser-enforced invariants. This skill covers the adversary's emission
 **responsibility**; the schema lives in the contract.
 
+### Plan Identity Precondition
+
+Before any manifest write or approval, verify the plan text outside fenced code
+blocks contains a real `**Plan ID:** <id>` marker. Missing, blank, or literal
+`unknown` Plan IDs are blocking findings because they generate
+`covers:unknown:*` labels. Reject any existing or generated manifest that
+contains a label beginning `covers:unknown:` before writing the manifest or
+approving the plan.
+
 ### Sequence on Clean Review
 
 When no blocking findings remain (zero findings or only nits):
 
-1. Append a `## M1 Task Manifest` section to the end of the plan file with
+1. Re-check the Plan Identity Precondition above.
+2. Append a `## M1 Task Manifest` section to the end of the plan file with
    `kind: manifest` and a YAML block carrying one entry per `kind: deliverable`
    section. The `M1` heading ID is required by the canonical heading regex.
    Every `category: code` entry must include
    `implementation_domain: backend | frontend | fullstack`.
-2. Self-check via `parse_plan(plan_path, parse_mode="expansion")`. Strict
+3. Self-check via `parse_plan(plan_path, parse_mode="expansion")`. Strict
    expansion validates that the manifest is present, schema-correct, and that
    every acceptance item is covered by exactly one entry.
-3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+4. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
    **3 retries**.
-4. If the cap is exhausted in the taskless path, return
+5. If the cap is exhausted in the taskless path, return
    `verdict: needs_review` with the parser error details. Do not approve. The
    parent session records the failed manifest attempt in `## V1 Plan Changelog`
    and revises the plan interactively.
-5. On success, return a structured `verdict: approved` result that documents
+6. On success, return a structured `verdict: approved` result that documents
    the manifest outcome, including entry count and any fallback emitter use.
 
 ### Plan-File Write Scope

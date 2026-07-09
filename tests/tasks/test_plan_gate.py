@@ -73,6 +73,29 @@ Implement.
     return path
 
 
+def _write_missing_plan_id(path: Path) -> Path:
+    """Canonical implementation plan missing its required Plan ID marker."""
+    path.write_text(
+        """# Missing Plan ID
+
+## P1: Setup
+`kind: framing`
+
+### 1.1 Foundation [category: code]
+`kind: deliverable`
+
+Target: `src/foo.py`
+
+Implement.
+
+**Acceptance:**
+- 1.1.1 - Done. file: `src/foo.py`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _write_symbol_change_plan(path: Path, *, targets: str = "Target: `src/service.py`") -> Path:
     path.write_text(
         f"""> **Plan ID:** symbol-change
@@ -197,6 +220,25 @@ def test_planner_spawn_against_clean_plan_succeeds(tmp_path: Path) -> None:
     result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
 
     assert result is None
+
+
+@pytest.mark.parametrize("agent_name", ("planner", "plan-adversary"))
+def test_planning_agent_spawn_rejects_missing_plan_id(
+    tmp_path: Path, agent_name: str
+) -> None:
+    plan = _write_missing_plan_id(tmp_path / "missing-id.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    result = validate_plan_for_agent_spawn(
+        agent_name=agent_name, task_id="t1", task_manager=manager
+    )
+
+    assert result is not None
+    assert result["success"] is False
+    assert result["error"].startswith("PlanValidationError:")
+    assert result["validator_errors"] == result["validator_warnings"]
+    assert "real **Plan ID:**" in result["validator_warnings"][0]
+    assert "covers:unknown:*" in result["validator_warnings"][0]
 
 
 def test_planner_spawn_against_malformed_plan_returns_structured_failure(

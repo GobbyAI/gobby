@@ -19,16 +19,32 @@ from gobby.tasks.expansion._common import (
 def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
     """Validate a plan file against the Plan-Coverage Contract."""
     if not plan_path.exists():
-        return {"valid": False, "errors": [f"Plan file not found: {plan_path}"]}
+        return {
+            "valid": False,
+            "errors": [f"Plan file not found: {plan_path}"],
+            "warnings": [],
+        }
     try:
         plan_doc = parse_plan(plan_path, parse_mode="draft")
     except (OSError, PlanParseError) as exc:
-        return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
+        return {
+            "valid": False,
+            "errors": [f"Plan file is not contract-conforming: {exc}"],
+            "warnings": [],
+        }
+    warnings = list(plan_doc.warnings)
+    if warnings:
+        return {
+            "valid": False,
+            "errors": warnings,
+            "warnings": warnings,
+        }
     deliverables = [section for section in plan_doc.sections if section.kind is Kind.deliverable]
     if not deliverables:
         return {
             "valid": False,
             "errors": [f"Plan file has no kind: deliverable sections: {plan_path}"],
+            "warnings": warnings,
         }
     phases = {
         _contract_phase_number(section.section_id): _clean_contract_section_title(section.title)
@@ -46,12 +62,14 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
                 "src/gobby/install/shared/skills/plan-draft/SKILL.md "
                 "§ 'Phase Heading Syntax'."
             ],
+            "warnings": warnings,
         }
     semantic_lint = lint_plan_document(plan_doc)
     if not semantic_lint.valid:
         return {
             "valid": False,
             "errors": semantic_lint.errors,
+            "warnings": warnings,
             "semantic_lint": semantic_lint.to_dict(),
         }
     return {
@@ -61,6 +79,7 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
         "phases": phases,
         "deliverable_count": len(deliverables),
         "contract_plan": True,
+        "warnings": warnings,
     }
 
 

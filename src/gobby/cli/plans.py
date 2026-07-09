@@ -152,7 +152,12 @@ def validate_plan_command(
     if not result["valid"]:
         for error in result.get("errors", []):
             click.echo(f"Error: {error}", err=True)
+        for warning in result.get("warnings", []):
+            click.echo(f"Warning: {warning}", err=True)
         raise click.ClickException("Plan validation failed")
+
+    for warning in result.get("warnings", []):
+        click.echo(f"Warning: {warning}", err=True)
 
     click.echo(f"Plan: {result['path']}")
     phases = result.get("phases")

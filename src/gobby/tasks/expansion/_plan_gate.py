@@ -67,6 +67,7 @@ def validate_plan_for_agent_spawn(
     from gobby.tasks.expansion._validate import validate_plan_file
 
     result = validate_plan_file(None, plan_path)
+    validator_warnings = list(result.get("warnings", []))
     if result.get("valid"):
         task = _safe_get_task(task_manager, task_id)
         project_id = _task_project_id(task)
@@ -93,10 +94,12 @@ def validate_plan_for_agent_spawn(
         result = {
             "valid": False,
             "errors": sweep.errors,
+            "warnings": validator_warnings,
             "consumer_sweep": sweep.to_dict(),
         }
 
     errors = result.get("errors", [])
+    warnings = result.get("warnings", [])
     error_summary = "; ".join(errors) if errors else "Plan validation failed"
     logger.warning(
         "Refusing %s spawn for task %s: PlanValidationError: %s",
@@ -110,6 +113,8 @@ def validate_plan_for_agent_spawn(
         "plan_file_path": str(plan_path),
         "validator_errors": list(errors),
     }
+    if warnings:
+        payload["validator_warnings"] = list(warnings)
     if "semantic_lint" in result:
         payload["semantic_lint"] = result["semantic_lint"]
     if "consumer_sweep" in result:

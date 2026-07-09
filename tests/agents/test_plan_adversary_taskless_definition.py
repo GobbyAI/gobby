@@ -58,6 +58,9 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
     assert "## V1 Plan Changelog" in agent["instructions"]
     assert "## M1 Task Manifest" in agent["instructions"]
     assert "implementation_domain" in agent["instructions"]
+    assert "PLAN IDENTITY PRECONDITION" in agent["instructions"]
+    assert "**Plan ID:** <id>" in agent["instructions"]
+    assert "covers:unknown:" in agent["instructions"]
     assert "gobby-agents:end_agent_run" in steps["review"]["allowed_mcp_tools"]
 
 

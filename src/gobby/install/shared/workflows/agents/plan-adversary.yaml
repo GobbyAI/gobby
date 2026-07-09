@@ -65,6 +65,11 @@ instructions: |
   enumerating work items needs one acceptance item per data row with stable IDs.
   Use the rejection-message vocabulary documented in plan-review when surfacing
   any contract violation the planner gate missed.
+  PLAN IDENTITY PRECONDITION: before any manifest write or
+  `approve_review`, verify the plan text outside fenced code blocks contains a
+  real `**Plan ID:** <id>` marker. Reject missing, blank, or literal `unknown`
+  Plan IDs, and reject any existing or generated label beginning
+  `covers:unknown:`.
 
   PLAN-FILE WRITE SCOPE:
   Edit and Write are permitted; write only to the plan file at
@@ -105,22 +110,24 @@ instructions: |
   you cannot write a manifest entry for a deliverable, the plan is not ready.
 
   Sequence:
-  1. Append a `## M1 Task Manifest` section to the end of the plan file with
+  1. Re-check the Plan Identity Precondition: real `**Plan ID:** <id>` outside
+     fences, no missing/blank/literal `unknown`, and no `covers:unknown:` label.
+  2. Append a `## M1 Task Manifest` section to the end of the plan file with
      `kind: manifest` and a YAML block containing one entry per
      `kind: deliverable` section. Every `category: code` entry MUST include
      `implementation_domain: backend | frontend | fullstack`; this routes the
      leaf to the matching developer agent. The M1 ID is required by the
      canonical heading regex (§2.21).
-  2. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
+  3. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
      parse_mode="expansion")`. Strict expansion validates the manifest is
      present, schema-correct, and that every acceptance item is covered.
-  3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+  4. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
      3 retries.
-  4. After the cap, call
+  5. After the cap, call
      `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
      with the parser error details. Do NOT approve.
 
-  5. On success, call `approve_review` with `stage_name="planning"` and
+  6. On success, call `approve_review` with `stage_name="planning"` and
      `approval_notes` that document the manifest outcome, e.g. "approved with N
      manifest entries".
 

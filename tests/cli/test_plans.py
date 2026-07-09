@@ -103,6 +103,29 @@ Update docs/demo.md.
     return path
 
 
+def _write_contract_plan_without_plan_id(tmp_path: Path) -> Path:
+    path = tmp_path / "missing-id.md"
+    path.write_text(
+        """# CLI Plan
+
+## P1: Work
+`kind: framing`
+
+### 1.1 Work [category: docs]
+`kind: deliverable`
+
+Target: `docs/demo.md`
+
+Update docs/demo.md.
+
+**Acceptance:**
+- 1.1.1 - Docs exist. file: `docs/demo.md`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _write_register_plan(root: Path, *, name: str = "cli-register-plan") -> Path:
     path = root / ".gobby" / "plans" / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,6 +333,17 @@ def test_validate_command_returns_semantic_lint_errors(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "target-coverage" in result.output
+
+
+def test_validate_command_reports_missing_plan_id_warning(tmp_path: Path) -> None:
+    plan = _write_contract_plan_without_plan_id(tmp_path)
+
+    result = CliRunner().invoke(plans, ["validate", str(plan)])
+
+    assert result.exit_code != 0
+    assert "Error: implementation plans must declare a real **Plan ID:**" in result.output
+    assert "Warning: implementation plans must declare a real **Plan ID:**" in result.output
+    assert "covers:unknown:*" in result.output
 
 
 def test_validate_command_runs_consumer_sweep(

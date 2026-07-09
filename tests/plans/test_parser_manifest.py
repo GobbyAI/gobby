@@ -10,6 +10,7 @@ from typing import get_args
 import pytest
 
 from gobby.plans.parser import (
+    MISSING_PLAN_ID_SENTINEL,
     Kind,
     ManifestEntry,
     ParseMode,
@@ -63,6 +64,25 @@ _MINIMAL_MANIFEST = """
   source_section: "A1"
 """
 
+
+_UNKNOWN_PLAN_ID_MANIFEST = _MINIMAL_MANIFEST.replace(
+    "covers:test-plan", f"covers:{MISSING_PLAN_ID_SENTINEL}"
+)
+
+
+def _plan_without_plan_id(
+    tmp_path: Path,
+    *,
+    deliverables: str = _MINIMAL_DELIVERABLE,
+    manifest_yaml: str = _UNKNOWN_PLAN_ID_MANIFEST,
+    name: str = "plan.md",
+) -> Path:
+    body = deliverables.rstrip() + "\n"
+    if manifest_yaml:
+        body += "\n## M1 Task Manifest\n`kind: manifest`\n\n```yaml\n"
+        body += manifest_yaml.rstrip() + "\n```\n"
+    return _write_plan(tmp_path, body, name)
+
 _TWO_DELIVERABLES = """
 ## A1 Section
 `kind: deliverable`
@@ -111,6 +131,69 @@ def test_parse_mode_signature_accepts_three_values() -> None:
     override = signature.parameters["plan_id_override"]
     assert override.kind is inspect.Parameter.KEYWORD_ONLY
     assert override.default is None
+
+
+def test_missing_plan_id_implementation_plan_passes_draft_with_warning(
+    tmp_path: Path,
+) -> None:
+    plan = _plan_without_plan_id(tmp_path)
+
+    document = parse_plan(plan, parse_mode="draft")
+
+    assert document.plan_id is None
+    assert len(document.warnings) == 1
+    assert "real **Plan ID:**" in document.warnings[0]
+    assert "covers:unknown:*" in document.warnings[0]
+
+
+def test_unknown_plan_id_implementation_plan_passes_draft_with_warning(
+    tmp_path: Path,
+) -> None:
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=_UNKNOWN_PLAN_ID_MANIFEST,
+        plan_id=MISSING_PLAN_ID_SENTINEL,
+    )
+
+    document = parse_plan(plan, parse_mode="draft")
+
+    assert document.plan_id == MISSING_PLAN_ID_SENTINEL
+    assert len(document.warnings) == 1
+    assert "literal 'unknown'" in document.warnings[0]
+
+
+@pytest.mark.parametrize("parse_mode", ("expansion", "strict"))
+def test_missing_plan_id_implementation_plan_fails_final_modes(
+    tmp_path: Path, parse_mode: ParseMode
+) -> None:
+    plan = _plan_without_plan_id(tmp_path)
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode=parse_mode)
+
+    message = str(excinfo.value)
+    assert "real **Plan ID:**" in message
+    assert "covers:unknown:*" in message
+
+
+@pytest.mark.parametrize("parse_mode", ("expansion", "strict"))
+def test_unknown_plan_id_implementation_plan_fails_final_modes(
+    tmp_path: Path, parse_mode: ParseMode
+) -> None:
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=_UNKNOWN_PLAN_ID_MANIFEST,
+        plan_id=MISSING_PLAN_ID_SENTINEL,
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode=parse_mode)
+
+    message = str(excinfo.value)
+    assert "literal 'unknown'" in message
+    assert "covers:unknown:*" in message
 
 
 def test_draft_tolerates_missing_manifest_but_validates_present_one(tmp_path: Path) -> None:
@@ -645,6 +728,7 @@ def test_strategy_plan_does_not_require_manifest(tmp_path: Path) -> None:
     plan = _write_plan(tmp_path, body)
     document = parse_plan(plan, plan_kind=PlanKind.strategy)
     assert document.manifest_entries == ()
+    assert document.warnings == ()
 
 
 def test_manifest_entry_schema_missing_required_field_fails(tmp_path: Path) -> None:

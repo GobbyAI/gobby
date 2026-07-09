@@ -81,6 +81,54 @@ Implement the first behavior.
     return path
 
 
+def _write_plan_without_plan_id(path: Path) -> Path:
+    """Plan with canonical sections but no resolved Plan ID."""
+    path.write_text(
+        """# Missing Plan ID
+
+## P1: Setup
+`kind: framing`
+
+### 1.1 Foundation [category: code]
+`kind: deliverable`
+
+Target: `src/foundation.py`
+
+Implement the first behavior.
+
+**Acceptance:**
+- 1.1.1 - Foundation exists. file: `src/foundation.py`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_plan_with_unknown_plan_id(path: Path) -> Path:
+    """Plan with the literal missing-ID sentinel as its embedded Plan ID."""
+    path.write_text(
+        """> **Plan ID:** unknown
+
+# Unknown Plan ID
+
+## P1: Setup
+`kind: framing`
+
+### 1.1 Foundation [category: code]
+`kind: deliverable`
+
+Target: `src/foundation.py`
+
+Implement the first behavior.
+
+**Acceptance:**
+- 1.1.1 - Foundation exists. file: `src/foundation.py`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _write_plan_with_manual_manifest_category(path: Path) -> Path:
     """Write a plan whose manifest uses the unsupported manual leaf category.
 
@@ -199,6 +247,32 @@ def test_validate_plan_file_accepts_canonical_phase_form(
     assert result["phase_count"] >= 1
     assert result["deliverable_count"] >= 1
     assert 1 in result["phases"]
+    assert result["warnings"] == []
+
+
+@pytest.mark.parametrize(
+    ("writer", "name"),
+    (
+        (_write_plan_without_plan_id, "missing-id.md"),
+        (_write_plan_with_unknown_plan_id, "unknown-id.md"),
+    ),
+)
+def test_validate_plan_file_rejects_missing_or_unknown_plan_id(
+    service: ExpansionService,
+    tmp_path: Path,
+    writer: Any,
+    name: str,
+) -> None:
+    """Return visible warnings and errors for unresolved implementation Plan IDs."""
+    plan_path = writer(tmp_path / name)
+
+    result = service.validate_plan_file(plan_path)
+
+    assert result["valid"] is False
+    assert result["errors"] == result["warnings"]
+    assert len(result["warnings"]) == 1
+    assert "real **Plan ID:**" in result["warnings"][0]
+    assert "covers:unknown:*" in result["warnings"][0]
 
 
 def test_validate_plan_file_returns_semantic_lint_errors(

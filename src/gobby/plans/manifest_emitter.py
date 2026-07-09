@@ -123,7 +123,7 @@ def _emit(path: Path, *, by_actor: str, plan_kind: PlanKind, plan_id: str | None
                 parse_plan(
                     path,
                     plan_kind=plan_kind,
-                    parse_mode="expansion",
+                    parse_mode="draft",
                     plan_id_override=plan_id,
                 )
                 return "noop_existing_valid"
@@ -238,14 +238,14 @@ def _emit_fresh(
         parse_plan(
             path,
             plan_kind=plan_kind,
-            parse_mode="expansion",
+            parse_mode="draft",
             plan_id_override=plan_id,
         )
     except PlanParseError as exc:
         _append_yolo_fallback(
             path,
             by_actor=by_actor,
-            reason=f"synthesized manifest failed expansion validation: {exc}",
+            reason=f"synthesized manifest failed draft validation: {exc}",
         )
         return "fallback_force_approve"
 

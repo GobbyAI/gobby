@@ -51,6 +51,11 @@ instructions: |
   If requirements are insufficient, use `verdict: needs_requirements` and list
   the exact decisions needed.
 
+  PLAN IDENTITY PRECONDITION: before any manifest write or approval, verify the
+  plan text outside fenced code blocks contains a real `**Plan ID:** <id>`
+  marker. Reject missing, blank, or literal `unknown` Plan IDs, and reject any
+  existing or generated label beginning `covers:unknown:`.
+
   If the plan is ready, ensure `## M1 Task Manifest` exists. Write or repair
   the manifest in the plan artifact, then run expansion-mode validation with
   `gobby.plans.parser.parse_plan(plan_path, parse_mode="expansion")` or the

@@ -117,6 +117,7 @@ class PlanDocument:
     framing_headings: tuple[tuple[int, str, int], ...]
     source_lines: tuple[str, ...] = ()
     manifest_entries: tuple[ManifestEntry, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 class PlanParseError(ValueError):
@@ -149,6 +150,13 @@ class _Fence:
     length: int
 
 
+@dataclass(frozen=True)
+class _PlanIdentity:
+    plan_id: str | None
+    source_line: int
+    source: Literal["override", "embedded", "filename", "missing"]
+
+
 def parse_plan(
     path: Path,
     *,
@@ -165,13 +173,21 @@ def parse_plan(
     headings = _collect_headings(lines, mask)
 
     errors: list[tuple[int, str]] = []
-    plan_id = _resolve_document_plan_id(
+    warnings: list[str] = []
+    identity = _resolve_document_plan_id(
         path=path,
         lines=lines,
         mask=mask,
         plan_id_override=plan_id_override,
         errors=errors,
     )
+    plan_id = identity.plan_id
+    identity_warning = _plan_identity_warning(identity, plan_kind=plan_kind)
+    if identity_warning is not None:
+        if parse_mode == "draft":
+            warnings.append(identity_warning)
+        else:
+            errors.append((identity.source_line, identity_warning))
     sections: list[PlanSection] = []
     framing_headings: list[tuple[int, str, int]] = []
     seen_section_ids: set[str] = set()
@@ -268,6 +284,7 @@ def parse_plan(
         framing_headings=tuple(framing_headings),
         source_lines=tuple(lines),
         manifest_entries=manifest_entries,
+        warnings=tuple(warnings),
     )
 
 
@@ -358,13 +375,13 @@ def _resolve_document_plan_id(
     mask: list[bool],
     plan_id_override: str | None,
     errors: list[tuple[int, str]],
-) -> str | None:
+) -> _PlanIdentity:
     embedded = _parse_plan_id(lines, mask)
     if plan_id_override is not None:
         override = _clean_ref(plan_id_override)
         if not override:
             errors.append((1, "plan_id_override must not be blank"))
-            return None
+            return _PlanIdentity(None, 1, "override")
         if embedded is not None and embedded[0] != override:
             errors.append(
                 (
@@ -372,10 +389,24 @@ def _resolve_document_plan_id(
                     f"embedded Plan ID {embedded[0]!r} does not match override {override!r}",
                 )
             )
-        return override
+        return _PlanIdentity(override, 1, "override")
     if embedded is not None:
-        return embedded[0]
-    return _plan_id_from_task_filename(path)
+        return _PlanIdentity(embedded[0], embedded[1], "embedded")
+    filename_plan_id = _plan_id_from_task_filename(path)
+    if filename_plan_id is not None:
+        return _PlanIdentity(filename_plan_id, 1, "filename")
+    return _PlanIdentity(None, 1, "missing")
+
+
+def _plan_identity_warning(identity: _PlanIdentity, *, plan_kind: PlanKind) -> str | None:
+    if plan_kind is not PlanKind.implementation:
+        return None
+    if identity.plan_id and identity.plan_id != MISSING_PLAN_ID_SENTINEL:
+        return None
+    return (
+        "implementation plans must declare a real **Plan ID:**; missing or literal "
+        "'unknown' Plan IDs would produce covers:unknown:* labels"
+    )
 
 
 def _parse_plan_id(lines: list[str], mask: list[bool]) -> tuple[str, int] | None:
