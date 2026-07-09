@@ -163,8 +163,21 @@ async def execute_sdk_query[T](
     options.stderr = lambda line: stderr_lines.append(line)
 
     def _on_retry(attempt: int, error: Exception) -> None:
-        stderr_ctx = f" stderr={stderr_lines}" if stderr_lines else ""
-        logger.warning(f"{operation} failed (attempt {attempt + 1}), retrying: {error}{stderr_ctx}")
+        if stderr_lines:
+            logger.warning(
+                "%s failed (attempt %d), retrying: %s stderr=%s",
+                operation,
+                attempt + 1,
+                error,
+                stderr_lines,
+            )
+        else:
+            logger.warning(
+                "%s failed (attempt %d), retrying: %s",
+                operation,
+                attempt + 1,
+                error,
+            )
         stderr_lines.clear()
 
     def _shutdown_cancellation(error: BaseException) -> ClaudeSDKShutdownCancellation:
@@ -174,23 +187,24 @@ async def execute_sdk_query[T](
             f"{operation} cancelled: Claude SDK process terminated "
             f"[exit_code={exit_code}]" + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
         )
-        logger.info(message)
+        logger.info(
+            "%s cancelled: Claude SDK process terminated [exit_code=%s]%s",
+            operation,
+            exit_code,
+            f"\nCLI stderr:\n{stderr_text}" if stderr_text else "",
+        )
         return ClaudeSDKShutdownCancellation(message)
 
     try:
         return await retry_async(
             query_fn, max_retries=max_retries, delay=retry_delay, on_retry=_on_retry
         )
-    except ExceptionGroup as error:
-        if is_sdk_sigterm_shutdown(error):
-            raise _shutdown_cancellation(error) from error
-        raise
     except Exception as error:
         if is_sdk_sigterm_shutdown(error):
             raise _shutdown_cancellation(error) from error
 
         if isinstance(error, ClaudeSDKProviderFailure):
-            logger.warning(str(error))
+            logger.warning("%s", error)
             raise
 
         if _is_error_result_success(error):
@@ -202,16 +216,19 @@ async def execute_sdk_query[T](
                 + (f" [exit_code={exit_code}]" if exit_code else "")
                 + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else "")
             )
-            logger.warning(message)
+            logger.warning("%s", message)
             raise ClaudeSDKProviderFailure(message, classification="error_result") from error
 
         await asyncio.sleep(0.2)
         exit_code = extract_exit_code(error)
         stderr_text = "\n".join(stderr_lines)
+        stderr_suffix = f"\nCLI stderr:\n{stderr_text}" if stderr_text else " (no stderr captured)"
         logger.error(
-            f"{operation} failed: {error}"
-            + (f" [exit_code={exit_code}]" if exit_code else "")
-            + (f"\nCLI stderr:\n{stderr_text}" if stderr_text else " (no stderr captured)"),
+            "%s failed: %s%s%s",
+            operation,
+            error,
+            f" [exit_code={exit_code}]" if exit_code else "",
+            stderr_suffix,
             exc_info=True,
         )
         raise RuntimeError(

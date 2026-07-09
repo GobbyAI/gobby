@@ -11,7 +11,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
+from gobby.sync.tasks import TaskSyncManager, _compute_path_cache
 from gobby.tasks.state_semantics import is_task_closed
 
 pytestmark = pytest.mark.unit
@@ -69,6 +69,31 @@ def _insert_session(db: HubDatabase, session_id: str, project_id: str) -> None:
         """,
         (session_id, session_id, "test-machine", "test", project_id),
     )
+
+
+class _FailingPathCacheConnection:
+    def execute(self, sql: str, params: tuple[object, ...]) -> object:
+        raise AssertionError("path-cache computation should use cached parent metadata")
+
+
+def test_compute_path_cache_prefers_existing_task_cache() -> None:
+    existing_tasks = {
+        "parent": {
+            "project_id": "project-1",
+            "seq_num": 12,
+            "parent_task_id": None,
+        }
+    }
+
+    path_cache = _compute_path_cache(
+        _FailingPathCacheConnection(),
+        "project-1",
+        13,
+        "parent",
+        existing_tasks,
+    )
+
+    assert path_cache == "12.13"
 
 
 class TestTaskSyncManager:

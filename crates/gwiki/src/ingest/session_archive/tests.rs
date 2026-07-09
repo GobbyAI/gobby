@@ -279,11 +279,12 @@ fn sync_session_archives_skips_connections_enrichment_when_disabled() {
     let wiki_dir = vault.join("session_wiki");
     fs::create_dir(&wiki_dir).expect("wiki dir");
     let external_id = "bbbbcccc-dddd-eeee-ffff-000011112222";
-    let body = "## Summary\n\nLinked [[Connections]] should stay inline only.\n\n## Key Claims\n\n- Enrichment is disabled.\n";
+    let body = "## Summary\n\nLinked [[session-index]] should stay inline only.\n\n## Key Claims\n\n- Connections enrichment is disabled.\n";
     assert!(
         ConnectionsEnricher::resolve().enrich_body(body).is_some(),
         "fixture must prove enrichment would add a connections section"
     );
+    ConnectionsEnricher::reset_resolve_count_for_test();
     write_session_wiki(&wiki_dir, external_id, body);
 
     let mut store = MemoryWikiStore::default();
@@ -311,9 +312,11 @@ fn sync_session_archives_skips_connections_enrichment_when_disabled() {
             .join(format!("{}.md", record.id)),
     )
     .expect("derived markdown");
-    assert!(derived.contains("Linked [[Connections]] should stay inline only."));
+    assert_eq!(ConnectionsEnricher::resolve_count_for_test(), 0);
+    assert!(derived.contains("Linked [[session-index]] should stay inline only."));
+    assert!(!derived.contains("[[Connections]]"), "{derived}");
     assert!(!derived.contains("## Connections"), "{derived}");
-    assert!(!derived.contains("\n- [[Connections]]"), "{derived}");
+    assert!(!derived.contains("\n- [[session-index]]"), "{derived}");
 }
 
 #[test]

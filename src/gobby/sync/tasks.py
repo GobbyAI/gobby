@@ -109,22 +109,29 @@ def _compute_path_cache(
     project_id: str | None,
     seq_num: int,
     parent_task_id: str | None,
+    existing_tasks: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     path_parts = [str(seq_num)]
     current_parent = parent_task_id
     for _ in range(100):
         if not current_parent:
             break
-        if project_id is None:
-            parent_row = conn.execute(
-                "SELECT seq_num, parent_task_id FROM tasks WHERE project_id IS NULL AND id = %s",
-                (current_parent,),
-            ).fetchone()
-        else:
-            parent_row = conn.execute(
-                "SELECT seq_num, parent_task_id FROM tasks WHERE project_id = %s AND id = %s",
-                (project_id, current_parent),
-            ).fetchone()
+        parent_row = None
+        if existing_tasks is not None:
+            cached_parent = existing_tasks.get(current_parent)
+            if cached_parent and cached_parent["project_id"] == project_id:
+                parent_row = cached_parent
+        if parent_row is None:
+            if project_id is None:
+                parent_row = conn.execute(
+                    "SELECT seq_num, parent_task_id FROM tasks WHERE project_id IS NULL AND id = %s",
+                    (current_parent,),
+                ).fetchone()
+            else:
+                parent_row = conn.execute(
+                    "SELECT seq_num, parent_task_id FROM tasks WHERE project_id = %s AND id = %s",
+                    (project_id, current_parent),
+                ).fetchone()
         if not parent_row or parent_row["seq_num"] is None:
             break
         path_parts.insert(0, str(parent_row["seq_num"]))
@@ -354,7 +361,7 @@ class TaskSyncManager:
             # Bulk-load existing task metadata in one query to avoid per-task SELECTs
             existing_tasks: dict[str, dict[str, Any]] = {}
             for row in self.db.fetchall(
-                "SELECT id, updated_at, seq_num, path_cache, project_id, "
+                "SELECT id, updated_at, seq_num, path_cache, project_id, parent_task_id, "
                 "claimed_by_session_id, created_in_session_id, closed_in_session_id "
                 "FROM tasks"
             ):
@@ -363,6 +370,7 @@ class TaskSyncManager:
                     "seq_num": row["seq_num"],
                     "path_cache": row["path_cache"],
                     "project_id": row["project_id"],
+                    "parent_task_id": row["parent_task_id"],
                     "claimed_by_session_id": row["claimed_by_session_id"],
                     "created_in_session_id": row["created_in_session_id"],
                     "closed_in_session_id": row["closed_in_session_id"],
@@ -566,6 +574,7 @@ class TaskSyncManager:
                                 task_project_id,
                                 final_seq,
                                 synced_values.get("parent_task_id"),
+                                existing_tasks,
                             )
 
                             # INSERT with all synced fields
@@ -575,6 +584,16 @@ class TaskSyncManager:
                                 f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
                                 (task_id, *synced_values.values()),
                             )
+                            existing_tasks[task_id] = {
+                                "updated_at": synced_values["updated_at"],
+                                "seq_num": synced_values["seq_num"],
+                                "path_cache": synced_values["path_cache"],
+                                "project_id": synced_values["project_id"],
+                                "parent_task_id": synced_values["parent_task_id"],
+                                "claimed_by_session_id": synced_values["claimed_by_session_id"],
+                                "created_in_session_id": synced_values["created_in_session_id"],
+                                "closed_in_session_id": synced_values["closed_in_session_id"],
+                            }
                             imported_count += 1
                         else:
                             # Existing task: update synced fields while preserving local state.
@@ -583,6 +602,17 @@ class TaskSyncManager:
                                 f"UPDATE tasks SET {set_clause} WHERE id = %s",
                                 (*synced_values.values(), task_id),
                             )
+                            existing_tasks[task_id] = {
+                                **existing_row,
+                                "updated_at": synced_values["updated_at"],
+                                "seq_num": synced_values["seq_num"],
+                                "path_cache": synced_values["path_cache"],
+                                "project_id": synced_values["project_id"],
+                                "parent_task_id": synced_values["parent_task_id"],
+                                "claimed_by_session_id": synced_values["claimed_by_session_id"],
+                                "created_in_session_id": synced_values["created_in_session_id"],
+                                "closed_in_session_id": synced_values["closed_in_session_id"],
+                            }
                             updated_count += 1
 
                     # Collect dependencies for Phase 2

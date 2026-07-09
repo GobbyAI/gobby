@@ -112,22 +112,27 @@ instructions: |
   Sequence:
   1. Re-check the Plan Identity Precondition: real `**Plan ID:** <id>` outside
      fences, no missing/blank/literal `unknown`, and no `covers:unknown:` label.
-  2. Append a `## M1 Task Manifest` section to the end of the plan file with
+  2. If the Plan Identity Precondition fails, stop manifest emission immediately:
+     call `reject_review(stage_name="planning", rejection_notes=...,
+     signoff_summary=...)`. Begin rejection notes with `Plan Identity
+     Precondition failed: <details>`. Do NOT edit the plan file, do NOT append
+     a manifest, and do NOT call `approve_review`.
+  3. Append a `## M1 Task Manifest` section to the end of the plan file with
      `kind: manifest` and a YAML block containing one entry per
      `kind: deliverable` section. Every `category: code` entry MUST include
      `implementation_domain: backend | frontend | fullstack`; this routes the
      leaf to the matching developer agent. The M1 ID is required by the
      canonical heading regex (§2.21).
-  3. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
+  4. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
      parse_mode="expansion")`. Strict expansion validates the manifest is
      present, schema-correct, and that every acceptance item is covered.
-  4. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+  5. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
      3 retries.
-  5. After the cap, call
+  6. After the cap, call
      `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
      with the parser error details. Do NOT approve.
 
-  6. On success, call `approve_review` with `stage_name="planning"` and
+  7. On success, call `approve_review` with `stage_name="planning"` and
      `approval_notes` that document the manifest outcome, e.g. "approved with N
      manifest entries".
 

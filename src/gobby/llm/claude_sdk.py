@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 from claude_agent_sdk import (
@@ -84,6 +84,7 @@ class ClaudeSDKClient:
                 nonlocal captured_usage
                 result_text = ""
                 message_count = 0
+                attempt_usage: dict[str, int] | None = None
                 rate_limit_info: Any | None = None
                 async for message in query(prompt=prompt, options=options):
                     message_count += 1
@@ -113,13 +114,14 @@ class ClaudeSDKClient:
                             result_text = message.result
                         usage = normalize_claude_usage(getattr(message, "usage", None))
                         if usage is not None:
-                            captured_usage = usage
+                            attempt_usage = usage
                 if message_count == 0:
                     self.logger.warning("generate_text: No messages received from Claude SDK")
                 elif not result_text:
                     self.logger.warning(
                         "generate_text: %d messages but no text content", message_count
                     )
+                captured_usage = attempt_usage
                 return result_text
 
             result: str = await execute_sdk_query(
@@ -180,9 +182,13 @@ class ClaudeSDKClient:
         operation = f"generate_agentic[{caller}]" if caller else "generate_agentic"
 
         async def _run_query() -> str:
-            nonlocal captured_usage, tool_use_count, turn_count
+            nonlocal captured_usage, tool_breakdown, tool_use_count, turn_count
             result_text = ""
             message_count = 0
+            attempt_usage: dict[str, int] | None = None
+            attempt_tool_breakdown: dict[str, int] = {}
+            attempt_tool_use_count = 0
+            attempt_turn_count = 0
             rate_limit_info: Any | None = None
             try:
                 async for message in query(prompt=prompt, options=options):
@@ -191,29 +197,35 @@ class ClaudeSDKClient:
                     if event_rate_limit is not None:
                         rate_limit_info = event_rate_limit
                     if isinstance(message, AssistantMessage):
-                        turn_count += 1
+                        attempt_turn_count += 1
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 result_text += block.text
                             elif isinstance(block, ToolUseBlock):
-                                tool_use_count += 1
-                                tool_breakdown[block.name] = tool_breakdown.get(block.name, 0) + 1
+                                attempt_tool_use_count += 1
+                                attempt_tool_breakdown[block.name] = (
+                                    attempt_tool_breakdown.get(block.name, 0) + 1
+                                )
                     elif isinstance(message, ResultMessage):
                         raise_for_error_result(message, operation, rate_limit_info=rate_limit_info)
                         if message.result:
                             result_text = message.result
                         usage = normalize_claude_usage(getattr(message, "usage", None))
                         if usage is not None:
-                            captured_usage = usage
+                            attempt_usage = usage
             except Exception as exc:  # noqa: BLE001 - re-raised unless max-turns
                 if is_max_turns_error(exc) and result_text.strip():
+                    captured_usage = attempt_usage
+                    tool_breakdown = attempt_tool_breakdown
+                    tool_use_count = attempt_tool_use_count
+                    turn_count = attempt_turn_count
                     self.logger.info(
                         "generate_agentic reached max_turns=%s; returning accumulated "
                         "text (%d chars, %d turns, %d tool uses)",
                         max_turns,
                         len(result_text),
-                        turn_count,
-                        tool_use_count,
+                        attempt_turn_count,
+                        attempt_tool_use_count,
                     )
                     return result_text
                 raise
@@ -223,6 +235,10 @@ class ClaudeSDKClient:
                 self.logger.warning(
                     "generate_agentic: %d messages but no text content", message_count
                 )
+            captured_usage = attempt_usage
+            tool_breakdown = attempt_tool_breakdown
+            tool_use_count = attempt_tool_use_count
+            turn_count = attempt_turn_count
             return result_text
 
         raw_text: str = await execute_sdk_query(
@@ -367,7 +383,7 @@ class ClaudeSDKClient:
             cli_path=cli_path,
         )
 
-        async def _message_generator() -> Any:
+        async def _message_generator() -> AsyncIterator[dict[str, Any]]:
             yield {
                 "type": "user",
                 "message": {

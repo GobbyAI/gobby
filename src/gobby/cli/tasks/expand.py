@@ -8,6 +8,10 @@ from typing import NoReturn
 
 import click
 
+from gobby.cli._plan_validation_output import (
+    emit_plan_validation_messages,
+    raise_plan_validation_failed,
+)
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.config.app import load_config
 from gobby.llm import LLMService
@@ -72,13 +76,8 @@ def validate_plan_cmd(plan_file: str) -> None:
         plan_path = Path.cwd() / plan_path
     result = service.validate_plan_file(plan_path)
     if not result["valid"]:
-        for error in result["errors"]:
-            click.echo(f"Error: {error}", err=True)
-        for warning in result.get("warnings", []):
-            click.echo(f"Warning: {warning}", err=True)
-        raise click.ClickException("Plan validation failed")
-    for warning in result.get("warnings", []):
-        click.echo(f"Warning: {warning}", err=True)
+        raise_plan_validation_failed(result)
+    emit_plan_validation_messages({"warnings": result.get("warnings")})
     click.echo(f"Plan: {result['path']}")
     click.echo(f"Phases: {result['phase_count']}")
     for phase_num, title in result["phases"].items():

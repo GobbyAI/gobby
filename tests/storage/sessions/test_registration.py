@@ -206,6 +206,33 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
     assert type(params[8]) is bool
 
 
+def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:
+    session = _session_stub()
+    session.terminal_context = {"tmux_pane": "%1"}
+    conn = _CaptureConnection()
+
+    session_upsert.update_existing_session(
+        _StaticSessionGetter(session),
+        conn,
+        session,
+        title=None,
+        title_source=None,
+        transcript_path=None,
+        git_branch=None,
+        parent_session_id=None,
+        terminal_context_json="{not-json",
+        workflow_name=None,
+        is_local=None,
+        sandbox_enabled=None,
+        sandbox_policy_hash=None,
+        now="2026-05-22T00:00:01+00:00",
+    )
+
+    params = conn.calls[0][1]
+
+    assert params[5] is None
+
+
 class TestSessionManagerRegistration:
     """Tests split from the SessionManager storage monolith."""
 

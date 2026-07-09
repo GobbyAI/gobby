@@ -17,6 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.tasks.expansion._validate import validate_plan_file
 
+from ._plan_validation_output import emit_plan_validation_messages, raise_plan_validation_failed
 from .utils import resolve_project_ref
 
 _ROOT_TASK_REF_RE = re.compile(r"^\s*root_task_ref\s*:\s*(?P<value>.+?)\s*$")
@@ -150,14 +151,9 @@ def validate_plan_command(
         include_tests=include_test_consumers,
     )
     if not result["valid"]:
-        for error in result.get("errors", []):
-            click.echo(f"Error: {error}", err=True)
-        for warning in result.get("warnings", []):
-            click.echo(f"Warning: {warning}", err=True)
-        raise click.ClickException("Plan validation failed")
+        raise_plan_validation_failed(result)
 
-    for warning in result.get("warnings", []):
-        click.echo(f"Warning: {warning}", err=True)
+    emit_plan_validation_messages({"warnings": result.get("warnings")})
 
     click.echo(f"Plan: {result['path']}")
     phases = result.get("phases")

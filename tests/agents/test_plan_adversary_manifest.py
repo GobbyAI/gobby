@@ -55,13 +55,45 @@ class TestManifestEmissionOnApproval:
     def test_manifest_emission_precedes_review_approval(self, agent: AgentDefinitionBody) -> None:
         """Manifest write must come BEFORE the approval call in instruction order."""
         instructions = agent.instructions or ""
-        manifest_index = instructions.find("M1 Task Manifest")
-        approval_index = instructions.find("approve_review")
+        manifest_index = instructions.find("Append a `## M1 Task Manifest`")
+        approval_index = instructions.find("On success, call `approve_review`")
         assert manifest_index >= 0
         assert approval_index >= 0
         assert manifest_index < approval_index, (
             "manifest emission must be described before review approval in instructions"
         )
+
+    def test_invalid_plan_identity_rejects_before_manifest_write(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        """Identity failure must stop before any manifest append."""
+        instructions = agent.instructions or ""
+        normalized = " ".join(instructions.split())
+        guard_index = normalized.find("If the Plan Identity Precondition fails")
+        reject_index = normalized.find("Plan Identity Precondition failed")
+        manifest_index = normalized.find("Append a `## M1 Task Manifest`")
+        assert guard_index >= 0
+        assert reject_index >= 0
+        assert manifest_index >= 0
+        assert reject_index < manifest_index
+        identity_guard = normalized[guard_index:manifest_index]
+        assert "reject_review" in identity_guard
+        assert "Do NOT edit the" in identity_guard
+        assert "do NOT call `approve_review`" in identity_guard
+
+    def test_raw_instruction_order_keeps_identity_guard_before_manifest(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        instructions = agent.instructions or ""
+        manifest_index = instructions.find("Append a `## M1 Task Manifest`")
+        reject_index = instructions.find("If the Plan Identity Precondition fails")
+        assert reject_index >= 0
+        assert manifest_index >= 0
+        assert reject_index < manifest_index
+        identity_guard = instructions[reject_index:manifest_index]
+        assert "reject_review" in identity_guard
+        assert "Do NOT edit the" in identity_guard
+        assert "do NOT call `approve_review`" in identity_guard
 
     def test_review_step_does_not_block_review_approval(self, agent: AgentDefinitionBody) -> None:
         """Sanity: the existing review approval wiring stays intact."""

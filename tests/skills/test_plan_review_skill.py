@@ -107,10 +107,11 @@ class TestPlanReviewContent:
             assert check in body, f"Missing gobby-specific check: {check}"
 
     def test_plan_identity_precondition_blocks_unknown_covers(self, body: str) -> None:
+        normalized = " ".join(body.split())
         assert "Plan Identity Precondition" in body
         assert "**Plan ID:** <id>" in body
         assert "outside fenced code" in body
-        assert "literal\n`unknown`" in body
+        assert "literal `unknown`" in normalized
         assert "covers:unknown:" in body
 
     # --- escalation ---------------------------------------------------------

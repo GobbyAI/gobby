@@ -318,6 +318,35 @@ class TestExecuteSdkQuery:
             for record in caplog.records
         )
 
+    @pytest.mark.asyncio
+    async def test_non_sigterm_exception_group_gets_diagnostics(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Non-shutdown ExceptionGroups should follow the normal diagnostics path."""
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = MockClaudeAgentOptions()
+        caplog.clear()
+
+        async def grouped_failure() -> str:
+            raise ExceptionGroup("sdk failure", [RuntimeError("boom")])
+
+        with (
+            patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock),
+            caplog.at_level(logging.ERROR, logger="gobby.llm.claude"),
+            pytest.raises(RuntimeError, match="generate_json failed"),
+        ):
+            await execute_sdk_query(
+                "generate_json",
+                grouped_failure,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=0,
+                retry_delay=0.01,
+            )
+
+        assert "generate_json failed" in caplog.text
+
 
 # ─── _prepare_image_data tests ──────────────────────────────────────────
 
@@ -424,6 +453,36 @@ class TestGenerateText:
         assert captured_kwargs[0]["allowed_tools"] == []
 
     @pytest.mark.asyncio
+    async def test_generate_text_retry_discards_failed_attempt_usage(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        attempts = 0
+
+        async def mock_query(prompt: str, options: object) -> object:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                yield MockResultMessage(
+                    "partial",
+                    usage={"input_tokens": 10, "output_tokens": 5},
+                )
+                raise RuntimeError("transient network reset")
+            yield MockResultMessage("done")
+
+        with (
+            mock_claude_sdk(mock_query),
+            patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider.generate_text_result("Generate text")
+
+        assert attempts == 2
+        assert result.text == "done"
+        assert result.usage is None
+
+    @pytest.mark.asyncio
     async def test_generate_text_sdk_omits_reasoning_effort_when_auto_or_unset(
         self, claude_config: DaemonConfig
     ) -> None:
@@ -491,6 +550,54 @@ class TestGenerateAgentic:
         assert result.text == "done"
         assert captured_kwargs[0]["allowed_tools"] == ["Read", "Grep", "Glob"]
         assert "Bash" not in captured_kwargs[0]["allowed_tools"]
+
+    @pytest.mark.asyncio
+    async def test_generate_agentic_retry_discards_failed_attempt_counters(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        attempts = 0
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                yield MockAssistantMessage(
+                    [MockTextBlock("partial"), MockToolUseBlock("tool-1", "Read", {})]
+                )
+                raise RuntimeError("transient network reset")
+            yield MockAssistantMessage([MockTextBlock("done")])
+
+        async def retry_once(
+            _operation: str,
+            query_fn: Any,
+            _options: object,
+            _logger: logging.Logger,
+            **_kwargs: object,
+        ) -> str:
+            try:
+                await query_fn()
+            except RuntimeError:
+                pass
+            return await query_fn()
+
+        with (
+            mock_claude_sdk(mock_query),
+            patch("gobby.llm.claude_sdk.execute_sdk_query", side_effect=retry_once),
+        ):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider.generate_agentic(
+                system_prompt=None,
+                prompt="Investigate",
+                project_path="/repo",
+            )
+
+        assert attempts == 2
+        assert result.text == "done"
+        assert result.turns == 1
+        assert result.tool_use_count == 0
+        assert result.tools == {}
 
 
 class TestGenerateJson:

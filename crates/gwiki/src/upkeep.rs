@@ -1719,6 +1719,11 @@ mod tests {
         );
         write_file(
             root,
+            "knowledge/concepts/claude-concept.md",
+            "---\ntitle: \"Existing Claude Concept\"\n---\n\n# Existing Claude Concept\n",
+        );
+        write_file(
+            root,
             "knowledge/concepts/agents.md",
             "---\ntitle: \"Agents\"\n---\n\n# Agents\n",
         );
@@ -1734,9 +1739,16 @@ mod tests {
         .expect("upkeep run");
 
         assert!(root.join("knowledge/concepts/claude-concept.md").exists());
+        assert!(root.join("knowledge/concepts/claude-concept-2.md").exists());
         assert!(root.join("knowledge/concepts/agents-concept.md").exists());
         assert!(!root.join("knowledge/concepts/claude.md").exists());
         assert!(!root.join("knowledge/concepts/agents.md").exists());
+        let migrated = fs::read_to_string(root.join("knowledge/concepts/claude-concept-2.md"))
+            .expect("migrated claude page");
+        assert!(migrated.contains("title: \"Claude\""), "{migrated}");
+        let existing = fs::read_to_string(root.join("knowledge/concepts/claude-concept.md"))
+            .expect("existing claude concept page");
+        assert!(existing.contains("Existing Claude Concept"), "{existing}");
     }
 
     #[test]

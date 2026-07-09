@@ -48,7 +48,7 @@ def update_existing_session(
     sandbox_policy_hash: str | None,
     now: datetime,
 ) -> Session:
-    terminal_context_update_json = terminal_context_json
+    terminal_context_update_json = None
     incoming_terminal_context = parse_terminal_context_value(terminal_context_json)
     if incoming_terminal_context is not None:
         merged_terminal_context = merge_terminal_context(

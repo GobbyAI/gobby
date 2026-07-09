@@ -21,6 +21,9 @@ const MAX_ENTITY_CHARS: usize = 64;
 #[cfg(any(feature = "ai", test))]
 const EXTRACTION_BODY_BUDGET: usize = 6_000;
 
+#[cfg(test)]
+static RESOLVE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Per-batch Connections enricher.
 ///
 /// Construct once with [`ConnectionsEnricher::resolve`]. The deterministic
@@ -42,10 +45,28 @@ struct AiRouted {
 }
 
 impl ConnectionsEnricher {
+    #[cfg(test)]
+    pub(crate) fn reset_resolve_count_for_test() {
+        RESOLVE_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_count_for_test() -> usize {
+        RESOLVE_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    fn count_resolve_for_test() {
+        RESOLVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Resolve AI config once for the whole sync batch. AI being unresolvable
     /// never disables the enricher — it degrades to the inline-link layer.
     #[cfg(feature = "ai")]
     pub(crate) fn resolve() -> Self {
+        #[cfg(test)]
+        Self::count_resolve_for_test();
+
         use gobby_core::ai::effective_route;
         use gobby_core::ai::generation::{
             GenerationTier, profile_for_tier, resolve_direct_generation_target,
@@ -87,6 +108,9 @@ impl ConnectionsEnricher {
 
     #[cfg(not(feature = "ai"))]
     pub(crate) fn resolve() -> Self {
+        #[cfg(test)]
+        Self::count_resolve_for_test();
+
         Self {}
     }
 
