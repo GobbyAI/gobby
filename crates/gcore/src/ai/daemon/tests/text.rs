@@ -98,6 +98,47 @@ fn configured_binding_profile_replaces_feature_low_default() {
 }
 
 #[test]
+fn lopsided_binding_falls_back_to_profile_routing() {
+    // A direct-route binding (api_base + model, no provider) forced onto the
+    // daemon route must not be forwarded as explicit routing: the daemon 400s
+    // a lone model ("provider and model must be supplied together"), which
+    // degraded whole codewiki runs to AST-only pages (#17778). The partial
+    // pair is dropped and profile routing wins.
+    let (port, request) = spawn_server(r#"{"text":"ok"}"#);
+    let home = temp_home();
+    let _env = EnvGuard::set_home(home.path());
+    write_daemon_files(home.path(), port, "text-token");
+    let mut cfg = test_context(Some("project-123"));
+    cfg.bindings.text_generate.provider = None;
+    cfg.bindings.text_generate.model = Some("qwen2.5-vl-7b-instruct".to_string());
+
+    generate_via_daemon(&cfg, "Model without provider", None).unwrap();
+    let request = request.join().unwrap().unwrap();
+    let body = request_body_json(&request);
+
+    assert!(body.get("provider").is_none());
+    assert!(body.get("model").is_none());
+    assert_eq!(body["profile"], "feature_low");
+
+    // Provider-only is the mirror image and follows the same fallback; a
+    // configured binding profile still supersedes the feature_low default.
+    let (port, request) = spawn_server(r#"{"text":"ok"}"#);
+    write_daemon_files(home.path(), port, "text-token");
+    let mut cfg = test_context(None);
+    cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+    cfg.bindings.text_generate.model = None;
+    cfg.bindings.text_generate.profile = Some("feature_mid".to_string());
+
+    generate_via_daemon(&cfg, "Provider without model", None).unwrap();
+    let request = request.join().unwrap().unwrap();
+    let body = request_body_json(&request);
+
+    assert!(body.get("provider").is_none());
+    assert!(body.get("model").is_none());
+    assert_eq!(body["profile"], "feature_mid");
+}
+
+#[test]
 fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
     use crate::ai::generation::generate_one_shot_pinned;
     use crate::config::AiRouting;

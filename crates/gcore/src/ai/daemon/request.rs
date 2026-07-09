@@ -67,8 +67,14 @@ pub(super) fn text_request_body(
     options: TextRequestOptions<'_>,
 ) -> Value {
     let mut body = Map::new();
-    let provider = non_empty(options.provider);
-    let model = non_empty(options.model);
+    // The daemon honors explicit routing only as a provider+model pair; a
+    // partial binding (e.g. a direct-route api_base+model entry with no
+    // provider) cannot be honored explicitly and would 400 the whole run, so
+    // it falls back to profile routing instead.
+    let (provider, model) = match (non_empty(options.provider), non_empty(options.model)) {
+        (Some(provider), Some(model)) => (Some(provider), Some(model)),
+        _ => (None, None),
+    };
     let candidates = options
         .candidates
         .filter(|candidates| !candidates.is_empty());
