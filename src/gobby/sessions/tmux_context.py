@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
 
+from gobby import terminal_context as terminal_context_helpers
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
+
+merge_terminal_context = terminal_context_helpers.merge_terminal_context
+parse_terminal_context_value = terminal_context_helpers.parse_terminal_context_value
+terminal_context_has_tmux_target = terminal_context_helpers.terminal_context_has_tmux_target
 
 
 def parse_tmux_socket_path(tmux_env: str | None) -> str | None:
@@ -16,23 +20,6 @@ def parse_tmux_socket_path(tmux_env: str | None) -> str | None:
         return None
     socket_path = tmux_env.split(",", 1)[0].strip()
     return socket_path or None
-
-
-def parse_terminal_context_value(
-    terminal_context: Mapping[str, Any] | str | None,
-) -> dict[str, Any] | None:
-    """Normalize stored terminal context from either JSON text or a mapping."""
-    if not terminal_context:
-        return None
-    if isinstance(terminal_context, str):
-        try:
-            parsed = json.loads(terminal_context)
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return None
-        return parsed if isinstance(parsed, dict) else None
-    if isinstance(terminal_context, Mapping):
-        return dict(terminal_context)
-    return None
 
 
 def get_tmux_socket_path(terminal_context: Mapping[str, Any] | None) -> str | None:

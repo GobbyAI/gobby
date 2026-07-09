@@ -98,6 +98,27 @@ def _register_compact_self(
     return registry, tmux_manager
 
 
+def _register_compact_self_with_manager(
+    session_manager: MagicMock,
+    tmux_send_keys_returns: bool = True,
+) -> tuple[_TestRegistry, MagicMock]:
+    registry = _TestRegistry(name="test", description="test")
+    agent_run_manager = MagicMock()
+    agent_run_manager.get_by_session.return_value = None
+
+    tmux_manager = MagicMock()
+    tmux_manager.send_keys = AsyncMock(return_value=tmux_send_keys_returns)
+    tmux_manager.capture_pane = AsyncMock(return_value="")
+
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+        return_value=agent_run_manager,
+    ):
+        register_terminal_tools(registry, session_manager, tmux_manager)
+
+    return registry, tmux_manager
+
+
 def _call_compact_self(registry: _TestRegistry, tmux_manager: MagicMock, **kwargs: Any) -> Any:
     """Invoke compact_self through the registry with tmux context patched."""
     compact_self = registry.get_tool("compact_self")
@@ -273,6 +294,58 @@ class TestCompactSelfTerminalPath:
         assert tmux.send_keys.await_args_list == [
             call("%12", "Escape", literal=False),
             call("%12", "/compress\n", literal=True),
+        ]
+
+    def test_current_session_backfills_tmux_context_from_same_external_id_sibling(
+        self,
+    ) -> None:
+        current = _make_terminal_session("claude", tmux_pane=None)
+        current.id = "s1"
+        current.external_id = "shared-external"
+        current.machine_id = "machine-1"
+        current.project_id = "project-1"
+        current.terminal_context = {"cwd": "/work/repos/gobby"}
+        sibling = _make_terminal_session("claude", tmux_pane="%44")
+        sibling.id = "sibling-session"
+        sibling.external_id = "shared-external"
+        sibling.machine_id = "machine-1"
+        sibling.project_id = "project-1"
+        sessions_by_id = {"s1": current}
+
+        session_manager = MagicMock()
+        session_manager.get.side_effect = lambda session_id: sessions_by_id.get(session_id)
+        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
+        session_manager.find_by_external_id_all_sources.return_value = [current, sibling]
+
+        def backfill_terminal_context(
+            session_id: str,
+            terminal_context: dict[str, Any],
+        ) -> tuple[MagicMock, bool]:
+            updated = _make_terminal_session("claude", tmux_pane="%44")
+            updated.id = session_id
+            updated.external_id = current.external_id
+            updated.machine_id = current.machine_id
+            updated.project_id = current.project_id
+            updated.terminal_context = {**current.terminal_context, **terminal_context}
+            sessions_by_id[session_id] = updated
+            return updated, True
+
+        session_manager.backfill_terminal_context.side_effect = backfill_terminal_context
+        registry, tmux = _register_compact_self_with_manager(session_manager)
+
+        result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is True
+        assert result["command"] == "/compact"
+        assert sessions_by_id["s1"].terminal_context["cwd"] == "/work/repos/gobby"
+        assert sessions_by_id["s1"].terminal_context["tmux_pane"] == "%44"
+        session_manager.backfill_terminal_context.assert_called_once_with(
+            "s1",
+            sibling.terminal_context,
+        )
+        assert tmux.send_keys.await_args_list == [
+            call("%44", "Escape", literal=False),
+            call("%44", "/compact\n", literal=True),
         ]
 
     def test_terminal_session_marks_continuation_before_slash_command(self) -> None:

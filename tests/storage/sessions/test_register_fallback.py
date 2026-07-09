@@ -189,6 +189,69 @@ def test_register_existing_session_backfills_terminal_context(
     assert updated.workflow_name == "developer"
 
 
+def test_register_existing_session_merges_cwd_without_losing_tmux_context(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    original_context = {
+        "parent_pid": 12345,
+        "tmux_pane": "%7",
+        "tmux_socket_path": "/tmp/tmux-501/gobby",
+    }
+    created = session_mgr.register(
+        external_id="existing-terminal-session-with-cwd",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        terminal_context=original_context,
+    )
+
+    updated = session_mgr.register(
+        external_id="existing-terminal-session-with-cwd",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby"},
+    )
+
+    assert updated.id == created.id
+    assert updated.terminal_context == {
+        **original_context,
+        "cwd": "/work/repos/gobby",
+    }
+
+
+def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    weak = session_mgr.register(
+        external_id="recover-terminal-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        terminal_context={"cwd": "/work/repos/gobby"},
+    )
+    tmux_capable = session_mgr.register(
+        external_id="recover-terminal-session",
+        machine_id="machine-1",
+        source="claude",
+        project_id=project_id,
+        terminal_context={"tmux_pane": "%8", "tmux_socket_path": "/tmp/tmux-501/gobby"},
+    )
+
+    recovered = session_mgr.recover_session(
+        external_id="recover-terminal-session",
+        source="codex",
+        machine_id="machine-1",
+        project_id=project_id,
+    )
+
+    assert recovered is not None
+    assert recovered.id == tmux_capable.id
+    assert recovered.id != weak.id
+
+
 def test_register_raises_on_storage_failure(
     session_mgr: SessionManager,
     project_id: str,

@@ -63,6 +63,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -209,6 +210,72 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
+def _backfill_tmux_context_from_sibling(
+    session_id: str,
+    session: Any,
+    session_manager: SessionManager,
+) -> Any | None:
+    """Copy tmux context from a same-identity terminal sibling into session_id."""
+    external_id = getattr(session, "external_id", None)
+    machine_id = getattr(session, "machine_id", None)
+    project_id = getattr(session, "project_id", None)
+    if not all(isinstance(value, str) and value for value in (external_id, machine_id, project_id)):
+        return None
+
+    finder = getattr(session_manager, "find_by_external_id_all_sources", None)
+    if not callable(finder):
+        return None
+
+    try:
+        candidates = finder(
+            external_id=external_id,
+            machine_id=machine_id,
+            project_id=project_id,
+            session_type="terminal",
+        )
+    except Exception as exc:
+        logger.debug(
+            "Failed finding sibling terminal sessions for compact_self session %s: %s",
+            session_id,
+            exc,
+            exc_info=True,
+        )
+        return None
+
+    for candidate in candidates or ():
+        if getattr(candidate, "id", None) == session_id:
+            continue
+        if getattr(candidate, "session_type", "terminal") != "terminal":
+            continue
+        if (
+            getattr(candidate, "external_id", None) != external_id
+            or getattr(candidate, "machine_id", None) != machine_id
+            or getattr(candidate, "project_id", None) != project_id
+        ):
+            continue
+
+        sibling_context = parse_terminal_context_value(getattr(candidate, "terminal_context", None))
+        if not terminal_context_has_tmux_target(sibling_context):
+            continue
+
+        try:
+            updated_session, _tmux_target_added = session_manager.backfill_terminal_context(
+                session_id,
+                sibling_context,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed backfilling tmux context into compact_self session %s: %s",
+                session_id,
+                exc,
+                exc_info=True,
+            )
+            return None
+        return updated_session or session_manager.get(session_id)
+
+    return None
+
+
 def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
@@ -325,6 +392,19 @@ def register_terminal_tools(
             session_manager,
             agent_run_manager,
         )
+        if error and not terminal_context_has_tmux_target(session.terminal_context):
+            recovered_session = _backfill_tmux_context_from_sibling(
+                resolved_session_id,
+                session,
+                session_manager,
+            )
+            if recovered_session is not None:
+                session = recovered_session
+                target, tmux, error = _resolve_tmux_target(
+                    resolved_session_id,
+                    session_manager,
+                    agent_run_manager,
+                )
         if error:
             return {"compacted": False, "reason": error}
         assert target is not None

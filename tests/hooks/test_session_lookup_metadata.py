@@ -162,6 +162,49 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     session_manager.get_session_id.assert_any_call("claude-external", "claude")
 
 
+def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registering() -> None:
+    recovered_session = SimpleNamespace(
+        id="tmux-capable-session",
+        project_id="project-1",
+        source="claude",
+        title="Existing terminal",
+    )
+    session_manager = MagicMock()
+    session_manager.get_session_id.return_value = None
+    session_manager.lookup_session_id.return_value = None
+    session_manager.recover_session.return_value = recovered_session
+    session_manager.backfill_terminal_context.return_value = (recovered_session, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    resolve_project_id = MagicMock(return_value="project-1")
+    service = _service(session_manager, session_task_manager, resolve_project_id)
+    event = _event()
+    event.event_type = HookEventType.BEFORE_AGENT
+    event.session_id = "codex-external"
+    event.source = SessionSource.CODEX
+    event.cwd = "/work/repos/gobby"
+    event.data = {
+        "cwd": "/work/repos/gobby",
+        "terminal_context": {"cwd": "/work/repos/gobby"},
+    }
+
+    result = service.resolve(event)
+
+    assert result == "tmux-capable-session"
+    assert event.metadata["_platform_session_id"] == "tmux-capable-session"
+    session_manager.recover_session.assert_any_call(
+        external_id="codex-external",
+        source="codex",
+        machine_id="machine-id",
+        project_id="project-1",
+    )
+    session_manager.register_session.assert_not_called()
+    session_manager.backfill_terminal_context.assert_called_once_with(
+        "tmux-capable-session",
+        {"cwd": "/work/repos/gobby"},
+    )
+
+
 def test_task_context_uses_stage_native_state() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(

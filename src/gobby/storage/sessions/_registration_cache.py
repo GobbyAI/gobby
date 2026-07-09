@@ -8,34 +8,23 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.terminal_context import merge_terminal_context, terminal_context_has_tmux_target
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 
-def _merge_terminal_context(
-    current: dict[str, Any] | None,
-    incoming: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Merge terminal context, preferring new non-null values."""
-    merged: dict[str, Any] = dict(current or {})
-    for key, value in (incoming or {}).items():
-        if value is None:
-            continue
-        merged[key] = value
-    return merged
-
-
-def _recovery_score(session: Session) -> tuple[bool, bool, bool]:
+def _recovery_score(session: Session) -> tuple[bool, bool, bool, bool]:
     """Score recovery candidates by metadata completeness only."""
     return (
         not bool(session.transcript_path),
         not bool(session.title),
+        not terminal_context_has_tmux_target(session.terminal_context),
         not bool(session.terminal_context),
     )
 
 
-def _recovery_rank(session: Session) -> tuple[bool, bool, bool, datetime, str]:
+def _recovery_rank(session: Session) -> tuple[bool, bool, bool, bool, datetime, str]:
     """Rank cross-source recovery candidates by completeness, then age."""
     return (*_recovery_score(session), session.created_at, session.id)
 
@@ -322,11 +311,11 @@ class _RegistrationCacheMixin:
             return None, False
 
         current_ctx = current.terminal_context or {}
-        merged = _merge_terminal_context(current_ctx, terminal_context)
+        merged = merge_terminal_context(current_ctx, terminal_context)
         if merged == current_ctx:
             return current, False
 
-        had_tmux_pane = bool(current_ctx.get("tmux_pane"))
+        had_tmux_target = terminal_context_has_tmux_target(current_ctx)
         updated = self.update(session_id=session_id, terminal_context=merged)
         if updated is None:
             return current, False
@@ -335,5 +324,5 @@ class _RegistrationCacheMixin:
             metadata = self._session_metadata.setdefault(session_id, {})
             metadata["terminal_context"] = merged
 
-        has_tmux_pane = bool((updated.terminal_context or {}).get("tmux_pane"))
-        return updated, has_tmux_pane and not had_tmux_pane
+        has_tmux_target = terminal_context_has_tmux_target(updated.terminal_context)
+        return updated, has_tmux_target and not had_tmux_target

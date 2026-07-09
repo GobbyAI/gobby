@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
 from gobby.storage.session_models import Session
+from gobby.terminal_context import merge_terminal_context, parse_terminal_context_value
 
 
 class _SessionGetter(Protocol):
@@ -46,6 +48,15 @@ def update_existing_session(
     sandbox_policy_hash: str | None,
     now: datetime,
 ) -> Session:
+    terminal_context_update_json = terminal_context_json
+    incoming_terminal_context = parse_terminal_context_value(terminal_context_json)
+    if incoming_terminal_context is not None:
+        merged_terminal_context = merge_terminal_context(
+            existing.terminal_context,
+            incoming_terminal_context,
+        )
+        terminal_context_update_json = json.dumps(merged_terminal_context)
+
     conn.execute(
         """
         UPDATE sessions SET
@@ -72,7 +83,7 @@ def update_existing_session(
             transcript_path,
             git_branch,
             parent_session_id,
-            terminal_context_json,
+            terminal_context_update_json,
             workflow_name,
             is_local is not None,
             bool(is_local) if is_local is not None else False,
