@@ -10,6 +10,10 @@ protects UI routes and their backing API endpoints. It does NOT protect:
 - /api/sessions/* (CLI agent session endpoints)
 - /api/local/* (local token-protected runtime endpoints)
 - /api/mcp/* (MCP protocol endpoints)
+- /api/llm/* (AI generation used by installed gcode/gwiki binaries)
+- /api/embeddings (embedding generation used by installed binaries)
+- /api/voice/transcribe (transcription used by installed binaries)
+- /api/workflows/variables/* (MCP proxy session-variable tools)
 - /api/admin/health, /api/admin/status, /api/admin/metrics, /api/admin/config (read-only admin)
 - /assets/* (static assets)
 - WebSocket connections (agents need open access)
@@ -42,6 +46,14 @@ _PUBLIC_PREFIXES = (
     "/api/local/",
     "/api/mcp/",
     "/api/mcp",
+    # Machine-local tooling data plane: the installed gcode/gwiki binaries and
+    # the MCP proxy call these directly; UI auth must not sever them. A 401
+    # here previously made `gcode codewiki --ai auto` resolve "no daemon" and
+    # destructively rewrite AI vaults as structural docs (#17777, #17776).
+    "/api/llm/",
+    "/api/embeddings",
+    "/api/voice/transcribe",
+    "/api/workflows/variables/",
     "/api/admin/health",
     "/api/admin/status",
     "/api/admin/metrics",
