@@ -44,10 +44,25 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let known_targets = normalized_targets(known_targets)
+    let known_targets = canonical_targets(known_targets);
+    extract_links_with_canonical_targets(markdown, &known_targets)
+}
+
+pub fn canonical_targets<I, S>(targets: I) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    normalized_targets(targets)
         .into_iter()
         .map(|target| canonical_target_key(&target))
-        .collect::<BTreeSet<_>>();
+        .collect()
+}
+
+pub fn extract_links_with_canonical_targets(
+    markdown: &str,
+    known_targets: &BTreeSet<String>,
+) -> Vec<WikiLink> {
     let code_ranges = markdown_code_ranges(markdown);
     let mut links = Vec::new();
     let mut offset = 0;
@@ -60,14 +75,14 @@ where
 
         let rest = &markdown[offset..];
         if rest.starts_with("[[") {
-            if let Some((link, next_offset)) = parse_wikilink(markdown, offset, &known_targets) {
+            if let Some((link, next_offset)) = parse_wikilink(markdown, offset, known_targets) {
                 links.push(link);
                 offset = next_offset;
                 continue;
             }
         } else if rest.starts_with('[')
             && !is_image_marker(markdown, offset)
-            && let Some((link, next_offset)) = parse_markdown_link(markdown, offset, &known_targets)
+            && let Some((link, next_offset)) = parse_markdown_link(markdown, offset, known_targets)
         {
             links.push(link);
             offset = next_offset;

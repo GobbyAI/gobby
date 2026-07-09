@@ -2158,6 +2158,7 @@ dependencies = [
 name = "gobby-wiki"
 version = "0.8.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "calamine",
  "chrono",

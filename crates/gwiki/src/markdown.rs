@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -5,7 +6,7 @@ use gobby_core::indexing::Chunk;
 use serde_json::json;
 
 use crate::frontmatter::{FrontmatterError, WikiFrontmatter, parse_frontmatter};
-use crate::links::{WikiLink, extract_links};
+use crate::links::{WikiLink, extract_links, extract_links_with_canonical_targets};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkdownHeading {
@@ -93,8 +94,28 @@ where
     S: AsRef<str>,
 {
     let path = path.into();
+    parse_markdown_parts(path, markdown, extract_links(markdown, known_targets))
+}
+
+pub(crate) fn parse_markdown_with_canonical_targets(
+    path: impl Into<PathBuf>,
+    markdown: &str,
+    known_targets: &BTreeSet<String>,
+) -> Result<MarkdownDomainRecord, MarkdownParseError> {
+    let path = path.into();
+    parse_markdown_parts(
+        path,
+        markdown,
+        extract_links_with_canonical_targets(markdown, known_targets),
+    )
+}
+
+fn parse_markdown_parts(
+    path: PathBuf,
+    markdown: &str,
+    links: Vec<WikiLink>,
+) -> Result<MarkdownDomainRecord, MarkdownParseError> {
     let frontmatter = parse_frontmatter(markdown)?;
-    let links = extract_links(markdown, known_targets);
     let headings = extract_headings(markdown, frontmatter.body_start);
     let chunks = build_chunks(&path, markdown, frontmatter.body_start, &headings);
 

@@ -1,13 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
+use aho_corasick::AhoCorasick;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
-use linked_hash_map::LinkedHashMap;
+use gobby_core::vault::links::{LinkKind, canonical_target_key, normalize_wiki_path};
+use gobby_core::vault::lint::link_lookup_keys;
 use serde::Serialize;
 
-use crate::lint::{collect_pages, title_for_page};
+use crate::lint::{WikiPage, collect_pages, report_from_pages, title_for_page};
 use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start};
 use crate::provenance::ProvenanceGraph;
 use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
@@ -15,8 +16,6 @@ use crate::{ScopeIdentity, WikiError};
 
 const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
 const STALE_CITATION_YEARS_ENV: &str = "GWIKI_STALE_CITATION_YEARS";
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-const REGEX_CACHE_CAPACITY: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HealthReport {
@@ -57,8 +56,9 @@ pub struct DuplicateSource {
 }
 
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, WikiError> {
-    let report = inspect(vault_root, scope.clone())?;
-    demote_stale_lifecycle(vault_root, &scope)?;
+    let pages = collect_pages(vault_root)?;
+    let report = report_from_pages_for_health(vault_root, scope.clone(), &pages)?;
+    demote_stale_lifecycle(vault_root, &scope, &pages)?;
     persist_report(vault_root, &report)?;
     Ok(report)
 }
@@ -68,10 +68,14 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, Wiki
 /// the mark-stale frontmatter path (preserving an existing `stale_reason`) and
 /// the transition is appended to `log.md`. [`inspect`] stays read-only for
 /// trust/librarian callers.
-fn demote_stale_lifecycle(vault_root: &Path, scope: &ScopeIdentity) -> Result<(), WikiError> {
+fn demote_stale_lifecycle(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    pages: &[WikiPage],
+) -> Result<(), WikiError> {
     use crate::frontmatter::WikiLifecycle;
 
-    for page in collect_pages(vault_root)? {
+    for page in pages {
         let frontmatter = &page.parsed.frontmatter;
         if matches!(
             frontmatter.lifecycle,
@@ -79,7 +83,7 @@ fn demote_stale_lifecycle(vault_root: &Path, scope: &ScopeIdentity) -> Result<()
         ) {
             continue;
         }
-        if !page_is_stale(&page) {
+        if !page_is_stale(page) {
             continue;
         }
         let reason = frontmatter
@@ -100,12 +104,20 @@ fn demote_stale_lifecycle(vault_root: &Path, scope: &ScopeIdentity) -> Result<()
 }
 
 pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, WikiError> {
-    let lint_report = crate::lint::run(vault_root, scope.clone())?;
     let pages = collect_pages(vault_root)?;
+    report_from_pages_for_health(vault_root, scope, &pages)
+}
+
+fn report_from_pages_for_health(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    pages: &[WikiPage],
+) -> Result<HealthReport, WikiError> {
+    let lint_report = report_from_pages(vault_root, scope.clone(), pages);
     let manifest = SourceManifest::read(vault_root)?;
     let provenance = load_provenance(vault_root)?;
-    let citation_index = build_citation_index(&manifest.entries, &pages, &provenance);
-    let stale_pages = stale_pages(&pages);
+    let citation_index = build_citation_index(&manifest.entries, pages, &provenance);
+    let stale_pages = stale_pages(pages);
     let stale_citations = manifest
         .entries
         .iter()
@@ -118,8 +130,8 @@ pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, 
         .filter(|entry| !citation_index.cites(&entry.id))
         .map(source_issue)
         .collect();
-    let duplicate_concepts = duplicate_concepts(&pages);
-    let duplicate_sources = duplicate_sources(&pages);
+    let duplicate_concepts = duplicate_concepts(pages);
+    let duplicate_sources = duplicate_sources(pages);
     let uncompiled_sources = manifest
         .entries
         .iter()
@@ -336,12 +348,11 @@ impl SourceCitationIndex {
     }
 }
 
-/// Patterns per compiled [`regex::RegexSet`]. Every pattern repeats the
-/// unicode boundary classes, so one set holding a whole vault's needles blew
-/// the regex crate's compiled-size limit at ~200 sources and silently
-/// degraded the index to provenance-only. Bounded chunks keep each set far
-/// under the limit at any vault size.
-const CITATION_PATTERN_CHUNK: usize = 64;
+struct SourceNeedleIndex {
+    text_patterns: Vec<String>,
+    text_source_ids: Vec<BTreeSet<String>>,
+    link_source_ids_by_target: BTreeMap<String, BTreeSet<String>>,
+}
 
 fn build_citation_index(
     sources: &[SourceRecord],
@@ -353,41 +364,141 @@ fn build_citation_index(
         .filter(|source| !provenance.links_for_source(&source.id).is_empty())
         .map(|source| source.id.clone())
         .collect::<BTreeSet<_>>();
-    let mut patterns = Vec::new();
-    let mut pattern_source_ids = Vec::new();
-    for source in sources {
-        for needle in source_reference_needles(source) {
-            for pattern in source_reference_patterns(needle) {
-                patterns.push(pattern);
-                pattern_source_ids.push(source.id.as_str());
-            }
-        }
+    let needle_index = build_source_needle_index(sources);
+    for page in pages {
+        cite_page_links(&mut cited_source_ids, page, &needle_index);
     }
-    if patterns.is_empty() {
+    if needle_index.text_patterns.is_empty() {
         return SourceCitationIndex { cited_source_ids };
     }
-    let mut regex_sets = Vec::new();
-    for (chunk_patterns, chunk_ids) in patterns
-        .chunks(CITATION_PATTERN_CHUNK)
-        .zip(pattern_source_ids.chunks(CITATION_PATTERN_CHUNK))
-    {
-        match regex::RegexSet::new(chunk_patterns) {
-            Ok(regex_set) => regex_sets.push((regex_set, chunk_ids)),
-            Err(error) => {
-                log::warn!("failed to build health citation regex set chunk: {error}");
-            }
+    let matcher = match AhoCorasick::new(&needle_index.text_patterns) {
+        Ok(matcher) => matcher,
+        Err(error) => {
+            log::warn!("failed to build health citation matcher: {error}");
+            return SourceCitationIndex { cited_source_ids };
         }
-    }
+    };
 
     for page in pages {
         let markdown = markdown_without_fenced_code(&page.markdown);
-        for (regex_set, chunk_ids) in &regex_sets {
-            for matched in regex_set.matches(&markdown) {
-                cited_source_ids.insert(chunk_ids[matched].to_string());
+        for matched in matcher.find_overlapping_iter(&markdown) {
+            if !has_text_match_boundaries(&markdown, matched.start(), matched.end()) {
+                continue;
+            }
+            for source_id in &needle_index.text_source_ids[matched.pattern().as_usize()] {
+                cited_source_ids.insert(source_id.clone());
             }
         }
     }
     SourceCitationIndex { cited_source_ids }
+}
+
+fn build_source_needle_index(sources: &[SourceRecord]) -> SourceNeedleIndex {
+    let mut text_source_ids_by_needle = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut link_source_ids_by_target = BTreeMap::<String, BTreeSet<String>>::new();
+    for source in sources {
+        for needle in source_reference_needles(source) {
+            insert_source_needle(
+                &mut text_source_ids_by_needle,
+                &mut link_source_ids_by_target,
+                source,
+                needle,
+            );
+        }
+        insert_link_target(
+            &mut link_source_ids_by_target,
+            &format!("knowledge/sources/{}", source.id),
+            &source.id,
+        );
+        insert_link_target(
+            &mut link_source_ids_by_target,
+            &format!("knowledge/sources/{}.md", source.id),
+            &source.id,
+        );
+    }
+    let (text_patterns, text_source_ids): (Vec<_>, Vec<_>) =
+        text_source_ids_by_needle.into_iter().unzip();
+    SourceNeedleIndex {
+        text_patterns,
+        text_source_ids,
+        link_source_ids_by_target,
+    }
+}
+
+fn insert_source_needle(
+    text_source_ids_by_needle: &mut BTreeMap<String, BTreeSet<String>>,
+    link_source_ids_by_target: &mut BTreeMap<String, BTreeSet<String>>,
+    source: &SourceRecord,
+    needle: &str,
+) {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return;
+    }
+    text_source_ids_by_needle
+        .entry(needle.to_string())
+        .or_default()
+        .insert(source.id.clone());
+    insert_link_target(link_source_ids_by_target, needle, &source.id);
+}
+
+fn insert_link_target(
+    link_source_ids_by_target: &mut BTreeMap<String, BTreeSet<String>>,
+    target: &str,
+    source_id: &str,
+) {
+    let target = target.trim();
+    if target.is_empty() {
+        return;
+    }
+    insert_link_key(link_source_ids_by_target, target, source_id);
+    let normalized = normalize_wiki_path(target);
+    insert_link_key(link_source_ids_by_target, &normalized, source_id);
+    insert_link_key(
+        link_source_ids_by_target,
+        &canonical_target_key(&normalized),
+        source_id,
+    );
+    for kind in [LinkKind::Wikilink, LinkKind::Markdown] {
+        for key in link_lookup_keys(Path::new(""), kind, &normalized) {
+            insert_link_key(link_source_ids_by_target, &key, source_id);
+        }
+    }
+}
+
+fn insert_link_key(
+    link_source_ids_by_target: &mut BTreeMap<String, BTreeSet<String>>,
+    key: &str,
+    source_id: &str,
+) {
+    link_source_ids_by_target
+        .entry(key.to_string())
+        .or_default()
+        .insert(source_id.to_string());
+}
+
+fn cite_page_links(
+    cited_source_ids: &mut BTreeSet<String>,
+    page: &crate::lint::WikiPage,
+    needle_index: &SourceNeedleIndex,
+) {
+    for link in &page.parsed.links {
+        cite_link_key(cited_source_ids, needle_index, &link.target);
+        cite_link_key(cited_source_ids, needle_index, &link.normalized_target);
+        for key in link_lookup_keys(&page.relative_path, link.kind, &link.normalized_target) {
+            cite_link_key(cited_source_ids, needle_index, &key);
+        }
+    }
+}
+
+fn cite_link_key(
+    cited_source_ids: &mut BTreeSet<String>,
+    needle_index: &SourceNeedleIndex,
+    key: &str,
+) {
+    if let Some(source_ids) = needle_index.link_source_ids_by_target.get(key) {
+        cited_source_ids.extend(source_ids.iter().cloned());
+    }
 }
 
 fn source_reference_needles(source: &SourceRecord) -> Vec<&str> {
@@ -402,17 +513,6 @@ fn source_reference_needles(source: &SourceRecord) -> Vec<&str> {
     needles
 }
 
-fn source_reference_patterns(needle: &str) -> Vec<String> {
-    let needle = needle.trim();
-    if needle.is_empty() {
-        return Vec::new();
-    }
-    vec![
-        markdown_link_target_pattern(needle),
-        bounded_text_pattern(needle),
-    ]
-}
-
 #[cfg(test)]
 fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
     let needle = needle.trim();
@@ -420,7 +520,10 @@ fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
         return false;
     }
     let markdown = markdown_without_fenced_code(markdown);
-    markdown_link_target_matches(&markdown, needle) || bounded_text_matches(&markdown, needle)
+    let matcher = AhoCorasick::new([needle]).expect("single pattern matcher builds");
+    matcher
+        .find_overlapping_iter(&markdown)
+        .any(|matched| has_text_match_boundaries(&markdown, matched.start(), matched.end()))
 }
 
 fn markdown_without_fenced_code(markdown: &str) -> String {
@@ -444,82 +547,14 @@ fn markdown_without_fenced_code(markdown: &str) -> String {
     output
 }
 
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-fn markdown_link_target_matches(markdown: &str, needle: &str) -> bool {
-    cached_regex_is_match(markdown_link_target_pattern(needle), markdown)
+fn has_text_match_boundaries(markdown: &str, start: usize, end: usize) -> bool {
+    let before = markdown[..start].chars().next_back();
+    let after = markdown[end..].chars().next();
+    !before.is_some_and(is_citation_word_char) && !after.is_some_and(is_citation_word_char)
 }
 
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-fn bounded_text_matches(markdown: &str, needle: &str) -> bool {
-    cached_regex_is_match(bounded_text_pattern(needle), markdown)
-}
-
-fn markdown_link_target_pattern(needle: &str) -> String {
-    let escaped = regex::escape(needle);
-    format!(
-        r#"(?m)(\[[^\]]*\]\(\s*<?{escaped}>?(?:\s+["'][^"']*["'])?\s*\)|\[\[\s*{escaped}(?:\|[^\]]*)?\s*\]\])"#
-    )
-}
-
-fn bounded_text_pattern(needle: &str) -> String {
-    let escaped = regex::escape(needle);
-    format!(r#"(^|[^\p{{L}}\p{{N}}_]){escaped}($|[^\p{{L}}\p{{N}}_])"#)
-}
-
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-fn cached_regex_is_match(pattern: String, haystack: &str) -> bool {
-    static CACHE: OnceLock<Mutex<RegexCache>> = OnceLock::new();
-    let mut cache = match CACHE
-        .get_or_init(|| Mutex::new(RegexCache::default()))
-        .lock()
-    {
-        Ok(cache) => cache,
-        Err(poisoned) => {
-            // Regex compilation is deterministic; recovering the cache keeps a
-            // prior panic from forcing every later check down the slow path.
-            poisoned.into_inner()
-        }
-    };
-    let regex = match cache.get(&pattern) {
-        Some(regex) => regex,
-        None => {
-            let regex = match regex::Regex::new(&pattern) {
-                Ok(regex) => regex,
-                Err(error) => {
-                    log::warn!("invalid health regex pattern `{pattern}`: {error}");
-                    return false;
-                }
-            };
-            cache.insert(pattern, regex.clone());
-            regex
-        }
-    };
-    drop(cache);
-    regex.is_match(haystack)
-}
-
-#[derive(Default)]
-#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-struct RegexCache {
-    entries: LinkedHashMap<String, regex::Regex>,
-}
-
-impl RegexCache {
-    #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
-    fn get(&mut self, pattern: &str) -> Option<regex::Regex> {
-        let regex = self.entries.remove(pattern)?;
-        let cloned = regex.clone();
-        self.entries.insert(pattern.to_string(), regex);
-        Some(cloned)
-    }
-
-    fn insert(&mut self, pattern: String, regex: regex::Regex) {
-        self.entries.remove(&pattern);
-        self.entries.insert(pattern, regex);
-        while self.entries.len() > REGEX_CACHE_CAPACITY {
-            self.entries.pop_front();
-        }
-    }
+fn is_citation_word_char(value: char) -> bool {
+    value == '_' || value.is_alphanumeric()
 }
 
 fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
@@ -973,7 +1008,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         let mut cited_id = String::new();
-        for index in 0..196 {
+        for index in 0..512 {
             let source = SourceManifest::register(
                 root,
                 SourceDraft::url(
@@ -1008,9 +1043,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             !uncited_ids.contains(&cited_id.as_str()),
-            "text citation must count at 196-source scale"
+            "recap link citation must count at 512-source scale"
         );
-        assert_eq!(uncited_ids.len(), 195, "only the uncited 195 remain");
+        assert_eq!(uncited_ids.len(), 511, "only the uncited 511 remain");
     }
 
     #[test]
@@ -1054,8 +1089,12 @@ mod tests {
     }
 
     #[test]
-    fn cached_regex_returns_false_for_malformed_patterns() {
-        assert!(!cached_regex_is_match("[".to_string(), "anything"));
+    fn source_reference_matching_uses_unicode_word_boundaries() {
+        assert!(!source_reference_is_present("αsource-id", "source-id"));
+        assert!(!source_reference_is_present("source-idβ", "source-id"));
+        assert!(!source_reference_is_present("source-id_", "source-id"));
+        assert!(!source_reference_is_present("source-id9", "source-id"));
+        assert!(source_reference_is_present("source-id.", "source-id"));
     }
 
     #[test]
@@ -1068,20 +1107,6 @@ mod tests {
         assert!(stale_after_is_due("2026-06-02T11:59:59Z", now));
         assert!(!stale_after_is_due("2026-06-03", now));
         assert!(!stale_after_is_due("not-a-date", now));
-    }
-
-    #[test]
-    fn regex_cache_touch_updates_lru_order() {
-        let mut cache = RegexCache::default();
-        cache.insert("one".to_string(), regex::Regex::new("one").unwrap());
-        cache.insert("two".to_string(), regex::Regex::new("two").unwrap());
-
-        assert!(cache.get("one").is_some());
-
-        assert_eq!(
-            cache.entries.keys().cloned().collect::<Vec<_>>(),
-            vec!["two".to_string(), "one".to_string()]
-        );
     }
 
     #[test]

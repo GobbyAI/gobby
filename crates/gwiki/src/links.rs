@@ -5,7 +5,9 @@
 //! re-exports the pieces gwiki consumes under the crate-local path every
 //! consumer already uses.
 
-pub use gobby_core::vault::links::{LinkKind, WikiLink, canonical_target_key, extract_links};
+pub use gobby_core::vault::links::{
+    LinkKind, WikiLink, canonical_target_key, extract_links, extract_links_with_canonical_targets,
+};
 
 /// Entity-shaped keys (no path separator) are what upkeep clusters into
 /// entity pages; path-shaped targets — including `knowledge/sources/...`

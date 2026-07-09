@@ -14,7 +14,7 @@ use gobby_core::vault::lint::{LintPage, page_targets, run_checks};
 use serde::Serialize;
 
 use crate::frontmatter::{WikiFrontmatter, parse_frontmatter};
-use crate::markdown::{MarkdownDomainRecord, parse_markdown};
+use crate::markdown::{MarkdownDomainRecord, parse_markdown_with_canonical_targets};
 use crate::{ScopeIdentity, WikiError};
 
 pub(crate) use gobby_core::vault::lint::line_number;
@@ -35,6 +35,14 @@ pub struct LintReport {
 
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<LintReport, WikiError> {
     let pages = collect_pages(vault_root)?;
+    Ok(report_from_pages(vault_root, scope, &pages))
+}
+
+pub(crate) fn report_from_pages(
+    vault_root: &Path,
+    scope: ScopeIdentity,
+    pages: &[WikiPage],
+) -> LintReport {
     let lint_pages: Vec<LintPage<'_>> = pages
         .iter()
         .map(|page| LintPage {
@@ -49,7 +57,7 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<LintReport, WikiEr
         .collect();
     let outcome = run_checks(&lint_pages, None);
 
-    Ok(LintReport {
+    LintReport {
         command: "lint",
         scope,
         root: vault_root.to_path_buf(),
@@ -59,7 +67,7 @@ pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<LintReport, WikiEr
         duplicate_aliases: outcome.duplicate_aliases,
         missing_backlinks: outcome.missing_backlinks,
         invalid_diagrams: outcome.invalid_diagrams,
-    })
+    }
 }
 
 pub fn render_text(report: &LintReport) -> String {
@@ -112,10 +120,10 @@ pub(crate) fn collect_pages(vault_root: &Path) -> Result<Vec<WikiPage>, WikiErro
     raw_pages
         .into_iter()
         .map(|raw| {
-            let parsed = parse_markdown(
+            let parsed = parse_markdown_with_canonical_targets(
                 raw.relative_path.clone(),
                 &raw.markdown,
-                known_targets.iter(),
+                &known_targets,
             )
             .map_err(|error| WikiError::InvalidInput {
                 field: "markdown",
