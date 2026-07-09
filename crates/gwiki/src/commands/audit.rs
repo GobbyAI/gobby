@@ -21,7 +21,9 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 }
 
 /// An audit citation pass promotes `reviewed` pages with zero unsupported
-/// claims to `verified`. Only the `gwiki audit` command mutates; trust and
+/// claims to `verified`, and clears the `candidate` quarantine flag on
+/// candidate pages with zero unsupported claims (#17727) — a clean audit is
+/// corroboration. Only the `gwiki audit` command mutates; trust and
 /// librarian call `audit::run_with_options` directly and stay read-only.
 /// Legacy pages without a lifecycle field are never touched, and `draft`
 /// pages must earn `reviewed` from the librarian first.
@@ -38,10 +40,18 @@ fn promote_verified_lifecycle(
         if !scope_includes_page(&report.scope, &page.relative_path) {
             continue;
         }
-        if page.parsed.frontmatter.lifecycle != Some(WikiLifecycle::Reviewed) {
+        if unsupported.contains(page.relative_path.as_path()) {
             continue;
         }
-        if unsupported.contains(page.relative_path.as_path()) {
+        if page.parsed.frontmatter.candidate {
+            crate::lifecycle::promote_candidate_page(
+                vault_root,
+                &report.scope,
+                &page.relative_path,
+                "audit: citation pass with no unsupported claims",
+            )?;
+        }
+        if page.parsed.frontmatter.lifecycle != Some(WikiLifecycle::Reviewed) {
             continue;
         }
         crate::lifecycle::apply_lifecycle_transition(
@@ -136,5 +146,39 @@ mod tests {
         let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
         assert_eq!(log.matches("lifecycle_transition:").count(), 1, "{log}");
         assert!(log.contains("reviewed -> verified"), "{log}");
+    }
+
+    #[test]
+    fn citation_pass_promotes_clean_candidates_out_of_quarantine() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(
+            temp.path(),
+            "knowledge/concepts/clean-candidate.md",
+            "---\ntitle: Clean Candidate\nlifecycle: draft\ncandidate: true\n---\n\nBody.\n",
+        );
+        write_page(
+            temp.path(),
+            "knowledge/concepts/unsupported-candidate.md",
+            "---\ntitle: Unsupported Candidate\nlifecycle: draft\ncandidate: true\n---\n\nBody.\n",
+        );
+        let report = report_with_unsupported(
+            temp.path(),
+            &["knowledge/concepts/unsupported-candidate.md"],
+        );
+
+        promote_verified_lifecycle(temp.path(), &report).expect("promotion pass");
+
+        let candidate_of = |relative: &str| {
+            let markdown = std::fs::read_to_string(temp.path().join(relative)).expect("read page");
+            parse_frontmatter(&markdown)
+                .expect("parse")
+                .metadata
+                .candidate
+        };
+        assert!(!candidate_of("knowledge/concepts/clean-candidate.md"));
+        assert!(candidate_of("knowledge/concepts/unsupported-candidate.md"));
+
+        let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
+        assert_eq!(log.matches("candidate_promoted:").count(), 1, "{log}");
     }
 }

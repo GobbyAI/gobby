@@ -34,8 +34,19 @@ pub(crate) fn execute(
     limit: usize,
     include_semantic: bool,
     token_budget: Option<usize>,
+    include_candidates: bool,
 ) -> Result<CommandOutcome, WikiError> {
-    render(retrieve(query, selection, limit, include_semantic, token_budget)?.output)
+    render(
+        retrieve(
+            query,
+            selection,
+            limit,
+            include_semantic,
+            token_budget,
+            include_candidates,
+        )?
+        .output,
+    )
 }
 
 pub(crate) fn retrieve(
@@ -44,6 +55,7 @@ pub(crate) fn retrieve(
     limit: usize,
     include_semantic: bool,
     token_budget: Option<usize>,
+    include_candidates: bool,
 ) -> Result<SearchRetrieval, WikiError> {
     if let Some(database_url) = database_url_for("gwiki search")? {
         let scope = resolve_command_scope(&selection)?;
@@ -56,6 +68,7 @@ pub(crate) fn retrieve(
             limit,
             include_semantic,
             token_budget,
+            include_candidates,
         );
     }
 
@@ -78,6 +91,7 @@ pub(crate) fn retrieve(
             limit,
             include_semantic,
             token_budget,
+            include_candidates,
         },
     )
 }
@@ -95,6 +109,7 @@ fn run_search_attached(
     limit: usize,
     include_semantic: bool,
     token_budget: Option<usize>,
+    include_candidates: bool,
 ) -> Result<SearchRetrieval, WikiError> {
     let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
         WikiError::Config {
@@ -151,6 +166,7 @@ fn run_search_attached(
             limit,
             include_semantic,
             token_budget,
+            include_candidates,
         },
     )
 }
@@ -199,6 +215,7 @@ struct SearchExecutionInput {
     limit: usize,
     include_semantic: bool,
     token_budget: Option<usize>,
+    include_candidates: bool,
 }
 
 fn run_search_with_backends<B, S, G>(
@@ -226,12 +243,15 @@ where
     let mut results = Vec::with_capacity(response.results.len());
     let mut evidence = Vec::with_capacity(response.results.len());
     for result in response.results {
-        // Default retrieval excludes archived pages (shared default-surface
-        // predicate); the vault file is the source of truth so exclusion
-        // applies across BM25, semantic, and graph-boost hits alike.
-        if crate::lifecycle::page_excluded_from_default_surfaces(
+        // Default retrieval excludes archived pages and quarantined
+        // candidates (shared default-surface predicate); the vault file is
+        // the source of truth so exclusion applies across BM25, semantic,
+        // and graph-boost hits alike. `--include-candidates` opts the
+        // librarian/upkeep loops back into candidate hits.
+        if crate::lifecycle::page_excluded_from_surfaces(
             &input.vault_root,
             std::path::Path::new(&result.path),
+            input.include_candidates,
         ) {
             continue;
         }
@@ -563,6 +583,7 @@ mod tests {
                 query: "lifecycle".to_string(),
                 limit: 10,
                 include_semantic: false,
+                include_candidates: false,
                 token_budget: None,
             },
         )
@@ -577,5 +598,75 @@ mod tests {
         assert_eq!(pages, vec!["knowledge/concepts/live.md".to_string()]);
         // Evidence stays aligned with the filtered result rows.
         assert_eq!(retrieval.evidence.len(), retrieval.output.results.len());
+    }
+
+    fn candidate_vault_retrieval(include_candidates: bool) -> Vec<String> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let trusted = temp.path().join("knowledge/concepts/trusted.md");
+        std::fs::create_dir_all(trusted.parent().expect("parent")).expect("dirs");
+        std::fs::write(
+            &trusted,
+            "---\ntitle: Trusted\nlifecycle: reviewed\n---\n\nBody.\n",
+        )
+        .expect("trusted page");
+        std::fs::write(
+            temp.path().join("knowledge/concepts/quarantined.md"),
+            "---\ntitle: Quarantined\nlifecycle: draft\ncandidate: true\n---\n\nBody.\n",
+        )
+        .expect("candidate page");
+
+        let mut bm25_backend = search_support::StoreBm25Backend {
+            hits: vec![
+                store_hit("knowledge/concepts/trusted.md"),
+                store_hit("knowledge/concepts/quarantined.md"),
+            ]
+            .into(),
+        };
+        let mut semantic_backend = search_support::UnavailableSemanticBackend;
+        let graph = crate::graph::MemoryWikiGraph::default();
+        let mut graph_backend = wiki_search::graph_boost::MemoryGraphBoostBackend::new(graph);
+
+        let retrieval = run_search_with_backends(
+            &mut bm25_backend,
+            &mut semantic_backend,
+            &mut graph_backend,
+            SearchExecutionInput {
+                output_scope: ScopeIdentity::project("project-1"),
+                search_scope: wiki_search::SearchScope::project("project-1"),
+                vault_root: temp.path().to_path_buf(),
+                query: "lifecycle".to_string(),
+                limit: 10,
+                include_semantic: false,
+                include_candidates,
+                token_budget: None,
+            },
+        )
+        .expect("search runs");
+        retrieval
+            .output
+            .results
+            .iter()
+            .map(|result| result.wiki_page.display().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn default_retrieval_excludes_candidate_pages() {
+        let pages = candidate_vault_retrieval(false);
+
+        assert_eq!(pages, vec!["knowledge/concepts/trusted.md".to_string()]);
+    }
+
+    #[test]
+    fn include_candidates_opts_quarantined_pages_back_into_retrieval() {
+        let pages = candidate_vault_retrieval(true);
+
+        assert_eq!(
+            pages,
+            vec![
+                "knowledge/concepts/trusted.md".to_string(),
+                "knowledge/concepts/quarantined.md".to_string(),
+            ]
+        );
     }
 }

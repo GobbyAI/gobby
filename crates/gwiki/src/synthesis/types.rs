@@ -71,6 +71,9 @@ pub struct SynthesisInput {
     /// Frontmatter tags appended after the standard `gwiki`/`compiled` pair
     /// (e.g. the `entity` marker on entity concept pages).
     pub extra_tags: Vec<String>,
+    /// Quarantine the synthesized article as an untrusted LLM-proposed page
+    /// (#17727): frontmatter carries `candidate: true` until promotion.
+    pub candidate: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

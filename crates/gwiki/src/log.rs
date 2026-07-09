@@ -12,6 +12,10 @@ pub const ACTION_PAGE_UPDATED: &str = "page_updated";
 pub const ACTION_UPKEEP_COMPLETED: &str = "upkeep_completed";
 pub const ACTION_RECAP_COMPLETED: &str = "recap_completed";
 pub const ACTION_LIFECYCLE_TRANSITION: &str = "lifecycle_transition";
+pub const ACTION_CANDIDATE_PROPOSED: &str = "candidate_proposed";
+pub const ACTION_CANDIDATE_PROMOTED: &str = "candidate_promoted";
+pub const ACTION_CANDIDATE_MERGED: &str = "candidate_merged";
+pub const ACTION_CANDIDATE_DISCARDED: &str = "candidate_discarded";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEntry {

@@ -8,6 +8,9 @@ pub(super) struct FrontmatterFields<'a> {
     pub degraded_sources: &'a [&'a str],
     pub aliases: &'a [String],
     pub extra_tags: &'a [String],
+    /// Quarantine marker (#17727): renders `candidate: true` on LLM-proposed
+    /// pages that have not yet accrued corroboration.
+    pub candidate: bool,
     /// Vault-relative path of the raw source a compile-emitted stub page was
     /// synthesized from (`raw/<src-id>.md`). Recompiles match on it to update
     /// the existing page in place instead of minting a slug-suffixed sibling.
@@ -43,6 +46,9 @@ pub(super) fn render_frontmatter(markdown: &mut String, fields: &FrontmatterFiel
     // fresh content needs a new lint/librarian and audit pass to re-earn
     // reviewed/verified.
     markdown.push_str("lifecycle: draft\n");
+    if fields.candidate {
+        markdown.push_str("candidate: true\n");
+    }
     markdown.push_str("compile_handoff: ");
     markdown.push_str(&yaml_scalar(fields.handoff_id));
     markdown.push('\n');

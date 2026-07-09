@@ -184,6 +184,7 @@ fn ask_cli_flags_map_to_command_options() {
             ai: AiRouting::Direct,
             require_ai: true,
             token_budget: Some(2000),
+            include_candidates: true,
         }),
         ScopeSelection::topic("docs"),
     )
@@ -196,6 +197,7 @@ fn ask_cli_flags_map_to_command_options() {
         ai,
         require_ai,
         token_budget,
+        include_candidates,
     } = command
     else {
         panic!("expected ask command");
@@ -206,6 +208,7 @@ fn ask_cli_flags_map_to_command_options() {
     assert_eq!(ai, AiRouting::Direct);
     assert!(require_ai);
     assert_eq!(token_budget, Some(2000));
+    assert!(include_candidates);
 }
 
 #[test]

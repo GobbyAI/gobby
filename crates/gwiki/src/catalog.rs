@@ -403,7 +403,10 @@ fn summarize_page(vault_root: &Path, path: &Path, text: &str) -> Option<PageSumm
     let relative = relative_path(vault_root, path);
     let (title, body) = match parse_frontmatter(text) {
         Ok(parsed) => {
-            if crate::lifecycle::excluded_from_default_surfaces(&parsed.metadata) {
+            // Catalog indexes are the maintainer/review surface: quarantined
+            // candidates stay listed so the librarian can find them (#17727);
+            // only archived pages drop out.
+            if crate::lifecycle::excluded_from_surfaces(&parsed.metadata, true) {
                 return None;
             }
             (parsed.metadata.title.clone(), parsed.body.to_string())

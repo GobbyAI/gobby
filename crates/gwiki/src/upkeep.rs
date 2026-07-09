@@ -160,6 +160,12 @@ pub struct UpkeepReport {
     pub reconciled_no_synthesis: Vec<String>,
     /// Long-stale pages archived this run (would-be archives on dry runs).
     pub archived_pages: Vec<PathBuf>,
+    /// Quarantined candidates promoted this run: corroborated by at least
+    /// [`CANDIDATE_PROMOTION_BACKLINKS`] other knowledge pages (#17727).
+    pub candidates_promoted: Vec<PathBuf>,
+    /// Quarantined candidates discarded this run: no page links to them
+    /// anymore, so they were archived (#17727).
+    pub candidates_discarded: Vec<PathBuf>,
     pub notes: Vec<String>,
 }
 
@@ -418,7 +424,7 @@ pub fn run(
             cluster_generator,
         ) {
             Ok((page_path, write_kind)) => {
-                outcome.page_path = Some(page_path);
+                outcome.page_path = Some(page_path.clone());
                 outcome.action = match write_kind {
                     PageWriteKind::Created => {
                         pages_created += 1;
@@ -429,6 +435,46 @@ pub fn run(
                         "updated".to_string()
                     }
                 };
+                // Quarantine audit trail (#17727): a created concept page
+                // enters quarantine (proposed); a near-duplicate update
+                // resolved the would-be candidate into an existing page
+                // (merged). Plain key-match updates are ordinary recompiles,
+                // not candidate events.
+                let candidate_event = match write_kind {
+                    PageWriteKind::Created => Some((
+                        crate::log::ACTION_CANDIDATE_PROPOSED,
+                        format!(
+                            "{}: proposed from cluster `{}` ({} mentions)",
+                            page_path.display(),
+                            cluster.primary,
+                            cluster.mentions,
+                        ),
+                    )),
+                    PageWriteKind::Overwritten => outcome.near_duplicate.as_ref().map(|near| {
+                        (
+                            crate::log::ACTION_CANDIDATE_MERGED,
+                            format!(
+                                "{}: cluster `{}` resolved into existing page (cosine {:.2})",
+                                page_path.display(),
+                                cluster.primary,
+                                near.score,
+                            ),
+                        )
+                    }),
+                };
+                if let Some((action, summary)) = candidate_event {
+                    crate::log::append_logs(
+                        &vault_root,
+                        None,
+                        &crate::log::LogEntry {
+                            timestamp: timestamp.to_string(),
+                            scope: scope.clone(),
+                            action: action.to_string(),
+                            summary,
+                            artifacts: vec![page_path],
+                        },
+                    )?;
+                }
             }
             Err(error) => {
                 // Per-page failure: record it and keep draining. The cluster's
@@ -474,6 +520,16 @@ pub fn run(
         healed_mentions.retain_digests(digest_records.keys());
         healed_mentions.write(&vault_root)?;
     }
+
+    // Candidate governance (#17727): corroboration from other knowledge pages
+    // promotes a quarantined candidate out of quarantine; a candidate no page
+    // links to anymore is an orphan and is discarded via the archive
+    // transition. Runs after healing so this run's own link rewrites count.
+    let (candidates_promoted, candidates_discarded) = if options.dry_run {
+        (Vec::new(), Vec::new())
+    } else {
+        govern_candidates(&vault_root, &scope, timestamp)?
+    };
 
     // Archive long-stale pages before catalog regeneration so the regenerated
     // indexes already reflect the exclusions.
@@ -531,6 +587,8 @@ pub fn run(
         skipped_over_budget,
         reconciled_no_synthesis,
         archived_pages,
+        candidates_promoted,
+        candidates_discarded,
         notes,
     };
 
@@ -825,6 +883,14 @@ fn compile_cluster(
     )?;
     session.accepted_notes = notes;
 
+    // Quarantine (#17727): a freshly minted concept page starts as an
+    // untrusted candidate; an update keeps the target's existing quarantine
+    // state so a rewrite never silently promotes a candidate.
+    let mark_candidate = match &target_page {
+        None => true,
+        Some(page) => crate::lifecycle::page_is_candidate(vault_root, page),
+    };
+
     let outcome = compile_to_wiki_with_options(
         &mut session,
         CompileRequest {
@@ -840,6 +906,7 @@ fn compile_cluster(
             aliases: cluster.variants.clone(),
             extra_tags: vec![ENTITY_TAG.to_string()],
             persist_checkpoint: false,
+            mark_candidate,
         },
         generator,
     )?;
@@ -1014,6 +1081,108 @@ fn page_match_keys(page: &lint::WikiPage) -> BTreeSet<String> {
     }
     keys.remove("");
     keys
+}
+
+/// Corroborating backlinks from other knowledge (concept/topic) pages
+/// required to clear a candidate's quarantine (#17727). Digest mentions
+/// already gated the page's creation (`min_mentions`), so corroboration is
+/// counted from knowledge pages only — a fresh candidate's own digest
+/// backlinks never auto-promote it.
+const CANDIDATE_PROMOTION_BACKLINKS: usize = 2;
+
+/// Promote corroborated candidates and discard orphaned ones (#17727).
+///
+/// Promotion clears the `candidate` frontmatter flag when at least
+/// [`CANDIDATE_PROMOTION_BACKLINKS`] other knowledge pages link to the
+/// candidate. Discard archives a candidate that no page in the vault links to
+/// anymore (its digest mentions were healed away or its sources pruned) —
+/// the page stays on disk at its stable path but leaves every default
+/// surface. Both paths append their own `log.md` audit entries.
+fn govern_candidates(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    timestamp: &str,
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>), WikiError> {
+    use crate::frontmatter::WikiLifecycle;
+
+    let pages = lint::collect_pages(vault_root)?;
+    let candidates: Vec<(usize, BTreeSet<String>)> = pages
+        .iter()
+        .enumerate()
+        .filter(|(_, page)| {
+            page.parsed.frontmatter.candidate
+                && page.parsed.frontmatter.lifecycle != Some(WikiLifecycle::Archived)
+        })
+        .map(|(index, page)| (index, page_match_keys(page)))
+        .collect();
+    if candidates.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let mut key_to_slot: BTreeMap<&str, usize> = BTreeMap::new();
+    for (slot, (_, keys)) in candidates.iter().enumerate() {
+        for key in keys {
+            key_to_slot.entry(key.as_str()).or_insert(slot);
+        }
+    }
+
+    let mut knowledge_referrers: Vec<BTreeSet<&Path>> = vec![BTreeSet::new(); candidates.len()];
+    let mut any_referrers: Vec<BTreeSet<&Path>> = vec![BTreeSet::new(); candidates.len()];
+    for (page_index, page) in pages.iter().enumerate() {
+        let is_knowledge_page = page.relative_path.starts_with("knowledge/concepts")
+            || page.relative_path.starts_with("knowledge/topics");
+        for link in &page.parsed.links {
+            let key = canonical_target_key(&link.target);
+            let Some(&slot) = key_to_slot.get(key.as_str()) else {
+                continue;
+            };
+            if candidates[slot].0 == page_index {
+                continue;
+            }
+            any_referrers[slot].insert(page.relative_path.as_path());
+            if is_knowledge_page {
+                knowledge_referrers[slot].insert(page.relative_path.as_path());
+            }
+        }
+    }
+
+    let mut promoted = Vec::new();
+    let mut discarded = Vec::new();
+    for (slot, (page_index, _)) in candidates.iter().enumerate() {
+        let relative = &pages[*page_index].relative_path;
+        if knowledge_referrers[slot].len() >= CANDIDATE_PROMOTION_BACKLINKS {
+            let reason = format!(
+                "corroborated by {} knowledge pages",
+                knowledge_referrers[slot].len()
+            );
+            if crate::lifecycle::promote_candidate_page(vault_root, scope, relative, &reason)? {
+                promoted.push(relative.clone());
+            }
+        } else if any_referrers[slot].is_empty() {
+            crate::lifecycle::apply_lifecycle_transition(
+                vault_root,
+                scope,
+                relative,
+                WikiLifecycle::Archived,
+                "candidate discarded: no remaining backlinks",
+            )?;
+            crate::log::append_logs(
+                vault_root,
+                None,
+                &crate::log::LogEntry {
+                    timestamp: timestamp.to_string(),
+                    scope: scope.clone(),
+                    action: crate::log::ACTION_CANDIDATE_DISCARDED.to_string(),
+                    summary: format!("{}: no remaining backlinks", relative.display()),
+                    artifacts: vec![relative.clone()],
+                },
+            )?;
+            discarded.push(relative.clone());
+        }
+    }
+    promoted.sort();
+    discarded.sort();
+    Ok((promoted, discarded))
 }
 
 /// Persisted map of digest relative path -> concept entities the heal pass has
@@ -1206,12 +1375,32 @@ pub fn render_text(report: &UpkeepReport) -> String {
                 .join(", ")
         ));
     }
+    if !report.candidates_promoted.is_empty() {
+        text.push_str(&format!(
+            "Candidates promoted: {}\n",
+            display_paths(&report.candidates_promoted)
+        ));
+    }
+    if !report.candidates_discarded.is_empty() {
+        text.push_str(&format!(
+            "Candidates discarded: {}\n",
+            display_paths(&report.candidates_discarded)
+        ));
+    }
     for note in &report.notes {
         text.push_str("Note: ");
         text.push_str(note);
         text.push('\n');
     }
     text
+}
+
+fn display_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -1481,6 +1670,118 @@ mod tests {
                 .is_ok_and(|exists| !exists),
             "upkeep must not persist a research checkpoint"
         );
+    }
+
+    #[test]
+    fn upkeep_created_concept_pages_enter_candidate_quarantine() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a", "Uses [[gcode]] for symbol search.\n");
+        seed_source(root, "src-b", "Prefers [[gcode]] everywhere.\n");
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        let page = fs::read_to_string(root.join("knowledge/concepts/gcode.md"))
+            .expect("concept page written");
+        assert!(
+            page.contains("lifecycle: draft") && page.contains("candidate: true"),
+            "created concept page starts quarantined: {page}"
+        );
+
+        let log = fs::read_to_string(root.join("log.md")).expect("log written");
+        assert!(log.contains("candidate_proposed:"), "{log}");
+
+        // Digest backlinks gated the page's creation; they are not
+        // corroboration, so the fresh candidate is neither promoted nor
+        // discarded by the same run.
+        assert!(report.candidates_promoted.is_empty());
+        assert!(report.candidates_discarded.is_empty());
+    }
+
+    #[test]
+    fn govern_candidates_promotes_candidates_with_knowledge_backlinks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_file(
+            root,
+            "knowledge/concepts/widget.md",
+            "---\ntitle: Widget\nlifecycle: draft\ncandidate: true\n---\n\n# Widget\n\nBody.\n",
+        );
+        write_file(
+            root,
+            "knowledge/concepts/gadget.md",
+            "---\ntitle: Gadget\n---\n\nPairs with [[Widget]].\n",
+        );
+        write_file(
+            root,
+            "knowledge/topics/assembly.md",
+            "---\ntitle: Assembly\n---\n\nStarts from a [[Widget]].\n",
+        );
+
+        let (promoted, discarded) =
+            govern_candidates(root, &scope(), TIMESTAMP).expect("governance pass");
+
+        assert_eq!(
+            promoted,
+            vec![PathBuf::from("knowledge/concepts/widget.md")]
+        );
+        assert!(discarded.is_empty());
+        let page =
+            fs::read_to_string(root.join("knowledge/concepts/widget.md")).expect("read page");
+        assert!(!page.contains("candidate: true"), "{page}");
+        let log = fs::read_to_string(root.join("log.md")).expect("log written");
+        assert!(log.contains("candidate_promoted:"), "{log}");
+    }
+
+    #[test]
+    fn govern_candidates_discards_orphans_and_keeps_digest_backed_candidates() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_file(
+            root,
+            "knowledge/concepts/orphan.md",
+            "---\ntitle: Orphan\nlifecycle: draft\ncandidate: true\n---\n\n# Orphan\n\nBody.\n",
+        );
+        write_file(
+            root,
+            "knowledge/concepts/mentioned.md",
+            "---\ntitle: Mentioned\nlifecycle: draft\ncandidate: true\n---\n\n# Mentioned\n\nBody.\n",
+        );
+        write_file(
+            root,
+            "knowledge/sources/digest.md",
+            "---\ntitle: Digest\n---\n\nStill cites [[Mentioned]].\n",
+        );
+
+        let (promoted, discarded) =
+            govern_candidates(root, &scope(), TIMESTAMP).expect("governance pass");
+
+        assert!(promoted.is_empty());
+        assert_eq!(
+            discarded,
+            vec![PathBuf::from("knowledge/concepts/orphan.md")]
+        );
+
+        // The orphan is archived in place; the digest-backed candidate stays
+        // quarantined awaiting knowledge-page corroboration.
+        let orphan =
+            fs::read_to_string(root.join("knowledge/concepts/orphan.md")).expect("orphan page");
+        assert!(orphan.contains("lifecycle: archived"), "{orphan}");
+        let mentioned = fs::read_to_string(root.join("knowledge/concepts/mentioned.md"))
+            .expect("mentioned page");
+        assert!(mentioned.contains("candidate: true"), "{mentioned}");
+
+        let log = fs::read_to_string(root.join("log.md")).expect("log written");
+        assert!(log.contains("candidate_discarded:"), "{log}");
+        assert!(log.contains("lifecycle_transition:"), "{log}");
     }
 
     #[test]
@@ -1906,6 +2207,17 @@ mod tests {
         assert!(
             !root.join("knowledge/concepts/gobby-daemon.md").exists(),
             "near-duplicate update must not create a sibling page"
+        );
+
+        // The would-be candidate resolved into an existing page: the audit
+        // trail records a merge, and the target page is not quarantined.
+        let log = fs::read_to_string(root.join("log.md")).expect("log written");
+        assert!(log.contains("candidate_merged:"), "{log}");
+        let target = fs::read_to_string(root.join("knowledge/concepts/long-running-service.md"))
+            .expect("target page");
+        assert!(
+            !target.contains("candidate: true"),
+            "merge target must not enter quarantine: {target}"
         );
     }
 

@@ -68,6 +68,10 @@ pub struct WikiCompileOptions {
     /// (`gwiki upkeep`) compile many ephemeral sessions against one vault and
     /// must not clobber the user's interactive research checkpoint.
     pub persist_checkpoint: bool,
+    /// Quarantine the written article as an untrusted candidate (#17727).
+    /// Set by `gwiki upkeep` for LLM-proposed concept pages; interactive
+    /// compiles leave it false.
+    pub mark_candidate: bool,
 }
 
 impl Default for WikiCompileOptions {
@@ -79,6 +83,7 @@ impl Default for WikiCompileOptions {
             aliases: Vec::new(),
             extra_tags: Vec::new(),
             persist_checkpoint: true,
+            mark_candidate: false,
         }
     }
 }
@@ -206,6 +211,7 @@ pub fn compile_to_wiki_with_options(
             .cloned()
             .collect(),
         extra_tags: options.extra_tags.clone(),
+        candidate: options.mark_candidate,
     };
     let explainer_prompt = build_explainer_prompt(vault_root, &input);
     let prompt = SynthesisPrompt {

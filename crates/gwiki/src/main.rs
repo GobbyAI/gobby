@@ -253,6 +253,10 @@ struct SearchArgs {
     /// Trim results to fit an approximate token budget, emitting a narrowing hint.
     #[arg(long = "token-budget", value_name = "N", value_parser = parse_positive_usize)]
     token_budget: Option<usize>,
+
+    /// Also return quarantined candidate pages (librarian/upkeep loops).
+    #[arg(long = "include-candidates")]
+    include_candidates: bool,
 }
 
 #[derive(Debug, Args)]
@@ -275,6 +279,10 @@ struct AskArgs {
     /// Trim retrieval hits to fit an approximate token budget, emitting a narrowing hint.
     #[arg(long = "token-budget", value_name = "N", value_parser = parse_positive_usize)]
     token_budget: Option<usize>,
+
+    /// Also retrieve quarantined candidate pages (librarian/upkeep loops).
+    #[arg(long = "include-candidates")]
+    include_candidates: bool,
 }
 
 #[derive(Debug, Args)]
@@ -753,6 +761,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             limit: args.limit,
             include_semantic: !args.no_semantic,
             token_budget: args.token_budget,
+            include_candidates: args.include_candidates,
         }),
         CliCommand::Ask(args) => Ok(Command::Ask {
             query: args.question,
@@ -761,6 +770,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             ai: args.ai,
             require_ai: args.require_ai,
             token_budget: args.token_budget,
+            include_candidates: args.include_candidates,
         }),
         CliCommand::Read(args) => {
             let target = match (args.path, args.title) {

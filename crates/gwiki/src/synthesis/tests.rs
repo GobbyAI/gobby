@@ -25,6 +25,7 @@ fn empty_input(topic: &str, target_kind: ArticleKind) -> SynthesisInput {
         existing_page_body: None,
         aliases: vec![],
         extra_tags: vec![],
+        candidate: false,
     }
 }
 

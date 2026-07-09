@@ -380,6 +380,7 @@ mod tests {
             existing_page_body: None,
             aliases: vec![],
             extra_tags: vec![],
+            candidate: false,
         }
     }
 

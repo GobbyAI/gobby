@@ -44,6 +44,7 @@ pub fn synthesize_article(
             degraded_sources,
             aliases: &input.aliases,
             extra_tags: &input.extra_tags,
+            candidate: input.candidate,
             source_path: None,
         },
     );
@@ -193,6 +194,9 @@ pub fn synthesize_source_pages(
                 degraded_sources: &[],
                 aliases: &[],
                 extra_tags: &[],
+                // Source digest stubs are extraction artifacts, never
+                // LLM-proposed knowledge — they are not quarantined.
+                candidate: false,
                 source_path: Some(&identity),
             },
         );

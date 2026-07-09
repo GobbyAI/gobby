@@ -59,6 +59,9 @@ pub enum Command {
         limit: usize,
         include_semantic: bool,
         token_budget: Option<usize>,
+        /// Opt-in: also return quarantined candidate pages (#17727), for the
+        /// librarian/upkeep loops. Default retrieval excludes candidates.
+        include_candidates: bool,
     },
     Ask {
         query: String,
@@ -67,6 +70,8 @@ pub enum Command {
         ai: AiRouting,
         require_ai: bool,
         token_budget: Option<usize>,
+        /// Opt-in: also retrieve quarantined candidate pages (#17727).
+        include_candidates: bool,
     },
     Read {
         target: ReadTarget,

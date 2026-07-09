@@ -19,15 +19,37 @@ use crate::{ScopeIdentity, WikiError};
 
 /// Shared exclusion predicate for catalog indexes, agent exports, and default
 /// retrieval. Archived pages stay on disk at stable paths but disappear from
-/// every default surface.
+/// every default surface; quarantined candidates (#17727) are likewise hidden
+/// until promotion clears the flag.
+#[allow(dead_code, reason = "kept as the default-surface predicate wrapper")]
 pub(crate) fn excluded_from_default_surfaces(frontmatter: &WikiFrontmatter) -> bool {
+    excluded_from_surfaces(frontmatter, false)
+}
+
+/// [`excluded_from_default_surfaces`] with an opt-in for candidate pages, so
+/// retrieval callers serving the librarian/upkeep loops can still see
+/// quarantined pages. Archived pages are excluded unconditionally.
+pub(crate) fn excluded_from_surfaces(
+    frontmatter: &WikiFrontmatter,
+    include_candidates: bool,
+) -> bool {
     matches!(frontmatter.lifecycle, Some(WikiLifecycle::Archived))
+        || (!include_candidates && frontmatter.candidate)
 }
 
 /// File-reading variant of [`excluded_from_default_surfaces`] for surfaces
 /// that only hold a page path. Missing or unparseable pages are NOT excluded:
 /// exclusion must never hide results because of an I/O or parse hiccup.
 pub(crate) fn page_excluded_from_default_surfaces(vault_root: &Path, relative: &Path) -> bool {
+    page_excluded_from_surfaces(vault_root, relative, false)
+}
+
+/// File-reading variant of [`excluded_from_surfaces`].
+pub(crate) fn page_excluded_from_surfaces(
+    vault_root: &Path,
+    relative: &Path,
+    include_candidates: bool,
+) -> bool {
     let path = vault_root.join(relative);
     let Ok(markdown) = std::fs::read_to_string(&path) else {
         return false;
@@ -35,7 +57,72 @@ pub(crate) fn page_excluded_from_default_surfaces(vault_root: &Path, relative: &
     let Ok(parsed) = parse_frontmatter(&markdown) else {
         return false;
     };
-    excluded_from_default_surfaces(&parsed.metadata)
+    excluded_from_surfaces(&parsed.metadata, include_candidates)
+}
+
+/// True when the page at `relative` carries the `candidate: true` quarantine
+/// flag. Missing or unparseable pages read as non-candidates.
+pub(crate) fn page_is_candidate(vault_root: &Path, relative: &Path) -> bool {
+    let path = vault_root.join(relative);
+    let Ok(markdown) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(parsed) = parse_frontmatter(&markdown) else {
+        return false;
+    };
+    parsed.metadata.candidate
+}
+
+/// Clear a page's `candidate` quarantine flag (promotion, #17727) and append
+/// a `candidate_promoted` log entry. Returns false when the page is not a
+/// candidate (no rewrite, no log entry).
+pub(crate) fn promote_candidate_page(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    relative: &Path,
+    reason: &str,
+) -> Result<bool, WikiError> {
+    let path = vault_root.join(relative);
+    let markdown = std::fs::read_to_string(&path).map_err(|error| WikiError::Io {
+        action: "read wiki page for candidate promotion",
+        path: Some(path.clone()),
+        source: error,
+    })?;
+    let parsed = parse_frontmatter(&markdown).map_err(|error| WikiError::InvalidInput {
+        field: "frontmatter",
+        message: format!("{}: {error}", relative.display()),
+    })?;
+    if !parsed.metadata.candidate {
+        return Ok(false);
+    }
+
+    let mut metadata = parsed.metadata.clone();
+    metadata.candidate = false;
+    let updated =
+        render_markdown_with_metadata(parsed.format, &metadata, parsed.body).map_err(|error| {
+            WikiError::InvalidInput {
+                field: "frontmatter",
+                message: format!("{}: {error}", relative.display()),
+            }
+        })?;
+    std::fs::write(&path, updated).map_err(|error| WikiError::Io {
+        action: "write wiki page candidate promotion",
+        path: Some(path.clone()),
+        source: error,
+    })?;
+
+    append_logs(
+        vault_root,
+        None,
+        &LogEntry {
+            timestamp: crate::support::time::collect_timestamp()?,
+            scope: scope.clone(),
+            action: crate::log::ACTION_CANDIDATE_PROMOTED.to_string(),
+            summary: format!("{}: {reason}", relative.display()),
+            artifacts: vec![relative.to_path_buf()],
+        },
+    )?;
+    Ok(true)
 }
 
 /// One applied lifecycle transition, for reports and tests.
@@ -154,6 +241,56 @@ mod tests {
         }
         frontmatter.lifecycle = Some(WikiLifecycle::Archived);
         assert!(excluded_from_default_surfaces(&frontmatter));
+    }
+
+    #[test]
+    fn candidate_pages_are_excluded_unless_opted_in() {
+        let mut frontmatter = WikiFrontmatter::empty();
+        frontmatter.lifecycle = Some(WikiLifecycle::Draft);
+        frontmatter.candidate = true;
+
+        assert!(excluded_from_default_surfaces(&frontmatter));
+        assert!(!excluded_from_surfaces(&frontmatter, true));
+
+        // The opt-in never resurrects archived pages.
+        frontmatter.lifecycle = Some(WikiLifecycle::Archived);
+        assert!(excluded_from_surfaces(&frontmatter, true));
+    }
+
+    #[test]
+    fn promote_candidate_page_clears_flag_and_logs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(
+            temp.path(),
+            "knowledge/concepts/entity.md",
+            "---\ntitle: Entity\nlifecycle: draft\ncandidate: true\n---\n\nBody.\n",
+        );
+        let scope = ScopeIdentity::project("proj");
+        let relative = Path::new("knowledge/concepts/entity.md");
+
+        let promoted =
+            promote_candidate_page(temp.path(), &scope, relative, "corroborated by 2 pages")
+                .expect("promotion");
+        assert!(promoted);
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(relative)).expect("read promoted page");
+        let parsed = parse_frontmatter(&markdown).expect("parse promoted page");
+        assert!(!parsed.metadata.candidate);
+        // Promotion clears quarantine only; lifecycle is the librarian's job.
+        assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Draft));
+
+        let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
+        assert!(log.contains("candidate_promoted:"), "{log}");
+        assert!(log.contains("corroborated by 2 pages"), "{log}");
+
+        // Idempotent: a non-candidate page is left alone with no new entry.
+        let repeat =
+            promote_candidate_page(temp.path(), &scope, relative, "corroborated by 2 pages")
+                .expect("repeat promotion");
+        assert!(!repeat);
+        let log_after = std::fs::read_to_string(temp.path().join("log.md")).expect("re-read log");
+        assert_eq!(log_after.matches("candidate_promoted:").count(), 1);
     }
 
     #[test]

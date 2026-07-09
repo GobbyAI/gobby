@@ -72,7 +72,14 @@ pub struct WikiFrontmatter {
     pub freshness: Option<String>,
     pub indexed_at: Option<String>,
     pub lifecycle: Option<WikiLifecycle>,
-    // Preserve legacy or tool-specific frontmatter keys across parse/serialize.
+    /// Quarantine marker for LLM-proposed pages that have not yet accrued
+    /// corroboration (#17727). Candidates stay at their stable paths but are
+    /// excluded from default retrieval/export surfaces until promotion
+    /// clears the flag.
+    pub candidate: bool,
+    // Frontmatter keys gwiki does not own (operator- or other-tool-authored).
+    // Rewrites re-serialize from this struct, so anything not carried here
+    // would be silently deleted from the user's file.
     pub unknown: BTreeMap<String, Value>,
 }
 
@@ -91,6 +98,7 @@ impl WikiFrontmatter {
             freshness: None,
             indexed_at: None,
             lifecycle: None,
+            candidate: false,
             unknown: BTreeMap::new(),
         }
     }
@@ -164,6 +172,9 @@ impl WikiFrontmatter {
                 "lifecycle".to_string(),
                 Value::String(lifecycle.as_str().to_string()),
             );
+        }
+        if self.candidate {
+            object.insert("candidate".to_string(), Value::Bool(true));
         }
         Value::Object(object)
     }
@@ -472,6 +483,16 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
         },
         None => None,
     };
+    // Non-boolean `candidate` values stay in `unknown` so round-trips preserve
+    // them instead of silently coercing operator-authored state.
+    let candidate = match object.remove("candidate") {
+        Some(Value::Bool(value)) => value,
+        Some(value) => {
+            object.insert("candidate".to_string(), value);
+            false
+        }
+        None => false,
+    };
     WikiFrontmatter {
         title,
         aliases,
@@ -485,6 +506,7 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
         freshness,
         indexed_at,
         lifecycle,
+        candidate,
         unknown: object.into_iter().collect(),
     }
 }
@@ -575,6 +597,48 @@ mod tests {
             parse_frontmatter("---\ntitle: Legacy\n---\n\nBody.\n").expect("parse legacy page");
         assert_eq!(parsed.metadata.lifecycle, None);
         assert!(parsed.metadata.as_json().get("lifecycle").is_none());
+    }
+
+    #[test]
+    fn candidate_flag_round_trips_and_serializes_only_when_true() {
+        let markdown = "---\ntitle: Page\nlifecycle: draft\ncandidate: true\n---\n\nBody.\n";
+        let parsed = parse_frontmatter(markdown).expect("parse");
+        assert!(parsed.metadata.candidate);
+        assert!(!parsed.metadata.unknown.contains_key("candidate"));
+
+        let rendered = render_markdown_with_metadata(parsed.format, &parsed.metadata, parsed.body)
+            .expect("render");
+        let reparsed = parse_frontmatter(&rendered).expect("reparse");
+        assert!(reparsed.metadata.candidate);
+
+        // Non-candidate pages never carry the key at all.
+        let plain = parse_frontmatter("---\ntitle: Page\n---\n\nBody.\n").expect("parse plain");
+        assert!(!plain.metadata.candidate);
+        assert!(plain.metadata.as_json().get("candidate").is_none());
+    }
+
+    #[test]
+    fn non_bool_candidate_values_stay_in_unknown() {
+        let markdown = "---\ntitle: Page\ncandidate: pending\n---\n\nBody.\n";
+        let parsed = parse_frontmatter(markdown).expect("parse");
+        assert!(!parsed.metadata.candidate);
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("candidate")
+                .and_then(Value::as_str),
+            Some("pending")
+        );
+        // Round-trip preserves the operator-authored value verbatim.
+        assert_eq!(
+            parsed
+                .metadata
+                .as_json()
+                .get("candidate")
+                .and_then(Value::as_str),
+            Some("pending")
+        );
     }
 
     #[test]

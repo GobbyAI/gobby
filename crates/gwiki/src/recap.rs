@@ -144,6 +144,7 @@ pub fn run(
         existing_page_body,
         aliases: Vec::new(),
         extra_tags: Vec::new(),
+        candidate: false,
     };
     let prompt = build_explainer_prompt(vault_root, &input);
     report.sources_truncated = prompt.truncated_sources;

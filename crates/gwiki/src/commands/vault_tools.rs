@@ -59,12 +59,15 @@ impl VaultToolExecutor {
     fn search_vault(&mut self, args: &Value) -> Result<String, ToolError> {
         let query = arg_str(args, "query")?;
         let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+        // Agent-facing vault search keeps the default surface: quarantined
+        // candidate pages stay hidden until promoted (#17727).
         let retrieval = search::retrieve(
             query.clone(),
             self.selection.clone(),
             limit,
             true,
             Some(SEARCH_TOKEN_BUDGET),
+            false,
         )
         .map_err(|error| tool_err(format!("vault search failed: {error}")))?;
         for degradation in &retrieval.output.degradations {

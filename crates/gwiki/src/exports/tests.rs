@@ -420,6 +420,45 @@ fn agent_exports_exclude_archived_pages() {
 }
 
 #[test]
+fn agent_exports_exclude_candidate_pages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let overview = root.join("knowledge/topics/overview.md");
+    fs::create_dir_all(overview.parent().expect("overview parent")).expect("overview dir");
+    fs::write(&overview, "# Overview\n\nVault entrypoint.\n").expect("overview page");
+    let design = root.join("documents/design.md");
+    fs::create_dir_all(design.parent().expect("design parent")).expect("design dir");
+    fs::write(
+        &design,
+        "---\ntitle: Design Notes\nlifecycle: draft\ncandidate: true\n---\n\nUncorroborated notes.\n",
+    )
+    .expect("candidate page");
+
+    export_agent_artifacts(
+        root,
+        &agent_export_facts(SearchScope::project("project-123")),
+        GraphExportOptions::available(),
+    )
+    .expect("agent artifacts exported");
+
+    let jsonld_text = fs::read_to_string(root.join("outputs/graph.jsonld")).expect("graph jsonld");
+    assert!(
+        !jsonld_text.contains("documents/design.md"),
+        "candidate page node must be dropped: {jsonld_text}"
+    );
+
+    let index = fs::read_to_string(root.join("outputs/llms.txt")).expect("llms index");
+    assert!(index.contains("- [Overview](knowledge/topics/overview.md)"));
+    assert!(!index.contains("Design Notes"));
+
+    let full = fs::read_to_string(root.join("outputs/llms-full.txt")).expect("llms full");
+    assert!(!full.contains("Uncorroborated notes."));
+
+    // The quarantined page itself stays in place at its stable path.
+    assert!(design.exists());
+}
+
+#[test]
 fn agent_exports_do_not_mutate_vault() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();
