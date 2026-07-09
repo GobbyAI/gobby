@@ -1,5 +1,7 @@
 # Obsidian-Grade Wiki Activity Panel (wiki / code / ask / research)
 
+> **Plan ID:** `wiki-obsidian-panel`.
+
 ## Overview
 `kind: framing`
 
@@ -12,7 +14,7 @@ Prior exploration is recorded in this session; backend and frontend designs were
 ## Constraints
 `kind: framing`
 
-- **Pre-0.5.0: no backward compatibility.** Replace the existing WikiTab UI wholesale; keep `useWiki.ts` low-level fetch helpers and `WikiSourceRemovalDialog.tsx` where reusable.
+- **Pre-0.5.0: no backward compatibility.** The legacy WikiTab UI has already been removed — `WikiTab.tsx` is a blank stub awaiting the new shell, and the old list/detail/chat-action components are deleted; keep `useWiki.ts` low-level fetch helpers and `WikiSourceRemovalDialog.tsx` for reuse.
 - **Vault is filesystem-first.** `wiki/` markdown is source of truth; `gwiki index` (incremental, content-hash diff) syncs Postgres (`gwiki_documents`, `gwiki_chunks`, `gwiki_links`). The daemon `WikiWatcher` + `WikiUpdateCoordinator.handle_write_result` already await reindex for write commands that emit `changed_paths`.
 - **All wiki HTTP routes carry `?project=&topic=` scope params**; envelope shape is `{ok, command, payload, stderr, index_handoff}`.
 - **Timeout budget:** `INTERACTIVE_GWIKI_TIMEOUT_SECONDS=30.0`, `GENERATION_GWIKI_TIMEOUT_SECONDS=270.0` (`src/gobby/gwiki_gateway.py`); generation must stay under the 300s transport ceiling.
@@ -193,10 +195,10 @@ Domain: frontend.
 
 Targets: `web/src/components/activity/wiki/WikiTabModel.ts`, `web/src/components/activity/wiki/WikiTabData.ts`, `web/src/components/activity/wiki/__tests__/`
 
-Rewrite the wiki data layer against the new backend contracts (keep old exports compiling until 2.2 deletes the old UI):
+Build the wiki data layer fresh against the new backend contracts (the legacy `WikiTabData.ts` was already deleted with the old UI):
 
 - `WikiTabModel.ts` (~350): types `WikiMode = 'wiki' | 'code' | 'ask' | 'research'`, `WikiGraphPayload`, `WikiPageMeta`, `WikiOutputMeta`, `PageTreeNode`; path helpers `pageKindFromPath`, `breadcrumbSegments`, `codePathToSourcePath("code/files/src/gobby/runner.py.md") → "src/gobby/runner.py"`; `buildPageTree(pages, outputs, rootFilter)` or a pre-merged `pages + outputs` input grouping by path segments (`knowledge/{concepts,topics,sources}`, `recaps/`, `outputs/`, root pages `_index`, `log`; code mode: `INDEX`, `repo`, `modules/`, `files/**` mirror); `buildNodeIndex(pages)` producing path→meta and title/alias→path maps for wikilink + citation resolution; node color/size mapping tables for the graph (kind → token var, `val = 2 + 3*sqrt(degree)` clamped).
-- `WikiTabData.ts` (~400): typed fetchers over the envelope — `fetchGraph(scope, include)`, `fetchPages(scope, prefix?)`, `fetchPage(path|title)`, `fetchBacklinks(target)`, `fetchSearch`, `fetchAsk({query, llm, signal})`, `savePage(path, content, mode, expectedHash)` → `POST /api/wiki/write` (412 normalized to a typed conflict result), `createPage`, `deletePage` → `POST /api/wiki/delete`, `launchResearch(inputs)` → `POST /api/pipelines/run {name:'wiki-research', background:true}`; normalizers `normalizeGraph`, `normalizePages`, `normalizePage` (frontmatter split via `js-yaml`, already a dep), `normalizeAskAnswer` (answer markdown, citations `{target, title, resolvedPath|null}`, grounding warnings — field names normalized defensively in the established `asRecord`/`fieldText` style against fixture envelopes captured from live `gwiki ask` output), `normalizeBacklinks`.
+- `WikiTabData.ts` (~400): typed fetchers over the envelope — `fetchGraph(scope, include)`, `fetchPages(scope, prefix?)`, `fetchPage(path|title)`, `fetchBacklinks(target)`, `fetchSearch`, `fetchAsk({query, llm, signal})`, `savePage(path, content, mode, expectedHash)` → `POST /api/wiki/write` (412 normalized to a typed conflict result), `createPage`, `deletePage` → `POST /api/wiki/delete`, `launchResearch(inputs)` → `POST /api/pipelines/run {name:'wiki-research', background:true}`; normalizers `normalizeGraph`, `normalizePages`, `normalizePage` (frontmatter split via `js-yaml`, already a dep), `normalizeAskAnswer` (answer markdown, citations `{target, title, resolvedPath|null}`, grounding warnings — field names normalized defensively in the established `asRecord`/`fieldText` style against fixture envelopes captured from live `gwiki ask` output), `normalizeBacklinks`; plus a status-summary normalizer (successor to the deleted `buildWikiSummary`) over the `useWiki` status/health envelopes, feeding 2.2's degraded banner.
 - **Tree and citation resolution use the lightweight `pages` listing; the graph payload is fetched lazily only for the graph view and unresolved-mentions data.**
 - Tests use fixtures shaped from `wiki/outputs/graph.json` (1,846 nodes in the current vault: 835 `unresolved_target`, 337 `source` + 337 `citation`) and live envelope captures.
 
@@ -211,22 +213,22 @@ Rewrite the wiki data layer against the new backend contracts (keep old exports 
 
 Domain: frontend.
 
-Targets: `web/src/components/activity/WikiTab.tsx`, `web/src/components/activity/wiki/WikiTabToolbar.tsx`, `web/src/components/activity/wiki/WikiTabActions.ts`, `web/src/components/activity/wiki/WikiSourcesManager.tsx`, `web/src/components/activity/ActivityPanel.tsx`, `web/src/components/activity/wiki/WikiTabList.tsx` (deleted), `web/src/components/activity/wiki/WikiDetailPanel.tsx` (deleted)
+Targets: `web/src/components/activity/WikiTab.tsx`, `web/src/components/activity/wiki/WikiTabToolbar.tsx`, `web/src/components/activity/wiki/WikiTabActions.ts`, `web/src/components/activity/wiki/WikiSourcesManager.tsx`, `web/src/components/activity/ActivityPanel.tsx`
 
-Replace `WikiTab.tsx` with the four-mode shell (the `wiki` tab id is already registered — no tab registration work):
+Replace the blank `WikiTab.tsx` stub with the four-mode shell (the `wiki` tab id is already registered — no tab registration work):
 
 - Shell (~250): mode state via `SegmentedControl` ("Wiki | Code | Ask | Research", `controlHeight="sm"`), scope state `{projectId, topic}` (topic = free-text input in the kebab, persisted), `useWikiNav()` — `{current, openPage(path, opts), back(), forward(), canBack, canForward}` with an in-memory history stack (cap 50); `openPage` flips mode automatically (`code/` prefix → code mode) and is dirty-guarded; container-width measurement via `ResizeObserver` (wide ≥560px vs narrow) — the repo bans Tailwind `md:` variants for this.
 - Persistence keys: `gobby:wiki-tab:mode`, `:topic`, `:tree-width`, `:split`, `:last-page:wiki`, `:last-page:code`, `:graph` (JSON settings); sessionStorage `gobby:wiki-tab:ask-history`.
 - Toolbar (~200): segmented control, `ActivityPanelSearch` (filters current mode's tree/list), graph button (wiki+code modes), kebab `QuickMenu`: New page, Quick open, Refresh index, Compile…, Audit, Attach file…, Ingest URL…, Manage sources…, Topic scope….
-- `WikiTabActions.ts` (~250): orchestration — save→refetch page/pages/backlinks, create→navigate, delete→confirm+navigate-back, launchResearch, compile/audit/refresh/attach/ingest ported from the old toolbar and `WikiChatActions`.
+- `WikiTabActions.ts` (~250): orchestration — save→refetch page/pages/backlinks, create→navigate, delete→confirm+navigate-back, launchResearch, compile/audit/refresh/attach/ingest built over the kept `useWiki` action helpers (`refresh`, `attach`, `ingest`, `compileWiki`, `audit`).
 - `WikiSourcesManager.tsx` (~250): the old sources list/detail capability as an in-pane view opened from the kebab, reusing `WikiSourceRemovalDialog`.
 - `ActivityPanel.tsx`: `case "wiki"` gains `requestPanelOverride`/`releasePanelOverride` props (mirrors `case "memory"`) for the graph's full-width takeover.
-- Degraded banner: existing `buildWikiSummary` normalizers drive one slim banner under the toolbar (info icon + "Wiki degraded: <services>" + details popover); ask/research composers disable when the gateway is down; browse keeps working.
-- Delete the old wiki list/detail components (targets above) and the old `WikiTab.tsx` body; mode bodies render placeholders until P3–P5 land.
+- Degraded banner: the 2.1 status-summary normalizer drives one slim banner under the toolbar (info icon + "Wiki degraded: <services>" + details popover); ask/research composers disable when the gateway is down; browse keeps working.
+- Mode bodies render placeholders until P3–P5 land (the legacy UI was already removed; this section replaces the blank stub).
 
 **Acceptance:**
 
-- 2.2.1 - Four-mode shell with persisted mode/scope/nav replaces the old WikiTab. file: `web/src/components/activity/WikiTab.tsx`.
+- 2.2.1 - Four-mode shell with persisted mode/scope/nav replaces the blank stub. file: `web/src/components/activity/WikiTab.tsx`.
 - 2.2.2 - Toolbar, kebab actions, and sources manager port work against the actions layer. file: `web/src/components/activity/wiki/WikiTabToolbar.tsx`.
 - 2.2.3 - Wiki tab participates in panel override like MemoryTab. behavior: "wiki case passes requestPanelOverride" in `web/src/components/activity/ActivityPanel.tsx`.
 - 2.2.4 - Mode switch and page navigation are dirty-guarded. test: `web/src/components/activity/wiki/__tests__/WikiTab.shell.test.tsx`.
@@ -510,9 +512,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   depends_on: []
   validation_criteria: 'gwiki graph --stdout prints the full GraphExport JSON envelope without writing artifacts; --include knowledge|code filters facts with analytics recomputed on the filtered set; default artifact-writing behavior is unchanged. Crate tests cover retain_include and stdout emission; clippy clean; release binary rebuilt and reinstalled to ~/.gobby/bin/gwiki.'
   labels:
-  - covers:unknown:1.1:1.1.1
-  - covers:unknown:1.1:1.1.2
-  - covers:unknown:1.1:1.1.3
+  - covers:wiki-obsidian-panel:1.1:1.1.1
+  - covers:wiki-obsidian-panel:1.1:1.1.2
+  - covers:wiki-obsidian-panel:1.1:1.1.3
   implementation_domain: backend
   tdd: true
   source_section: '1.1'
@@ -522,9 +524,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   depends_on: []
   validation_criteria: 'gwiki pages returns indexed pages with path/title/tags plus a filesystem-walked outputs array; --prefix code/ restricts the listing; run reports under outputs/ become readable via gwiki read while staying unindexed. Crate tests cover prefix filtering and outputs readability; release binary reinstalled.'
   labels:
-  - covers:unknown:1.2:1.2.1
-  - covers:unknown:1.2:1.2.2
-  - covers:unknown:1.2:1.2.3
+  - covers:wiki-obsidian-panel:1.2:1.2.1
+  - covers:wiki-obsidian-panel:1.2:1.2.2
+  - covers:wiki-obsidian-panel:1.2:1.2.3
   implementation_domain: backend
   tdd: true
   source_section: '1.2'
@@ -534,11 +536,11 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   depends_on: []
   validation_criteria: 'gwiki page write upserts knowledge/ pages from stdin emitting changed_paths; confinement rejects writes outside knowledge/ plus traversal and symlink escapes; --mode create returns a distinct already-exists error; --expected-hash mismatch returns a precondition-failed error leaving the file untouched; page delete removes the file and reindex prunes derived rows. Crate tests cover all five behaviors; release binary reinstalled.'
   labels:
-  - covers:unknown:1.3:1.3.1
-  - covers:unknown:1.3:1.3.2
-  - covers:unknown:1.3:1.3.3
-  - covers:unknown:1.3:1.3.4
-  - covers:unknown:1.3:1.3.5
+  - covers:wiki-obsidian-panel:1.3:1.3.1
+  - covers:wiki-obsidian-panel:1.3:1.3.2
+  - covers:wiki-obsidian-panel:1.3:1.3.3
+  - covers:wiki-obsidian-panel:1.3:1.3.4
+  - covers:wiki-obsidian-panel:1.3:1.3.5
   implementation_domain: backend
   tdd: true
   source_section: '1.3'
@@ -550,9 +552,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '1.2'
   validation_criteria: 'GwikiGateway.graph()/pages() exist and GET /api/wiki/graph and /api/wiki/pages serve them with project/topic scope params; an invalid include value yields a 400 validation envelope; gzip middleware compresses large responses. Focused route tests prove include validation and gzip behavior.'
   labels:
-  - covers:unknown:1.4:1.4.1
-  - covers:unknown:1.4:1.4.2
-  - covers:unknown:1.4:1.4.3
+  - covers:wiki-obsidian-panel:1.4:1.4.1
+  - covers:wiki-obsidian-panel:1.4:1.4.2
+  - covers:wiki-obsidian-panel:1.4:1.4.3
   implementation_domain: backend
   tdd: true
   source_section: '1.4'
@@ -563,9 +565,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '1.3'
   validation_criteria: 'POST /api/wiki/write persists content verbatim and responds only after the reindex handoff completes; GwikiGateway.write_page threads expected_hash into the gwiki argv so the precondition cannot be dropped at the gateway boundary; create-mode conflict maps to 409, missing-page delete to 404, and expected-hash mismatch to 412; wiki_write_page and wiki_delete_page MCP tools are registered with confinement errors surfaced. Focused route tests prove write-await-reindex, hash threading, and error mapping.'
   labels:
-  - covers:unknown:1.5:1.5.1
-  - covers:unknown:1.5:1.5.2
-  - covers:unknown:1.5:1.5.3
+  - covers:wiki-obsidian-panel:1.5:1.5.1
+  - covers:wiki-obsidian-panel:1.5:1.5.2
+  - covers:wiki-obsidian-panel:1.5:1.5.3
   implementation_domain: backend
   tdd: true
   source_section: '1.5'
@@ -575,9 +577,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   depends_on: []
   validation_criteria: 'PipelineExecutor.start_detached returns a RUNNING execution immediately and the run completes in the background with task retention and exception-logging done-callbacks; POST /api/pipelines/run with background true responds 202 carrying execution_id while pipeline_event WS messages stream progress; executor startup marks restart-orphaned RUNNING executions FAILED. Executor tests prove detached completion and the startup sweep.'
   labels:
-  - covers:unknown:1.6:1.6.1
-  - covers:unknown:1.6:1.6.2
-  - covers:unknown:1.6:1.6.3
+  - covers:wiki-obsidian-panel:1.6:1.6.1
+  - covers:wiki-obsidian-panel:1.6:1.6.2
+  - covers:wiki-obsidian-panel:1.6:1.6.3
   implementation_domain: backend
   tdd: true
   source_section: '1.6'
@@ -587,8 +589,8 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   depends_on: []
   validation_criteria: 'CodewikiRefreshTrigger.status() exposes pending root keys, active flush tasks, and last-run outcome with timestamps; GET /api/code-index/codewiki/status returns that snapshot. Focused tests prove the snapshot contents after a refresh cycle.'
   labels:
-  - covers:unknown:1.7:1.7.1
-  - covers:unknown:1.7:1.7.2
+  - covers:wiki-obsidian-panel:1.7:1.7.1
+  - covers:wiki-obsidian-panel:1.7:1.7.2
   implementation_domain: backend
   tdd: true
   source_section: '1.7'
@@ -600,11 +602,11 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '1.5'
   - '1.6'
   - '1.7'
-  validation_criteria: 'WikiTabModel and WikiTabData expose typed models, the page-tree builder, node index, path helpers, and defensive fetchers/normalizers for graph, pages, page, backlinks, ask, write, delete, and research launch. Vitest fixtures pin tree building, wikilink target resolution, and ask normalization against captured envelopes.'
+  validation_criteria: 'WikiTabModel and WikiTabData expose typed models, the page-tree builder, node index, path helpers, and defensive fetchers/normalizers for graph, pages, page, backlinks, ask, write, delete, and research launch, plus a status-summary normalizer over the useWiki status/health envelopes. Vitest fixtures pin tree building, wikilink target resolution, and ask normalization against captured envelopes.'
   labels:
-  - covers:unknown:2.1:2.1.1
-  - covers:unknown:2.1:2.1.2
-  - covers:unknown:2.1:2.1.3
+  - covers:wiki-obsidian-panel:2.1:2.1.1
+  - covers:wiki-obsidian-panel:2.1:2.1.2
+  - covers:wiki-obsidian-panel:2.1:2.1.3
   implementation_domain: frontend
   tdd: true
   source_section: '2.1'
@@ -613,12 +615,12 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   task_type: feature
   depends_on:
   - '2.1'
-  validation_criteria: 'The four-mode WikiTab shell replaces the old implementation with persisted mode/scope/navigation, the segmented mode control, kebab actions, the ported sources manager, and panel-override wiring mirroring MemoryTab; the old wiki list/detail components are deleted. Shell tests prove mode switching and dirty-guarded transitions.'
+  validation_criteria: 'The four-mode WikiTab shell replaces the blank stub with persisted mode/scope/navigation, the segmented mode control, kebab actions, the ported sources manager, and panel-override wiring mirroring MemoryTab. Shell tests prove mode switching and dirty-guarded transitions.'
   labels:
-  - covers:unknown:2.2:2.2.1
-  - covers:unknown:2.2:2.2.2
-  - covers:unknown:2.2:2.2.3
-  - covers:unknown:2.2:2.2.4
+  - covers:wiki-obsidian-panel:2.2:2.2.1
+  - covers:wiki-obsidian-panel:2.2:2.2.2
+  - covers:wiki-obsidian-panel:2.2:2.2.3
+  - covers:wiki-obsidian-panel:2.2:2.2.4
   implementation_domain: frontend
   tdd: true
   source_section: '2.2'
@@ -629,8 +631,8 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '2.1'
   validation_criteria: 'remarkWikilink transforms wikilink syntax including alias, anchor, unresolved, adjacent, and embed-degradation cases into wikilink-scheme links without rehype-raw; MarkdownBody accepts merged remarkPlugins/components props with byte-identical default behavior and a memo key covering the plugin identity. Unit tests pin every listed case.'
   labels:
-  - covers:unknown:2.3:2.3.1
-  - covers:unknown:2.3:2.3.2
+  - covers:wiki-obsidian-panel:2.3:2.3.1
+  - covers:wiki-obsidian-panel:2.3:2.3.2
   implementation_domain: frontend
   tdd: true
   source_section: '2.3'
@@ -641,8 +643,8 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '2.3'
   validation_criteria: 'MermaidBlock lazily renders language-mermaid fences as token-themed SVG in both themes with strict security level, re-initializing on theme change; render failure falls back to a highlighted code block with an error note; the mermaid dependency stays out of the main bundle. Component tests prove render and fallback paths.'
   labels:
-  - covers:unknown:2.4:2.4.1
-  - covers:unknown:2.4:2.4.2
+  - covers:wiki-obsidian-panel:2.4:2.4.1
+  - covers:wiki-obsidian-panel:2.4:2.4.2
   implementation_domain: frontend
   tdd: true
   source_section: '2.4'
@@ -656,10 +658,10 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '2.4'
   validation_criteria: 'The tree renders vault structure from the pages listing with keyboard navigation and kind-colored icons; the reader renders frontmatter header plus markdown with clickable wikilink navigation and distinct unresolved treatment; the backlinks pane lists linked and unresolved mentions; quick-open fuzzy-jumps to any page and back/forward history is dirty-guarded. Browse tests prove navigation flows.'
   labels:
-  - covers:unknown:3.1:3.1.1
-  - covers:unknown:3.1:3.1.2
-  - covers:unknown:3.1:3.1.3
-  - covers:unknown:3.1:3.1.4
+  - covers:wiki-obsidian-panel:3.1:3.1.1
+  - covers:wiki-obsidian-panel:3.1:3.1.2
+  - covers:wiki-obsidian-panel:3.1:3.1.3
+  - covers:wiki-obsidian-panel:3.1:3.1.4
   implementation_domain: frontend
   tdd: true
   source_section: '3.1'
@@ -670,10 +672,10 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '3.1'
   validation_criteria: 'The edit toggle provides draft state with dirty guard and Cmd+S; save passes the base content hash and awaits the reindex-backed write; a 412 opens the reload/overwrite conflict panel so silent overwrite is impossible; create validates knowledge/ paths, seeds frontmatter, and surfaces 409 conflicts inline; delete confirms destructively and navigates back; code pages expose no edit or delete affordances. Editor tests prove create, save-conflict, and concurrent-modification flows.'
   labels:
-  - covers:unknown:3.2:3.2.1
-  - covers:unknown:3.2:3.2.2
-  - covers:unknown:3.2:3.2.3
-  - covers:unknown:3.2:3.2.4
+  - covers:wiki-obsidian-panel:3.2:3.2.1
+  - covers:wiki-obsidian-panel:3.2:3.2.2
+  - covers:wiki-obsidian-panel:3.2:3.2.3
+  - covers:wiki-obsidian-panel:3.2:3.2.4
   implementation_domain: frontend
   tdd: true
   source_section: '3.2'
@@ -684,10 +686,10 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '3.1'
   validation_criteria: 'The ref-isolated memoized 2D graph renders around 1500 nodes with hover, click-to-navigate, and zoom without kapsule re-mounts; the graph view takes the panel override with working filters, layers, legend, and persisted settings; reduced motion pre-simulates layout; node kinds remain distinguishable in grayscale and unresolved nodes render hollow. Graph tests prove interactions.'
   labels:
-  - covers:unknown:4.1:4.1.1
-  - covers:unknown:4.1:4.1.2
-  - covers:unknown:4.1:4.1.3
-  - covers:unknown:4.1:4.1.4
+  - covers:wiki-obsidian-panel:4.1:4.1.1
+  - covers:wiki-obsidian-panel:4.1:4.1.2
+  - covers:wiki-obsidian-panel:4.1:4.1.3
+  - covers:wiki-obsidian-panel:4.1:4.1.4
   implementation_domain: frontend
   tdd: true
   source_section: '4.1'
@@ -698,9 +700,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '4.1'
   validation_criteria: 'Code mode browses the codewiki mirror at scale with collapsed-by-default folders; code pages render mermaid diagrams and highlighted fences and expose Copy source path; the graph opens pre-filtered to code edges; the freshness strip surfaces codewiki refresh status and a refresh action. Code-mode tests prove the browsing flow.'
   labels:
-  - covers:unknown:4.2:4.2.1
-  - covers:unknown:4.2:4.2.2
-  - covers:unknown:4.2:4.2.3
+  - covers:wiki-obsidian-panel:4.2:4.2.1
+  - covers:wiki-obsidian-panel:4.2:4.2.2
+  - covers:wiki-obsidian-panel:4.2:4.2.3
   implementation_domain: frontend
   tdd: true
   source_section: '4.2'
@@ -711,9 +713,9 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '3.1'
   validation_criteria: 'Ask supports the extractive/synthesized toggle, staged progress with cancel, and error/timeout retry; every citation chip either navigates to a vault page or is explicitly marked unresolved with a search fallback (never a silent dead link); grounding warnings render as a monochrome-legible callout. Ask tests prove citation resolution behavior.'
   labels:
-  - covers:unknown:5.1:5.1.1
-  - covers:unknown:5.1:5.1.2
-  - covers:unknown:5.1:5.1.3
+  - covers:wiki-obsidian-panel:5.1:5.1.1
+  - covers:wiki-obsidian-panel:5.1:5.1.2
+  - covers:wiki-obsidian-panel:5.1:5.1.3
   implementation_domain: frontend
   tdd: true
   source_section: '5.1'
@@ -725,10 +727,10 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '3.1'
   validation_criteria: 'Research runs launch detached with a 202 and stream live step progress via pipeline events with a 10s polling fallback when the WebSocket is down; restart-orphaned runs surface a recovery state that re-enables the composer; past run reports list from vault outputs and open in the shared reader with navigable topic wikilinks; the single-flight guard and completion strip behave correctly. Research tests prove launch, monitor, recovery, and report flows.'
   labels:
-  - covers:unknown:5.2:5.2.1
-  - covers:unknown:5.2:5.2.2
-  - covers:unknown:5.2:5.2.3
-  - covers:unknown:5.2:5.2.4
+  - covers:wiki-obsidian-panel:5.2:5.2.1
+  - covers:wiki-obsidian-panel:5.2:5.2.2
+  - covers:wiki-obsidian-panel:5.2:5.2.3
+  - covers:wiki-obsidian-panel:5.2:5.2.4
   implementation_domain: frontend
   tdd: true
   source_section: '5.2'
@@ -742,8 +744,8 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   - '5.2'
   validation_criteria: 'All frontend gates pass (type-check, vitest, JS/CSS/token lint); dark, light, and grayscale walkthroughs are completed across all four modes with fixes applied; keyboard-only operation covers every interactive surface; reduced-motion and 360px-split reachability are verified. A11y tests pin keyboard coverage.'
   labels:
-  - covers:unknown:6.1:6.1.1
-  - covers:unknown:6.1:6.1.2
+  - covers:wiki-obsidian-panel:6.1:6.1.1
+  - covers:wiki-obsidian-panel:6.1:6.1.2
   implementation_domain: frontend
   tdd: true
   source_section: '6.1'
