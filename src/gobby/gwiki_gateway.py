@@ -5,10 +5,50 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from gobby.utils.native_bin import resolve_native_bin
+from gobby.utils.wiki_vault import existing_vault_dir, is_vault, resolve_vault_dir
 
 COMPILE_KINDS = frozenset({"source", "concept", "topic"})
+
+# Gateway command names (the ``command_name`` passed to ``_run_json``) whose
+# subprocesses mutate the wiki vault. Every gateway in this process — watcher
+# coordinator, cron handlers, MCP tools, HTTP routes, codewiki refresh —
+# serializes these per vault so concurrent runs don't collide on gwiki's
+# internal file locks and degrade with lock timeouts.
+SERIALIZED_WRITE_COMMANDS = frozenset(
+    {
+        "index",
+        "ingest_file",
+        "ingest_url",
+        "collect",
+        "compile",
+        "remove_source",
+        "refresh",
+        "sync_sessions",
+        "upkeep",
+        "librarian",
+        "recap",
+    }
+)
+
+# Locks are scoped per event loop: the daemon has one loop, while tests spin
+# up a fresh loop per test and an asyncio.Lock cannot be reused across loops.
+_vault_write_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
+
+
+def _vault_write_lock(key: str) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    locks = _vault_write_locks.setdefault(loop, {})
+    lock = locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[key] = lock
+    return lock
+
 
 # Subprocess kill guards for gwiki calls. Generation-backed commands
 # (compile, AI-routed ask) run LLM synthesis that scales with vault size and
@@ -32,7 +72,9 @@ def normalize_kind(value: str | None) -> str | None:
 
 def resolve_ask_timeout(llm: bool, ai: str | None) -> float:
     ai_may_generate = llm or (ai is not None and ai != "off")
-    return GENERATION_GWIKI_TIMEOUT_SECONDS if ai_may_generate else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+    return (
+        GENERATION_GWIKI_TIMEOUT_SECONDS if ai_may_generate else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+    )
 
 
 class GwikiGatewayError(RuntimeError):
@@ -281,13 +323,38 @@ class GwikiGateway:
         binary = await self._resolve_binary()
         scope_args = self._scope_args() if include_scope else []
         argv = [binary, *args, *scope_args, "--format", "json"]
-        outcome = await self._run_command(command_name, argv)
+        if command_name in SERIALIZED_WRITE_COMMANDS:
+            async with _vault_write_lock(self._vault_lock_key()):
+                outcome = await self._run_command(command_name, argv)
+        else:
+            outcome = await self._run_command(command_name, argv)
         if isinstance(outcome, dict):
             return outcome
 
         stdout, stderr = outcome
         payload = self._parse_success_payload(command_name, stdout)
         return self._success_envelope(command_name, payload, stderr)
+
+    def _vault_lock_key(self) -> str:
+        """Identity of the vault this gateway mutates, shared across callers.
+
+        Callers name the same vault differently: cron and MCP/HTTP gateways
+        pass the project repo root, the watcher passes the vault directory
+        itself, and topic gateways pass only the topic name. Normalizing to
+        the resolved vault directory (mirroring gwiki's own resolution) makes
+        watcher- and cron-triggered runs share one lock.
+        """
+        if self._topic is not None:
+            return f"topic:{self._topic}"
+        root = Path(self._project_root).expanduser() if self._project_root else Path.cwd()
+        try:
+            root = root.resolve()
+        except OSError:
+            pass
+        if is_vault(root):
+            return f"vault:{root}"
+        vault = existing_vault_dir(root) or resolve_vault_dir(root)
+        return f"vault:{vault if vault is not None else root}"
 
     async def _resolve_binary(self) -> str:
         if self._binary is not None:

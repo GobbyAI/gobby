@@ -10,6 +10,12 @@ DEFAULT_WIKI_IGNORE_GLOBS: tuple[str, ...] = (
     "meta/librarian/**",
     "meta/upkeep/**",
     "_meta/**",
+    # gwiki-written machine state: raw source captures (rewritten by refresh
+    # and collect) and vault-internal state. Watching them re-triggers an
+    # index for changes gwiki itself just wrote.
+    "raw/**",
+    "inbox/**",
+    "_gwiki/**",
 )
 
 

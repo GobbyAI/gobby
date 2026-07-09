@@ -718,3 +718,115 @@ async def test_refresh_uses_gateway_scope_and_preserves_payload(
 
     assert exc_info.value.payload == failed_payload
     assert exc_info.value.stderr == "all failed"
+
+
+def _make_vault(repo: Path) -> Path:
+    vault = repo / "wiki"
+    state = vault / "_gwiki"
+    state.mkdir(parents=True)
+    (state / "scope.json").write_text("{}")
+    return vault
+
+
+async def test_vault_lock_key_unifies_repo_root_and_vault_dir(tmp_path: Path) -> None:
+    """Cron passes the repo root, the watcher passes the vault dir — same lock."""
+    repo = tmp_path / "repo"
+    vault = _make_vault(repo)
+    other_repo = tmp_path / "other"
+    _make_vault(other_repo)
+
+    cron_style = GwikiGateway(binary="/bin/gwiki", project_root=repo)
+    watcher_style = GwikiGateway(binary="/bin/gwiki", project_root=vault)
+    other = GwikiGateway(binary="/bin/gwiki", project_root=other_repo)
+
+    assert cron_style._vault_lock_key() == watcher_style._vault_lock_key()
+    assert cron_style._vault_lock_key() != other._vault_lock_key()
+    assert (
+        GwikiGateway(binary="/bin/gwiki", topic="research")._vault_lock_key()
+        == GwikiGateway(binary="/bin/gwiki", project_root=repo, topic="research")._vault_lock_key()
+    )
+
+
+async def test_index_serializes_watcher_and_cron_gateways_on_same_vault(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    vault = _make_vault(repo)
+    cron_gateway = GwikiGateway(binary="/bin/gwiki", project_root=repo)
+    watcher_gateway = GwikiGateway(binary="/bin/gwiki", project_root=vault)
+
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    entered: list[str] = []
+
+    def stub_run_command(
+        label: str,
+        gate: asyncio.Event | None,
+    ) -> Any:
+        async def run_command(command_name: str, argv: Any) -> tuple[bytes, str]:
+            entered.append(label)
+            if gate is not None:
+                first_entered.set()
+                await gate.wait()
+            return b'{"status": "ok"}', ""
+
+        return run_command
+
+    monkeypatch.setattr(cron_gateway, "_run_command", stub_run_command("cron", release_first))
+    monkeypatch.setattr(watcher_gateway, "_run_command", stub_run_command("watcher", None))
+
+    cron_index = asyncio.create_task(cron_gateway.index())
+    await asyncio.wait_for(first_entered.wait(), timeout=2.0)
+
+    watcher_index = asyncio.create_task(watcher_gateway.index())
+    # One full loop turn: the watcher task runs as far as it can — with the
+    # shared per-vault lock held it must park on acquire, not enter the stub.
+    turn = asyncio.Event()
+    asyncio.get_running_loop().call_soon(turn.set)
+    await turn.wait()
+
+    assert entered == ["cron"]
+    assert not watcher_index.done()
+
+    release_first.set()
+    await cron_index
+    await watcher_index
+    assert entered == ["cron", "watcher"]
+
+
+async def test_index_runs_concurrently_across_different_vaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    _make_vault(repo_a)
+    _make_vault(repo_b)
+    gateway_a = GwikiGateway(binary="/bin/gwiki", project_root=repo_a)
+    gateway_b = GwikiGateway(binary="/bin/gwiki", project_root=repo_b)
+
+    a_entered = asyncio.Event()
+    b_entered = asyncio.Event()
+
+    def stub_run_command(entered_event: asyncio.Event, other_event: asyncio.Event) -> Any:
+        async def run_command(command_name: str, argv: Any) -> tuple[bytes, str]:
+            entered_event.set()
+            # Both stubs must be inside their subprocess call at once; a
+            # wrongly shared lock would leave one of these waits unsatisfied.
+            await asyncio.wait_for(other_event.wait(), timeout=2.0)
+            return b'{"status": "ok"}', ""
+
+        return run_command
+
+    monkeypatch.setattr(gateway_a, "_run_command", stub_run_command(a_entered, b_entered))
+    monkeypatch.setattr(gateway_b, "_run_command", stub_run_command(b_entered, a_entered))
+
+    result_a, result_b = await asyncio.wait_for(
+        asyncio.gather(gateway_a.index(), gateway_b.index()),
+        timeout=4.0,
+    )
+
+    assert a_entered.is_set() and b_entered.is_set()
+    assert result_a["ok"] is True
+    assert result_b["ok"] is True

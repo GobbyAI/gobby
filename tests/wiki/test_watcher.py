@@ -153,6 +153,33 @@ async def test_local_edit_triggers_index(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_scan_ignores_gwiki_written_paths_by_default(tmp_path: Path) -> None:
+    """Refresh-written raw captures and vault state must not re-trigger indexing."""
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+
+    (tmp_path / "raw" / "assets").mkdir(parents=True)
+    (tmp_path / "_gwiki" / "compile").mkdir(parents=True)
+    (tmp_path / "inbox").mkdir()
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "raw" / "src-refresh.md").write_text("refreshed capture")
+    (tmp_path / "raw" / "assets" / "src-refresh.bin").write_text("asset")
+    (tmp_path / "_gwiki" / "compile" / "state.json").write_text("{}")
+    (tmp_path / "inbox" / "drop.md").write_text("inbox drop")
+    (tmp_path / "knowledge" / "concept.md").write_text("real page")
+
+    await watcher._scan_once()
+    await watcher.flush_pending()
+
+    assert coordinator.calls == [{"project": ["concept.md"]}]
+
+
+@pytest.mark.asyncio
 async def test_flush_keeps_pending_changes_when_coordinator_fails(tmp_path: Path) -> None:
     coordinator = FailingCoordinator()
     watcher = WikiWatcher(

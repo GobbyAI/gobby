@@ -17,6 +17,9 @@ def test_default_ignore_globs_cover_librarian_and_upkeep_artifacts() -> None:
         "meta/librarian/**",
         "meta/upkeep/**",
         "_meta/**",
+        "raw/**",
+        "inbox/**",
+        "_gwiki/**",
     } <= set(config.ignore_globs)
 
 
