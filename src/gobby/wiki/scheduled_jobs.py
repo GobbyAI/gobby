@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from gobby.gwiki_gateway import GwikiGateway
+from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
@@ -17,7 +18,7 @@ from gobby.wiki.scope_resolution import (
     project_scope,
     resolve_scope_identity,
 )
-from gobby.wiki.update_coordinator import WikiUpdateCoordinator
+from gobby.wiki.update_coordinator import WikiUpdateCoordinator, written_cluster_paths
 
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
@@ -31,6 +32,10 @@ WIKI_RECAP_SCHEDULE_CRON = "10 0 * * *"
 # Maintenance commands (librarian check sweeps, upkeep/recap synthesis) run
 # far past the gateway's 30s interactive default; cron has no caller waiting.
 WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS = 600.0
+# Gwiki statuses that must record a failed cron run so consecutive_failures
+# and backoff engage; "degraded" covers gwiki timeout envelopes, which report
+# ok:false with status "degraded" instead of "failed".
+_FAILED_RUN_STATUSES = frozenset({"failed", "failure", "error", "timeout", "degraded"})
 WIKI_HEALTH_HISTORY_SAMPLE_SIZE = 10
 WIKI_LIBRARIAN_TASK_LABEL_PREFIX = "wiki-librarian"
 _LIBRARIAN_DEDUP_LOOKUP_LIMIT = 20
@@ -217,7 +222,8 @@ def create_wiki_librarian_handler(
 
     async def librarian_handler(job: CronJob) -> str:
         result = await gateway.librarian()
-        task_filing = _file_librarian_tasks(
+        task_filing = await asyncio.to_thread(
+            _file_librarian_tasks,
             task_manager=task_manager,
             scope=scope,
             fallback_project_id=fallback_project_id,
@@ -247,19 +253,37 @@ def create_wiki_recap_handler(
     """
 
     async def recap_handler(job: CronJob) -> str:
-        presync = await coordinator.handle_write_result(await gateway.sync_sessions())
+        try:
+            presync = await coordinator.handle_write_result(await gateway.sync_sessions())
+        except (GwikiCommandError, GwikiGatewayError) as exc:
+            if isinstance(exc, GwikiCommandError):
+                presync = exc.to_envelope()
+            else:
+                presync = {
+                    "ok": False,
+                    "command": "sync-sessions",
+                    "status": "failed",
+                    "payload": None,
+                    "error": {"type": exc.__class__.__name__, "message": str(exc)},
+                }
         result = await gateway.recap(date=_previous_utc_day())
         coordinated = await coordinator.handle_write_result(result)
+        presync_payload = _payload(presync)
+        presync_status = _status(presync, presync_payload)
         coordinated["presync"] = {
             "command": "sync-sessions",
-            "status": _status(presync, _payload(presync)),
+            "status": presync_status,
         }
+        presync_error = _run_error(
+            presync, presync_payload, command="sync-sessions", status=presync_status
+        )
         return _history_output(
             purpose="Write the nightly session recap page",
             scope=scope,
             command="recap",
             gwiki_result=coordinated,
             changed_paths=_changed_paths(coordinated),
+            extra_error=f"presync sync-sessions: {presync_error}" if presync_error else None,
         )
 
     return recap_handler
@@ -544,13 +568,19 @@ def _history_output(
     command: str,
     gwiki_result: dict[str, Any],
     changed_paths: list[str] | None = None,
+    extra_error: str | None = None,
 ) -> str:
     payload = _payload(gwiki_result)
+    status = _status(gwiki_result, payload)
+    error = _run_error(gwiki_result, payload, command=command, status=status)
+    if extra_error:
+        error = f"{error}; {extra_error}" if error else extra_error
     return _history_output_json(
         purpose=purpose,
         scope=scope,
         command=command,
-        status=_status(gwiki_result, payload),
+        status=status,
+        error=error,
         result=_visible_result(gwiki_result, payload),
         changed_paths=changed_paths,
     )
@@ -568,11 +598,13 @@ def _librarian_history_output(
     payload = _payload(gwiki_result)
     result = _visible_health_result(gwiki_result, _compact_librarian_payload(payload))
     result["task_filing"] = task_filing
+    status = _status(gwiki_result, payload)
     return _history_output_json(
         purpose=purpose,
         scope=scope,
         command="librarian",
-        status=_status(gwiki_result, payload),
+        status=status,
+        error=_run_error(gwiki_result, payload, command="librarian", status=status),
         result=result,
     )
 
@@ -621,11 +653,13 @@ def _health_history_output(
     gwiki_result: dict[str, Any],
 ) -> str:
     payload = _payload(gwiki_result)
+    status = _status(gwiki_result, payload)
     return _history_output_json(
         purpose=purpose,
         scope=scope,
         command=command,
-        status=_status(gwiki_result, payload),
+        status=status,
+        error=_run_error(gwiki_result, payload, command=command, status=status),
         result=_visible_health_result(gwiki_result, _compact_health_payload(payload)),
     )
 
@@ -637,15 +671,22 @@ def _history_output_json(
     command: str,
     status: str,
     result: dict[str, Any],
+    error: str | None = None,
     changed_paths: list[str] | None = None,
 ) -> str:
+    # The cron executor parses JSON handler output and coerces top-level
+    # ok/error into the run outcome, so failed and degraded gwiki results
+    # record failed runs instead of silently completing.
     output: dict[str, Any] = {
         "purpose": purpose,
         "scope": scope,
         "command": command,
         "status": status,
+        "ok": error is None,
         "result": result,
     }
+    if error is not None:
+        output["error"] = error
     if changed_paths is not None:
         output["changed_paths"] = changed_paths
     return json.dumps(output, sort_keys=True)
@@ -717,17 +758,7 @@ def _changed_paths(result: dict[str, Any]) -> list[str]:
 
 def _upkeep_changed_paths(result: dict[str, Any]) -> list[str]:
     """Page paths written by upkeep clusters; planned/failed clusters wrote nothing."""
-    paths: list[str] = []
-    clusters = _payload(result).get("clusters")
-    if not isinstance(clusters, list):
-        return paths
-    for entry in clusters:
-        if not isinstance(entry, dict) or entry.get("action") not in ("created", "updated"):
-            continue
-        page_path = entry.get("page_path")
-        if isinstance(page_path, str) and page_path and page_path not in paths:
-            paths.append(page_path)
-    return paths
+    return written_cluster_paths(_payload(result).get("clusters"))
 
 
 def _previous_utc_day() -> str:
@@ -830,6 +861,29 @@ def _status(result: dict[str, Any], payload: dict[str, Any]) -> str:
     if isinstance(status, str) and status:
         return status
     return "completed" if result.get("ok") else "failed"
+
+
+def _run_error(
+    result: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    command: str,
+    status: str,
+) -> str | None:
+    """Error text for gwiki results that must record a failed cron run."""
+    if result.get("ok") is not False and status.lower() not in _FAILED_RUN_STATUSES:
+        return None
+    for candidate in (result.get("error"), payload.get("error")):
+        if isinstance(candidate, dict):
+            message = candidate.get("message") or candidate.get("type")
+            if isinstance(message, str) and message:
+                return message
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    stderr = result.get("stderr")
+    if isinstance(stderr, str) and stderr.strip():
+        return stderr.strip()
+    return f"gwiki {command} reported status '{status}'"
 
 
 def _scope_project_id(scope: str, fallback_project_id: str) -> str:

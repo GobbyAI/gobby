@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from gobby.gwiki_gateway import GwikiGateway
+from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
@@ -304,6 +305,8 @@ async def test_cron_history_is_user_visible() -> None:
     assert output["scope"] == "project:alpha"
     assert output["command"] == "refresh"
     assert output["status"] == "completed"
+    assert output["ok"] is True
+    assert "error" not in output
     assert output["changed_paths"] == ["raw/changed.md"]
     assert output["result"]["indexed"] == {"documents": 1, "chunks": 3}
     assert output["result"]["gwiki"]["command"] == "refresh"
@@ -323,6 +326,8 @@ async def test_health_cron_history_summarizes_large_payloads() -> None:
     assert output["scope"] == "project:alpha"
     assert output["command"] == "health"
     assert output["status"] == "degraded"
+    assert output["ok"] is False
+    assert output["error"] == "gwiki health reported status 'degraded'"
     assert output["result"]["status"] == "degraded"
     assert output["result"]["scope"] == "project:alpha"
     assert output["result"]["command"] == "health"
@@ -337,6 +342,151 @@ async def test_health_cron_history_summarizes_large_payloads() -> None:
     assert "broken_links" not in output["result"]
     assert "metadata" not in output["result"]
     assert output["result"]["gwiki"] == {"ok": True, "command": "health", "stderr": ""}
+
+
+def _timeout_envelope(command: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "command": command,
+        "status": "degraded",
+        "payload": None,
+        "stderr": "",
+        "error": {"type": "timeout", "message": "gwiki command timed out"},
+    }
+
+
+class TimeoutRefreshGateway(RecordingGateway):
+    async def refresh(
+        self,
+        *,
+        source_ids: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        self.calls.append(("refresh", {"source_ids": source_ids, "dry_run": dry_run}))
+        return _timeout_envelope("refresh")
+
+
+@pytest.mark.asyncio
+async def test_gwiki_timeout_envelope_marks_history_failed() -> None:
+    gateway = TimeoutRefreshGateway()
+    handler = create_wiki_refresh_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("refresh")))
+
+    assert output["status"] == "degraded"
+    assert output["ok"] is False
+    assert output["error"] == "gwiki command timed out"
+
+
+@pytest.mark.asyncio
+async def test_gwiki_ok_false_envelope_marks_history_failed() -> None:
+    class FailingAuditGateway(RecordingGateway):
+        async def audit(self) -> dict[str, Any]:
+            return {
+                "ok": False,
+                "command": "audit",
+                "status": "failed",
+                "payload": None,
+                "stderr": "audit blew up",
+                "error": {"type": "command", "returncode": 2, "message": "gwiki audit exited 2"},
+            }
+
+    gateway = FailingAuditGateway()
+    handler = create_wiki_audit_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("audit")))
+
+    assert output["status"] == "failed"
+    assert output["ok"] is False
+    assert output["error"] == "gwiki audit exited 2"
+
+
+@pytest.mark.asyncio
+async def test_gwiki_degraded_payload_status_marks_history_failed() -> None:
+    class DegradedUpkeepGateway(RecordingGateway):
+        async def upkeep(self, *, dry_run: bool = False) -> dict[str, Any]:
+            return _result("upkeep", {"status": "degraded", "clusters": []})
+
+    gateway = DegradedUpkeepGateway()
+    handler = create_wiki_upkeep_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("upkeep")))
+
+    assert output["status"] == "degraded"
+    assert output["ok"] is False
+    assert output["error"] == "gwiki upkeep reported status 'degraded'"
+
+
+@pytest.mark.asyncio
+async def test_recap_presync_failure_marks_history_failed() -> None:
+    class PresyncTimeoutGateway(RecordingGateway):
+        async def sync_sessions(
+            self,
+            *,
+            archive_dir: str | Path | None = None,
+            limit: int | None = None,
+        ) -> dict[str, Any]:
+            self.calls.append(("sync-sessions", {"archive_dir": archive_dir, "limit": limit}))
+            return _timeout_envelope("sync-sessions")
+
+    gateway = PresyncTimeoutGateway()
+    handler = create_wiki_recap_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("recap")))
+
+    assert output["command"] == "recap"
+    assert output["status"] == "completed"
+    assert output["ok"] is False
+    assert output["error"] == "presync sync-sessions: gwiki command timed out"
+    assert output["result"]["presync"]["status"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_gwiki_timeout_envelope_records_failed_cron_run(
+    cron_storage: CronJobStorage, project_id: str
+) -> None:
+    """End-to-end: a gwiki timeout envelope must record a failed cron run with
+    an error populated so consecutive_failures/backoff engage."""
+    gateway = TimeoutRefreshGateway()
+    handler = create_wiki_refresh_handler(
+        gateway=gateway,
+        coordinator=WikiUpdateCoordinator(gateway),
+        scope="project:alpha",
+    )
+    executor = CronExecutor(storage=cron_storage)
+    executor.register_handler("wiki:refresh:project:alpha", handler)
+    job = cron_storage.create_job(
+        project_id=project_id,
+        name="gobby:wiki-refresh:project:alpha",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="handler",
+        action_config={"handler": "wiki:refresh:project:alpha", "scope": "project:alpha"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    updated = await executor.execute(job, run)
+
+    assert updated.status == "failed"
+    assert updated.error == "gwiki command timed out"
+    assert updated.output is not None
+    assert json.loads(updated.output)["status"] == "degraded"
 
 
 @pytest.mark.asyncio
