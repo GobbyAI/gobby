@@ -108,11 +108,7 @@ def sanitize_wiki_overview(overview: str) -> str:
     for marker in _INJECTED_CONTEXT_MARKERS:
         sanitized = sanitized.replace(marker, "")
     sanitized = "".join(char for char in sanitized if char in "\n\t" or ord(char) >= 32)
-    lines = [
-        line
-        for line in sanitized.splitlines()
-        if not line.strip().startswith("<!-- gobby:")
-    ]
+    lines = [line for line in sanitized.splitlines() if not line.strip().startswith("<!-- gobby:")]
     return "\n".join(lines).strip()
 
 
