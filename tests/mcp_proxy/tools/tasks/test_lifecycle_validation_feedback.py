@@ -262,11 +262,38 @@ def test_resolved_regression_summaries_do_not_admit_failure(feedback: str) -> No
 @pytest.mark.parametrize(
     "feedback",
     [
+        # Exact fragment from the #15950 round-2 verdict that misfired: the
+        # override flipped a 'valid' LLM verdict because "test ... failed"
+        # matched inside a description of an assertion.
+        (
+            "The agent's summary names focused tests for timeout/ok:false/degraded/"
+            "presync-failure plus an end-to-end test asserting a real CronRun records "
+            "status=failed with error populated, which aligns with the visible source logic."
+        ),
+        (
+            "The end-to-end test asserts the recorded cron run is marked failed "
+            "with error populated."
+        ),
+        "The handler change coerces degraded gwiki results into failed cron outcomes.",
+        "New tests verify the executor records the run as failed when the envelope is degraded.",
+        "The history output records status: failed so backoff can engage.",
+    ],
+)
+def test_failure_state_assertion_descriptions_do_not_admit_failure(feedback: str) -> None:
+    """Describing assertions or designed behavior about failure states is not an admission."""
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
         "tests: 9 passed, 1 failed",
         "Validation summary: 2 failures remain.",
         "Tests are failing in the required check.",
         "Tests are still failing in the required check.",
         "The validation gate did not pass.",
+        "The new tests verify the retry path, but the lint check failed.",
     ],
 )
 def test_nonzero_and_explicit_failure_summaries_still_admit_failure(feedback: str) -> None:

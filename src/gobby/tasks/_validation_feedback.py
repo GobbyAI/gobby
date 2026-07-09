@@ -41,6 +41,32 @@ _QUOTED_FEEDBACK_FRAGMENT_RE = re.compile(
     r"(?:\"[^\"]{1,240}\"|`[^`]{1,240}`|(?<!\w)'[^']{1,240}'(?!\w))",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_ASSERTION_VERBS = (
+    r"(?:assert(?:s|ed|ing)?|expect(?:s|ed|ing)?|verif(?:y|ies|ied|ying)|"
+    r"prov(?:e|es|ed|ing)|ensur(?:e|es|ed|ing)|mark(?:s|ed|ing)?|"
+    r"record(?:s|ed|ing)?|coerc(?:e|es|ed|ing)|convert(?:s|ed|ing)?|"
+    r"treat(?:s|ed|ing)?|classif(?:y|ies|ied|ying))"
+)
+_ASSERTION_DESCRIBED_FAILURE_FRAGMENT_RE = re.compile(
+    # Example: "an end-to-end test asserting a real CronRun records
+    # status=failed with error populated" — a description of an assertion or
+    # designed behavior about failure states, not an admission that a gate
+    # failed. The gap must not cross a contrastive clause, a gate word, or a
+    # success word, so genuine admissions like "verify the retry path, but the
+    # lint check failed" keep their failure evidence.
+    rf"\b{_ASSERTION_VERBS}\b"
+    rf"(?:(?!\b(?:but|however|yet|although|though|satisfied|met|pass(?:es|ed|ing)?)\b|"
+    rf"\b{_VALIDATION_GATE_WORDS}\b)[^.!?]){{0,80}}?"
+    r"\bfail(?:ed|ing|ures?)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_STATUS_VALUE_FAILURE_TOKEN_RE = re.compile(
+    # Example: "records status=failed" or "the run status is 'failed'" — a
+    # status *value* named failed, not a failure event.
+    r"\bstatus\s*(?:[=:]{1,2}\s*|\s+(?:is|as|of)\s+)(?:recorded\s+as\s+)?"
+    r"[\"'`]?fail(?:ed|ure)[\"'`]?\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _NONZERO_FAILURE_COUNT_RE = re.compile(
     # Example: "1 failed" or "2 failures".
     r"\b(?:[1-9]\d*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
@@ -147,6 +173,8 @@ def _searchable_feedback(feedback: str) -> str:
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
     normalized_feedback = _NEGATED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _RESOLVED_REGRESSION_FRAGMENT_RE.sub("", normalized_feedback)
+    normalized_feedback = _STATUS_VALUE_FAILURE_TOKEN_RE.sub("", normalized_feedback)
+    normalized_feedback = _ASSERTION_DESCRIBED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     return _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
 
 
