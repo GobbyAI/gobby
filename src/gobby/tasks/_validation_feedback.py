@@ -136,7 +136,7 @@ _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(?<!\bnot\s)\ball\s+"
         r"(?:(?!(?:previous|previously|prior|unmet|unsatisfied|other|remaining)\b)\w+\s+){0,3}"
         r"criteria\s+"
-        r"(?:are\s+|were\s+)?(?:satisfied|met|passed|addressed|covered)\b"
+        r"(?:(?:are|were|have\s+been)\s+)?(?:satisfied|met|passed|addressed|covered)\b"
         r"(?!\s*[,;:]?\s*(?:except|but|however|aside|save|unless)\b)",
         re.IGNORECASE,
     ),

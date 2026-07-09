@@ -389,6 +389,37 @@ class TestInconsistentVerdictReconciliation:
         assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_success_feedback_have_been_met_is_revalidated_once(
+        self,
+        config: TaskValidationConfig,
+        mock_llm: MagicMock,
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": "All acceptance criteria have been met.",
+                "blocking_reasons": ["Missing regression coverage."],
+            },
+            {
+                "status": "valid",
+                "feedback": "Confirmed complete.",
+                "blocking_reasons": [],
+            },
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_incident_rationale_invalid_with_reasons_is_revalidated_once(
         self,
         config: TaskValidationConfig,
@@ -453,6 +484,37 @@ class TestInconsistentVerdictReconciliation:
         assert result.blocking_reasons == [
             "Validation response did not name unmet criteria or failing gates"
         ]
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_invalid_malformed_blocking_reasons_is_revalidated_once(
+        self,
+        config: TaskValidationConfig,
+        mock_llm: MagicMock,
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": "A dict is not a valid blocking_reasons payload.",
+                "blocking_reasons": {"reason": "Missing regression coverage."},
+            },
+            {
+                "status": "valid",
+                "feedback": "Confirmed complete.",
+                "blocking_reasons": [],
+            },
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
         assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio

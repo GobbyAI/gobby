@@ -652,13 +652,9 @@ def _is_unsupported_reject(result_data: dict[str, Any]) -> bool:
         else False
     )
     reasons = result_data.get("blocking_reasons")
-    if isinstance(reasons, list):
-        return not _coerce_blocking_reasons(reasons) or success_feedback
-    if isinstance(reasons, str):
-        return not reasons.strip() or success_feedback
-    # Missing or null field: treat as "no reasons given" so the unsupported
-    # reject is re-validated rather than trusted.
-    return reasons is None or success_feedback
+    if not isinstance(reasons, list | str):
+        return True
+    return not _coerce_blocking_reasons(reasons) or success_feedback
 
 
 class TaskValidator:
