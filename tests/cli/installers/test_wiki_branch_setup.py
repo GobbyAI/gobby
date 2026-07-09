@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from gobby.cli.installers.git_hooks import HOOK_TEMPLATES, install_git_hooks
+from gobby.cli.installers.git_hooks import (
+    GOBBY_HOOK_END,
+    GOBBY_HOOK_START,
+    HOOK_TEMPLATES,
+    install_git_hooks,
+)
 from gobby.cli.installers.wiki_branch_setup import (
     GITIGNORE_START,
     WIKI_BRANCH,
@@ -208,6 +213,46 @@ class TestPrePushWikiPublishing:
         assert "PUSH_REFS=$(cat)" in content
         assert "PUBLISH_WIKI=false" in content
         assert 'if [ "$DELETE_ONLY" = true ] || [ "$WIKI_ONLY" = true ]; then' in content
+
+    def test_install_refreshes_stale_pre_push_hook_section(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        hook_path = repo / ".git" / "hooks" / "pre-push"
+        custom_before = "echo 'custom before'"
+        custom_after = "echo 'custom after'"
+        hook_path.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    custom_before,
+                    GOBBY_HOOK_START,
+                    "# stale Gobby pre-push hook without wiki publishing",
+                    "gobby hooks run pre-push",
+                    GOBBY_HOOK_END,
+                    custom_after,
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        hook_path.chmod(stat.S_IRWXU)
+
+        result = install_git_hooks(repo)
+
+        content = hook_path.read_text(encoding="utf-8")
+        assert result["success"] is True
+        assert "pre-push" in result["installed"]
+        assert not any(skipped.startswith("pre-push ") for skipped in result["skipped"])
+        assert content.count(GOBBY_HOOK_START) == 1
+        assert content.count(GOBBY_HOOK_END) == 1
+        assert "PUSH_REFS=$(cat)" in content
+        assert "PUBLISH_WIKI=false" in content
+        assert "WIKI_WORKTREE=" in content
+        assert "stale Gobby pre-push hook" not in content
+        assert custom_before in content
+        assert custom_after in content
+        assert content.index(custom_before) < content.index(GOBBY_HOOK_START)
+        assert content.index(GOBBY_HOOK_END) < content.index(custom_after)
 
     def test_publishes_wiki_for_default_branch(self, tmp_path: Path) -> None:
         repo, bare = _init_repo_with_remote(tmp_path)

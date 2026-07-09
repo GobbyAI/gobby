@@ -237,10 +237,6 @@ __marimo__/
 !.gobby/plans/
 !.gobby/plans/**
 
-# Project wiki vault lives on the `wiki` branch, republished by
-# .githooks/pre-push on pushes to main. Keep the working vault local here so it
-# stays out of active-branch diffs. Root-anchored: src/gobby/wiki/ is source.
-/wiki/
 screenshots/
 reports/
 bandit_report.json

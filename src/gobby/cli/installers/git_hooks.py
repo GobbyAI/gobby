@@ -441,6 +441,36 @@ def _wrap_gobby_section(script: str) -> str:
     return f"{GOBBY_HOOK_START}\n{script.strip()}\n{GOBBY_HOOK_END}\n"
 
 
+def _extract_gobby_section(content: str) -> str | None:
+    """Return the complete managed Gobby hook section, if present."""
+    start = content.find(GOBBY_HOOK_START)
+    if start == -1:
+        return None
+
+    end = content.find(GOBBY_HOOK_END, start)
+    if end == -1:
+        return None
+
+    end += len(GOBBY_HOOK_END)
+    return content[start:end].strip()
+
+
+def _replace_gobby_section(content: str, gobby_section: str) -> str:
+    """Replace the complete managed Gobby hook section in place."""
+    start = content.find(GOBBY_HOOK_START)
+    if start == -1:
+        return content
+
+    end = content.find(GOBBY_HOOK_END, start)
+    if end == -1:
+        return content
+
+    end += len(GOBBY_HOOK_END)
+    line_end = content.find("\n", end)
+    replace_end = len(content) if line_end == -1 else line_end + 1
+    return f"{content[:start]}{gobby_section}{content[replace_end:]}"
+
+
 def _clean_hook_content(content: str) -> str:
     """Normalize blank lines after removing managed hook content."""
     cleaned = content
@@ -530,9 +560,10 @@ def install_git_hooks(
 
         if hook_path.exists():
             content = hook_path.read_text()
+            existing_gobby_section = _extract_gobby_section(content)
 
             # Check if already installed
-            if _has_gobby_hook(content) and not force:
+            if existing_gobby_section == gobby_section.strip() and not force:
                 result["skipped"].append(f"{hook_name} (already installed)")
                 continue
 
@@ -543,15 +574,19 @@ def install_git_hooks(
 
             # If this is a pre-commit framework hook for pre-commit stage,
             # replace it entirely with our wrapper (which calls pre-commit)
-            if hook_name == "pre-commit" and _is_precommit_framework_hook(content):
+            if (
+                hook_name == "pre-commit"
+                and existing_gobby_section is None
+                and _is_precommit_framework_hook(content)
+            ):
                 new_content = f"#!/usr/bin/env bash\n\n{gobby_section}"
                 hook_path.write_text(new_content)
                 logger.info("Replaced pre-commit framework hook with Gobby wrapper")
+            elif existing_gobby_section is not None:
+                new_content = _replace_gobby_section(content, gobby_section)
+                hook_path.write_text(new_content)
+                logger.info(f"Refreshed Gobby hook section in existing {hook_name}")
             else:
-                # Remove old Gobby section if force reinstalling
-                if force and GOBBY_HOOK_START in content:
-                    content = _remove_gobby_section(content)
-
                 # Append Gobby section to existing hook
                 if content.strip():
                     # Ensure shebang is preserved at top
