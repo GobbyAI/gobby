@@ -51,6 +51,9 @@ const NEAR_DUPLICATE_REVIEW_COSINE: f64 = 0.80;
 const NEAR_DUPLICATE_SEARCH_LIMIT: usize = 8;
 /// Vault-relative path of the run report written by non-dry runs.
 pub(crate) const REPORT_RELATIVE_PATH: &str = "meta/upkeep/last-run.json";
+/// Default days a page stays `stale` before upkeep archives it. A starting
+/// point until Part A loop distributions tune the threshold (strategy §3.4).
+pub(crate) const DEFAULT_ARCHIVE_AFTER_DAYS: u64 = 45;
 
 /// Durable registry of concept mentions the heal pass unwrapped from digest
 /// bodies. It preserves the concept-synthesis work-queue signal across runs so
@@ -70,6 +73,9 @@ pub struct Options {
     /// Set when a Lane B generator is driving synthesis: a generation failure
     /// then fails the cluster instead of writing a skeleton page.
     pub hard_fail_on_generation_failure: bool,
+    /// Days a page stays `stale` (per its `stale_at` demotion timestamp)
+    /// before upkeep archives it.
+    pub archive_after_days: u64,
 }
 
 impl Default for Options {
@@ -81,6 +87,7 @@ impl Default for Options {
             dry_run: false,
             daemon_synthesis_available: false,
             hard_fail_on_generation_failure: false,
+            archive_after_days: DEFAULT_ARCHIVE_AFTER_DAYS,
         }
     }
 }
@@ -151,6 +158,8 @@ pub struct UpkeepReport {
     /// Pending sources reviewed without joining any cluster, flipped to
     /// `compiled` so the queue drains.
     pub reconciled_no_synthesis: Vec<String>,
+    /// Long-stale pages archived this run (would-be archives on dry runs).
+    pub archived_pages: Vec<PathBuf>,
     pub notes: Vec<String>,
 }
 
@@ -466,6 +475,10 @@ pub fn run(
         healed_mentions.write(&vault_root)?;
     }
 
+    // Archive long-stale pages before catalog regeneration so the regenerated
+    // indexes already reflect the exclusions.
+    let archived_pages = archive_long_stale_pages(&vault_root, &scope, options)?;
+
     // Only pending sources reconcile: a compiled digest feeding a cluster is
     // evidence reuse, not a drain-state change.
     let mut reconciled_no_synthesis: Vec<String> = pending_indices
@@ -517,6 +530,7 @@ pub fn run(
         clusters,
         skipped_over_budget,
         reconciled_no_synthesis,
+        archived_pages,
         notes,
     };
 
@@ -531,10 +545,11 @@ pub fn run(
                 scope,
                 action: crate::log::ACTION_UPKEEP_COMPLETED.to_string(),
                 summary: format!(
-                    "created={} updated={} failed={} reconciled={} pending_after={}",
+                    "created={} updated={} failed={} archived={} reconciled={} pending_after={}",
                     report.pages_created,
                     report.pages_updated,
                     report.failures,
+                    report.archived_pages.len(),
                     report.reconciled_no_synthesis.len(),
                     report.pending_after,
                 ),
@@ -839,6 +854,56 @@ fn compile_cluster(
 
 /// Update-over-create layering: exact/alias match first, then the semantic
 /// near-duplicate bands, defaulting to create.
+/// Archive long-stale pages: lifecycle `stale` whose `stale_at` demotion
+/// timestamp is at least `archive_after_days` old. Archived files stay at
+/// their stable paths (the publisher and SourceManifest keep resolving them);
+/// the shared exclusion predicate removes them from catalog indexes, agent
+/// exports, and default retrieval. Dry runs report would-be archives without
+/// touching the vault. Pages stale without a `stale_at` cannot age yet — the
+/// next health demotion records one.
+fn archive_long_stale_pages(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    options: &Options,
+) -> Result<Vec<PathBuf>, WikiError> {
+    use crate::frontmatter::WikiLifecycle;
+
+    let now = chrono::Utc::now();
+    let max_age =
+        chrono::Duration::days(i64::try_from(options.archive_after_days).unwrap_or(i64::MAX));
+    let mut archived = Vec::new();
+    for page in lint::collect_pages(vault_root)? {
+        let frontmatter = &page.parsed.frontmatter;
+        if frontmatter.lifecycle != Some(WikiLifecycle::Stale) {
+            continue;
+        }
+        let Some(stale_at) = frontmatter
+            .unknown
+            .get("stale_at")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        else {
+            continue;
+        };
+        let age = now.signed_duration_since(stale_at.with_timezone(&chrono::Utc));
+        if age < max_age {
+            continue;
+        }
+        if !options.dry_run {
+            crate::lifecycle::apply_lifecycle_transition(
+                vault_root,
+                scope,
+                &page.relative_path,
+                WikiLifecycle::Archived,
+                &format!("upkeep: stale for {} days", age.num_days()),
+            )?;
+        }
+        archived.push(page.relative_path.clone());
+    }
+    archived.sort();
+    Ok(archived)
+}
+
 fn resolve_page_disposition(
     cluster: &Cluster,
     existing_pages: &[(PathBuf, BTreeSet<String>)],
@@ -1181,6 +1246,76 @@ mod tests {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(path, content).expect("write file");
+    }
+
+    #[test]
+    fn archive_long_stale_pages_archives_only_aged_stale_pages() {
+        use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(
+            temp.path(),
+            "knowledge/concepts/old-stale.md",
+            "---\ntitle: Old\nlifecycle: stale\nstale_at: 2020-01-01T00:00:00Z\n---\n\nBody.\n",
+        );
+        let recent_stale_at = chrono::Utc::now().to_rfc3339();
+        let recent = format!(
+            "---\ntitle: Recent\nlifecycle: stale\nstale_at: {recent_stale_at}\n---\n\nBody.\n"
+        );
+        write_file(temp.path(), "knowledge/concepts/recent-stale.md", &recent);
+        write_file(
+            temp.path(),
+            "knowledge/concepts/unstamped-stale.md",
+            "---\ntitle: Unstamped\nlifecycle: stale\n---\n\nBody.\n",
+        );
+
+        let archived = archive_long_stale_pages(temp.path(), &scope(), &Options::default())
+            .expect("archive pass");
+
+        assert_eq!(
+            archived,
+            vec![PathBuf::from("knowledge/concepts/old-stale.md")]
+        );
+        let markdown = std::fs::read_to_string(temp.path().join("knowledge/concepts/old-stale.md"))
+            .expect("read archived page");
+        let parsed = parse_frontmatter(&markdown).expect("parse archived page");
+        assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Archived));
+        assert!(parsed.metadata.unknown.contains_key("archived_at"));
+        // The file stays at its stable path.
+        assert!(temp.path().join("knowledge/concepts/old-stale.md").exists());
+
+        let recent_after =
+            std::fs::read_to_string(temp.path().join("knowledge/concepts/recent-stale.md"))
+                .expect("read recent page");
+        assert_eq!(recent_after, recent);
+
+        let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
+        assert_eq!(log.matches("lifecycle_transition:").count(), 1, "{log}");
+        assert!(log.contains("stale -> archived"), "{log}");
+    }
+
+    #[test]
+    fn archive_long_stale_pages_dry_run_reports_without_writing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let markdown =
+            "---\ntitle: Old\nlifecycle: stale\nstale_at: 2020-01-01T00:00:00Z\n---\n\nBody.\n";
+        write_file(temp.path(), "knowledge/concepts/old-stale.md", markdown);
+        let options = Options {
+            dry_run: true,
+            ..Options::default()
+        };
+
+        let archived =
+            archive_long_stale_pages(temp.path(), &scope(), &options).expect("dry-run pass");
+
+        assert_eq!(
+            archived,
+            vec![PathBuf::from("knowledge/concepts/old-stale.md")]
+        );
+        let after = std::fs::read_to_string(temp.path().join("knowledge/concepts/old-stale.md"))
+            .expect("read page");
+        assert_eq!(after, markdown);
+        assert!(!temp.path().join("log.md").exists());
     }
 
     /// Register a pending source: manifest entry, raw body, and digest page.

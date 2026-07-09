@@ -28,6 +28,7 @@ pub(crate) mod health;
 pub(crate) mod indexer;
 pub(crate) mod ingest;
 pub(crate) mod librarian;
+pub(crate) mod lifecycle;
 pub(crate) mod links;
 pub(crate) mod lint;
 pub(crate) mod log;

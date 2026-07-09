@@ -12,6 +12,52 @@ pub enum FrontmatterFormat {
     Toml,
 }
 
+/// Workflow state of a wiki page, orthogonal to the `trust` reporting axis.
+///
+/// Transitions are owned by the maintenance loops: compile/upkeep create at
+/// `draft`, a clean lint+librarian pass promotes to `reviewed`, an audit
+/// citation pass promotes to `verified`, health demotes to `stale`, and
+/// upkeep archives long-stale pages. `archived` pages stay on disk at their
+/// stable paths but are excluded from catalog indexes, agent exports, and
+/// default retrieval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WikiLifecycle {
+    Draft,
+    Reviewed,
+    Verified,
+    Stale,
+    Archived,
+}
+
+impl WikiLifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Reviewed => "reviewed",
+            Self::Verified => "verified",
+            Self::Stale => "stale",
+            Self::Archived => "archived",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "draft" => Some(Self::Draft),
+            "reviewed" => Some(Self::Reviewed),
+            "verified" => Some(Self::Verified),
+            "stale" => Some(Self::Stale),
+            "archived" => Some(Self::Archived),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for WikiLifecycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikiFrontmatter {
     pub title: Option<String>,
@@ -25,6 +71,7 @@ pub struct WikiFrontmatter {
     pub trust: Option<String>,
     pub freshness: Option<String>,
     pub indexed_at: Option<String>,
+    pub lifecycle: Option<WikiLifecycle>,
     // Preserve legacy or tool-specific frontmatter keys across parse/serialize.
     pub unknown: BTreeMap<String, Value>,
 }
@@ -43,6 +90,7 @@ impl WikiFrontmatter {
             trust: None,
             freshness: None,
             indexed_at: None,
+            lifecycle: None,
             unknown: BTreeMap::new(),
         }
     }
@@ -111,6 +159,12 @@ impl WikiFrontmatter {
         if let Some(indexed_at) = &self.indexed_at {
             object.insert("indexed_at".to_string(), Value::String(indexed_at.clone()));
         }
+        if let Some(lifecycle) = self.lifecycle {
+            object.insert(
+                "lifecycle".to_string(),
+                Value::String(lifecycle.as_str().to_string()),
+            );
+        }
         Value::Object(object)
     }
 }
@@ -171,6 +225,19 @@ pub fn parse_frontmatter(markdown: &str) -> Result<ParsedFrontmatter<'_>, Frontm
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn mark_stale_markdown(markdown: &str, reason: &str) -> Result<String, FrontmatterError> {
+    mark_stale_markdown_at(markdown, reason, &chrono::Utc::now().to_rfc3339())
+}
+
+/// [`mark_stale_markdown`] with an injected timestamp for deterministic tests.
+///
+/// Sets `lifecycle: stale` alongside the legacy `stale`/`stale_reason` keys,
+/// and records `stale_at` (first demotion only) so upkeep can age long-stale
+/// pages toward `archived`.
+pub fn mark_stale_markdown_at(
+    markdown: &str,
+    reason: &str,
+    stale_at: &str,
+) -> Result<String, FrontmatterError> {
     let mut parsed = parse_frontmatter(markdown)?;
     parsed
         .metadata
@@ -180,14 +247,27 @@ pub fn mark_stale_markdown(markdown: &str, reason: &str) -> Result<String, Front
         "stale_reason".to_string(),
         Value::String(reason.trim().to_string()),
     );
-    let (delimiter, frontmatter) = match parsed.format.unwrap_or(FrontmatterFormat::Yaml) {
-        FrontmatterFormat::Yaml => ("---", serialize_yaml_frontmatter(&parsed.metadata)?),
-        FrontmatterFormat::Toml => ("+++", serialize_toml_frontmatter(&parsed.metadata)?),
+    parsed.metadata.lifecycle = Some(WikiLifecycle::Stale);
+    parsed
+        .metadata
+        .unknown
+        .entry("stale_at".to_string())
+        .or_insert_with(|| Value::String(stale_at.to_string()));
+    render_markdown_with_metadata(parsed.format, &parsed.metadata, parsed.body)
+}
+
+/// Re-render a page from parsed metadata and body, preserving the original
+/// frontmatter format (YAML by default for pages without frontmatter).
+pub(crate) fn render_markdown_with_metadata(
+    format: Option<FrontmatterFormat>,
+    metadata: &WikiFrontmatter,
+    body: &str,
+) -> Result<String, FrontmatterError> {
+    let (delimiter, frontmatter) = match format.unwrap_or(FrontmatterFormat::Yaml) {
+        FrontmatterFormat::Yaml => ("---", serialize_yaml_frontmatter(metadata)?),
+        FrontmatterFormat::Toml => ("+++", serialize_toml_frontmatter(metadata)?),
     };
-    Ok(format!(
-        "{delimiter}\n{frontmatter}{delimiter}\n{}",
-        parsed.body
-    ))
+    Ok(format!("{delimiter}\n{frontmatter}{delimiter}\n{body}"))
 }
 
 impl FrontmatterError {
@@ -377,6 +457,21 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
     let indexed_at = object
         .remove("indexed_at")
         .and_then(|value| string_value(&value));
+    // Unrecognized lifecycle values stay in `unknown` so round-trips preserve
+    // them instead of silently dropping operator-authored state.
+    let lifecycle = match object.remove("lifecycle") {
+        Some(value) => match string_value(&value)
+            .as_deref()
+            .and_then(WikiLifecycle::parse)
+        {
+            Some(lifecycle) => Some(lifecycle),
+            None => {
+                object.insert("lifecycle".to_string(), value);
+                None
+            }
+        },
+        None => None,
+    };
     WikiFrontmatter {
         title,
         aliases,
@@ -389,6 +484,7 @@ fn frontmatter_from_object(mut object: Map<String, Value>) -> WikiFrontmatter {
         trust,
         freshness,
         indexed_at,
+        lifecycle,
         unknown: object.into_iter().collect(),
     }
 }
@@ -453,6 +549,111 @@ fn parse_source_kind(value: &str) -> Option<WikiSourceKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_round_trips_through_parse_and_as_json() {
+        let markdown = "---\ntitle: Page\nlifecycle: reviewed\n---\n\nBody.\n";
+        let parsed = parse_frontmatter(markdown).expect("parse");
+        assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Reviewed));
+        assert!(!parsed.metadata.unknown.contains_key("lifecycle"));
+
+        let json = parsed.metadata.as_json();
+        assert_eq!(
+            json.get("lifecycle").and_then(Value::as_str),
+            Some("reviewed")
+        );
+
+        let rendered = render_markdown_with_metadata(parsed.format, &parsed.metadata, parsed.body)
+            .expect("render");
+        let reparsed = parse_frontmatter(&rendered).expect("reparse");
+        assert_eq!(reparsed.metadata.lifecycle, Some(WikiLifecycle::Reviewed));
+    }
+
+    #[test]
+    fn pages_without_lifecycle_default_to_none() {
+        let parsed =
+            parse_frontmatter("---\ntitle: Legacy\n---\n\nBody.\n").expect("parse legacy page");
+        assert_eq!(parsed.metadata.lifecycle, None);
+        assert!(parsed.metadata.as_json().get("lifecycle").is_none());
+    }
+
+    #[test]
+    fn unrecognized_lifecycle_values_stay_in_unknown() {
+        let markdown = "---\ntitle: Page\nlifecycle: mothballed\n---\n\nBody.\n";
+        let parsed = parse_frontmatter(markdown).expect("parse");
+        assert_eq!(parsed.metadata.lifecycle, None);
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("lifecycle")
+                .and_then(Value::as_str),
+            Some("mothballed")
+        );
+        // Round-trip preserves the operator-authored value verbatim.
+        let json = parsed.metadata.as_json();
+        assert_eq!(
+            json.get("lifecycle").and_then(Value::as_str),
+            Some("mothballed")
+        );
+    }
+
+    #[test]
+    fn every_lifecycle_state_parses_from_its_label() {
+        for state in [
+            WikiLifecycle::Draft,
+            WikiLifecycle::Reviewed,
+            WikiLifecycle::Verified,
+            WikiLifecycle::Stale,
+            WikiLifecycle::Archived,
+        ] {
+            assert_eq!(WikiLifecycle::parse(state.as_str()), Some(state));
+            assert_eq!(
+                WikiLifecycle::parse(&state.as_str().to_ascii_uppercase()),
+                Some(state)
+            );
+        }
+        assert_eq!(WikiLifecycle::parse("unknown"), None);
+    }
+
+    #[test]
+    fn mark_stale_sets_lifecycle_and_first_demotion_timestamp() {
+        let markdown = "---\ntitle: Page\nlifecycle: verified\n---\n\nBody.\n";
+        let marked = mark_stale_markdown_at(markdown, "src/lib.rs changed", "2026-07-01T00:00:00Z")
+            .expect("mark stale");
+        let parsed = parse_frontmatter(&marked).expect("parse marked page");
+        assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Stale));
+        assert_eq!(
+            parsed
+                .metadata
+                .unknown
+                .get("stale_at")
+                .and_then(Value::as_str),
+            Some("2026-07-01T00:00:00Z")
+        );
+
+        // A second demotion keeps the original stale_at: the page ages from
+        // its FIRST demotion, and the new reason wins.
+        let remarked = mark_stale_markdown_at(&marked, "still stale", "2026-07-08T00:00:00Z")
+            .expect("re-mark stale");
+        let reparsed = parse_frontmatter(&remarked).expect("parse re-marked page");
+        assert_eq!(
+            reparsed
+                .metadata
+                .unknown
+                .get("stale_at")
+                .and_then(Value::as_str),
+            Some("2026-07-01T00:00:00Z")
+        );
+        assert_eq!(
+            reparsed
+                .metadata
+                .unknown
+                .get("stale_reason")
+                .and_then(Value::as_str),
+            Some("still stale")
+        );
+    }
 
     #[test]
     fn preserves_unknown_frontmatter() {

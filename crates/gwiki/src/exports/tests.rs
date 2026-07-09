@@ -372,6 +372,54 @@ fn agent_exports_emit_index_jsonld_and_content() {
 }
 
 #[test]
+fn agent_exports_exclude_archived_pages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let overview = root.join("knowledge/topics/overview.md");
+    fs::create_dir_all(overview.parent().expect("overview parent")).expect("overview dir");
+    fs::write(&overview, "# Overview\n\nVault entrypoint.\n").expect("overview page");
+    let design = root.join("documents/design.md");
+    fs::create_dir_all(design.parent().expect("design parent")).expect("design dir");
+    fs::write(
+        &design,
+        "---\ntitle: Design Notes\nlifecycle: archived\n---\n\nSuperseded design.\n",
+    )
+    .expect("design page");
+
+    export_agent_artifacts(
+        root,
+        &agent_export_facts(SearchScope::project("project-123")),
+        GraphExportOptions::available(),
+    )
+    .expect("agent artifacts exported");
+
+    let jsonld_text = fs::read_to_string(root.join("outputs/graph.jsonld")).expect("graph jsonld");
+    let jsonld: serde_json::Value = serde_json::from_str(&jsonld_text).expect("valid graph jsonld");
+    let graph = jsonld["@graph"].as_array().expect("@graph array");
+    assert!(
+        graph
+            .iter()
+            .all(|entity| entity["url"] != serde_json::json!("documents/design.md")),
+        "archived page node must be dropped: {jsonld_text}"
+    );
+    // The overview -> design wikilink edge is dropped with the node: no
+    // citation may dangle at the archived page.
+    assert!(!jsonld_text.contains("documents/design.md"));
+
+    let index = fs::read_to_string(root.join("outputs/llms.txt")).expect("llms index");
+    assert!(index.contains("- [Overview](knowledge/topics/overview.md)"));
+    assert!(!index.contains("Design Notes"));
+
+    let full = fs::read_to_string(root.join("outputs/llms-full.txt")).expect("llms full");
+    assert!(full.contains("## Overview"));
+    assert!(!full.contains("Superseded design."));
+    assert!(!full.contains("## Design Notes"));
+
+    // The archived page itself stays in place.
+    assert!(design.exists());
+}
+
+#[test]
 fn agent_exports_do_not_mutate_vault() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();

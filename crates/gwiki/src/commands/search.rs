@@ -51,6 +51,7 @@ pub(crate) fn retrieve(
             &database_url,
             resolved_scope_identity(&scope),
             search_scope_for_resolved(&scope),
+            scope.root().to_path_buf(),
             query,
             limit,
             include_semantic,
@@ -58,7 +59,7 @@ pub(crate) fn retrieve(
         );
     }
 
-    let (_, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
+    let (scope, output_scope, search_scope, store) = indexed_store_for_selection(&selection)?;
     let mut bm25_backend = search_support::StoreBm25Backend {
         hits: search_support::store_search_hits(&store, &search_scope, &query).into(),
     };
@@ -72,6 +73,7 @@ pub(crate) fn retrieve(
         SearchExecutionInput {
             output_scope,
             search_scope,
+            vault_root: scope.root().to_path_buf(),
             query,
             limit,
             include_semantic,
@@ -80,10 +82,15 @@ pub(crate) fn retrieve(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one-caller wiring fn; a params struct would just restate SearchExecutionInput"
+)]
 fn run_search_attached(
     database_url: &str,
     output_scope: ScopeIdentity,
     search_scope: wiki_search::SearchScope,
+    vault_root: std::path::PathBuf,
     query: String,
     limit: usize,
     include_semantic: bool,
@@ -139,6 +146,7 @@ fn run_search_attached(
         SearchExecutionInput {
             output_scope,
             search_scope,
+            vault_root,
             query,
             limit,
             include_semantic,
@@ -184,6 +192,9 @@ fn gobby_home() -> Result<std::path::PathBuf, WikiError> {
 struct SearchExecutionInput {
     output_scope: ScopeIdentity,
     search_scope: wiki_search::SearchScope,
+    /// Vault root of the resolved scope; result pages excluded from default
+    /// retrieval (archived lifecycle) are filtered against the files here.
+    vault_root: std::path::PathBuf,
     query: String,
     limit: usize,
     include_semantic: bool,
@@ -215,6 +226,15 @@ where
     let mut results = Vec::with_capacity(response.results.len());
     let mut evidence = Vec::with_capacity(response.results.len());
     for result in response.results {
+        // Default retrieval excludes archived pages (shared default-surface
+        // predicate); the vault file is the source of truth so exclusion
+        // applies across BM25, semantic, and graph-boost hits alike.
+        if crate::lifecycle::page_excluded_from_default_surfaces(
+            &input.vault_root,
+            std::path::Path::new(&result.path),
+        ) {
+            continue;
+        }
         let fusion_key = result.fusion_key()?;
         let snippet = bounded_snippet(&result.snippet, &input.query);
         evidence.push(result.snippet);
@@ -481,5 +501,81 @@ mod tests {
 
         assert_eq!(trimmed.results.len(), 2);
         assert!(trimmed.hint.is_none());
+    }
+
+    fn store_hit(path: &str) -> wiki_search::WikiSearchResult {
+        wiki_search::WikiSearchResult {
+            id: path.to_string(),
+            title: Some(path.to_string()),
+            scope: wiki_search::SearchScope::project("project-1"),
+            path: path.into(),
+            source_path: path.into(),
+            hit_kind: wiki_search::SearchHitKind::Document,
+            snippet: "lifecycle exclusion evidence".to_string(),
+            score: 1.0,
+            sources: vec![wiki_search::SearchSource::Bm25],
+            explanations: Vec::new(),
+            chunk: None,
+            provenance: wiki_search::SearchProvenance {
+                document_path: path.into(),
+                source_path: path.into(),
+                source_kind: "concept".to_string(),
+                content_hash: None,
+            },
+        }
+    }
+
+    #[test]
+    fn default_retrieval_excludes_archived_pages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let live = temp.path().join("knowledge/concepts/live.md");
+        std::fs::create_dir_all(live.parent().expect("parent")).expect("dirs");
+        std::fs::write(
+            &live,
+            "---\ntitle: Live\nlifecycle: verified\n---\n\nBody.\n",
+        )
+        .expect("live page");
+        std::fs::write(
+            temp.path().join("knowledge/concepts/gone.md"),
+            "---\ntitle: Gone\nlifecycle: archived\n---\n\nBody.\n",
+        )
+        .expect("archived page");
+
+        let mut bm25_backend = search_support::StoreBm25Backend {
+            hits: vec![
+                store_hit("knowledge/concepts/live.md"),
+                store_hit("knowledge/concepts/gone.md"),
+            ]
+            .into(),
+        };
+        let mut semantic_backend = search_support::UnavailableSemanticBackend;
+        let graph = crate::graph::MemoryWikiGraph::default();
+        let mut graph_backend = wiki_search::graph_boost::MemoryGraphBoostBackend::new(graph);
+
+        let retrieval = run_search_with_backends(
+            &mut bm25_backend,
+            &mut semantic_backend,
+            &mut graph_backend,
+            SearchExecutionInput {
+                output_scope: ScopeIdentity::project("project-1"),
+                search_scope: wiki_search::SearchScope::project("project-1"),
+                vault_root: temp.path().to_path_buf(),
+                query: "lifecycle".to_string(),
+                limit: 10,
+                include_semantic: false,
+                token_budget: None,
+            },
+        )
+        .expect("search runs");
+
+        let pages: Vec<String> = retrieval
+            .output
+            .results
+            .iter()
+            .map(|result| result.wiki_page.display().to_string())
+            .collect();
+        assert_eq!(pages, vec!["knowledge/concepts/live.md".to_string()]);
+        // Evidence stays aligned with the filtered result rows.
+        assert_eq!(retrieval.evidence.len(), retrieval.output.results.len());
     }
 }

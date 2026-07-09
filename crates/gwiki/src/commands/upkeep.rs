@@ -50,6 +50,7 @@ pub(crate) fn execute(
         dry_run: options.dry_run,
         daemon_synthesis_available: daemon_report.synthesis.available,
         hard_fail_on_generation_failure: false,
+        archive_after_days: upkeep::DEFAULT_ARCHIVE_AFTER_DAYS,
     };
 
     // Dry runs never generate, so skip AI route resolution entirely.

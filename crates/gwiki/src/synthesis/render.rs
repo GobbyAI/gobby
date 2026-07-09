@@ -39,6 +39,10 @@ pub(super) fn render_frontmatter(markdown: &mut String, fields: &FrontmatterFiel
         markdown.push_str(&yaml_scalar(tag));
         markdown.push('\n');
     }
+    // Compile/upkeep-written pages always (re)enter the lifecycle at draft:
+    // fresh content needs a new lint/librarian and audit pass to re-earn
+    // reviewed/verified.
+    markdown.push_str("lifecycle: draft\n");
     markdown.push_str("compile_handoff: ");
     markdown.push_str(&yaml_scalar(fields.handoff_id));
     markdown.push('\n');

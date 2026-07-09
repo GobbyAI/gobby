@@ -328,7 +328,9 @@ fn scan_pages(vault_root: &Path, directory: &str) -> Result<Vec<PageSummary>, Wi
         let Some(text) = read_page(&path)? else {
             continue;
         };
-        pages.push(summarize_page(vault_root, &path, &text));
+        if let Some(summary) = summarize_page(vault_root, &path, &text) {
+            pages.push(summary);
+        }
     }
     pages.sort_by(|left, right| left.relative.cmp(&right.relative));
     Ok(pages)
@@ -396,10 +398,16 @@ fn read_page(path: &Path) -> Result<Option<String>, WikiError> {
     }
 }
 
-fn summarize_page(vault_root: &Path, path: &Path, text: &str) -> PageSummary {
+/// `None` when the page is excluded from catalog indexes (archived lifecycle).
+fn summarize_page(vault_root: &Path, path: &Path, text: &str) -> Option<PageSummary> {
     let relative = relative_path(vault_root, path);
     let (title, body) = match parse_frontmatter(text) {
-        Ok(parsed) => (parsed.metadata.title.clone(), parsed.body.to_string()),
+        Ok(parsed) => {
+            if crate::lifecycle::excluded_from_default_surfaces(&parsed.metadata) {
+                return None;
+            }
+            (parsed.metadata.title.clone(), parsed.body.to_string())
+        }
         Err(_) => (None, text.to_string()),
     };
     let title = title
@@ -409,11 +417,11 @@ fn summarize_page(vault_root: &Path, path: &Path, text: &str) -> PageSummary {
         let budget = ONE_LINER_MAX_CHARS.saturating_sub(title.chars().count() + 3);
         truncate_chars(&sentence, budget)
     });
-    PageSummary {
+    Some(PageSummary {
         relative,
         title,
         one_liner: one_liner.filter(|value| !value.is_empty()),
-    }
+    })
 }
 
 fn page_stem(relative: &str) -> &str {
@@ -593,6 +601,37 @@ mod tests {
         regenerate(root, &ScopeIdentity::project("/repo")).expect("second regenerate");
         let after = fs::read_to_string(root.join("code/INDEX.md")).expect("code/INDEX.md");
         assert!(!after.contains("code/modules/src/foo/cluster"));
+    }
+
+    #[test]
+    fn regenerate_excludes_archived_pages_from_indexes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/concepts/kept.md",
+            &page("Kept", "Still live."),
+        );
+        write_page(
+            root,
+            "knowledge/concepts/retired.md",
+            "---\ntitle: \"Retired\"\nlifecycle: archived\n---\n\nSuperseded.\n",
+        );
+        write_page(
+            root,
+            "code/files/src/old.rs.md",
+            "---\ntitle: \"old.rs\"\nlifecycle: archived\n---\n\nRemoved module.\n",
+        );
+
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate");
+        let (_, knowledge_index, code_index) = catalog_files(root);
+
+        assert!(knowledge_index.contains("knowledge/concepts/kept"));
+        assert!(!knowledge_index.contains("retired"));
+        assert!(!code_index.contains("old.rs"));
+        // The archived files themselves stay in place at stable paths.
+        assert!(root.join("knowledge/concepts/retired.md").exists());
+        assert!(root.join("code/files/src/old.rs.md").exists());
     }
 
     #[test]

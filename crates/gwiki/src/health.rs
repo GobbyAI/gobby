@@ -57,9 +57,46 @@ pub struct DuplicateSource {
 }
 
 pub fn run(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, WikiError> {
-    let report = inspect(vault_root, scope)?;
+    let report = inspect(vault_root, scope.clone())?;
+    demote_stale_lifecycle(vault_root, &scope)?;
     persist_report(vault_root, &report)?;
     Ok(report)
+}
+
+/// Health owns the `stale` lifecycle demotion: every page detected stale whose
+/// lifecycle has not already reached `stale`/`archived` is rewritten through
+/// the mark-stale frontmatter path (preserving an existing `stale_reason`) and
+/// the transition is appended to `log.md`. [`inspect`] stays read-only for
+/// trust/librarian callers.
+fn demote_stale_lifecycle(vault_root: &Path, scope: &ScopeIdentity) -> Result<(), WikiError> {
+    use crate::frontmatter::WikiLifecycle;
+
+    for page in collect_pages(vault_root)? {
+        let frontmatter = &page.parsed.frontmatter;
+        if matches!(
+            frontmatter.lifecycle,
+            Some(WikiLifecycle::Stale | WikiLifecycle::Archived)
+        ) {
+            continue;
+        }
+        if !page_is_stale(&page) {
+            continue;
+        }
+        let reason = frontmatter
+            .unknown
+            .get("stale_reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("health: page detected stale")
+            .to_string();
+        crate::lifecycle::apply_lifecycle_transition(
+            vault_root,
+            scope,
+            &page.relative_path,
+            WikiLifecycle::Stale,
+            &reason,
+        )?;
+    }
+    Ok(())
 }
 
 pub fn inspect(vault_root: &Path, scope: ScopeIdentity) -> Result<HealthReport, WikiError> {
@@ -649,7 +686,72 @@ fn render_duplicate_sources(text: &mut String, duplicates: &[DuplicateSource]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
     use crate::sources::{IngestionMethod, SourceDraft, SourceKind, SourceManifest};
+
+    #[test]
+    fn run_demotes_stale_detected_pages_to_stale_lifecycle() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(
+            temp.path(),
+            "knowledge/concepts/aging.md",
+            "---\ntitle: Aging\nlifecycle: verified\nstale_after: 2020-01-01\n---\n\nBody.\n",
+        );
+        write_page(
+            temp.path(),
+            "knowledge/concepts/fresh.md",
+            "---\ntitle: Fresh\nlifecycle: verified\n---\n\nBody.\n",
+        );
+
+        let report = run(temp.path(), ScopeIdentity::project("proj")).expect("health run succeeds");
+        assert_eq!(
+            report.stale_pages,
+            vec![PathBuf::from("knowledge/concepts/aging.md")]
+        );
+
+        let aging = std::fs::read_to_string(temp.path().join("knowledge/concepts/aging.md"))
+            .expect("read aging page");
+        let parsed = parse_frontmatter(&aging).expect("parse aging page");
+        assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Stale));
+        assert!(parsed.metadata.unknown.contains_key("stale_at"));
+
+        let fresh = std::fs::read_to_string(temp.path().join("knowledge/concepts/fresh.md"))
+            .expect("read fresh page");
+        let parsed_fresh = parse_frontmatter(&fresh).expect("parse fresh page");
+        assert_eq!(
+            parsed_fresh.metadata.lifecycle,
+            Some(WikiLifecycle::Verified)
+        );
+
+        let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
+        assert!(log.contains("lifecycle_transition:"), "{log}");
+        assert!(log.contains("verified -> stale"), "{log}");
+
+        // Re-running is idempotent: the page is already stale, no second
+        // transition is logged.
+        run(temp.path(), ScopeIdentity::project("proj")).expect("second health run");
+        let log_after = std::fs::read_to_string(temp.path().join("log.md")).expect("re-read log");
+        assert_eq!(
+            log_after.matches("lifecycle_transition:").count(),
+            1,
+            "{log_after}"
+        );
+    }
+
+    #[test]
+    fn inspect_does_not_demote_lifecycle() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let markdown =
+            "---\ntitle: Aging\nlifecycle: verified\nstale_after: 2020-01-01\n---\n\nBody.\n";
+        write_page(temp.path(), "knowledge/concepts/aging.md", markdown);
+
+        inspect(temp.path(), ScopeIdentity::project("proj")).expect("inspect succeeds");
+
+        let after = std::fs::read_to_string(temp.path().join("knowledge/concepts/aging.md"))
+            .expect("read page");
+        assert_eq!(after, markdown);
+        assert!(!temp.path().join("log.md").exists());
+    }
 
     #[test]
     fn duplicate_sources_flags_rotated_hash_siblings_not_distinct_sources() {

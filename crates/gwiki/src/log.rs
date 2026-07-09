@@ -11,6 +11,7 @@ pub const ACTION_PAGE_CREATED: &str = "page_created";
 pub const ACTION_PAGE_UPDATED: &str = "page_updated";
 pub const ACTION_UPKEEP_COMPLETED: &str = "upkeep_completed";
 pub const ACTION_RECAP_COMPLETED: &str = "recap_completed";
+pub const ACTION_LIFECYCLE_TRANSITION: &str = "lifecycle_transition";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEntry {

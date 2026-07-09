@@ -244,8 +244,54 @@ pub fn run(
         },
     };
 
+    promote_reviewed_lifecycle(vault_root, &report, &pages)?;
     persist_report(vault_root, &report)?;
     Ok(report)
+}
+
+/// A clean lint+librarian pass promotes `draft` pages to `reviewed`.
+///
+/// Promotion is conservative: it requires every page-hygiene check to have
+/// actually run (`patch_suggestions` availability only gates patch output,
+/// not page hygiene) and only touches pages that already opted into the
+/// lifecycle by carrying a `lifecycle` field — legacy pages without one are
+/// never mass-stamped. Page content is untouched; only the lifecycle
+/// frontmatter key changes, and each promotion appends a `log.md` entry.
+fn promote_reviewed_lifecycle(
+    vault_root: &Path,
+    report: &ProposalsReport,
+    pages: &[lint::WikiPage],
+) -> Result<(), WikiError> {
+    use crate::frontmatter::WikiLifecycle;
+
+    let hygiene_complete = report
+        .checks
+        .iter()
+        .all(|check| check.available || check.name == "patch_suggestions");
+    if !hygiene_complete {
+        return Ok(());
+    }
+    let implicated: BTreeSet<&Path> = report
+        .checks
+        .iter()
+        .flat_map(|check| check.items.iter().map(PathBuf::as_path))
+        .collect();
+    for page in pages {
+        if page.parsed.frontmatter.lifecycle != Some(WikiLifecycle::Draft) {
+            continue;
+        }
+        if implicated.contains(page.relative_path.as_path()) {
+            continue;
+        }
+        crate::lifecycle::apply_lifecycle_transition(
+            vault_root,
+            &report.scope,
+            &page.relative_path,
+            WikiLifecycle::Reviewed,
+            "librarian: clean lint+librarian pass",
+        )?;
+    }
+    Ok(())
 }
 
 pub fn render_text(report: &ProposalsReport) -> String {
@@ -1628,6 +1674,140 @@ mod tests {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
         std::fs::write(path, markdown).expect("write page");
+    }
+
+    fn promotion_report(checks: Vec<CheckReport>) -> ProposalsReport {
+        ProposalsReport {
+            scope: ScopeIdentity::project("proj"),
+            checks,
+            suggested_tasks: Vec::new(),
+            suggested_patch_diffs: Vec::new(),
+            artifacts: artifacts(),
+            dependency_classification: DependencyClassification {
+                hard: vec!["vault"],
+                optional: vec![],
+                multimodal: "none",
+            },
+        }
+    }
+
+    fn hygiene_checks(implicated: &[(&'static str, &str)]) -> Vec<CheckReport> {
+        [
+            "stale_pages",
+            "missing_citations",
+            "broken_links",
+            "weak_provenance",
+            "outdated_codewiki",
+            "semantic_gaps",
+            "patch_suggestions",
+        ]
+        .into_iter()
+        .map(|name| {
+            let items = implicated
+                .iter()
+                .filter(|(check, _)| *check == name)
+                .map(|(_, path)| PathBuf::from(*path))
+                .collect();
+            CheckReport {
+                name,
+                available: true,
+                note: None,
+                items,
+            }
+        })
+        .collect()
+    }
+
+    #[test]
+    fn clean_pass_promotes_draft_pages_to_reviewed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let clean = "---\ntitle: Clean\nlifecycle: draft\n---\n\nBody.\n";
+        let flagged = "---\ntitle: Flagged\nlifecycle: draft\n---\n\nBody.\n";
+        let legacy = "---\ntitle: Legacy\n---\n\nBody.\n";
+        write_page(temp.path(), "knowledge/concepts/clean.md", clean);
+        write_page(temp.path(), "knowledge/concepts/flagged.md", flagged);
+        write_page(temp.path(), "knowledge/concepts/legacy.md", legacy);
+        let pages = vec![
+            knowledge_page("knowledge/concepts/clean.md", clean),
+            knowledge_page("knowledge/concepts/flagged.md", flagged),
+            knowledge_page("knowledge/concepts/legacy.md", legacy),
+        ];
+        let report = promotion_report(hygiene_checks(&[(
+            "weak_provenance",
+            "knowledge/concepts/flagged.md",
+        )]));
+
+        promote_reviewed_lifecycle(temp.path(), &report, &pages).expect("promotion pass");
+
+        let lifecycle_of = |relative: &str| {
+            let markdown = std::fs::read_to_string(temp.path().join(relative)).expect("read page");
+            parse_frontmatter(&markdown)
+                .expect("parse page")
+                .metadata
+                .lifecycle
+        };
+        use crate::frontmatter::WikiLifecycle;
+        assert_eq!(
+            lifecycle_of("knowledge/concepts/clean.md"),
+            Some(WikiLifecycle::Reviewed)
+        );
+        assert_eq!(
+            lifecycle_of("knowledge/concepts/flagged.md"),
+            Some(WikiLifecycle::Draft)
+        );
+        assert_eq!(lifecycle_of("knowledge/concepts/legacy.md"), None);
+
+        let log = std::fs::read_to_string(temp.path().join("log.md")).expect("read log");
+        assert_eq!(log.matches("lifecycle_transition:").count(), 1, "{log}");
+        assert!(log.contains("draft -> reviewed"), "{log}");
+    }
+
+    #[test]
+    fn degraded_hygiene_pass_never_promotes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let clean = "---\ntitle: Clean\nlifecycle: draft\n---\n\nBody.\n";
+        write_page(temp.path(), "knowledge/concepts/clean.md", clean);
+        let pages = vec![knowledge_page("knowledge/concepts/clean.md", clean)];
+
+        // semantic_gaps unavailable => not a clean pass; no promotion.
+        let mut checks = hygiene_checks(&[]);
+        checks
+            .iter_mut()
+            .find(|check| check.name == "semantic_gaps")
+            .expect("semantic check")
+            .available = false;
+        promote_reviewed_lifecycle(temp.path(), &promotion_report(checks), &pages)
+            .expect("degraded pass");
+        use crate::frontmatter::WikiLifecycle;
+        let markdown = std::fs::read_to_string(temp.path().join("knowledge/concepts/clean.md"))
+            .expect("read page");
+        assert_eq!(
+            parse_frontmatter(&markdown)
+                .expect("parse")
+                .metadata
+                .lifecycle,
+            Some(WikiLifecycle::Draft)
+        );
+
+        // patch_suggestions availability gates patch output, not page hygiene:
+        // its absence alone still promotes.
+        let mut checks = hygiene_checks(&[]);
+        checks
+            .iter_mut()
+            .find(|check| check.name == "patch_suggestions")
+            .expect("patch check")
+            .available = false;
+        promote_reviewed_lifecycle(temp.path(), &promotion_report(checks), &pages)
+            .expect("promotion pass");
+        let markdown = std::fs::read_to_string(temp.path().join("knowledge/concepts/clean.md"))
+            .expect("read page");
+        assert_eq!(
+            parse_frontmatter(&markdown)
+                .expect("parse")
+                .metadata
+                .lifecycle,
+            Some(WikiLifecycle::Reviewed)
+        );
     }
 
     fn knowledge_page(relative: &str, markdown: &str) -> lint::WikiPage {

@@ -43,6 +43,36 @@ pub(super) fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsE
     }
 }
 
+/// Drop vault document nodes excluded from agent exports (archived lifecycle,
+/// per the shared default-surface predicate) plus every edge touching them.
+/// Exclusion is judged from the page file on disk — the vault is the source
+/// of truth for lifecycle state.
+fn exclude_default_surface_documents(root: &Path, export: &mut GraphExport) {
+    let excluded: std::collections::BTreeSet<String> = export
+        .nodes
+        .iter()
+        .filter(|node| is_document_node(node.kind))
+        .filter(|node| {
+            crate::lifecycle::page_excluded_from_default_surfaces(root, Path::new(&node.path))
+        })
+        .map(|node| node.id.clone())
+        .collect();
+    if excluded.is_empty() {
+        return;
+    }
+    export.nodes.retain(|node| !excluded.contains(&node.id));
+    for edges in [
+        &mut export.edges.links,
+        &mut export.edges.imports,
+        &mut export.edges.calls,
+        &mut export.edges.callers,
+        &mut export.edges.trust,
+        &mut export.edges.audit,
+    ] {
+        edges.retain(|edge| !excluded.contains(&edge.source) && !excluded.contains(&edge.target));
+    }
+}
+
 /// Emit the static agent-context exports: `graph.jsonld` (schema.org JSON-LD of
 /// the vault document graph), `llms.txt` (portable index), and `llms-full.txt`
 /// (portable content bundle). Reuses the existing `export_graph` vault export
@@ -53,7 +83,8 @@ pub fn export_agent_artifacts(
     facts: &WikiGraphFacts,
     options: GraphExportOptions,
 ) -> Result<Vec<ExportArtifact>, WikiError> {
-    let export = facts.export_graph(options).map_err(graph_export_error)?;
+    let mut export = facts.export_graph(options).map_err(graph_export_error)?;
+    exclude_default_surface_documents(root, &mut export);
 
     let jsonld = render_graph_jsonld(&export)?;
     let llms_index = render_llms_index(&export);
