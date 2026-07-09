@@ -706,6 +706,14 @@ class TestCanonicalToolMetadata:
             ),
             ("gcode outline src/app.py | head -40", "read"),
             ('gcode grep "pattern" src -m 50 | rg fn', "search"),
+            # Batched all-gcode sequences are still pure navigation: every
+            # segment is side-effect free, so `;`/`&&` joins keep the exemption.
+            ('gcode grep "a" src -m 10 ; gcode grep "b" src -m 10', "search"),
+            ('gcode grep "a" src -m 10 && gcode outline src/app.py', "search"),
+            (
+                "gcode outline src/app.py ; gcode symbol 00000000-0000-0000-0000-000000000000",
+                "read",
+            ),
         ],
     )
     def test_exec_command_gcode_navigation_is_canonical(
@@ -725,6 +733,7 @@ class TestCanonicalToolMetadata:
         [
             "gcode outline src/app.py && rm -rf build",
             "gcode symbol 00000000-0000-0000-0000-000000000000 ; echo done",
+            'gcode grep "a" src ; echo done',
             "gcode grep pattern src || true",
             "gcode outline src/app.py | tee out.txt",
             "gcode symbol 00000000-0000-0000-0000-000000000000 | jq -r .source > out.txt",
@@ -732,9 +741,9 @@ class TestCanonicalToolMetadata:
         ],
     )
     def test_exec_command_gcode_with_side_effects_loses_pure_navigation(self, command: str) -> None:
-        # `&&`/`;`/`||` join a *separate* command (possibly side-effecting), so a
-        # gcode-led sequence is not treated as pure navigation -- only a `|`
-        # pipeline of read-only filters is.
+        # `&&`/`;`/`||` joining a *non-gcode* command (possibly side-effecting)
+        # drops pure navigation; only all-gcode sequences and `|` pipelines of
+        # read-only filters keep it.
         data = {"tool_name": "exec_command", "tool_input": {"command": command}}
 
         normalize_tool_fields(data)

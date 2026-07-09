@@ -341,7 +341,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             if path not in paths:
                 paths.append(path)
 
-    pure_gcode_navigation = sum(1 for item in metadata if item.pure_gcode_navigation) == 1 and all(
+    pure_gcode_navigation = any(item.pure_gcode_navigation for item in metadata) and all(
         item.neutral_setup or item.pure_gcode_navigation or item.read_only_pipeline_filter
         for item in metadata
     )
