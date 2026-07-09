@@ -1,6 +1,8 @@
 use super::*;
 use crate::IngestFileOptions;
-use crate::sources::{CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceReplay};
+use crate::sources::{
+    CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceReplay,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -100,6 +102,44 @@ fn seed_local_file(root: &Path, relative_path: &str, body: &[u8]) -> SourceRecor
         .into_iter()
         .find(|entry| entry.id == record.id)
         .expect("updated local source")
+}
+
+fn seed_scratchpad_replay(root: &Path) -> SourceRecord {
+    let record = SourceManifest::register(
+        root,
+        SourceDraft {
+            location: "scratchpad export".to_string(),
+            kind: SourceKind::File,
+            fetched_at: "2026-06-02T00:00:00Z".to_string(),
+            content: b"scratchpad".to_vec(),
+            title: Some("Scratchpad".to_string()),
+            citation: None,
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+        },
+    )
+    .expect("register scratchpad source");
+    let path = std::env::temp_dir()
+        .join("gobby-agent-scratchpad-stale-replay")
+        .join("source.txt");
+    let replay = SourceReplay::local_file(path, &IngestFileOptions::default());
+    SourceManifest::update(root, |manifest| {
+        manifest
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == record.id)
+            .expect("seeded scratchpad source")
+            .replay = Some(replay);
+        Ok(true)
+    })
+    .expect("write scratchpad replay metadata");
+    SourceManifest::read(root)
+        .expect("read manifest")
+        .entries
+        .into_iter()
+        .find(|entry| entry.id == record.id)
+        .expect("updated scratchpad source")
 }
 
 fn seed_unsupported_connector(root: &Path) -> SourceRecord {
@@ -598,4 +638,109 @@ fn all_source_refresh_skips_missing_replay_metadata_records() {
         outcome.result.payload["skipped"][0]["code"],
         "missing_replay_metadata"
     );
+}
+
+#[test]
+fn all_source_refresh_repairs_stale_scratchpad_replay_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let record = seed_scratchpad_replay(temp.path());
+
+    let outcome = execute_resolved_with_fetcher(
+        test_scope(temp.path()),
+        Vec::new(),
+        false,
+        |_record, _fetched_at| unreachable!("scratchpad replay should be stripped before planning"),
+    )
+    .expect("refresh all");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.result.payload["skipped"][0]["id"], record.id);
+    assert_eq!(
+        outcome.result.payload["skipped"][0]["code"],
+        "missing_replay_metadata"
+    );
+    assert!(
+        !outcome.result.payload["failed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure["code"] == "missing_local_file")
+    );
+    let repaired = SourceManifest::read(temp.path()).expect("read repaired manifest");
+    let entry = repaired
+        .entries
+        .iter()
+        .find(|entry| entry.id == record.id)
+        .expect("repaired entry");
+    assert!(entry.replay.is_none());
+}
+
+#[test]
+fn dry_run_classifies_stale_scratchpad_replay_without_persisting_repair() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let record = seed_scratchpad_replay(temp.path());
+
+    let outcome = execute_resolved_with_fetcher(
+        test_scope(temp.path()),
+        Vec::new(),
+        true,
+        |_record, _fetched_at| unreachable!("dry-run should not fetch"),
+    )
+    .expect("refresh dry-run");
+
+    assert_eq!(outcome.result.payload["status"], "dry_run");
+    assert_eq!(outcome.result.payload["skipped"][0]["id"], record.id);
+    assert_eq!(
+        outcome.result.payload["skipped"][0]["code"],
+        "missing_replay_metadata"
+    );
+    let manifest = SourceManifest::read(temp.path()).expect("read manifest");
+    let entry = manifest
+        .entries
+        .iter()
+        .find(|entry| entry.id == record.id)
+        .expect("manifest entry");
+    assert!(entry.replay.is_some());
+}
+
+#[test]
+fn refresh_forwards_url_failure_codes_and_messages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let status = seed_url(temp.path(), "https://example.test/status", "then", b"old");
+    let too_large = seed_url(temp.path(), "https://example.test/large", "then", b"old");
+
+    let outcome = execute_resolved_with_fetcher(
+        test_scope(temp.path()),
+        Vec::new(),
+        false,
+        |record, _fetched_at| {
+            if record.id == status.id {
+                Err(UrlIngestFailure {
+                    url: record.location.clone(),
+                    code: "http_status".to_string(),
+                    message: "HTTP status 404".to_string(),
+                })
+            } else {
+                Err(UrlIngestFailure {
+                    url: record.location.clone(),
+                    code: "response_too_large".to_string(),
+                    message: "response exceeds GWIKI_MAX_INBOX_ITEM_BYTES limit of 8 bytes"
+                        .to_string(),
+                })
+            }
+        },
+    )
+    .expect("refresh all");
+
+    let failures = outcome.result.payload["failed"].as_array().unwrap();
+    assert!(failures.iter().any(|failure| {
+        failure["id"] == status.id
+            && failure["code"] == "http_status"
+            && failure["message"] == "HTTP status 404"
+    }));
+    assert!(failures.iter().any(|failure| {
+        failure["id"] == too_large.id
+            && failure["code"] == "response_too_large"
+            && failure["message"] == "response exceeds GWIKI_MAX_INBOX_ITEM_BYTES limit of 8 bytes"
+    }));
 }

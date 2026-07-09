@@ -7,7 +7,7 @@ use gobby_core::indexing::content_hash;
 use super::source::{detect_source_kind, source_location};
 use super::*;
 use crate::api::IngestFileOptions;
-use crate::sources::{SourceKind, SourceManifest};
+use crate::sources::{SourceKind, SourceManifest, SourceReplay};
 use crate::store::MemoryWikiStore;
 
 #[derive(Default)]
@@ -111,6 +111,73 @@ fn file_ingest_progress_reports_ingest_and_index_phases() {
             .any(|event| event.starts_with("VaultIndex:start:"))
     );
     assert!(progress.events.contains(&"VaultIndex:finish".to_string()));
+}
+
+#[test]
+fn temp_scratchpad_file_ingest_omits_replay_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path().join("vault");
+    let scratchpad = std::env::temp_dir()
+        .join("gobby-agent-scratchpad-replay-test")
+        .join("source.txt");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+    std::fs::create_dir_all(scratchpad.parent().expect("scratchpad parent"))
+        .expect("create scratchpad");
+    std::fs::write(&scratchpad, b"scratchpad note").expect("write scratchpad");
+
+    let result = ingest_path_for_test(
+        &vault,
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &scratchpad,
+        "2026-06-02T00:00:00Z",
+    )
+    .expect("ingest scratchpad file");
+
+    assert!(result.record.replay.is_none());
+    let manifest = SourceManifest::read(&vault).expect("read manifest");
+    let entry = manifest
+        .entries
+        .iter()
+        .find(|entry| entry.id == result.record.id)
+        .expect("manifest entry");
+    assert!(entry.replay.is_none());
+}
+
+#[test]
+fn local_file_ingest_records_replay_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path().join("vault");
+    let source = temp.path().join("source.txt");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+    std::fs::write(&source, b"stable note").expect("write source");
+
+    let result = ingest_path_for_test(
+        &vault,
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &source,
+        "2026-06-02T00:00:00Z",
+    )
+    .expect("ingest local file");
+
+    let manifest = SourceManifest::read(&vault).expect("read manifest");
+    let entry = manifest
+        .entries
+        .iter()
+        .find(|entry| entry.id == result.record.id)
+        .expect("manifest entry");
+    assert!(matches!(entry.replay, Some(SourceReplay::LocalFile { .. })));
 }
 
 #[test]

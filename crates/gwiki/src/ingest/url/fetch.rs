@@ -2,13 +2,10 @@ use std::io::Read;
 use std::net::{IpAddr, Ipv6Addr, ToSocketAddrs};
 use std::time::Duration;
 
-use crate::WikiError;
-use crate::ingest::{single_line, text_from_utf8_lossy};
-
 use super::{UrlIngestFailure, UrlSnapshot};
+use crate::WikiError;
 
 const URL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-const HTTP_STATUS_BODY_LIMIT_BYTES: u64 = 8 * 1024;
 const MAX_REDIRECTS: usize = 10;
 const USER_AGENT: &str = "gwiki/0.1";
 
@@ -49,12 +46,8 @@ impl BlockingUrlFetcher {
                 .call()
             {
                 Ok(response) => response,
-                Err(ureq::Error::Status(status, response)) => {
-                    return Err(UrlIngestFailure::http_status(
-                        &current_url,
-                        status,
-                        response,
-                    ));
+                Err(ureq::Error::Status(status, _response)) => {
+                    return Err(UrlIngestFailure::http_status(&current_url, status));
                 }
                 Err(ureq::Error::Transport(error)) => {
                     return Err(UrlIngestFailure::new(
@@ -157,19 +150,8 @@ impl UrlIngestFailure {
         Self::new(url, error.code(), error.to_string())
     }
 
-    fn http_status(url: &str, status: u16, response: ureq::Response) -> Self {
-        let body =
-            match read_limited_body(response.into_reader(), HTTP_STATUS_BODY_LIMIT_BYTES, url) {
-                Ok(body) => text_from_utf8_lossy(&body),
-                Err(error) => error.message,
-            };
-        let body = single_line(&body);
-        let detail = if body.is_empty() {
-            format!("HTTP status {status}")
-        } else {
-            format!("HTTP status {status}: {}", truncate_message(&body))
-        };
-        Self::new(url, "http_status", detail)
+    fn http_status(url: &str, status: u16) -> Self {
+        Self::new(url, "http_status", format!("HTTP status {status}"))
     }
 }
 
@@ -268,15 +250,4 @@ fn is_ipv6_unique_local(ip: Ipv6Addr) -> bool {
 
 fn is_ipv6_unicast_link_local(ip: Ipv6Addr) -> bool {
     ip.segments()[0] & 0xffc0 == 0xfe80
-}
-
-fn truncate_message(message: &str) -> String {
-    const MAX_CHARS: usize = 200;
-    let mut chars = message.chars();
-    let truncated = chars.by_ref().take(MAX_CHARS).collect::<String>();
-    if chars.next().is_some() {
-        format!("{truncated}...")
-    } else {
-        truncated
-    }
 }

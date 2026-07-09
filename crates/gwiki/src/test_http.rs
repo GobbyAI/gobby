@@ -8,7 +8,17 @@ use std::time::Duration;
 pub(crate) type RequestHandle = thread::JoinHandle<io::Result<String>>;
 
 pub(crate) fn spawn_json_response(body: impl Into<String>) -> io::Result<(String, RequestHandle)> {
+    spawn_response(200, "application/json", body)
+}
+
+pub(crate) fn spawn_response(
+    status: u16,
+    content_type: &str,
+    body: impl Into<String>,
+) -> io::Result<(String, RequestHandle)> {
     let body = body.into();
+    let reason = reason_phrase(status);
+    let content_type = content_type.to_string();
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let api_base = format!("http://{}", listener.local_addr()?);
     let handle = thread::spawn(move || {
@@ -17,12 +27,21 @@ pub(crate) fn spawn_json_response(body: impl Into<String>) -> io::Result<(String
         let request = read_http_request(&mut stream)?;
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
             body.len()
         )?;
         Ok(request)
     });
     Ok((api_base, handle))
+}
+
+fn reason_phrase(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "Status",
+    }
 }
 
 fn read_http_request(stream: &mut impl Read) -> io::Result<String> {

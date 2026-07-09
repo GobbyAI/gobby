@@ -5,9 +5,11 @@ use std::time::Duration;
 pub(crate) mod atomic;
 mod manifest;
 mod render;
+mod replay_repair;
 mod types;
 
 pub use manifest::*;
+pub(crate) use replay_repair::*;
 pub use types::*;
 
 const SOURCE_ID_HASH_PREFIX_LEN: usize = 16;

@@ -175,6 +175,19 @@ fn local_file_replay_metadata_round_trips_through_manifest() {
 }
 
 #[test]
+fn private_tmp_scratchpad_replay_path_is_ephemeral() {
+    let path = PathBuf::from("/private/tmp/session-1/scratchpad/source.md");
+
+    assert!(is_ephemeral_scratchpad_replay_path(&path));
+    assert!(!is_ephemeral_scratchpad_replay_path(&PathBuf::from(
+        "/private/tmp/ordinary/source.md"
+    )));
+    assert!(!is_ephemeral_scratchpad_replay_path(&PathBuf::from(
+        "scratchpad/source.md"
+    )));
+}
+
+#[test]
 fn canonical_location_sorts_query_before_trimming_slash() {
     assert_eq!(
         canonicalize_location("https://Example.com/docs/?b=2&a=1#frag"),

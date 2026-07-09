@@ -8,7 +8,10 @@ use crate::commands::index;
 use crate::ingest;
 use crate::ingest::url::{UrlIngestFailure, UrlSnapshot};
 use crate::scope::ResolvedScope;
-use crate::sources::{SourceKind, SourceManifest, SourceRecord, SourceReplay, SourceReplayOptions};
+use crate::sources::{
+    SourceKind, SourceRecord, SourceReplay, SourceReplayOptions,
+    read_manifest_with_ephemeral_scratchpad_replay_repair,
+};
 use crate::support::counts::IndexCounts;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::support::time::collect_timestamp;
@@ -56,7 +59,7 @@ fn execute_resolved_with_fetcher(
 ) -> Result<CommandOutcome, WikiError> {
     ensure_scope_root(scope.root())?;
     let output_scope = resolved_scope_identity(&scope);
-    let manifest = SourceManifest::read(scope.root())?;
+    let manifest = read_manifest_with_ephemeral_scratchpad_replay_repair(scope.root(), dry_run)?;
     let explicit = !source_ids.is_empty();
     let Selection {
         planned,

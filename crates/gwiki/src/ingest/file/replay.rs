@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::WikiError;
 use crate::api::IngestFileOptions;
 use crate::ingest::IngestResult;
-use crate::sources::{SourceManifest, SourceReplay};
+use crate::sources::{SourceManifest, SourceReplay, is_ephemeral_scratchpad_replay_path};
 
 pub(super) fn attach_replay_metadata(
     vault_root: &Path,
@@ -11,6 +11,10 @@ pub(super) fn attach_replay_metadata(
     path: &Path,
     options: &IngestFileOptions,
 ) -> Result<(), WikiError> {
+    if is_ephemeral_scratchpad_replay_path(path) {
+        return Ok(());
+    }
+
     let replay = SourceReplay::local_file(path.to_path_buf(), options);
     SourceManifest::update(vault_root, |manifest| {
         let Some(entry) = manifest

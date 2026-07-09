@@ -16,6 +16,7 @@ use crate::store::{
     MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
     WikiSource,
 };
+use crate::support::test_env::EnvGuard;
 
 #[derive(Default)]
 struct RecordingProgress {
@@ -463,6 +464,43 @@ fn url_fetch_limits_content_length_and_stream_bytes() {
             .len(),
         10
     );
+}
+
+#[test]
+fn actual_url_fetch_oversized_404_reports_http_status() {
+    let _env = EnvGuard::set("GWIKI_ALLOW_LOOPBACK_URL_FETCH_FOR_TESTS", "1")
+        .and_set("GWIKI_MAX_INBOX_ITEM_BYTES", "8");
+    let (base_url, request) =
+        crate::test_http::spawn_response(404, "text/plain", "body larger than limit")
+            .expect("spawn test server");
+
+    let error =
+        fetch_url_snapshot(&base_url, "2026-06-02T00:00:00Z").expect_err("fetch should fail");
+
+    assert_eq!(error.code, "http_status");
+    assert_eq!(error.message, "HTTP status 404");
+    let request = request.join().expect("server thread").expect("request");
+    assert!(request.starts_with("GET / HTTP/1.1"));
+}
+
+#[test]
+fn actual_url_fetch_oversized_200_reports_response_too_large() {
+    let _env = EnvGuard::set("GWIKI_ALLOW_LOOPBACK_URL_FETCH_FOR_TESTS", "1")
+        .and_set("GWIKI_MAX_INBOX_ITEM_BYTES", "8");
+    let (base_url, request) =
+        crate::test_http::spawn_response(200, "text/plain", "body larger than limit")
+            .expect("spawn test server");
+
+    let error =
+        fetch_url_snapshot(&base_url, "2026-06-02T00:00:00Z").expect_err("fetch should fail");
+
+    assert_eq!(error.code, "response_too_large");
+    assert_eq!(
+        error.message,
+        "response exceeds GWIKI_MAX_INBOX_ITEM_BYTES limit of 8 bytes"
+    );
+    let request = request.join().expect("server thread").expect("request");
+    assert!(request.starts_with("GET / HTTP/1.1"));
 }
 
 #[test]
