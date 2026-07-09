@@ -1029,8 +1029,10 @@ def _row(memory_id: str, content: str) -> dict[str, Any]:
         "last_accessed_at": None,
         "tags": [],
         "graph_processed": True,
-        "created_at": "2025-01-01T00:00:00+00:00",
-        "updated_at": "2025-01-01T00:00:00+00:00",
+        # datetime objects, not ISO strings: psycopg dict_row returns
+        # TIMESTAMPTZ columns as datetimes, and snapshots must survive that.
+        "created_at": datetime(2025, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2025, 1, 1, tzinfo=UTC),
         "deleted_at": None,
         "dream_action": None,
         "last_dreamed_at": None,
@@ -1043,8 +1045,8 @@ def _project_row(project_id: str, repo_path: Path | None) -> dict[str, Any]:
         "name": project_id,
         "repo_path": str(repo_path) if repo_path is not None else None,
         "github_url": None,
-        "created_at": "2025-01-01T00:00:00+00:00",
-        "updated_at": "2025-01-01T00:00:00+00:00",
+        "created_at": datetime(2025, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2025, 1, 1, tzinfo=UTC),
     }
 
 
@@ -1109,6 +1111,15 @@ async def _capture_service_truth_digest(
 
 class _Cursor:
     rowcount = 1
+
+
+_MEMORY_TIMESTAMPTZ_COLUMNS = (
+    "last_accessed_at",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+    "last_dreamed_at",
+)
 
 
 class _FakeDreamDB:
@@ -1184,7 +1195,14 @@ class _FakeDreamDB:
                 "dream_action",
                 "last_dreamed_at",
             )
-            self.memories[str(params[0])] = dict(zip(columns, params, strict=True))
+            row = dict(zip(columns, params, strict=True))
+            # Postgres casts text params bound to TIMESTAMPTZ columns, so a
+            # restored row reads back with datetime values; mirror that here.
+            for column in _MEMORY_TIMESTAMPTZ_COLUMNS:
+                value = row[column]
+                if isinstance(value, str):
+                    row[column] = datetime.fromisoformat(value)
+            self.memories[str(params[0])] = row
         return _Cursor()
 
     def fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
@@ -1290,6 +1308,42 @@ def test_restore_memory_row_rejects_incomplete_snapshot() -> None:
 
     with pytest.raises(ValueError, match="missing columns: updated_at"):
         store.restore_memory_row(row)
+
+
+def test_snapshots_serialize_datetime_rows_to_iso_strings() -> None:
+    """Regression: psycopg dict_row returns TIMESTAMPTZ columns as datetimes.
+
+    Snapshot payloads are raw memory rows; ``_json`` must convert datetime
+    values to ISO strings instead of raising ``TypeError`` (which aborted
+    every mutating dream sweep before any row was touched).
+    """
+    db = _FakeDreamDB()
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+    before = _row("memory-1", "content")
+    after = dict(before, deleted_at=datetime(2025, 1, 2, tzinfo=UTC), dream_action="delete")
+
+    snapshot_id = store.insert_snapshot(
+        run_id=run_id,
+        memory_id="memory-1",
+        action="delete",
+        before_data=before,
+    )
+    store.complete_snapshot(snapshot_id, after_data=after)
+    store.record_applied_snapshot(
+        run_id=run_id,
+        memory_id="memory-2",
+        action="merge",
+        before_data=before,
+        after_data=after,
+    )
+
+    snapshots = store.list_snapshots(run_id)
+    assert len(snapshots) == 2
+    for snapshot in snapshots:
+        assert snapshot["before_data"]["created_at"] == "2025-01-01T00:00:00+00:00"
+        assert snapshot["before_data"]["deleted_at"] is None
+        assert snapshot["after_data"]["deleted_at"] == "2025-01-02T00:00:00+00:00"
 
 
 class _FakeMemoryManager:

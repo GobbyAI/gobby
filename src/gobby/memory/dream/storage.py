@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
+from gobby.utils.datetime import to_json_safe
 
 PLATFORM_TRUTH_SCOPE = "__gobby_platform__"
 
@@ -426,7 +427,9 @@ class MemoryDreamStore:
 def _json(value: Any) -> str | None:
     if value is None:
         return None
-    return json.dumps(value)
+    # Snapshot payloads carry raw psycopg rows whose TIMESTAMPTZ columns are
+    # datetime objects; convert them to ISO strings before dumping.
+    return json.dumps(to_json_safe(value))
 
 
 def _decode(value: Any) -> Any:
