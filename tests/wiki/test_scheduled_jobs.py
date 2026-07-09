@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -797,6 +798,126 @@ async def test_wiki_cron_registration_reconciles_bare_uuid_rows(
     assert cron_storage.get_job(canonical_refresh.id) is not None
     assert cron_storage.get_job_by_name(f"gobby:wiki-research:{project_id}") is None
     assert cron_storage.get_job_by_name(f"gobby:wiki-research:project:{project_id}") is None
+
+
+@pytest.mark.asyncio
+async def test_disabled_non_system_row_takeover_preserves_enabled_and_marks_system(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    legacy = cron_storage.create_job(
+        project_id=project_id,
+        name="gobby:wiki-refresh:project:alpha",
+        description="operator refresh",
+        schedule_type="interval",
+        interval_seconds=600,
+        action_type="shell",
+        action_config={"command": "true"},
+        enabled=False,
+        is_system=False,
+    )
+    assert legacy.next_run_at is None
+    executor = RecordingExecutor(handlers={})
+
+    created = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    repeated = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    assert created == 7
+    assert repeated == 7
+    taken_over = cron_storage.get_job(legacy.id)
+    assert taken_over is not None
+    assert taken_over.is_system is True
+    # The operator's disabled toggle survives the takeover and every restart.
+    assert taken_over.enabled is False
+    assert taken_over.next_run_at is None
+    assert taken_over.action_type == "handler"
+    assert taken_over.action_config["handler"] == "wiki:refresh:project:alpha"
+    assert taken_over.interval_seconds == 3600
+
+
+@pytest.mark.asyncio
+async def test_enabled_non_system_row_takeover_recomputes_next_run(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    legacy = cron_storage.create_job(
+        project_id=project_id,
+        name="gobby:wiki-recap:project:alpha",
+        description="operator recap",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="shell",
+        action_config={"command": "true"},
+        enabled=True,
+        is_system=False,
+    )
+
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    taken_over = cron_storage.get_job(legacy.id)
+    assert taken_over is not None
+    assert taken_over.is_system is True
+    assert taken_over.enabled is True
+    assert taken_over.schedule_type == "cron"
+    assert taken_over.cron_expr == WIKI_RECAP_SCHEDULE_CRON
+    assert taken_over.next_run_at is not None
+    recomputed = taken_over.next_run_at.astimezone(UTC)
+    assert (recomputed.hour, recomputed.minute) == (0, 10)
+
+
+@pytest.mark.asyncio
+async def test_non_system_bare_scope_row_does_not_abort_registration(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    operator_row = cron_storage.create_job(
+        project_id=project_id,
+        name=f"gobby:wiki-refresh:{project_id}",
+        description="operator refresh on the legacy bare scope",
+        schedule_type="interval",
+        interval_seconds=3600,
+        action_type="shell",
+        action_config={"command": "true"},
+        enabled=True,
+        is_system=False,
+    )
+    executor = RecordingExecutor(handlers={})
+
+    created = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    assert created == 7
+    assert set(executor.handlers) == {
+        f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
+    }
+    untouched = cron_storage.get_job(operator_row.id)
+    assert untouched is not None
+    assert untouched.name == f"gobby:wiki-refresh:{project_id}"
+    assert untouched.is_system is False
+    assert untouched.enabled is True
 
 
 @pytest.mark.asyncio

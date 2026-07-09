@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.scheduler.executor import CronHandler
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.wiki.scope_resolution import (
@@ -487,6 +488,17 @@ def _ensure_wiki_cron_job(
         return
 
     if not existing.is_system:
+        # Legacy non-system takeover: preserve the operator's enabled toggle,
+        # recompute next_run_at for the bundled schedule, and mark the row
+        # system so subsequent startups use the system reconcile path.
+        candidate = replace(
+            existing,
+            schedule_type=schedule_type,
+            cron_expr=cron_expr,
+            interval_seconds=interval_seconds,
+            run_at=None,
+        )
+        next_run_at = compute_next_run(candidate) if existing.enabled else None
         cron_storage.update_job(
             existing.id,
             description=description,
@@ -496,8 +508,10 @@ def _ensure_wiki_cron_job(
             run_at=None,
             action_type="handler",
             action_config=action_config,
-            enabled=True,
+            enabled=existing.enabled,
+            next_run_at=next_run_at,
         )
+        cron_storage.mark_as_system_job(existing.id)
         return
 
     if existing.is_system:
@@ -544,7 +558,10 @@ def reconcile_stale_wiki_cron_scopes(
     canonical_scope = project_scope(legacy_scope)
     for command in WIKI_CRON_COMMANDS:
         legacy = cron_storage.get_job_by_name(wiki_job_name(command, legacy_scope))
-        if legacy is None:
+        if legacy is None or not legacy.is_system:
+            # Non-system bare-scope rows are operator-owned; the system-only
+            # identity reconcile would raise SystemRowProtected and abort
+            # registration for every scope.
             continue
 
         canonical_name = wiki_job_name(command, canonical_scope)
