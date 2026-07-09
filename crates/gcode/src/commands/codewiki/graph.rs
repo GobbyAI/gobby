@@ -1,7 +1,6 @@
 use super::*;
 use crate::config::Context;
 use gobby_core::falkor::{GraphClient, Row};
-use std::time::Duration;
 
 pub(crate) fn fetch_codewiki_graph_edges(
     ctx: &Context,
@@ -28,19 +27,14 @@ pub(crate) fn fetch_codewiki_graph_edges(
         .cloned()
         .collect::<Vec<_>>();
 
-    // All FalkorDB I/O (connect + queries) runs under a wall-clock bound: a
-    // stalled or half-open connection (FalkorDB mid-restart, redis "unexpected
-    // end of file") must degrade to an unavailable graph, never freeze the whole
-    // codewiki run. falkordb 0.2 exposes no client-side socket read timeout, so
-    // the bound is enforced here on a detached worker thread.
-    let Some(raw) = fetch_graph_rows_bounded(
-        config.connection_config(),
-        config.graph_name.clone(),
-        ctx.project_id.clone(),
+    let connection_config = config.connection_config();
+    let Some(raw) = fetch_graph_rows(
+        &connection_config,
+        &config.graph_name,
+        &ctx.project_id,
         edge_limit,
         !core_files.is_empty(),
         ctx.quiet,
-        GRAPH_FETCH_TIMEOUT,
     ) else {
         return Ok(CodewikiGraph::unavailable());
     };
@@ -78,12 +72,6 @@ pub(crate) fn fetch_codewiki_graph_edges(
     }
 }
 
-/// Wall-clock bound for the codewiki FalkorDB graph read. Simple `MATCH … LIMIT`
-/// reads return in well under a second on a healthy graph; the generous bound
-/// only trips when the connection stalls, in which case codewiki degrades to an
-/// unavailable graph instead of freezing.
-const GRAPH_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Raw `(source, target)` pairs pulled from FalkorDB before core-membership
 /// filtering, plus the per-query truncation signals.
 struct RawGraphRows {
@@ -93,64 +81,9 @@ struct RawGraphRows {
     import_truncated: bool,
 }
 
-/// Run `work` on a detached worker thread and return its value, or `on_timeout`
-/// if it does not finish within `timeout`. A worker that overruns is abandoned
-/// (it unwinds when its blocking I/O finally errors, or dies at process exit)
-/// rather than joined, so a hung FalkorDB socket can never block the caller.
-fn run_bounded<T: Send + 'static>(
-    timeout: Duration,
-    work: impl FnOnce() -> T + Send + 'static,
-    on_timeout: impl FnOnce() -> T,
-) -> T {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(work());
-    });
-    match rx.recv_timeout(timeout) {
-        Ok(value) => value,
-        Err(_) => on_timeout(),
-    }
-}
-
-/// Fetch the codewiki graph rows under `timeout`, degrading to `None`
-/// (unavailable) on connection failure, query failure, or timeout.
-fn fetch_graph_rows_bounded(
-    connection_config: gobby_core::config::FalkorConfig,
-    graph_name: String,
-    project_id: String,
-    edge_limit: usize,
-    need_import: bool,
-    quiet: bool,
-    timeout: Duration,
-) -> Option<RawGraphRows> {
-    run_bounded(
-        timeout,
-        move || {
-            fetch_graph_rows(
-                &connection_config,
-                &graph_name,
-                &project_id,
-                edge_limit,
-                need_import,
-                quiet,
-            )
-        },
-        move || {
-            if !quiet {
-                eprintln!(
-                    "Warning: FalkorDB graph read timed out after {}s; codewiki \
-                     continues without graph edges",
-                    timeout.as_secs()
-                );
-            }
-            None
-        },
-    )
-}
-
 /// Connect to FalkorDB and pull the call/import edge rows. Any connection or
 /// query error degrades to `None`; the caller treats that as an unavailable
-/// graph. Runs entirely on the worker thread spawned by [`run_bounded`].
+/// graph. Socket connect/read/write timeouts are enforced by `GraphClient`.
 fn fetch_graph_rows(
     connection_config: &gobby_core::config::FalkorConfig,
     graph_name: &str,
@@ -288,40 +221,4 @@ pub(crate) fn codewiki_import_edges_query(
             typed_query::cypher_string_literal(project_id),
         )]),
     )
-}
-
-#[cfg(test)]
-mod graph_timeout_tests {
-    use super::{GRAPH_FETCH_TIMEOUT, run_bounded};
-    use std::time::Duration;
-
-    #[test]
-    fn run_bounded_returns_work_result_when_it_finishes_in_time() {
-        let value = run_bounded(Duration::from_secs(5), || 42_u32, || 0_u32);
-        assert_eq!(value, 42);
-    }
-
-    #[test]
-    fn run_bounded_degrades_when_work_never_returns() {
-        // A worker that blocks forever stands in for a half-open FalkorDB socket
-        // (the redis "unexpected end of file" / mid-restart hang). It must trip
-        // the timeout and yield the fallback without blocking the caller.
-        let value = run_bounded(
-            Duration::from_millis(100),
-            || {
-                // `_hold` keeps the sender alive so `recv` never observes a
-                // disconnect and blocks indefinitely — no wall-clock sleep.
-                let (_hold, rx) = std::sync::mpsc::channel::<u8>();
-                let _ = rx.recv();
-                1_u8
-            },
-            || 2_u8,
-        );
-        assert_eq!(value, 2);
-    }
-
-    #[test]
-    fn graph_fetch_timeout_is_positive() {
-        assert!(GRAPH_FETCH_TIMEOUT > Duration::ZERO);
-    }
 }

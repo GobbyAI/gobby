@@ -1,18 +1,19 @@
 //! FalkorDB foundation adapter boundary.
 //!
-//! This module is available with the `falkor` feature. The feature also enables
-//! `urlencoding` so FalkorDB connection URLs can encode passwords safely.
+//! This module is available with the `falkor` feature. The feature enables the
+//! direct Redis client used to execute FalkorDB `GRAPH.QUERY` commands with
+//! socket-level timeouts.
 //! Duplicate-index suppression is based on observed FalkorDB/driver message
-//! fragments because the crate does not expose a stable typed duplicate-index
-//! error. Live tests are env-gated against the caller-provided service image;
-//! this adapter intentionally does not claim a tested FalkorDB version range.
+//! fragments because FalkorDB does not expose a stable typed duplicate-index
+//! error through Redis. Live tests are env-gated against the caller-provided
+//! service image; this adapter intentionally does not claim a tested FalkorDB
+//! version range.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
-use falkordb::{
-    FalkorClientBuilder, FalkorConnectionInfo, FalkorValue, LazyResultSet, QueryBuilder,
-    QueryResult, SyncGraph,
-};
+use redis::Value as RedisValue;
+use redis::{Client, Connection, ConnectionAddr, ConnectionInfo, RedisConnectionInfo};
 use serde_json::{Map, Number, Value};
 
 use crate::config::FalkorConfig;
@@ -26,64 +27,53 @@ pub type Row = HashMap<String, Value>;
 /// Owns a connection to a named graph. Domain crates supply Cypher queries;
 /// this adapter handles connection lifecycle and result parsing.
 pub struct GraphClient {
-    graph: SyncGraph,
+    connection: Connection,
+    graph_name: String,
 }
 
-/// Read-only view of a synchronous FalkorDB graph.
-///
-/// `falkordb` requires mutable access even for `GRAPH.RO_QUERY`; this wrapper
-/// exposes only the read-only query surface instead of the raw mutable graph.
-pub struct ReadOnlySyncGraph<'a> {
-    graph: &'a mut SyncGraph,
-}
-
-impl<'a> ReadOnlySyncGraph<'a> {
-    /// Return the selected graph name.
-    pub fn graph_name(&self) -> &str {
-        self.graph.graph_name()
-    }
-
-    /// Create a read-only FalkorDB query builder.
-    pub fn ro_query<'b>(
-        &'b mut self,
-        query_string: &'b str,
-    ) -> QueryBuilder<'b, QueryResult<LazyResultSet<'b>>, &'b str, SyncGraph> {
-        self.graph.ro_query(query_string)
-    }
-}
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_SOCKET_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl GraphClient {
     /// Build a client for a consumer-selected graph.
     pub fn from_config(config: &FalkorConfig, graph_name: &str) -> anyhow::Result<Self> {
-        let password = config.password.as_deref().unwrap_or_default();
-        let url = format!(
-            "falkor://:{}@{}:{}",
-            urlencoding::encode(password),
-            config.host,
-            config.port,
-        );
-        let conn_info: FalkorConnectionInfo = url.as_str().try_into()?;
-        let client = FalkorClientBuilder::new()
-            .with_connection_info(conn_info)
-            .build()?;
-        Ok(Self {
-            graph: client.select_graph(graph_name),
-        })
+        Self::from_config_with_timeouts(
+            config,
+            graph_name,
+            DEFAULT_CONNECT_TIMEOUT,
+            DEFAULT_SOCKET_TIMEOUT,
+        )
     }
 
-    /// Run a read-only closure with the underlying synchronous FalkorDB graph.
-    ///
-    /// This is an escape hatch for consumers that need a FalkorDB operation the
-    /// shared `GraphClient` API does not expose yet. It intentionally exposes a
-    /// wrapper limited to read-only queries.
-    pub fn with_sync_graph<T>(
-        &mut self,
-        f: impl FnOnce(&mut ReadOnlySyncGraph<'_>) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let mut graph = ReadOnlySyncGraph {
-            graph: &mut self.graph,
+    /// Build a client with explicit timeouts. Intended for tests and internal
+    /// callers that need a shorter bound than the production defaults.
+    pub fn from_config_with_timeouts(
+        config: &FalkorConfig,
+        graph_name: &str,
+        connect_timeout: Duration,
+        socket_timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        let connection_info = ConnectionInfo {
+            addr: ConnectionAddr::Tcp(config.host.clone(), config.port),
+            redis: RedisConnectionInfo {
+                db: 0,
+                username: None,
+                password: config
+                    .password
+                    .clone()
+                    .filter(|password| !password.is_empty()),
+                ..RedisConnectionInfo::default()
+            },
         };
-        f(&mut graph)
+        let client = Client::open(connection_info)?;
+        let connection = client.get_connection_with_timeout(connect_timeout)?;
+        connection.set_read_timeout(Some(socket_timeout))?;
+        connection.set_write_timeout(Some(socket_timeout))?;
+
+        Ok(Self {
+            connection,
+            graph_name: graph_name.to_string(),
+        })
     }
 
     /// Execute a Cypher query and return parsed rows.
@@ -92,16 +82,13 @@ impl GraphClient {
         cypher: &str,
         params: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Vec<Row>> {
-        match params {
-            Some(params) => {
-                let result = self.graph.query(cypher).with_params(&params).execute()?;
-                Ok(parse_falkor_result(result))
-            }
-            None => {
-                let result = self.graph.query(cypher).execute()?;
-                Ok(parse_falkor_result(result))
-            }
-        }
+        let query = construct_query(cypher, params.as_ref());
+        let response = redis::cmd("GRAPH.QUERY")
+            .arg(&self.graph_name)
+            .arg(&query)
+            .arg("--compact")
+            .query::<RedisValue>(&mut self.connection)?;
+        parse_compact_response(response)
     }
 
     /// Ensure an exact node index exists for a label/property pair.
@@ -219,49 +206,197 @@ fn is_existing_index_error(error: &anyhow::Error) -> bool {
     matched
 }
 
-fn parse_falkor_result(result: QueryResult<LazyResultSet<'_>>) -> Vec<Row> {
-    parse_falkor_records(result.header, result.data)
+fn construct_query(query_str: &str, params: Option<&HashMap<String, String>>) -> String {
+    let params = params
+        .map(|params| {
+            params
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|params| !params.is_empty())
+        .map(|params| format!("CYPHER {params} "))
+        .unwrap_or_default();
+    format!("{params}{query_str}")
 }
 
-fn parse_falkor_records<I>(headers: Vec<String>, records: I) -> Vec<Row>
-where
-    I: IntoIterator<Item = Vec<FalkorValue>>,
-{
-    records
+fn parse_compact_response(response: RedisValue) -> anyhow::Result<Vec<Row>> {
+    if let RedisValue::ServerError(error) = response {
+        anyhow::bail!("FalkorDB server error: {error:?}");
+    }
+
+    let sections = redis_array(response)?;
+    match sections.as_slice() {
+        [stats] => {
+            parse_stats(stats.clone())?;
+            Ok(Vec::new())
+        }
+        [headers, stats] => {
+            parse_header(headers.clone())?;
+            parse_stats(stats.clone())?;
+            Ok(Vec::new())
+        }
+        [headers, data, stats] => {
+            let headers = parse_header(headers.clone())?;
+            parse_stats(stats.clone())?;
+            parse_compact_records(headers, data.clone())
+        }
+        _ => anyhow::bail!(
+            "invalid FalkorDB response: expected stats, header+stats, or header+data+stats"
+        ),
+    }
+}
+
+fn parse_header(header: RedisValue) -> anyhow::Result<Vec<String>> {
+    redis_array(header)?
         .into_iter()
-        .map(|record| {
-            let mut row = HashMap::new();
-            for (i, field) in headers.iter().enumerate() {
-                let value = record.get(i).cloned().unwrap_or(FalkorValue::None);
-                row.insert(field.clone(), falkor_value_to_json(value));
-            }
-            row
+        .map(|item| {
+            let mut item = redis_array(item)?;
+            let key = if item.len() == 2 {
+                item.remove(1)
+            } else {
+                item.into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("invalid FalkorDB header: empty item"))?
+            };
+            redis_string(key)
         })
         .collect()
 }
 
-fn falkor_value_to_json(value: FalkorValue) -> Value {
-    match value {
-        FalkorValue::String(value) => Value::String(value),
-        FalkorValue::Bool(value) => Value::Bool(value),
-        FalkorValue::I64(value) => Value::Number(Number::from(value)),
-        FalkorValue::F64(value) => Number::from_f64(value)
+fn parse_stats(stats: RedisValue) -> anyhow::Result<Vec<String>> {
+    redis_array(stats)?.into_iter().map(redis_string).collect()
+}
+
+fn parse_compact_records(headers: Vec<String>, data: RedisValue) -> anyhow::Result<Vec<Row>> {
+    redis_array(data)?
+        .into_iter()
+        .map(|record| {
+            let fields = redis_array(record)?;
+            let mut row = HashMap::new();
+            for (index, field) in headers.iter().enumerate() {
+                let value = fields.get(index).cloned().unwrap_or(RedisValue::Nil);
+                row.insert(field.clone(), compact_value_to_json(value)?);
+            }
+            Ok(row)
+        })
+        .collect()
+}
+
+fn compact_value_to_json(value: RedisValue) -> anyhow::Result<Value> {
+    let (marker, value) = type_value(value)?;
+    Ok(match marker {
+        1 => Value::Null,
+        2 => Value::String(redis_string(value)?),
+        3 => Value::Number(Number::from(redis_i64(value)?)),
+        4 => Value::Bool(redis_bool(value)?),
+        5 => Number::from_f64(redis_f64(value)?)
             .map(Value::Number)
             .unwrap_or(Value::Null),
-        FalkorValue::Array(values) => Value::Array(
-            values
+        6 => Value::Array(
+            redis_array(value)?
                 .into_iter()
-                .map(falkor_value_to_json)
-                .collect::<Vec<_>>(),
+                .map(compact_value_to_json)
+                .collect::<anyhow::Result<Vec<_>>>()?,
         ),
-        FalkorValue::Map(values) => Value::Object(
+        10 => Value::Object(parse_map(value)?),
+        7 => unsupported_marker("edge", marker, value),
+        8 => unsupported_marker("node", marker, value),
+        9 => unsupported_marker("path", marker, value),
+        11 => unsupported_marker("point", marker, value),
+        12 => unsupported_marker("vec32", marker, value),
+        _ => unsupported_marker("unknown", marker, value),
+    })
+}
+
+fn unsupported_marker(kind: &str, marker: i64, value: RedisValue) -> Value {
+    Value::String(format!(
+        "unsupported FalkorDB graph value marker {marker} ({kind}): {value:?}"
+    ))
+}
+
+fn parse_map(value: RedisValue) -> anyhow::Result<Map<String, Value>> {
+    let entries = match value {
+        RedisValue::Map(entries) => entries,
+        RedisValue::Array(values) => {
+            if values.len() % 2 != 0 {
+                anyhow::bail!("invalid FalkorDB map: odd number of array entries");
+            }
             values
-                .into_iter()
-                .map(|(key, value)| (key, falkor_value_to_json(value)))
-                .collect::<Map<_, _>>(),
-        ),
-        FalkorValue::None => Value::Null,
-        value => Value::String(format!("{value:?}")),
+                .chunks_exact(2)
+                .map(|chunk| (chunk[0].clone(), chunk[1].clone()))
+                .collect()
+        }
+        value => anyhow::bail!("invalid FalkorDB map value: {value:?}"),
+    };
+
+    entries
+        .into_iter()
+        .map(|(key, value)| Ok((redis_string(key)?, compact_value_to_json(value)?)))
+        .collect()
+}
+
+fn type_value(value: RedisValue) -> anyhow::Result<(i64, RedisValue)> {
+    if matches!(value, RedisValue::Nil) {
+        return Ok((1, RedisValue::Nil));
+    }
+
+    let values = redis_array(value)?;
+    let [marker, value]: [RedisValue; 2] = values
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid FalkorDB typed value"))?;
+    Ok((redis_i64(marker)?, value))
+}
+
+fn redis_array(value: RedisValue) -> anyhow::Result<Vec<RedisValue>> {
+    match value {
+        RedisValue::Array(values) => Ok(values),
+        value => anyhow::bail!("expected Redis array, got {value:?}"),
+    }
+}
+
+fn redis_string(value: RedisValue) -> anyhow::Result<String> {
+    match value {
+        RedisValue::BulkString(value) => String::from_utf8(value).map_err(Into::into),
+        RedisValue::SimpleString(value) => Ok(value),
+        RedisValue::VerbatimString { text, .. } => Ok(text),
+        RedisValue::Okay => Ok("OK".to_string()),
+        value => anyhow::bail!("expected Redis string, got {value:?}"),
+    }
+}
+
+fn redis_i64(value: RedisValue) -> anyhow::Result<i64> {
+    match value {
+        RedisValue::Int(value) => Ok(value),
+        value => anyhow::bail!("expected Redis integer, got {value:?}"),
+    }
+}
+
+fn redis_bool(value: RedisValue) -> anyhow::Result<bool> {
+    match value {
+        RedisValue::Boolean(value) => Ok(value),
+        RedisValue::BulkString(value) => match String::from_utf8(value)?.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            value => anyhow::bail!("expected FalkorDB boolean, got {value:?}"),
+        },
+        RedisValue::SimpleString(value) => match value.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            value => anyhow::bail!("expected FalkorDB boolean, got {value:?}"),
+        },
+        value => anyhow::bail!("expected FalkorDB boolean, got {value:?}"),
+    }
+}
+
+fn redis_f64(value: RedisValue) -> anyhow::Result<f64> {
+    match value {
+        RedisValue::Double(value) => Ok(value),
+        RedisValue::Int(value) => Ok(value as f64),
+        RedisValue::BulkString(value) => Ok(String::from_utf8(value)?.parse()?),
+        RedisValue::SimpleString(value) => Ok(value.parse()?),
+        value => anyhow::bail!("expected FalkorDB float, got {value:?}"),
     }
 }
 
@@ -271,6 +406,12 @@ mod tests {
     use crate::config::FalkorConfig;
     use crate::degradation::ServiceState;
     use anyhow::anyhow;
+    use serde_json::json;
+    use std::io::{ErrorKind, Read};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Instant;
 
     struct FakeGraphClient;
 
@@ -415,7 +556,190 @@ mod tests {
     }
 
     #[test]
-    fn live_sync_graph_read_is_env_gated() {
+    fn compact_response_parses_scalar_rows() {
+        let rows = parse_compact_response(RedisValue::Array(vec![
+            header(&["name", "count", "ratio", "flag", "missing"]),
+            RedisValue::Array(vec![RedisValue::Array(vec![
+                typed(2, bulk("alpha")),
+                typed(3, RedisValue::Int(42)),
+                typed(5, bulk("1.5")),
+                typed(4, bulk("true")),
+            ])]),
+            stats(),
+        ]))
+        .expect("scalar compact response should parse");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("name"), Some(&json!("alpha")));
+        assert_eq!(rows[0].get("count"), Some(&json!(42)));
+        assert_eq!(rows[0].get("ratio"), Some(&json!(1.5)));
+        assert_eq!(rows[0].get("flag"), Some(&json!(true)));
+        assert_eq!(rows[0].get("missing"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn compact_response_parses_empty_stat_only_writes() {
+        let stat_only = parse_compact_response(RedisValue::Array(vec![stats()]))
+            .expect("stat-only response should parse");
+        assert!(stat_only.is_empty());
+
+        let header_only =
+            parse_compact_response(RedisValue::Array(vec![header(&["value"]), stats()]))
+                .expect("header+stats response should parse");
+        assert!(header_only.is_empty());
+    }
+
+    #[test]
+    fn compact_response_parses_arrays_and_maps() {
+        let nested = typed(
+            10,
+            RedisValue::Array(vec![
+                bulk("name"),
+                typed(2, bulk("inner")),
+                bulk("values"),
+                typed(
+                    6,
+                    RedisValue::Array(vec![
+                        typed(3, RedisValue::Int(7)),
+                        typed(1, RedisValue::Nil),
+                    ]),
+                ),
+            ]),
+        );
+        let rows = parse_compact_response(RedisValue::Array(vec![
+            header(&["payload"]),
+            RedisValue::Array(vec![RedisValue::Array(vec![nested])]),
+            stats(),
+        ]))
+        .expect("nested compact response should parse");
+
+        assert_eq!(
+            rows[0].get("payload"),
+            Some(&json!({
+                "name": "inner",
+                "values": [7, null]
+            }))
+        );
+    }
+
+    #[test]
+    fn compact_response_returns_server_errors() {
+        let response =
+            redis::parse_redis_value(b"-ERR syntax error near RETURN\r\n").expect("RESP error");
+        let error = parse_compact_response(response).expect_err("server error should fail");
+
+        assert!(error.to_string().contains("syntax error near RETURN"));
+    }
+
+    #[test]
+    fn compact_response_returns_diagnostics_for_unsupported_markers() {
+        let rows = parse_compact_response(RedisValue::Array(vec![
+            header(&["node"]),
+            RedisValue::Array(vec![RedisValue::Array(vec![typed(
+                8,
+                RedisValue::Array(vec![]),
+            )])]),
+            stats(),
+        ]))
+        .expect("unsupported markers should parse as diagnostics");
+
+        let diagnostic = rows[0]
+            .get("node")
+            .and_then(Value::as_str)
+            .expect("node marker should return diagnostic string");
+        assert!(diagnostic.contains("unsupported FalkorDB graph value marker 8 (node)"));
+    }
+
+    #[test]
+    fn nonresponsive_socket_setup_is_bounded_and_dropped() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (closed_tx, closed_rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept test connection");
+            let _ = accepted_tx.send(());
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set listener read timeout");
+            let mut buf = [0_u8; 1024];
+            loop {
+                match stream.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = closed_tx.send(true);
+                        break;
+                    }
+                    Ok(_) => continue,
+                    Err(error)
+                        if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
+                    {
+                        let _ = closed_tx.send(false);
+                        break;
+                    }
+                    Err(_) => {
+                        let _ = closed_tx.send(true);
+                        break;
+                    }
+                }
+            }
+        });
+
+        let config = FalkorConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            password: None,
+        };
+        let started = Instant::now();
+        let result = GraphClient::from_config_with_timeouts(
+            &config,
+            "timeout_test",
+            Duration::from_millis(150),
+            Duration::from_millis(150),
+        );
+
+        assert!(result.is_err(), "nonresponsive socket should fail");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "nonresponsive socket should be bounded"
+        );
+        accepted_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("test server should accept the client connection");
+        assert!(
+            closed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("client socket should close after timeout"),
+            "client connection should close after timeout"
+        );
+        handle.join().expect("listener thread should join");
+    }
+
+    fn bulk(value: &str) -> RedisValue {
+        RedisValue::BulkString(value.as_bytes().to_vec())
+    }
+
+    fn typed(marker: i64, value: RedisValue) -> RedisValue {
+        RedisValue::Array(vec![RedisValue::Int(marker), value])
+    }
+
+    fn header(names: &[&str]) -> RedisValue {
+        RedisValue::Array(
+            names
+                .iter()
+                .map(|name| RedisValue::Array(vec![RedisValue::Int(0), bulk(name)]))
+                .collect(),
+        )
+    }
+
+    fn stats() -> RedisValue {
+        RedisValue::Array(vec![bulk(
+            "Query internal execution time: 0.1 milliseconds",
+        )])
+    }
+
+    #[test]
+    fn live_graph_read_is_env_gated() {
         let Some((config, graph_name)) = live_falkor_fixture() else {
             eprintln!("skipping live FalkorDB read test: GOBBY_FALKORDB_HOST is not set");
             return;
@@ -426,11 +750,8 @@ mod tests {
             return;
         };
         let rows = client
-            .with_sync_graph(|graph| {
-                let result = graph.ro_query("RETURN 1 AS value").execute()?;
-                Ok(parse_falkor_result(result))
-            })
-            .expect("read through SyncGraph");
+            .query("RETURN 1 AS value", None)
+            .expect("read through GraphClient");
 
         assert_eq!(
             rows.first()

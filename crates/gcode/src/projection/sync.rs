@@ -249,12 +249,12 @@ impl ProjectionProgressSink for ChannelProgressSink {
 ///
 /// The sync runs on a detached worker thread; its progress is relayed back and
 /// rendered through `progress`, and each event resets the stall deadline. If no
-/// event arrives within `stall_timeout` the worker is abandoned — it may still
-/// be blocked in unbounded FalkorDB socket I/O — and degraded reports are
-/// returned so the caller's `with_project_lock` guard can drop the lock. Every
-/// failure mode folds into degraded reports rather than an error: the PostgreSQL
-/// index already succeeded, and best-effort projections must never fail the
-/// index command or hold the lock (#17711).
+/// event arrives within `stall_timeout` the worker is abandoned; bounded
+/// FalkorDB socket timeouts should let it terminate shortly while degraded
+/// reports are returned so the caller's `with_project_lock` guard can drop the
+/// lock. Every failure mode folds into degraded reports rather than an error:
+/// the PostgreSQL index already succeeded, and best-effort projections must
+/// never fail the index command or hold the lock (#17711).
 pub fn sync_after_index_bounded(
     ctx: &Context,
     file_paths: &[String],
