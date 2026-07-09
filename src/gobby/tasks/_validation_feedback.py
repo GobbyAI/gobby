@@ -83,6 +83,18 @@ _FAILURE_COLLECTION_NOUN_RE = re.compile(
     r"(?:arrays?|lists?|entr(?:y|ies)|buckets?|fields?|keys?|columns?|collections?)\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_FAILURE_BUCKET_EMPTY_RE = re.compile(
+    # Example: "failed is empty" or "failed remains empty" — asserting a result
+    # bucket named `failed` holds nothing, which describes success.
+    r"\bfail(?:ed|ures?)\s+(?:is|are|was|were|remains?|stays?)\s+empty\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILURE_COMPOUND_MODIFIER_RE = re.compile(
+    # Example: "the explicit-id failed-path assertion" — hyphenated compounds
+    # use failed/failing as a naming modifier, not as an event.
+    r"\bfail(?:ed|ing)-[\w-]+\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _NONZERO_FAILURE_COUNT_RE = re.compile(
     # Example: "1 failed" or "2 failures".
     r"\b(?:[1-9]\d*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
@@ -192,6 +204,8 @@ def _searchable_feedback(feedback: str) -> str:
     normalized_feedback = _STATUS_VALUE_FAILURE_TOKEN_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_BUCKET_DESTINATION_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_COLLECTION_NOUN_RE.sub("", normalized_feedback)
+    normalized_feedback = _FAILURE_BUCKET_EMPTY_RE.sub("", normalized_feedback)
+    normalized_feedback = _FAILURE_COMPOUND_MODIFIER_RE.sub("", normalized_feedback)
     normalized_feedback = _ASSERTION_DESCRIBED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     return _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
 

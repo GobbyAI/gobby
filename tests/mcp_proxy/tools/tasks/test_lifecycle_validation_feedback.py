@@ -305,6 +305,11 @@ def test_failure_state_assertion_descriptions_do_not_admit_failure(feedback: str
         ),
         "The selection routes missing-replay records into the failed list only for explicit ids.",
         "The compaction groups the failed entries by code before the check runs.",
+        # Exact fragments from the #17734 close verdict that misfired after the
+        # first round of bucket strips: an empty-bucket assertion and a
+        # hyphenated naming compound, each near a gate word.
+        ("The new test asserts skipped[0].code is correct and failed is empty for the bulk path."),
+        ("The pre-existing test (unchanged) still covers the explicit-id failed-path assertion."),
     ],
 )
 def test_failure_bucket_references_do_not_admit_failure(feedback: str) -> None:
