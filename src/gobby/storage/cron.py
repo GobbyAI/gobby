@@ -289,6 +289,32 @@ class CronJobStorage(CronRunStorageMixin):
         )
         return [CronJob.from_row(row) for row in rows]
 
+    def list_system_jobs_by_name_prefix(
+        self,
+        prefix: str,
+        *,
+        enabled: bool | None = None,
+    ) -> list[CronJob]:
+        """List gobby-managed system cron rows whose name starts with prefix."""
+        if not prefix:
+            raise ValueError("prefix must not be empty")
+        pattern = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        conditions = ["is_system = TRUE", "name LIKE %s ESCAPE '\\'"]
+        params: list[Any] = [pattern]
+        if enabled is not None:
+            conditions.append("enabled = %s")
+            params.append(bool(enabled))
+
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM cron_jobs
+            WHERE {" AND ".join(conditions)}
+            ORDER BY name
+            """,  # nosec B608
+            tuple(params),
+        )
+        return [CronJob.from_row(row) for row in rows]
+
     _VALID_UPDATE_FIELDS = frozenset(
         {
             "name",

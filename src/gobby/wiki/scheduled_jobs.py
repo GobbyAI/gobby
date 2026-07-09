@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,11 +16,14 @@ from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.wiki.scope_resolution import (
     ResolvedWikiScope,
+    WikiScopeResolutionError,
     normalize_scope_identity,
     project_scope,
     resolve_scope_identity,
 )
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator, written_cluster_paths
+
+logger = logging.getLogger(__name__)
 
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
@@ -107,6 +111,8 @@ class LibrarianTaskManagerProtocol(Protocol):
 
 GatewayFactory = Callable[[ResolvedWikiScope], WikiGatewayProtocol]
 WIKI_CRON_COMMANDS = ("refresh", "health", "audit")
+WIKI_JOB_NAME_PREFIX = "gobby:wiki-"
+WIKI_HANDLER_NAME_PREFIX = "wiki:"
 
 
 def create_wiki_refresh_handler(
@@ -310,85 +316,17 @@ async def register_wiki_cron_jobs(
 
         task_manager = LocalTaskManager(db)
     registered = 0
-    for scope in _configured_scopes(scopes, project_id):
+    configured = _configured_scopes(scopes, project_id)
+    for scope in configured:
         gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
-        for command, purpose, interval, cron_expr, handler in (
-            (
-                "refresh",
-                "Scheduled wiki source refresh",
-                WIKI_REFRESH_INTERVAL_SECONDS,
-                None,
-                create_wiki_refresh_handler(
-                    gateway=gateway,
-                    coordinator=coordinator,
-                    scope=scope,
-                ),
-            ),
-            (
-                "health",
-                "Scheduled wiki health checks",
-                WIKI_HEALTH_INTERVAL_SECONDS,
-                None,
-                create_wiki_health_handler(gateway=gateway, scope=scope),
-            ),
-            (
-                "audit",
-                "Scheduled wiki audit",
-                WIKI_AUDIT_INTERVAL_SECONDS,
-                None,
-                create_wiki_audit_handler(
-                    gateway=gateway,
-                    coordinator=coordinator,
-                    scope=scope,
-                ),
-            ),
-            (
-                "sync-sessions",
-                "Scheduled wiki session transcript sync",
-                WIKI_SYNC_SESSIONS_INTERVAL_SECONDS,
-                None,
-                create_wiki_sync_sessions_handler(
-                    gateway=gateway,
-                    coordinator=coordinator,
-                    scope=scope,
-                ),
-            ),
-            (
-                "upkeep",
-                "Scheduled wiki upkeep page drain",
-                WIKI_UPKEEP_INTERVAL_SECONDS,
-                None,
-                create_wiki_upkeep_handler(
-                    gateway=gateway,
-                    coordinator=coordinator,
-                    scope=scope,
-                ),
-            ),
-            (
-                "librarian",
-                "Scheduled wiki librarian proposals",
-                WIKI_LIBRARIAN_INTERVAL_SECONDS,
-                None,
-                create_wiki_librarian_handler(
-                    gateway=gateway,
-                    scope=scope,
-                    task_manager=task_manager,
-                    fallback_project_id=project_id,
-                ),
-            ),
-            (
-                "recap",
-                "Nightly wiki session recap",
-                None,
-                WIKI_RECAP_SCHEDULE_CRON,
-                create_wiki_recap_handler(
-                    gateway=gateway,
-                    coordinator=coordinator,
-                    scope=scope,
-                ),
-            ),
+        for command, purpose, interval, cron_expr, handler in _wiki_command_specs(
+            gateway=gateway,
+            coordinator=coordinator,
+            scope=scope,
+            task_manager=task_manager,
+            fallback_project_id=project_id,
         ):
             handler_name = wiki_handler_name(command, scope)
             cron_executor.register_handler(handler_name, handler)
@@ -404,6 +342,185 @@ async def register_wiki_cron_jobs(
             )
             registered += 1
 
+    registered += await _register_enabled_wiki_row_handlers(
+        cron_storage=cron_storage,
+        cron_executor=cron_executor,
+        fallback_project_id=project_id,
+        db=db,
+        gateway_factory=gateway_factory,
+        task_manager=task_manager,
+        covered_scopes=set(configured),
+    )
+    return registered
+
+
+def _wiki_command_specs(
+    *,
+    gateway: WikiGatewayProtocol,
+    coordinator: WikiUpdateCoordinator,
+    scope: str,
+    task_manager: LibrarianTaskManagerProtocol | None,
+    fallback_project_id: str,
+) -> tuple[tuple[str, str, int | None, str | None, CronHandler], ...]:
+    """One (command, purpose, interval, cron_expr, handler) spec per wiki command."""
+    return (
+        (
+            "refresh",
+            "Scheduled wiki source refresh",
+            WIKI_REFRESH_INTERVAL_SECONDS,
+            None,
+            create_wiki_refresh_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope=scope,
+            ),
+        ),
+        (
+            "health",
+            "Scheduled wiki health checks",
+            WIKI_HEALTH_INTERVAL_SECONDS,
+            None,
+            create_wiki_health_handler(gateway=gateway, scope=scope),
+        ),
+        (
+            "audit",
+            "Scheduled wiki audit",
+            WIKI_AUDIT_INTERVAL_SECONDS,
+            None,
+            create_wiki_audit_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope=scope,
+            ),
+        ),
+        (
+            "sync-sessions",
+            "Scheduled wiki session transcript sync",
+            WIKI_SYNC_SESSIONS_INTERVAL_SECONDS,
+            None,
+            create_wiki_sync_sessions_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope=scope,
+            ),
+        ),
+        (
+            "upkeep",
+            "Scheduled wiki upkeep page drain",
+            WIKI_UPKEEP_INTERVAL_SECONDS,
+            None,
+            create_wiki_upkeep_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope=scope,
+            ),
+        ),
+        (
+            "librarian",
+            "Scheduled wiki librarian proposals",
+            WIKI_LIBRARIAN_INTERVAL_SECONDS,
+            None,
+            create_wiki_librarian_handler(
+                gateway=gateway,
+                scope=scope,
+                task_manager=task_manager,
+                fallback_project_id=fallback_project_id,
+            ),
+        ),
+        (
+            "recap",
+            "Nightly wiki session recap",
+            None,
+            WIKI_RECAP_SCHEDULE_CRON,
+            create_wiki_recap_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope=scope,
+            ),
+        ),
+    )
+
+
+def _wiki_job_scope(job: CronJob) -> str | None:
+    """Scope encoded in a wiki cron row's handler name or job name."""
+    handler = job.action_config.get("handler") if isinstance(job.action_config, dict) else None
+    for encoded, prefix in ((handler, WIKI_HANDLER_NAME_PREFIX), (job.name, WIKI_JOB_NAME_PREFIX)):
+        if not isinstance(encoded, str) or not encoded.startswith(prefix):
+            continue
+        # "<prefix><command>:<scope>" — commands never contain ":", scopes may.
+        _, _, scope = encoded.removeprefix(prefix).partition(":")
+        if scope.strip():
+            return normalize_scope_identity(scope)
+    return None
+
+
+async def _register_enabled_wiki_row_handlers(
+    *,
+    cron_storage: CronJobStorage,
+    cron_executor: CronRegistrationProtocol,
+    fallback_project_id: str,
+    db: HubDatabase | None,
+    gateway_factory: GatewayFactory | None,
+    task_manager: LibrarianTaskManagerProtocol | None,
+    covered_scopes: set[str],
+) -> int:
+    """Register handlers for every enabled wiki system cron row, regardless of
+    which project the daemon started in; park rows whose scope identity no
+    longer resolves so they stop failing with "No handler registered"."""
+    rows = cron_storage.list_system_jobs_by_name_prefix(WIKI_JOB_NAME_PREFIX, enabled=True)
+    rows_by_scope: dict[str, list[CronJob]] = {}
+    for job in rows:
+        scope = _wiki_job_scope(job)
+        if scope is None or scope in covered_scopes:
+            continue
+        rows_by_scope.setdefault(scope, []).append(job)
+
+    registered = 0
+    for scope in sorted(rows_by_scope):
+        scope_rows = rows_by_scope[scope]
+        try:
+            resolved = await resolve_scope_identity(
+                db,
+                scope,
+                require_project_root=gateway_factory is None,
+            )
+            if (
+                gateway_factory is None
+                and resolved.project_root is not None
+                and not resolved.project_root.exists()
+            ):
+                raise WikiScopeResolutionError(
+                    f"Project root {resolved.project_root} for wiki scope {scope} no longer exists"
+                )
+        except WikiScopeResolutionError as exc:
+            for job in scope_rows:
+                cron_storage.park_system_job(job.id)
+            logger.warning(
+                "Parked %d enabled wiki cron row(s) for unresolvable scope %s: %s",
+                len(scope_rows),
+                scope,
+                exc,
+            )
+            continue
+
+        gateway = _gateway_for_resolved(resolved, gateway_factory)
+        coordinator = WikiUpdateCoordinator(gateway)
+        row_project_id = next(
+            (job.project_id for job in scope_rows if job.project_id),
+            fallback_project_id,
+        )
+        for command, _purpose, _interval, _cron_expr, handler in _wiki_command_specs(
+            gateway=gateway,
+            coordinator=coordinator,
+            scope=scope,
+            task_manager=task_manager,
+            fallback_project_id=row_project_id,
+        ):
+            cron_executor.register_handler(wiki_handler_name(command, scope), handler)
+            registered += 1
+        for job in scope_rows:
+            if job.next_run_at is None:
+                cron_storage.wake_system_job(job.id)
     return registered
 
 
@@ -421,11 +538,11 @@ def configured_wiki_cron_scopes(config: object | None, project_id: str) -> list[
 
 
 def wiki_handler_name(command: str, scope: str) -> str:
-    return f"wiki:{command}:{scope}"
+    return f"{WIKI_HANDLER_NAME_PREFIX}{command}:{scope}"
 
 
 def wiki_job_name(command: str, scope: str) -> str:
-    return f"gobby:wiki-{command}:{scope}"
+    return f"{WIKI_JOB_NAME_PREFIX}{command}:{scope}"
 
 
 async def _create_gateway(
@@ -440,6 +557,13 @@ async def _create_gateway(
         scope,
         require_project_root=gateway_factory is None,
     )
+    return _gateway_for_resolved(resolved, gateway_factory)
+
+
+def _gateway_for_resolved(
+    resolved: ResolvedWikiScope,
+    gateway_factory: GatewayFactory | None,
+) -> WikiGatewayProtocol:
     if gateway_factory is not None:
         return gateway_factory(resolved)
     return GwikiGateway(
@@ -515,7 +639,7 @@ def _ensure_wiki_cron_job(
         return
 
     if existing.is_system:
-        cron_storage.reconcile_system_job_definition(
+        reconciled = cron_storage.reconcile_system_job_definition(
             existing.id,
             action_type="handler",
             action_config=action_config,
@@ -524,6 +648,10 @@ def _ensure_wiki_cron_job(
             cron_expr=cron_expr,
             interval_seconds=interval_seconds,
         )
+        if reconciled is not None and reconciled.enabled and reconciled.next_run_at is None:
+            # A previous startup parked this row while its scope was
+            # unresolvable; the scope is registering again, so wake it.
+            cron_storage.wake_system_job(existing.id)
 
 
 def purge_legacy_wiki_research_jobs(cron_storage: CronJobStorage) -> int:

@@ -205,6 +205,65 @@ def test_list_jobs_enabled_filter(cron_storage: CronJobStorage) -> None:
     assert enabled_jobs[0].id == job.id
 
 
+def test_list_system_jobs_by_name_prefix(cron_storage: CronJobStorage) -> None:
+    """list_system_jobs_by_name_prefix returns system rows matching the prefix."""
+
+    def _create(name: str, *, enabled: bool, is_system: bool) -> CronJob:
+        return cron_storage.create_job(
+            project_id=PROJECT_ID,
+            name=name,
+            schedule_type="interval",
+            action_type="handler",
+            action_config={"handler": name},
+            interval_seconds=300,
+            enabled=enabled,
+            is_system=is_system,
+        )
+
+    matching_enabled = _create("gobby:wiki-refresh:project:a", enabled=True, is_system=True)
+    matching_disabled = _create("gobby:wiki-health:project:a", enabled=False, is_system=True)
+    _create("gobby:wiki-audit:project:b", enabled=True, is_system=False)
+    _create("gobby:other-job", enabled=True, is_system=True)
+
+    all_system = cron_storage.list_system_jobs_by_name_prefix("gobby:wiki-")
+    assert {job.id for job in all_system} == {matching_enabled.id, matching_disabled.id}
+
+    enabled_only = cron_storage.list_system_jobs_by_name_prefix("gobby:wiki-", enabled=True)
+    assert [job.id for job in enabled_only] == [matching_enabled.id]
+
+    with pytest.raises(ValueError, match="prefix must not be empty"):
+        cron_storage.list_system_jobs_by_name_prefix("")
+
+
+def test_list_system_jobs_by_name_prefix_escapes_like_wildcards(
+    cron_storage: CronJobStorage,
+) -> None:
+    """LIKE metacharacters in the prefix match literally, not as wildcards."""
+    underscore = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:wiki_special",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "gobby:wiki_special"},
+        interval_seconds=300,
+        enabled=True,
+        is_system=True,
+    )
+    cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:wikiXspecial",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "gobby:wikiXspecial"},
+        interval_seconds=300,
+        enabled=True,
+        is_system=True,
+    )
+
+    matches = cron_storage.list_system_jobs_by_name_prefix("gobby:wiki_")
+    assert [job.id for job in matches] == [underscore.id]
+
+
 def test_update_job(cron_storage: CronJobStorage) -> None:
     """update_job modifies specified fields."""
     job = cron_storage.create_job(

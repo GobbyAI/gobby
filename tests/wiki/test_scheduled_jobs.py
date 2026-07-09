@@ -921,6 +921,210 @@ async def test_non_system_bare_scope_row_does_not_abort_registration(
 
 
 @pytest.mark.asyncio
+async def test_startup_registers_handlers_for_other_projects_enabled_rows(
+    cron_storage: CronJobStorage,
+    project_id: str,
+    temp_db: Any,
+) -> None:
+    # A previous startup in another project created its enabled system rows.
+    other_project = LocalProjectManager(temp_db).create(name="wiki-b", repo_path="/tmp/wiki-b").id
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=other_project,
+        scopes=[f"project:{other_project}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    executor = RecordingExecutor(handlers={})
+
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    # 7 configured-scope handlers plus 7 swept from the other project's rows.
+    assert registered == 14
+    assert set(executor.handlers) == {
+        f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
+    } | {f"wiki:{command}:project:{other_project}" for command in WIKI_JOB_COMMANDS}
+    other_refresh = cron_storage.get_job_by_name(f"gobby:wiki-refresh:project:{other_project}")
+    assert other_refresh is not None
+    assert other_refresh.enabled is True
+    assert other_refresh.next_run_at is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_parks_rows_for_unresolvable_scope(
+    cron_storage: CronJobStorage,
+    project_id: str,
+    temp_db: Any,
+) -> None:
+    # Rows whose scope names a project that is not in the projects table.
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=["project:ghost-project"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    executor = RecordingExecutor(handlers={})
+
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        db=temp_db,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    assert registered == 7
+    assert set(executor.handlers) == {
+        f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
+    }
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:ghost-project")
+        assert job is not None
+        # Parked, not disabled: the operator toggle is preserved while the
+        # row stops coming due (and stops failing with "No handler registered").
+        assert job.enabled is True
+        assert job.next_run_at is None
+
+
+@pytest.mark.asyncio
+async def test_sweep_wakes_parked_rows_when_scope_resolves(
+    cron_storage: CronJobStorage,
+    project_id: str,
+    temp_db: Any,
+) -> None:
+    other_project = LocalProjectManager(temp_db).create(name="wiki-b", repo_path="/tmp/wiki-b").id
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=other_project,
+        scopes=[f"project:{other_project}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{other_project}")
+        assert job is not None
+        cron_storage.park_system_job(job.id)
+    executor = RecordingExecutor(handlers={})
+
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        db=temp_db,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    assert registered == 14
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{other_project}")
+        assert job is not None
+        assert job.enabled is True
+        assert job.next_run_at is not None
+        assert f"wiki:{command}:project:{other_project}" in executor.handlers
+
+
+@pytest.mark.asyncio
+async def test_registration_wakes_parked_row_for_configured_scope(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    parked = cron_storage.get_job_by_name("gobby:wiki-refresh:project:alpha")
+    assert parked is not None
+    cron_storage.park_system_job(parked.id)
+
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=["project:alpha"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    woken = cron_storage.get_job(parked.id)
+    assert woken is not None
+    assert woken.enabled is True
+    assert woken.next_run_at is not None
+
+
+@pytest.mark.asyncio
+async def test_fully_disabled_other_project_scope_gets_no_handlers(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=["project:idle-scope"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    for command in WIKI_JOB_COMMANDS:
+        job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:idle-scope")
+        assert job is not None
+        cron_storage.toggle_job(job.id)
+    executor = RecordingExecutor(handlers={})
+
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id=project_id,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    # Disabled rows never come due, so no handlers are swept for their scope.
+    assert registered == 7
+    assert set(executor.handlers) == {
+        f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
+    }
+
+
+@pytest.mark.asyncio
+async def test_registration_without_startup_project_sweeps_enabled_rows(
+    cron_storage: CronJobStorage,
+    project_id: str,
+) -> None:
+    await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=RecordingExecutor(handlers={}),
+        project_id=project_id,
+        scopes=[f"project:{project_id}"],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+    executor = RecordingExecutor(handlers={})
+
+    # Daemon started outside any project: no configured scopes, sweep only.
+    registered = await register_wiki_cron_jobs(
+        cron_storage=cron_storage,
+        cron_executor=executor,
+        project_id="",
+        scopes=[],
+        gateway_factory=lambda _scope: RecordingGateway(),
+    )
+
+    assert registered == 7
+    assert set(executor.handlers) == {
+        f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
+    }
+
+
+@pytest.mark.asyncio
 async def test_refresh_job_uses_gateway_and_avoids_duplicate_index() -> None:
     gateway = RecordingGateway()
     handler = create_wiki_refresh_handler(

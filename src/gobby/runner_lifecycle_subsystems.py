@@ -284,7 +284,7 @@ async def _register_wiki_cron_handlers(
     runner: GobbyRunner,
     tracker: StartupTracker | None,
 ) -> None:
-    if not runner.project_id or runner.cron_storage is None:
+    if runner.cron_storage is None:
         return
     executor = getattr(runner.cron_scheduler, "executor", None)
     if executor is None:
@@ -295,12 +295,20 @@ async def _register_wiki_cron_handlers(
             register_wiki_cron_jobs,
         )
 
+        # Without a startup project there are no configured scopes to ensure,
+        # but registration still runs so enabled rows from other projects get
+        # handlers (or are parked) instead of failing every interval.
+        scopes = (
+            configured_wiki_cron_scopes(runner.config, runner.project_id)
+            if runner.project_id
+            else []
+        )
         registered = await register_wiki_cron_jobs(
             cron_storage=runner.cron_storage,
             cron_executor=executor,
-            project_id=runner.project_id,
+            project_id=runner.project_id or "",
             db=runner.database,
-            scopes=configured_wiki_cron_scopes(runner.config, runner.project_id),
+            scopes=scopes,
         )
         logger.debug("Wiki cron handlers registered: %s", registered)
     except Exception as e:
