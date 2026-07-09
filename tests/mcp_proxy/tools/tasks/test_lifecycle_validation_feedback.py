@@ -288,12 +288,42 @@ def test_failure_state_assertion_descriptions_do_not_admit_failure(feedback: str
 @pytest.mark.parametrize(
     "feedback",
     [
+        # Exact fragment from the #17734 verdict that misfired twice: `failed`
+        # names the refresh payload's result bucket, and "test" follows within
+        # the same-sentence proximity window.
+        (
+            "The explicit source_ids branch was not touched by this diff, so it "
+            "retains its prior behavior of pushing into failed; this is "
+            "corroborated by the pre-existing test "
+            "explicit_unsupported_and_missing_sources_fail_structurally still "
+            "passing per the agent's report."
+        ),
+        (
+            "A new bulk-path test was added asserting the source appears under "
+            "skipped with the correct code, an empty failed array, and status "
+            "unchanged."
+        ),
+        "The selection routes missing-replay records into the failed list only for explicit ids.",
+        "The compaction groups the failed entries by code before the check runs.",
+    ],
+)
+def test_failure_bucket_references_do_not_admit_failure(feedback: str) -> None:
+    """Naming a `failed` result bucket or collection is not a failure admission."""
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
         "tests: 9 passed, 1 failed",
         "Validation summary: 2 failures remain.",
         "Tests are failing in the required check.",
         "Tests are still failing in the required check.",
         "The validation gate did not pass.",
         "The new tests verify the retry path, but the lint check failed.",
+        "Two failed tests remain in the required suite.",
+        "The build failed under load testing.",
     ],
 )
 def test_nonzero_and_explicit_failure_summaries_still_admit_failure(feedback: str) -> None:

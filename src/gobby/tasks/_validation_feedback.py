@@ -67,6 +67,22 @@ _STATUS_VALUE_FAILURE_TOKEN_RE = re.compile(
     r"[\"'`]?fail(?:ed|ure)[\"'`]?\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_FAILURE_BUCKET_DESTINATION_RE = re.compile(
+    # Example: "pushes these into failed" or "the source appears under failed"
+    # — `failed` names a result bucket records are routed into, not a failure
+    # event. Reversed order ("failed under load") does not match.
+    r"\b(?:into|under|onto)\s+(?:the\s+)?[\"'`]?failed[\"'`]?\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILURE_COLLECTION_NOUN_RE = re.compile(
+    # Example: "an empty failed array" or "the failed list" — `failed`
+    # adjectivally naming a data structure, not an event. Gate nouns such as
+    # "failed tests" or "failed checks" are deliberately excluded so genuine
+    # admissions keep their failure evidence.
+    r"\bfail(?:ed|ures?)\s+"
+    r"(?:arrays?|lists?|entr(?:y|ies)|buckets?|fields?|keys?|columns?|collections?)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _NONZERO_FAILURE_COUNT_RE = re.compile(
     # Example: "1 failed" or "2 failures".
     r"\b(?:[1-9]\d*|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
@@ -174,6 +190,8 @@ def _searchable_feedback(feedback: str) -> str:
     normalized_feedback = _NEGATED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _RESOLVED_REGRESSION_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _STATUS_VALUE_FAILURE_TOKEN_RE.sub("", normalized_feedback)
+    normalized_feedback = _FAILURE_BUCKET_DESTINATION_RE.sub("", normalized_feedback)
+    normalized_feedback = _FAILURE_COLLECTION_NOUN_RE.sub("", normalized_feedback)
     normalized_feedback = _ASSERTION_DESCRIBED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     return _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
 
