@@ -132,15 +132,15 @@ Domain: backend.
 
 Targets: `src/gobby/gwiki_gateway.py`, `src/gobby/servers/routes/wiki.py`, `src/gobby/wiki/update_coordinator.py`, `src/gobby/mcp_proxy/tools/wiki.py`, `tests/servers/routes/test_wiki_routes.py`
 
-- Gateway: thread `stdin_data: bytes | None = None` through `_run_json` → `_run_command` (`stdin=asyncio.subprocess.PIPE`, `proc.communicate(input=stdin_data)`); add `write_page(self, *, path: str, content: str, mode: str = "upsert")` and `delete_page(self, *, path: str)`.
-- Routes: `POST /api/wiki/write?project=&topic=` body `{path, content, mode?="upsert"}`; `POST /api/wiki/delete?project=&topic=` body `{path}` (POST-with-body matches the router's action-verb style). Both go through the existing `_write_call` helper so the response carries `index_handoff` and returns only **after** reindex completes. Map gwiki already-exists → 409 and missing-file → 404.
+- Gateway: thread `stdin_data: bytes | None = None` through `_run_json` → `_run_command` (`stdin=asyncio.subprocess.PIPE`, `proc.communicate(input=stdin_data)`); add `write_page(self, *, path: str, content: str, mode: str = "upsert", expected_hash: str | None = None)` — appending `--expected-hash <sha256>` to the `gwiki page write` argv when set — and `delete_page(self, *, path: str)`. Route and MCP layers pass `expected_hash` through this gateway parameter verbatim; the precondition must never be droppable at the gateway boundary.
+- Routes: `POST /api/wiki/write?project=&topic=` body `{path, content, mode?="upsert", expected_hash?}`; `POST /api/wiki/delete?project=&topic=` body `{path}` (POST-with-body matches the router's action-verb style). Both go through the existing `_write_call` helper so the response carries `index_handoff` and returns only **after** reindex completes. Map gwiki already-exists → 409, missing-file → 404, and expected-hash precondition failure → 412.
 - Add `"page-write"`, `"page-delete"` to `EXPLICIT_WRITE_COMMANDS` in `src/gobby/wiki/update_coordinator.py`.
-- MCP: add `wiki_write_page(path, content, mode="upsert", project=None, topic=None)` and `wiki_delete_page(path, project=None, topic=None)` to `src/gobby/mcp_proxy/tools/wiki.py` via the existing `write_call` helper; interactive timeout (no `EXTENDED_TIMEOUT_TOOL_NAMES` change). Deliberately **no `wiki_graph` MCP tool** — a multi-MB tool result poisons agent context; agents keep `gwiki graph` artifacts and graph-context packs. Record that rationale in the registry docstring.
+- MCP: add `wiki_write_page(path, content, mode="upsert", expected_hash=None, project=None, topic=None)` and `wiki_delete_page(path, project=None, topic=None)` to `src/gobby/mcp_proxy/tools/wiki.py` via the existing `write_call` helper; interactive timeout (no `EXTENDED_TIMEOUT_TOOL_NAMES` change). Deliberately **no `wiki_graph` MCP tool** — a multi-MB tool result poisons agent context; agents keep `gwiki graph` artifacts and graph-context packs. Record that rationale in the registry docstring.
 
 **Acceptance:**
 
 - 1.5.1 - `POST /api/wiki/write` persists content verbatim and responds only after reindex handoff. test: `tests/servers/routes/test_wiki_routes.py::test_write_awaits_reindex`.
-- 1.5.2 - Create-mode conflict maps to 409; delete of a missing page maps to 404. test: `tests/servers/routes/test_wiki_routes.py::test_write_delete_error_mapping`.
+- 1.5.2 - Create-mode conflict maps to 409, missing-page delete to 404, and expected-hash mismatch to 412 — with the test asserting a stale hash reaches the gwiki argv through the reindex-backed write path. test: `tests/servers/routes/test_wiki_routes.py::test_write_delete_error_mapping`.
 - 1.5.3 - `wiki_write_page`/`wiki_delete_page` MCP tools exist with vault-confinement errors surfaced. symbol: `gobby.mcp_proxy.tools.wiki.create_wiki_registry`.
 
 ### 1.6 Detached pipeline runs: `background` flag on `POST /api/pipelines/run` [category: code]
@@ -156,12 +156,13 @@ Targets: `src/gobby/workflows/pipeline_executor.py`, `src/gobby/servers/routes/p
 - `start_detached(self, pipeline, inputs, project_id, session_id=None) -> PipelineExecution`: create the record, then `asyncio.create_task(self.execute(..., execution_id=execution.id))` retained in `self._detached_tasks: set[asyncio.Task]` with a discard + exception-logging done-callback (mirror `CronExecutor._background_tasks`). The existing resume path accepts a fresh non-terminal record (only CANCELLED/COMPLETED are rejected).
 - Route: `PipelineRunRequest` gains `background: bool = False`; when true, return `202 {"status":"running","execution_id","pipeline_name"}` immediately. Existing `pipeline_event` WS broadcasts (`pipeline_started|step_started|step_completed|step_skipped|pipeline_completed|pipeline_failed`) and `GET /api/pipelines/executions*` provide monitoring unchanged.
 
-Known accepted exposure (unchanged from today's approval-parked runs): detached executions orphaned by a daemon restart remain RUNNING; a startup sweep is out of scope here.
+- Startup sweep: on executor startup, mark RUNNING executions whose background task no longer exists as FAILED with a daemon-restart note. This covers detached runs orphaned by restart and heals the same pre-existing exposure for approval-parked runs — without it, the research UI (5.2) would poll a phantom RUNNING execution forever.
 
 **Acceptance:**
 
 - 1.6.1 - `start_detached` returns immediately with a RUNNING execution that completes in the background. test: `tests/workflows/test_pipeline_executor.py::test_start_detached_completes`.
 - 1.6.2 - `POST /api/pipelines/run` with `background: true` responds 202 with `execution_id` while steps stream over `pipeline_event`. symbol: `gobby.workflows.pipeline_executor.PipelineExecutor.start_detached`.
+- 1.6.3 - Executor startup marks restart-orphaned RUNNING executions FAILED. test: `tests/workflows/test_pipeline_executor.py::test_startup_sweep_marks_orphans_failed`.
 
 ### 1.7 Codewiki refresh status endpoint [category: code]
 `kind: deliverable`
@@ -195,7 +196,7 @@ Targets: `web/src/components/activity/wiki/WikiTabModel.ts`, `web/src/components
 Rewrite the wiki data layer against the new backend contracts (keep old exports compiling until 2.2 deletes the old UI):
 
 - `WikiTabModel.ts` (~350): types `WikiMode = 'wiki' | 'code' | 'ask' | 'research'`, `WikiGraphPayload`, `WikiPageMeta`, `PageTreeNode`; path helpers `pageKindFromPath`, `breadcrumbSegments`, `codePathToSourcePath("code/files/src/gobby/runner.py.md") → "src/gobby/runner.py"`; `buildPageTree(pages, rootFilter)` grouping by path segments (`knowledge/{concepts,topics,sources}`, `recaps/`, `outputs/`, root pages `_index`, `log`; code mode: `INDEX`, `repo`, `modules/`, `files/**` mirror); `buildNodeIndex(pages)` producing path→meta and title/alias→path maps for wikilink + citation resolution; node color/size mapping tables for the graph (kind → token var, `val = 2 + 3*sqrt(degree)` clamped).
-- `WikiTabData.ts` (~400): typed fetchers over the envelope — `fetchGraph(scope, include)`, `fetchPages(scope, prefix?)`, `fetchPage(path|title)`, `fetchBacklinks(target)`, `fetchSearch`, `fetchAsk({query, llm, signal})`, `savePage(path, content, mode)` → `POST /api/wiki/write`, `createPage`, `deletePage` → `POST /api/wiki/delete`, `launchResearch(inputs)` → `POST /api/pipelines/run {name:'wiki-research', background:true}`; normalizers `normalizeGraph`, `normalizePages`, `normalizePage` (frontmatter split via `js-yaml`, already a dep), `normalizeAskAnswer` (answer markdown, citations `{target, title, resolvedPath|null}`, grounding warnings — field names normalized defensively in the established `asRecord`/`fieldText` style against fixture envelopes captured from live `gwiki ask` output), `normalizeBacklinks`.
+- `WikiTabData.ts` (~400): typed fetchers over the envelope — `fetchGraph(scope, include)`, `fetchPages(scope, prefix?)`, `fetchPage(path|title)`, `fetchBacklinks(target)`, `fetchSearch`, `fetchAsk({query, llm, signal})`, `savePage(path, content, mode, expectedHash)` → `POST /api/wiki/write` (412 normalized to a typed conflict result), `createPage`, `deletePage` → `POST /api/wiki/delete`, `launchResearch(inputs)` → `POST /api/pipelines/run {name:'wiki-research', background:true}`; normalizers `normalizeGraph`, `normalizePages`, `normalizePage` (frontmatter split via `js-yaml`, already a dep), `normalizeAskAnswer` (answer markdown, citations `{target, title, resolvedPath|null}`, grounding warnings — field names normalized defensively in the established `asRecord`/`fieldText` style against fixture envelopes captured from live `gwiki ask` output), `normalizeBacklinks`.
 - **Tree and citation resolution use the lightweight `pages` listing; the graph payload is fetched lazily only for the graph view and unresolved-mentions data.**
 - Tests use fixtures shaped from `wiki/outputs/graph.json` (1,846 nodes in the current vault: 835 `unresolved_target`, 337 `source` + 337 `citation`) and live envelope captures.
 
@@ -298,7 +299,8 @@ Targets: `web/src/components/activity/wiki/WikiPageEditor.tsx`, `web/src/compone
 
 - Edit toggle swaps the reader body for `CodeMirrorEditor` (`language="markdown"`, full raw content including frontmatter) with a `DetailPaneHeader` strip: dirty dot + "Unsaved" text, Save (accent), Discard (ghost), `serverChanged` indicator ("Page changed on disk" when the watcher reindexes underneath an open editor).
 - State via `useDetailDraft<{path, content}>` — auto-registers with the shell dirty-guard registry (tab change, panel close, layout toggles); local transitions (tree click, mode switch, graph open, back/forward) call `confirmIfDirty`. `Cmd+S` via the editor's `onSave`.
-- Save → `savePage` (`POST /api/wiki/write`, which returns after reindex) → update page cache, exit edit mode, refetch pages/backlinks (and graph if loaded).
+- Save → `savePage` (`POST /api/wiki/write`, which returns after reindex) → update page cache and base hash, exit edit mode, refetch pages/backlinks (and graph if loaded).
+- Revision contract (closes the lost-update race): the editor holds the base `content_hash` from the read payload; it revalidates the hash on window focus, on manual refresh, and immediately before save; save passes `expectedHash` and a 412 opens a conflict panel with three explicit choices — Reload (discard local draft), Overwrite (resave against the fresh hash after confirmation), or keep editing. `serverChanged` derives from the hash comparison, so it fires for watcher reindexes, second editors, and external filesystem edits alike. Silent last-write-wins is never allowed.
 - **Create** (recipe-compliant, no modal): kebab "New page" / tree "New page here" / not-found wikilink affordance → reader pane becomes a create form: path field (pre-filled prefix, validated `a-z0-9-/_.`, must resolve under `knowledge/`), editor seeded with a frontmatter template (`title`, `tags: []`); Save → `createPage(mode="create")` → 409 surfaces inline → `openPage(newPath)`.
 - **Delete**: `useConfirmDialog` (destructive icon + text) → `deletePage` → history-back or tree root; refetch. Code pages are read-only: edit/delete affordances hidden for `code/**` (backend rejects anyway).
 
@@ -307,6 +309,7 @@ Targets: `web/src/components/activity/wiki/WikiPageEditor.tsx`, `web/src/compone
 - 3.2.1 - Edit toggle with draft state, dirty guard, Cmd+S, and save-await-reindex flow works. file: `web/src/components/activity/wiki/WikiPageEditor.tsx`.
 - 3.2.2 - Create flow validates paths, seeds frontmatter, and handles 409 conflicts inline. test: `web/src/components/activity/wiki/__tests__/WikiPageEditor.test.tsx`.
 - 3.2.3 - Delete confirms destructively and navigates back; code pages expose no edit/delete affordances. behavior: "code pages read-only" in `web/src/components/activity/wiki/WikiPageReader.tsx`.
+- 3.2.4 - Concurrent modification surfaces the reload/overwrite conflict flow; silent overwrite is impossible. test: `web/src/components/activity/wiki/__tests__/WikiPageEditor.conflict.test.tsx`.
 
 ## P4: Graph and codewiki (depends: P3)
 `kind: framing`
@@ -390,12 +393,14 @@ Targets: `web/src/components/activity/wiki/WikiResearchMode.tsx`
 - Launch via `WikiTabActions.launchResearch` → `POST /api/pipelines/run {name:'wiki-research', project_id, background:true, inputs}` (202). Single-flight: while a `running` execution exists, the composer disables with "A research run is in progress" (respects the pipeline's own re-entrancy guard).
 - Live monitoring: `usePipelineExecutions({projectId})` with `pipeline_name:'wiki-research'` filter — the hook already refetches on `pipeline_event` WS messages with 500ms debounce. Live run card: status dot + label text (`--exec-status-*` tokens), step checklist (create_research_task → spawn_researcher → wait_researcher) with per-step status, elapsed time, "View in Pipelines tab" escape hatch. Completion flips a success strip: "Open report" / "Open topic page".
 - Past runs: merged view of executions history (status, duration, question from `inputs_json`) and reports from the `pages` listing's `outputs` array filtered to `*-run-report.md`, sorted by recency; clicking a report opens it in the shared `WikiPageReader` in place (back chevron returns). Report wikilinks to `knowledge/topics/<slug>` navigate via the plugin (mode auto-flip); compiled topic also derived from the execution's `outputs_json` when present.
+- Resilient monitoring (closes the WS-drop/restart gap): while a run is active or the WebSocket is disconnected, poll `GET /api/pipelines/executions?pipeline_name=wiki-research` on a 10s fallback interval; a RUNNING execution with no event or poll progress for a bounded window, or one the 1.6 startup sweep marked FAILED after a daemon restart, renders a recovery state (warning icon + text) with Refresh and Dismiss actions; the composer re-enables whenever no live execution remains. Monitoring state never depends on the WebSocket alone.
 
 **Acceptance:**
 
 - 5.2.1 - Research runs launch detached and stream live step progress in the panel. file: `web/src/components/activity/wiki/WikiResearchMode.tsx`.
 - 5.2.2 - Past run reports list from vault outputs and open in the reader with navigable topic links. test: `web/src/components/activity/wiki/__tests__/WikiResearchMode.test.tsx`.
 - 5.2.3 - Single-flight guard and completion strip (report/topic shortcuts) behave correctly. behavior: "single-flight research composer" in `web/src/components/activity/wiki/WikiResearchMode.tsx`.
+- 5.2.4 - WebSocket drop falls back to polling; restart-orphaned runs surface a recovery state that re-enables the composer. test: `web/src/components/activity/wiki/__tests__/WikiResearchMode.recovery.test.tsx`.
 
 ## P6: Verification and polish (depends: P4, P5)
 `kind: framing`
@@ -456,6 +461,44 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   phase-level dependencies to concrete prior leaf sections (expansion rejects phase IDs
   in manifest depends_on), preserved the plan's explicit backend/frontend domains, and
   ran expansion-mode validation successfully. No narrative changes were required.
+  Post-round: coordinator enriched all 18 manifest validation_criteria into testable
+  criteria sentences derived from acceptance items; expansion validation re-passed.
+
+**Round 2** `kind: verification`
+
+- reviewer_run: d5f76db0-29e5-4297-a72c-1dbf53f120e7
+- reviewer_session: 8909f4a7-8664-45ee-be33-a29697a74bd2
+- verdict: needs_review
+- findings:
+  - R2-F1/blocking/unhandled-edge (1.3, 1.5, 3.2): concurrent-editor/watcher race named
+    but unspecified — no revision contract on read/pages/write, so verbatim writes allow
+    silent lost updates and serverChanged has no data source.
+  - R2-F2/blocking/unhandled-edge (1.6, 5.2): research monitoring depended on the
+    WebSocket alone and single-flighted on any RUNNING execution while 1.6 deferred the
+    restart sweep — WS drop or daemon restart strands stale progress and a permanently
+    disabled composer.
+- resolution_notes: R2-F1 resolved with a content-hash revision contract — `pages` and
+  `read` payloads carry `content_hash` (1.2), `gwiki page write` gains `--expected-hash`
+  precondition returning precondition-failed (1.3.5), routes/MCP map it to 412 (1.5.2),
+  and the editor revalidates on focus/refresh/pre-save with a reload/overwrite conflict
+  panel (3.2.4). R2-F2 resolved by bringing the executor startup sweep into scope
+  (1.6.3) and adding poll-fallback monitoring with a stale-run recovery state that
+  re-enables the composer (5.2.4). Manifest labels and validation_criteria updated for
+  all four sections; draft and expansion validation re-run clean.
+
+**Round 3** `kind: verification`
+
+- reviewer_run: 5779843e-f25a-4de4-96df-e28fcf9d28a1
+- reviewer_session: 99596ec6-7ab5-4c51-b14f-cdb4d9fb8f85
+- verdict: needs_review
+- findings:
+  - R3-F1/blocking/unhandled-edge (1.5): gateway signature omitted expected_hash, so the
+    precondition could be silently dropped between route/MCP and the gwiki CLI, making
+    the 412 lost-update protection unreachable. R2-F2 fix verified sufficient.
+- resolution_notes: `GwikiGateway.write_page` now takes `expected_hash: str | None`,
+  appends `--expected-hash` to the gwiki argv when set, routes/MCP pass it verbatim, and
+  acceptance 1.5.2 requires the test to assert a stale hash reaches the gwiki argv
+  through the reindex-backed write path. Manifest criteria updated; validation re-run.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -489,12 +532,13 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: 'gwiki page write upserts knowledge/ pages from stdin emitting changed_paths; confinement rejects writes outside knowledge/ plus traversal and symlink escapes; --mode create returns a distinct already-exists error; page delete removes the file and reindex prunes derived rows. Crate tests cover all four behaviors; release binary reinstalled.'
+  validation_criteria: 'gwiki page write upserts knowledge/ pages from stdin emitting changed_paths; confinement rejects writes outside knowledge/ plus traversal and symlink escapes; --mode create returns a distinct already-exists error; --expected-hash mismatch returns a precondition-failed error leaving the file untouched; page delete removes the file and reindex prunes derived rows. Crate tests cover all five behaviors; release binary reinstalled.'
   labels:
   - covers:unknown:1.3:1.3.1
   - covers:unknown:1.3:1.3.2
   - covers:unknown:1.3:1.3.3
   - covers:unknown:1.3:1.3.4
+  - covers:unknown:1.3:1.3.5
   implementation_domain: backend
   tdd: true
   source_section: '1.3'
@@ -517,7 +561,7 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   task_type: feature
   depends_on:
   - '1.3'
-  validation_criteria: 'POST /api/wiki/write persists content verbatim and responds only after the reindex handoff completes; create-mode conflict maps to 409 and missing-page delete to 404; wiki_write_page and wiki_delete_page MCP tools are registered with confinement errors surfaced. Focused route tests prove write-await-reindex and error mapping.'
+  validation_criteria: 'POST /api/wiki/write persists content verbatim and responds only after the reindex handoff completes; GwikiGateway.write_page threads expected_hash into the gwiki argv so the precondition cannot be dropped at the gateway boundary; create-mode conflict maps to 409, missing-page delete to 404, and expected-hash mismatch to 412; wiki_write_page and wiki_delete_page MCP tools are registered with confinement errors surfaced. Focused route tests prove write-await-reindex, hash threading, and error mapping.'
   labels:
   - covers:unknown:1.5:1.5.1
   - covers:unknown:1.5:1.5.2
@@ -529,10 +573,11 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: 'PipelineExecutor.start_detached returns a RUNNING execution immediately and the run completes in the background with task retention and exception-logging done-callbacks; POST /api/pipelines/run with background true responds 202 carrying execution_id while pipeline_event WS messages stream progress. Executor tests prove detached completion.'
+  validation_criteria: 'PipelineExecutor.start_detached returns a RUNNING execution immediately and the run completes in the background with task retention and exception-logging done-callbacks; POST /api/pipelines/run with background true responds 202 carrying execution_id while pipeline_event WS messages stream progress; executor startup marks restart-orphaned RUNNING executions FAILED. Executor tests prove detached completion and the startup sweep.'
   labels:
   - covers:unknown:1.6:1.6.1
   - covers:unknown:1.6:1.6.2
+  - covers:unknown:1.6:1.6.3
   implementation_domain: backend
   tdd: true
   source_section: '1.6'
@@ -623,11 +668,12 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   task_type: feature
   depends_on:
   - '3.1'
-  validation_criteria: 'The edit toggle provides draft state with dirty guard and Cmd+S; save awaits the reindex-backed write then refreshes caches; create validates knowledge/ paths, seeds frontmatter, and surfaces 409 conflicts inline; delete confirms destructively and navigates back; code pages expose no edit or delete affordances. Editor tests prove create and conflict flows.'
+  validation_criteria: 'The edit toggle provides draft state with dirty guard and Cmd+S; save passes the base content hash and awaits the reindex-backed write; a 412 opens the reload/overwrite conflict panel so silent overwrite is impossible; create validates knowledge/ paths, seeds frontmatter, and surfaces 409 conflicts inline; delete confirms destructively and navigates back; code pages expose no edit or delete affordances. Editor tests prove create, save-conflict, and concurrent-modification flows.'
   labels:
   - covers:unknown:3.2:3.2.1
   - covers:unknown:3.2:3.2.2
   - covers:unknown:3.2:3.2.3
+  - covers:unknown:3.2:3.2.4
   implementation_domain: frontend
   tdd: true
   source_section: '3.2'
@@ -677,11 +723,12 @@ With the daemon running (`uv run gobby restart` after backend tasks; rebuild+rei
   depends_on:
   - '1.6'
   - '3.1'
-  validation_criteria: 'Research runs launch detached with a 202 and stream live step progress via pipeline events; past run reports list from vault outputs and open in the shared reader with navigable topic wikilinks; the single-flight guard and completion strip with report/topic shortcuts behave correctly. Research tests prove launch, monitor, and report flows.'
+  validation_criteria: 'Research runs launch detached with a 202 and stream live step progress via pipeline events with a 10s polling fallback when the WebSocket is down; restart-orphaned runs surface a recovery state that re-enables the composer; past run reports list from vault outputs and open in the shared reader with navigable topic wikilinks; the single-flight guard and completion strip behave correctly. Research tests prove launch, monitor, recovery, and report flows.'
   labels:
   - covers:unknown:5.2:5.2.1
   - covers:unknown:5.2:5.2.2
   - covers:unknown:5.2:5.2.3
+  - covers:unknown:5.2:5.2.4
   implementation_domain: frontend
   tdd: true
   source_section: '5.2'
