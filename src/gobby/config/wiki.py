@@ -22,7 +22,13 @@ DEFAULT_WIKI_IGNORE_GLOBS: tuple[str, ...] = (
 class WikiRootConfig(BaseModel):
     """One wiki root watched by the daemon."""
 
-    scope: str = Field(description="Stable scope name for grouped watcher changes.")
+    scope: str = Field(
+        description=(
+            "Scope kind label: 'project' for a project vault (may repeat across "
+            "roots; the watcher disambiguates by root path) or 'topic:<name>' "
+            "for a hub topic vault."
+        )
+    )
     path: Path = Field(description="Wiki root path to watch.")
 
     @field_validator("scope")

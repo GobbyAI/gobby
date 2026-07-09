@@ -83,23 +83,65 @@ def _wiki_gateway_for_local_scope(
 
     def gateway(scope: str) -> GwikiGateway:
         root = roots_by_scope.get(scope)
+        configured_scope = root.scope if root is not None else scope
+        project_root: str | None = None
+        if root is not None and _is_project_scope(configured_scope):
+            project_root = str(root.path)
         return GwikiGateway(
             binary=None,
-            project_root=str(root.path) if root is not None and scope == "project" else None,
-            topic=_wiki_topic_name(scope),
+            project_root=project_root,
+            topic=_wiki_topic_name(configured_scope),
             timeout_seconds=INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
         )
 
     return gateway
 
 
+def _is_project_scope(scope: str) -> bool:
+    return scope == "project" or scope.startswith("project:")
+
+
 def _wiki_topic_name(scope: str) -> str | None:
-    if scope == "project":
+    if _is_project_scope(scope):
         return None
     if scope.startswith("topic:"):
         topic = scope.removeprefix("topic:").strip()
         return topic or None
     return scope
+
+
+def _watch_scope_name(root: WikiRootConfig) -> str:
+    """Unique watcher identity for one wiki root.
+
+    Configured scope names are kind labels, not identities: every project
+    vault ships as scope "project", so multiple projects legally share the
+    name. The watcher, coordinator, and gateway factory all key state by
+    scope name, so project scopes are disambiguated by resolved root path.
+    """
+    if root.scope == "project":
+        return f"project:{root.path.expanduser().resolve()}"
+    return root.scope
+
+
+def _roots_by_watch_scope(wiki_config: WikiConfig) -> dict[str, WikiRootConfig]:
+    roots: dict[str, WikiRootConfig] = {}
+    for root in wiki_config.roots:
+        if not root.path.exists():
+            continue
+        name = _watch_scope_name(root)
+        existing = roots.get(name)
+        if existing is not None:
+            logger.warning(
+                "Ignoring duplicate wiki root %s (scope %r): already watching %s "
+                "under watch scope %r",
+                root.path,
+                root.scope,
+                existing.path,
+                name,
+            )
+            continue
+        roots[name] = root
+    return roots
 
 
 def start_periodic_tasks(
@@ -228,9 +270,9 @@ def start_periodic_tasks(
     runner._wiki_watcher_task = None
     wiki_config = getattr(runner.config, "wiki", None)
     if isinstance(wiki_config, WikiConfig) and wiki_config.enabled and wiki_config.roots:
-        roots_by_scope = {root.scope: root for root in wiki_config.roots if root.path.exists()}
+        roots_by_scope = _roots_by_watch_scope(wiki_config)
         scopes = [
-            WikiWatchScope(name=root.scope, root=root.path) for root in roots_by_scope.values()
+            WikiWatchScope(name=name, root=root.path) for name, root in roots_by_scope.items()
         ]
         if scopes:
             runner._wiki_watcher = WikiWatcher(

@@ -131,7 +131,106 @@ async def test_startup_indexes_local_changes_with_scoped_gateways(
     assert constructed_scopes == [(str(project_root), None), (None, "research")]
     assert result is not None
     assert result["index_handoff"]["status"] == "indexed"
-    assert set(result["index_handoff"]["results_by_scope"]) == {"project", "topic:research"}
+    assert set(result["index_handoff"]["results_by_scope"]) == {
+        f"project:{project_root.resolve()}",
+        "topic:research",
+    }
+
+
+def test_watch_scope_names_disambiguate_project_roots(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Duplicate "project" scope labels map to per-root watch scopes; only true duplicates drop."""
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    topic_root = tmp_path / "topic"
+    first_root.mkdir()
+    second_root.mkdir()
+    topic_root.mkdir()
+    config = WikiConfig(
+        roots=[
+            WikiRootConfig(scope="project", path=first_root),
+            WikiRootConfig(scope="project", path=second_root),
+            WikiRootConfig(scope="project", path=first_root),
+            WikiRootConfig(scope="topic:research", path=topic_root),
+            WikiRootConfig(scope="project", path=tmp_path / "missing"),
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle_periodic"):
+        roots = runner_lifecycle_periodic._roots_by_watch_scope(config)
+
+    assert {name: root.path for name, root in roots.items()} == {
+        f"project:{first_root.resolve()}": first_root,
+        f"project:{second_root.resolve()}": second_root,
+        "topic:research": topic_root,
+    }
+    duplicate_warnings = [
+        message for message in caplog.messages if "duplicate wiki root" in message
+    ]
+    assert len(duplicate_warnings) == 1
+    assert str(first_root) in duplicate_warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_startup_watches_all_duplicate_scope_project_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two projects both configured as scope "project" must each stay watched and indexed."""
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    indexed_projects: list[str | None] = []
+
+    class FakeGwikiGateway:
+        def __init__(
+            self,
+            *,
+            binary: str | None = None,
+            project_root: str | Path | None = None,
+            topic: str | None = None,
+            timeout_seconds: float = 30.0,
+        ) -> None:
+            self.project = str(project_root) if project_root is not None else None
+            self.topic = topic
+
+        async def index(self) -> dict[str, Any]:
+            indexed_projects.append(self.project)
+            return {"ok": True, "payload": {}}
+
+    monkeypatch.setattr(runner_lifecycle_periodic, "GwikiGateway", FakeGwikiGateway)
+    config = DaemonConfig(
+        wiki=WikiConfig(
+            roots=[
+                WikiRootConfig(scope="project", path=first_root),
+                WikiRootConfig(scope="project", path=second_root),
+            ],
+            debounce_interval=0.01,
+            poll_interval=0.01,
+        )
+    )
+    runner = _runner(config)
+
+    start_periodic_tasks(runner, tracker=None, **_loops())
+    try:
+        assert isinstance(runner._wiki_watcher, WikiWatcher)
+        assert runner._wiki_watcher.health()["scope_count"] == 2
+        await runner._wiki_watcher.record_change(first_root / "a.md")
+        await runner._wiki_watcher.record_change(second_root / "b.md")
+        result = await runner._wiki_watcher.flush_pending()
+    finally:
+        await _cancel_periodic_tasks(runner)
+
+    assert indexed_projects == [str(first_root), str(second_root)]
+    assert result is not None
+    assert result["index_handoff"]["status"] == "indexed"
+    assert set(result["index_handoff"]["results_by_scope"]) == {
+        f"project:{first_root.resolve()}",
+        f"project:{second_root.resolve()}",
+    }
 
 
 @pytest.mark.asyncio
