@@ -232,7 +232,7 @@ $ ghook --diagnose --cli=claude --type=session-start
   },
   "cli_recognized": true,
   "install_method": "github-release",
-  "install_source_url": "https://github.com/GobbyAI/gobby-cli/releases/download/ghook-v0.7.0/ghook-aarch64-apple-darwin.tar.gz"
+  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.1/ghook-aarch64-apple-darwin.tar.gz"
 }
 ```
 

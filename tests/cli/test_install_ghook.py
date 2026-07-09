@@ -140,8 +140,8 @@ class TestInstallGhookFromGithub:
         with (
             patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
             patch(
-                "gobby.cli.install_setup._resolve_latest_release_refs",
-                return_value=[("GobbyAI/gobby", "ghook-v0.1.1")],
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="ghook-v0.1.1",
             ),
             patch("gobby.cli.install_setup._verify_release_artifact", return_value=True),
         ):
@@ -175,8 +175,8 @@ class TestInstallGhookFromGithub:
         with (
             patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
             patch(
-                "gobby.cli.install_setup._resolve_latest_release_refs",
-                return_value=[("GobbyAI/gobby", "ghook-v0.1.1")],
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="ghook-v0.1.1",
             ),
             patch("gobby.cli.install_setup._GHOOK_BIN_NAME", "ghook.exe"),
             patch("gobby.cli.install_setup._verify_release_artifact", return_value=True),

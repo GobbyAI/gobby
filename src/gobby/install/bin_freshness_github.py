@@ -17,7 +17,7 @@ from gobby.install.bin_freshness_models import (
     parse_version_tuple,
 )
 
-_HELPER_RELEASE_REPOSITORIES = ("GobbyAI/gobby", "GobbyAI/gobby-cli")
+_HELPER_RELEASE_REPOSITORY = "GobbyAI/gobby"
 _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
     ("darwin", "arm64"): "aarch64-apple-darwin",
     ("darwin", "aarch64"): "aarch64-apple-darwin",
@@ -74,7 +74,7 @@ class GithubReleaseClient:
 
     def fetch_releases(self) -> list[dict[str, Any]]:
         """Fetch release metadata from GitHub."""
-        return self._fetch_releases(_HELPER_RELEASE_REPOSITORIES[0])
+        return self._fetch_releases(_HELPER_RELEASE_REPOSITORY)
 
     def _fetch_releases(self, repository: str) -> list[dict[str, Any]]:
         """Fetch release metadata from a helper release repository."""
@@ -96,24 +96,21 @@ class GithubReleaseClient:
 
     def resolve_latest_asset(self, spec: ManagedBinSpec, *, target: str) -> ReleaseAsset:
         """Resolve the newest stable release asset matching ``spec`` and ``target``."""
-        errors: list[str] = []
-        for repository in _HELPER_RELEASE_REPOSITORIES:
-            try:
-                release = self._resolve_latest_release_from(
-                    spec,
-                    self._fetch_releases(repository),
-                )
-                if release is None:
-                    continue
-                return self._release_asset_from_release(spec, target=target, release=release)
-            except (GithubAPIError, SourceUnavailableError) as exc:
-                errors.append(f"{repository}: {exc}")
-                continue
-
-        detail = f" ({'; '.join(errors)})" if errors else ""
-        raise SourceUnavailableError(
-            f"no stable release asset found for tag prefix {spec.tag_prefix!r}{detail}"
-        )
+        try:
+            release = self._resolve_latest_release_from(
+                spec,
+                self._fetch_releases(_HELPER_RELEASE_REPOSITORY),
+            )
+        except GithubAPIError as exc:
+            raise SourceUnavailableError(
+                f"no stable release asset found for tag prefix {spec.tag_prefix!r} "
+                f"({_HELPER_RELEASE_REPOSITORY}: {exc})"
+            ) from exc
+        if release is None:
+            raise SourceUnavailableError(
+                f"no stable release asset found for tag prefix {spec.tag_prefix!r}"
+            )
+        return self._release_asset_from_release(spec, target=target, release=release)
 
     def _release_asset_from_release(
         self,

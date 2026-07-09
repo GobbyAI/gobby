@@ -6,7 +6,7 @@ A complete guide to using `gcode` for code search, symbol navigation, and depend
 
 ### Install
 
-Download from [GitHub Releases](https://github.com/GobbyAI/gobby-cli/releases/latest) or build from source:
+Download the `gcode-v*` release from [GitHub Releases](https://github.com/GobbyAI/gobby/releases) or build from source:
 
 ```bash
 cargo install gobby-code

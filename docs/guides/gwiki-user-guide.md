@@ -16,8 +16,8 @@ Gobby AI routing layer.
 
 ### Install
 
-Download from [GitHub Releases](https://github.com/GobbyAI/gobby-cli/releases/latest)
-or build from source:
+Download the `gwiki-v*` release from
+[GitHub Releases](https://github.com/GobbyAI/gobby/releases) or build from source:
 
 ```bash
 cargo install gobby-wiki

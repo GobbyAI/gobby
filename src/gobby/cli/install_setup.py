@@ -38,7 +38,7 @@ from . import install_setup_gwiki as _gwiki_impl
 from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
-_HELPER_RELEASE_REPOSITORIES = ("GobbyAI/gobby", "GobbyAI/gobby-cli")
+_HELPER_RELEASE_REPOSITORY = "GobbyAI/gobby"
 # Helper modules resolve these names dynamically from this module to preserve
 # existing patch targets in tests and callers.
 _HELPER_EXPORTS = (os, platform, shutil, tempfile, UTC, datetime)
@@ -72,7 +72,6 @@ def _build_release_download_url(
     *,
     version: str | None,
     tag_prefix: str,
-    repository: str = _HELPER_RELEASE_REPOSITORIES[0],
     resolved_tag: str | None = None,
 ) -> str:
     """Build the GitHub Releases download URL for a binary artifact."""
@@ -81,7 +80,10 @@ def _build_release_download_url(
     tag_name = resolved_tag or (f"{tag_prefix}{version}" if version else None)
     if not tag_name:
         raise ValueError(f"No matching stable release found for tag prefix {tag_prefix!r}")
-    return f"https://github.com/{repository}/releases/download/{tag_name}/{artifact_filename}"
+    return (
+        f"https://github.com/{_HELPER_RELEASE_REPOSITORY}/releases/download/"
+        f"{tag_name}/{artifact_filename}"
+    )
 
 
 def _parse_release_semver(version_text: str) -> tuple[int, ...] | None:
@@ -138,70 +140,21 @@ def _newest_stable_release_tag(
     return None
 
 
-def _resolve_latest_release_refs(*, tag_prefix: str) -> list[tuple[str, str]]:
-    """Resolve stable helper releases as ``(repository, tag)`` candidates."""
-    errors: list[str] = []
-    refs: list[tuple[str, str]] = []
-    for repository in _HELPER_RELEASE_REPOSITORIES:
-        try:
-            tag = _newest_stable_release_tag(
-                _fetch_helper_releases(repository),
-                tag_prefix=tag_prefix,
-            )
-        except (URLError, OSError, ValueError, json.JSONDecodeError) as exc:
-            errors.append(f"{repository}: {exc}")
-            continue
-        if tag is not None:
-            refs.append((repository, tag))
-    if refs:
-        return refs
-    detail = f" ({'; '.join(errors)})" if errors else ""
-    raise ValueError(f"No matching stable release found for tag prefix {tag_prefix!r}{detail}")
-
-
-def _resolve_latest_release_ref(*, tag_prefix: str) -> tuple[str, str]:
-    """Resolve the preferred stable helper release as ``(repository, tag)``."""
-    return _resolve_latest_release_refs(tag_prefix=tag_prefix)[0]
-
-
 def _resolve_latest_release_tag(*, tag_prefix: str) -> str:
     """Resolve the newest stable GitHub release tag for a tag prefix."""
-    return _resolve_latest_release_ref(tag_prefix=tag_prefix)[1]
-
-
-def _release_download_candidates(
-    artifact_name: str,
-    target: str,
-    *,
-    version: str | None,
-    tag_prefix: str,
-    resolved_refs: list[tuple[str, str]] | None = None,
-) -> list[str]:
-    """Return release download URLs in preferred fallback order."""
-    if resolved_refs is not None:
-        return [
-            _build_release_download_url(
-                artifact_name,
-                target,
-                version=None,
-                tag_prefix=tag_prefix,
-                repository=repository,
-                resolved_tag=tag,
-            )
-            for repository, tag in resolved_refs
-        ]
-    if version is None:
-        raise ValueError(f"No matching stable release found for tag prefix {tag_prefix!r}")
-    return [
-        _build_release_download_url(
-            artifact_name,
-            target,
-            version=version,
+    try:
+        tag = _newest_stable_release_tag(
+            _fetch_helper_releases(_HELPER_RELEASE_REPOSITORY),
             tag_prefix=tag_prefix,
-            repository=repository,
         )
-        for repository in _HELPER_RELEASE_REPOSITORIES
-    ]
+    except (URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"No matching stable release found for tag prefix {tag_prefix!r} "
+            f"({_HELPER_RELEASE_REPOSITORY}: {exc})"
+        ) from exc
+    if tag is None:
+        raise ValueError(f"No matching stable release found for tag prefix {tag_prefix!r}")
+    return tag
 
 
 def _extract_binary_from_release_archive(
@@ -325,39 +278,33 @@ def _download_release_binary(
     """Download and extract a native binary from GitHub Releases."""
     archive_ext = _release_archive_extension(target)
     try:
-        resolved_refs = (
-            _resolve_latest_release_refs(tag_prefix=tag_prefix) if version is None else None
+        resolved_tag = (
+            _resolve_latest_release_tag(tag_prefix=tag_prefix) if version is None else None
         )
-        urls = _release_download_candidates(
+        url = _build_release_download_url(
             artifact_name,
             target,
             version=version,
             tag_prefix=tag_prefix,
-            resolved_refs=resolved_refs,
+            resolved_tag=resolved_tag,
         )
-        for url in urls:
-            try:
-                logger.info("Downloading %s from %s", label, url)
-                req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
-                with _urlopen_https(req, timeout=30) as resp:
-                    archive_bytes = resp.read()
-                if not _verify_release_artifact(
-                    archive_bytes,
-                    checksum_url=f"{url}.sha256",
-                    label=label,
-                ):
-                    continue
-                return _extract_binary_from_release_archive(
-                    archive_bytes,
-                    archive_ext=archive_ext,
-                    binary_name=binary_name,
-                    bin_dir=bin_dir,
-                    label=label,
-                )
-            except (URLError, OSError, ValueError) as e:
-                logger.debug("%s: GitHub download candidate failed for %s: %s", label, url, e)
-                continue
-        return False
+        logger.info("Downloading %s from %s", label, url)
+        req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
+        with _urlopen_https(req, timeout=30) as resp:
+            archive_bytes = resp.read()
+        if not _verify_release_artifact(
+            archive_bytes,
+            checksum_url=f"{url}.sha256",
+            label=label,
+        ):
+            return False
+        return _extract_binary_from_release_archive(
+            archive_bytes,
+            archive_ext=archive_ext,
+            binary_name=binary_name,
+            bin_dir=bin_dir,
+            label=label,
+        )
     except (URLError, OSError, ValueError, json.JSONDecodeError) as e:
         logger.warning("%s: GitHub download failed: %s", label, e)
         return False

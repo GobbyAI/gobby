@@ -315,46 +315,31 @@ class TestReleaseTagHelpers:
         assert _resolve_latest_release_tag(tag_prefix="gcode-v") == "gcode-v1.2.3"
 
     @patch("gobby.cli.install_setup.urlopen")
-    def test_resolve_latest_release_tag_falls_back_to_legacy_repo(self, mock_urlopen):
-        def response(payload: list[dict[str, object]]) -> MagicMock:
-            fake_resp = MagicMock()
-            fake_resp.read.return_value = json.dumps(payload).encode()
-            fake_resp.__enter__.return_value = fake_resp
-            return fake_resp
+    def test_resolve_latest_release_tag_fails_closed_without_legacy_fallback(self, mock_urlopen):
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = json.dumps(
+            [
+                {
+                    "tag_name": "ghook-v0.7.1",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-06-30T00:00:00Z",
+                }
+            ]
+        ).encode()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_urlopen.return_value = fake_resp
 
-        mock_urlopen.side_effect = [
-            response(
-                [
-                    {
-                        "tag_name": "ghook-v0.7.0",
-                        "draft": False,
-                        "prerelease": False,
-                        "published_at": "2026-06-30T00:00:00Z",
-                    }
-                ]
-            ),
-            response(
-                [
-                    {
-                        "tag_name": "gcode-v1.4.0",
-                        "draft": False,
-                        "prerelease": False,
-                        "published_at": "2026-07-01T00:00:00Z",
-                    }
-                ]
-            ),
-        ]
-
-        assert _resolve_latest_release_tag(tag_prefix="gcode-v") == "gcode-v1.4.0"
+        with pytest.raises(ValueError, match="gcode-v"):
+            _resolve_latest_release_tag(tag_prefix="gcode-v")
 
         requested_urls = [call.args[0].full_url for call in mock_urlopen.call_args_list]
         assert requested_urls == [
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
-            "https://api.github.com/repos/GobbyAI/gobby-cli/releases?per_page=100",
         ]
 
     @patch("gobby.cli.install_setup.urlopen")
-    def test_download_release_binary_falls_back_to_legacy_repo(self, mock_urlopen, tmp_path):
+    def test_download_release_binary_uses_only_canonical_repo(self, mock_urlopen, tmp_path):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             info = tarfile.TarInfo(name="gcode")
@@ -364,7 +349,7 @@ class TestReleaseTagHelpers:
         fake_resp = MagicMock()
         fake_resp.read.return_value = buf.getvalue()
         fake_resp.__enter__.return_value = fake_resp
-        mock_urlopen.side_effect = [URLError("not found"), fake_resp]
+        mock_urlopen.return_value = fake_resp
 
         with patch("gobby.cli.install_setup._verify_release_artifact", return_value=True):
             assert _download_release_binary(
@@ -372,7 +357,7 @@ class TestReleaseTagHelpers:
                 binary_name="gcode",
                 artifact_name="gcode",
                 target="aarch64-apple-darwin",
-                version="1.4.0",
+                version="1.5.0",
                 tag_prefix="gcode-v",
                 label="gcode",
             )
@@ -380,11 +365,32 @@ class TestReleaseTagHelpers:
         requested_urls = [call.args[0].full_url for call in mock_urlopen.call_args_list]
         assert requested_urls == [
             "https://github.com/GobbyAI/gobby/releases/download/"
-            "gcode-v1.4.0/gcode-aarch64-apple-darwin.tar.gz",
-            "https://github.com/GobbyAI/gobby-cli/releases/download/"
-            "gcode-v1.4.0/gcode-aarch64-apple-darwin.tar.gz",
+            "gcode-v1.5.0/gcode-aarch64-apple-darwin.tar.gz",
         ]
         assert (tmp_path / "gcode").read_bytes() == b"fake!"
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_download_release_binary_fails_closed_when_asset_is_missing(
+        self, mock_urlopen, tmp_path
+    ):
+        mock_urlopen.side_effect = URLError("not found")
+
+        assert not _download_release_binary(
+            tmp_path,
+            binary_name="gcode",
+            artifact_name="gcode",
+            target="aarch64-apple-darwin",
+            version="1.5.0",
+            tag_prefix="gcode-v",
+            label="gcode",
+        )
+
+        requested_urls = [call.args[0].full_url for call in mock_urlopen.call_args_list]
+        assert requested_urls == [
+            "https://github.com/GobbyAI/gobby/releases/download/"
+            "gcode-v1.5.0/gcode-aarch64-apple-darwin.tar.gz",
+        ]
+        assert not (tmp_path / "gcode").exists()
 
 
 class TestGcodeHelpers:

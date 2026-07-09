@@ -159,8 +159,8 @@ Schema:
 ```json
 {
   "install_method": "github-release",
-  "install_source_url": "https://github.com/GobbyAI/gobby-cli/releases/download/ghook-v0.7.0/ghook-aarch64-apple-darwin.tar.gz",
-  "installed_version": "0.7.0",
+  "install_source_url": "https://github.com/GobbyAI/gobby/releases/download/ghook-v0.7.1/ghook-aarch64-apple-darwin.tar.gz",
+  "installed_version": "0.7.1",
   "installed_at": "2026-04-22T18:30:00Z"
 }
 ```

@@ -522,7 +522,7 @@ class TestGithubReleaseClient:
 
         assert isinstance(exc_info.value.__cause__, IncompleteRead)
 
-    def test_resolve_latest_asset_falls_back_when_primary_asset_missing(
+    def test_resolve_latest_asset_resolves_from_canonical_repo(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         spec = _spec()
@@ -532,31 +532,19 @@ class TestGithubReleaseClient:
 
         def fake_urlopen(req: Any, **_kwargs: Any) -> _JsonResponse:
             calls.append(req.full_url)
-            if "/repos/GobbyAI/gobby/" in req.full_url:
-                return _JsonResponse(
-                    [
-                        {
-                            "tag_name": "ghook-v0.4.3",
-                            "draft": False,
-                            "prerelease": False,
-                            "published_at": "2026-07-01T00:00:00Z",
-                            "assets": [],
-                        }
-                    ]
-                )
             return _JsonResponse(
                 [
                     {
-                        "tag_name": "ghook-v0.4.2",
+                        "tag_name": "ghook-v0.4.3",
                         "draft": False,
                         "prerelease": False,
-                        "published_at": "2026-06-30T00:00:00Z",
+                        "published_at": "2026-07-01T00:00:00Z",
                         "assets": [
                             {
                                 "name": expected_asset,
                                 "browser_download_url": (
-                                    "https://github.com/GobbyAI/gobby-cli/releases/download/"
-                                    f"ghook-v0.4.2/{expected_asset}"
+                                    "https://github.com/GobbyAI/gobby/releases/download/"
+                                    f"ghook-v0.4.3/{expected_asset}"
                                 ),
                             }
                         ],
@@ -569,10 +557,41 @@ class TestGithubReleaseClient:
 
         asset = client.resolve_latest_asset(spec, target=target)
 
-        assert asset.tag_name == "ghook-v0.4.2"
+        assert asset.tag_name == "ghook-v0.4.3"
         assert asset.asset_name == expected_asset
-        assert asset.asset_url.startswith("https://github.com/GobbyAI/gobby-cli/")
+        assert asset.asset_url.startswith("https://github.com/GobbyAI/gobby/")
         assert calls == [
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
-            "https://api.github.com/repos/GobbyAI/gobby-cli/releases?per_page=100",
+        ]
+
+    def test_resolve_latest_asset_fails_closed_when_canonical_asset_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spec = _spec()
+        target = "aarch64-apple-darwin"
+        expected_asset = f"{spec.name}-{target}.tar.gz"
+        calls: list[str] = []
+
+        def fake_urlopen(req: Any, **_kwargs: Any) -> _JsonResponse:
+            calls.append(req.full_url)
+            return _JsonResponse(
+                [
+                    {
+                        "tag_name": "ghook-v0.4.3",
+                        "draft": False,
+                        "prerelease": False,
+                        "published_at": "2026-07-01T00:00:00Z",
+                        "assets": [],
+                    }
+                ]
+            )
+
+        monkeypatch.setattr("gobby.install.bin_freshness_github._urlopen_https", fake_urlopen)
+        client = GithubReleaseClient(timeout_seconds=1)
+
+        with pytest.raises(SourceUnavailableError, match=expected_asset):
+            client.resolve_latest_asset(spec, target=target)
+
+        assert calls == [
+            "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
         ]
