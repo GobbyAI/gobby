@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn porcelain_status_byte_validation_matches_git_v1_codes() {
-        for byte in [b' ', b'M', b'A', b'D', b'R', b'C', b'U', b'?', b'!'] {
+        for byte in *b" MADRCU?!" {
             assert!(valid_porcelain_status_byte(byte));
         }
         for byte in [0, b'X', b'\n'] {

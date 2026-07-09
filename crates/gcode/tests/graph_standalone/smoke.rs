@@ -277,7 +277,7 @@ fn graph_sync_file_classifies_missing_project_before_graph_access() {
     fs::write(
         project.path().join(".gobby/gcode.json"),
         serde_json::json!({
-            "id": "graph-missing-indexed-project",
+            "id": MISSING_INDEXED_PROJECT_ID,
             "name": "graph-missing-indexed-project",
             "created_at": "2026-05-28T00:00:00Z"
         })
@@ -285,7 +285,7 @@ fn graph_sync_file_classifies_missing_project_before_graph_access() {
     )
     .expect("write gcode identity");
 
-    let _cleanup = ProjectCleanup::new(&env.database_url, "graph-missing-indexed-project");
+    let _cleanup = ProjectCleanup::new(&env.database_url, MISSING_INDEXED_PROJECT_ID);
     let output = run_gcode(
         &env,
         project.path(),

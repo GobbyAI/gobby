@@ -10,6 +10,7 @@ pub(super) use std::process::{Command, Output};
 // hub stores every code_* id column as native uuid. The legacy label is kept in
 // the trailing comment for greppability.
 pub(super) const TEST_PROJECT_ID: &str = "285bdd28-41b4-5acb-878b-6e72cf276dd1"; // graph-standalone-project
+pub(super) const MISSING_INDEXED_PROJECT_ID: &str = "8a20293a-76d6-559d-990d-df24b32cc0e2"; // graph-missing-indexed-project
 pub(super) const LOCAL_IMPORT_PROJECT_ID: &str = "b75024f9-b106-5eac-86f1-f35805f97dbe"; // graph-standalone-local-import
 pub(super) const NO_PHANTOM_PROJECT_ID: &str = "9865ea81-c9bb-5edc-8de6-895686366ae6"; // graph-standalone-no-phantom
 pub(super) const GO_LOCAL_PROJECT_ID: &str = "acd54de2-7205-5fb0-a6c6-20570f333d26"; // graph-standalone-go-local
