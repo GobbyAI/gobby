@@ -597,6 +597,10 @@ fn interrupted_run_resumes_from_persisted_docs() {
     assert!(meta["docs"].get("code/files/src/lib.rs.md").is_some());
     assert!(meta["docs"].get("code/modules/src.md").is_none());
 
+    // A killed run's process exit releases the per-out_dir writer lock
+    // (#17732); dropping the interrupted sink stands in for that here.
+    drop(sink);
+
     // Run 2 resumes: persisted file docs are reused without symbol or file
     // generation calls, and only the missing aggregates are generated.
     let mut systems = Vec::new();

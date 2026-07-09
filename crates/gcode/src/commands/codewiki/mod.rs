@@ -130,6 +130,7 @@ mod diagram_compose;
 mod generation;
 mod graph;
 mod io;
+mod lock;
 mod ownership;
 mod paths;
 mod progress;

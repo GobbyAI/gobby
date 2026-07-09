@@ -98,7 +98,12 @@ impl DocPruneScope {
 /// moment the doc is built (#681). A killed run keeps every page written so
 /// far plus a meta log that matches them, so the next run resumes from disk
 /// instead of regenerating everything.
+#[derive(Debug)]
 pub(crate) struct DocSink<'a> {
+    /// Exclusive per-out_dir writer lock (#17732), acquired at open and held
+    /// through `finish` (or the drop of a failed run) so a second concurrent
+    /// codewiki run cannot interleave page and meta writes with this one.
+    _writer_lock: lock::CodewikiWriterLock,
     project_root: &'a Path,
     out_dir: &'a Path,
     ai_mode: String,
@@ -143,8 +148,12 @@ impl<'a> DocSink<'a> {
         prune_scope: DocPruneScope,
     ) -> anyhow::Result<Self> {
         std::fs::create_dir_all(out_dir)?;
+        // Lock before reading the previous meta, so the snapshot this run
+        // resumes from can never be a concurrent writer's half-flushed state.
+        let writer_lock = lock::CodewikiWriterLock::acquire(out_dir)?;
         let previous = read_codewiki_meta(out_dir)?;
         Ok(Self {
+            _writer_lock: writer_lock,
             project_root,
             out_dir,
             ai_mode: ai_mode.to_string(),

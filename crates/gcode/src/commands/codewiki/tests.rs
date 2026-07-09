@@ -19,6 +19,7 @@ mod incremental;
 mod infrastructure;
 mod invalidation;
 mod io_safety;
+mod lock;
 mod modules;
 mod onboarding;
 mod progress;
