@@ -17,6 +17,9 @@ use serde_json::{Map, Value};
 use crate::WikiError;
 use crate::vault::STATE_ROOT;
 
+const WORKSPACE_STATE_FILES: &[&str] =
+    &["workspace.json", "workspaces.json", "workspace-mobile.json"];
+
 /// The `userIgnoreFilters` pattern that hides the control dir in Obsidian.
 fn state_filter() -> String {
     format!("{STATE_ROOT}/")
@@ -92,9 +95,6 @@ pub(crate) fn seed_app_json(vault_root: &Path) -> Result<(), WikiError> {
 /// `.gitignore` that re-includes the vault would otherwise keep tracking local
 /// workspace churn. Idempotent: a no-op when all workspace rules already exist.
 pub(crate) fn ensure_gitignore_obsidian(vault_root: &Path) -> Result<(), WikiError> {
-    const WORKSPACE_STATE_FILES: &[&str] =
-        &["workspace.json", "workspaces.json", "workspace-mobile.json"];
-
     let Some(git_root) = find_git_root(vault_root) else {
         return Ok(());
     };

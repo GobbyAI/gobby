@@ -3,10 +3,7 @@
 import asyncio
 import json
 import logging
-import re
-import time
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +20,14 @@ from gobby.agents.provider_capabilities import provider_reasoning_efforts
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import AuthMode, LLMProviderCancellation, LLMTextResult
+from gobby.llm.claude_errors import (
+    ClaudeSDKProviderFailure,
+    classify_result_message,
+)
+from gobby.llm.claude_errors import (
+    ClaudeSDKRateLimited as ClaudeSDKRateLimited,
+)
+from gobby.llm.claude_models import AgenticGenerationResult
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
 from gobby.utils.json_helpers import extract_json_from_text
 
@@ -119,33 +124,7 @@ def _normalize_claude_usage(usage: Any) -> dict[str, int] | None:
     return result or None
 
 
-@dataclass(frozen=True, kw_only=True)
-class AgenticGenerationResult:
-    """Result of a tool-enabled agentic investigation run.
-
-    ``text`` is the grounded narrative; the remaining fields describe the
-    investigation so callers can surface provenance (how many turns the agent
-    took, how many tool uses, and a per-tool breakdown).
-    """
-
-    text: str
-    model: str
-    tool_use_count: int = 0
-    turns: int = 0
-    tools: dict[str, int] = field(default_factory=dict)
-    usage: dict[str, int] | None = None
-    applied_reasoning_effort: str | None = None
-
-
 def _strip_leading_preamble(text: str) -> str:
-    """Drop any non-markdown preamble before the first Markdown heading.
-
-    The agentic model sometimes prefixes prose (for example
-    "Now I have the evidence...") before the grounded page. When a line that
-    starts with ``"# "`` or ``"## "`` exists, return everything from that
-    heading onward; otherwise return the input stripped of surrounding
-    whitespace.
-    """
     lines = text.splitlines()
     for index, line in enumerate(lines):
         stripped = line.lstrip()
@@ -154,89 +133,10 @@ def _strip_leading_preamble(text: str) -> str:
     return text.strip()
 
 
-class ClaudeSDKProviderFailure(RuntimeError):
-    """Typed failure for known Claude SDK/provider degradation paths.
-
-    ``classification`` distinguishes a config/other error result
-    (``"error_result"``) from an opaque provider degradation
-    (``"provider_degraded"``). ``retry_after`` carries a provider-reported
-    cooldown in seconds when one is known, so calling services can back off for
-    the reported window instead of hammering a degraded route.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        classification: str = "provider_degraded",
-        retry_after: float | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.classification = classification
-        self.retry_after = retry_after
-
-
-class ClaudeSDKRateLimited(ClaudeSDKProviderFailure):
-    """The Claude subscription or API reported a usage/rate limit.
-
-    Carries ``retry_after`` (seconds until reset, when the CLI reports it) and
-    ``reset_at`` (absolute epoch seconds) so a calling service can open its
-    circuit breaker for the reported window rather than retrying a provider that
-    will keep refusing until the limit resets.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        retry_after: float | None = None,
-        reset_at: float | None = None,
-    ) -> None:
-        super().__init__(message, classification="rate_limited", retry_after=retry_after)
-        self.reset_at = reset_at
-
-
 class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
     """Raised when the Claude SDK child process is terminated during shutdown."""
 
-
-# Substrings that mark a rate/usage limit inside a ResultMessage.result body.
-# The Claude Code CLI reports subscription limits in the result text (e.g.
-# "Claude AI usage limit reached|<reset_epoch>") and API-side limits carry an
-# api_error_status of 429, so classification does not depend on parsing succeeding.
-_RATE_LIMIT_MARKERS: tuple[str, ...] = (
-    "usage limit reached",
-    "rate limit",
-    "rate_limit",
-    "too many requests",
-    "overloaded_error",
-    "overloaded",
-)
-
-# Trailing "|<epoch>" reset marker in a usage-limit result body. The epoch is
-# reported in seconds (10 digits) or milliseconds (13 digits).
-_USAGE_LIMIT_RESET_RE = re.compile(r"\|\s*(\d{9,13})\s*$")
-
-
-def _parse_usage_limit_reset(text: str, *, now: float) -> tuple[float | None, float | None]:
-    """Return ``(reset_epoch_seconds, retry_after_seconds)`` from a usage-limit body.
-
-    Claude Code reports subscription usage limits as
-    ``"Claude AI usage limit reached|<reset_epoch>"``; the epoch may be seconds or
-    milliseconds. Returns ``(None, None)`` when no reset marker is present and a
-    ``None`` retry_after when the reset is already in the past.
-    """
-    match = _USAGE_LIMIT_RESET_RE.search(text)
-    if not match:
-        return None, None
-    raw = int(match.group(1))
-    reset_epoch = raw / 1000.0 if raw > 1_000_000_000_000 else float(raw)
-    retry_after = reset_epoch - now
-    return reset_epoch, retry_after if retry_after > 0.0 else None
-
-
-# Turn budget for the one-shot feature text-generation path (codewiki, synthesis,
-# memory.dream, etc.). Must be >1: with max_turns=1 the Claude Agent SDK raises
+# Turn budget for the one-shot feature text-generation path. Must be >1: max_turns=1 raises
 # "Reached maximum number of turns (1)" on reasoning/continuation-heavy prompts
 # instead of returning text (gobby-#17698). Tools are disabled on this path, so
 # the model cannot take action-loops; this is bounded headroom, not an agent loop.
@@ -326,68 +226,6 @@ class ClaudeLLMProvider:
         """Return whether the SDK surfaced its known error-result-success shape."""
         return "claude code returned an error result: success" in str(e).lower()
 
-    @staticmethod
-    def _classify_result_message(
-        message: Any,
-        operation: str,
-        *,
-        now: float | None = None,
-        rate_limit_info: Any | None = None,
-    ) -> ClaudeSDKProviderFailure:
-        """Build a typed, classified failure from an ``is_error`` ResultMessage.
-
-        The Claude Agent SDK collapses an ``is_error`` ResultMessage into an
-        opaque ``"error result: <subtype>"`` string, discarding the ``result``
-        text and ``api_error_status`` that reveal *why* the turn failed. We
-        classify from the raw message before that evidence is lost: a rate/usage
-        limit becomes a :class:`ClaudeSDKRateLimited` carrying the reset window,
-        and every other error result keeps its real body for diagnosis.
-
-        ``rate_limit_info`` is the ``RateLimitInfo`` from a ``RateLimitEvent`` the
-        CLI emits alongside the result. When present it is the authoritative
-        source for the rejection status and reset epoch; the result-text and
-        ``api_error_status`` heuristics are the fallback.
-        """
-        now = time.time() if now is None else now
-        result_text = (getattr(message, "result", None) or "").strip()
-        subtype = getattr(message, "subtype", None) or "unknown"
-        api_status = getattr(message, "api_error_status", None)
-        lowered = result_text.lower()
-
-        rl_status = getattr(rate_limit_info, "status", None)
-        rl_resets_at = getattr(rate_limit_info, "resets_at", None)
-        rl_type = getattr(rate_limit_info, "rate_limit_type", None)
-
-        is_rate_limit = (
-            rl_status == "rejected"
-            or api_status == 429
-            or any(m in lowered for m in _RATE_LIMIT_MARKERS)
-        )
-        detail = result_text or f"subtype={subtype}"
-        if is_rate_limit:
-            reset_at: float | None = float(rl_resets_at) if rl_resets_at else None
-            retry_after: float | None = None
-            if reset_at is not None:
-                remaining = reset_at - now
-                retry_after = remaining if remaining > 0.0 else None
-            else:
-                reset_at, retry_after = _parse_usage_limit_reset(result_text, now=now)
-            parts = [f"{operation} provider rate-limited: {detail}"]
-            if rl_type:
-                parts.append(f"[window={rl_type}]")
-            if api_status:
-                parts.append(f"[api_error_status={api_status}]")
-            if retry_after:
-                parts.append(f"[retry_after={retry_after:.0f}s]")
-            return ClaudeSDKRateLimited(" ".join(parts), retry_after=retry_after, reset_at=reset_at)
-        parts = [
-            f"{operation} provider degraded: Claude SDK returned error result "
-            f"(subtype={subtype}): {detail}"
-        ]
-        if api_status:
-            parts.append(f"[api_error_status={api_status}]")
-        return ClaudeSDKProviderFailure(" ".join(parts), classification="error_result")
-
     def _raise_for_error_result(
         self, message: Any, operation: str, *, rate_limit_info: Any | None = None
     ) -> None:
@@ -398,7 +236,7 @@ class ClaudeLLMProvider:
         and raise a classified failure that survives with its evidence intact.
         """
         if getattr(message, "is_error", False):
-            raise self._classify_result_message(message, operation, rate_limit_info=rate_limit_info)
+            raise classify_result_message(message, operation, rate_limit_info=rate_limit_info)
 
     @staticmethod
     def _is_max_turns_error(e: BaseException) -> bool:
@@ -836,9 +674,13 @@ class ClaudeLLMProvider:
             nonlocal captured_usage, tool_use_count, turn_count
             result_text = ""
             message_count = 0
+            rate_limit_info: Any | None = None
             try:
                 async for message in query(prompt=prompt, options=options):
                     message_count += 1
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
                     if isinstance(message, AssistantMessage):
                         turn_count += 1
                         for block in message.content:
@@ -848,7 +690,9 @@ class ClaudeLLMProvider:
                                 tool_use_count += 1
                                 tool_breakdown[block.name] = tool_breakdown.get(block.name, 0) + 1
                     elif isinstance(message, ResultMessage):
-                        self._raise_for_error_result(message, operation)
+                        self._raise_for_error_result(
+                            message, operation, rate_limit_info=rate_limit_info
+                        )
                         if message.result:
                             result_text = message.result
                         usage = _normalize_claude_usage(getattr(message, "usage", None))
@@ -954,8 +798,12 @@ class ClaudeLLMProvider:
             async def _run_query() -> str:
                 result_text = ""
                 message_count = 0
+                rate_limit_info: Any | None = None
                 async for message in query(prompt=prompt, options=options):
                     message_count += 1
+                    event_rate_limit = getattr(message, "rate_limit_info", None)
+                    if event_rate_limit is not None:
+                        rate_limit_info = event_rate_limit
                     self.logger.debug(
                         "generate_json message %d: %s", message_count, type(message).__name__
                     )
@@ -964,7 +812,9 @@ class ClaudeLLMProvider:
                             if isinstance(block, TextBlock):
                                 result_text += block.text
                     elif isinstance(message, ResultMessage):
-                        self._raise_for_error_result(message, operation)
+                        self._raise_for_error_result(
+                            message, operation, rate_limit_info=rate_limit_info
+                        )
                         if message.result:
                             result_text = message.result
                 if message_count == 0:
@@ -1120,14 +970,20 @@ class ClaudeLLMProvider:
         async def _run_query() -> str:
             result_text = ""
             message_count = 0
+            rate_limit_info: Any | None = None
             async for message in query(prompt=_message_generator(), options=options):
                 message_count += 1
+                event_rate_limit = getattr(message, "rate_limit_info", None)
+                if event_rate_limit is not None:
+                    rate_limit_info = event_rate_limit
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             result_text += block.text
                 elif isinstance(message, ResultMessage):
-                    self._raise_for_error_result(message, "describe_image")
+                    self._raise_for_error_result(
+                        message, "describe_image", rate_limit_info=rate_limit_info
+                    )
                     if message.result:
                         result_text = message.result
             if not result_text:

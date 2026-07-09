@@ -2,7 +2,8 @@ import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+
+from gobby.utils.uuid_validation import parse_uuid_reference
 
 from .definitions import PipelineDefinition, WorkflowDefinition
 from .loader_cache import (
@@ -89,6 +90,15 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
 
             self._def_manager = LocalWorkflowDefinitionManager(self.db)
         return self._def_manager
+
+    def _db_project_scope(self, project_path: Path | str | None, *, label: str) -> str | None:
+        if project_path is None:
+            return None
+        parsed = parse_uuid_reference(project_path)
+        if parsed is None:
+            logger.debug("Ignoring non-uuid project scope for %s lookup: %s", label, project_path)
+            return None
+        return str(parsed)
 
     def _load_from_db(
         self,
@@ -190,13 +200,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
 
         # DB lookup (the only runtime source). workflow_definitions.project_id
         # is a uuid column; a filesystem path here means "no project scope".
-        project_id = str(project_path) if project_path else None
-        if project_id is not None:
-            try:
-                UUID(project_id)
-            except ValueError:
-                logger.debug(f"Ignoring non-uuid project scope for workflow lookup: {project_id}")
-                project_id = None
+        project_id = self._db_project_scope(project_path, label="workflow")
         visited = set(_inheritance_chain) if _inheritance_chain else set()
         db_definition = self._load_from_db(name, project_id=project_id, _visited=visited)
         if db_definition is not None:
@@ -244,13 +248,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
 
         # DB lookup. workflow_definitions.project_id is a uuid column; a
         # filesystem path here means "no project scope".
-        project_id = str(project_path) if project_path else None
-        if project_id is not None:
-            try:
-                UUID(project_id)
-            except ValueError:
-                logger.debug(f"Ignoring non-uuid project scope for pipeline lookup: {project_id}")
-                project_id = None
+        project_id = self._db_project_scope(project_path, label="pipeline")
         visited = set(_inheritance_chain) if _inheritance_chain else set()
         db_definition = self._load_from_db(name, project_id=project_id, _visited=visited)
         if db_definition is not None:

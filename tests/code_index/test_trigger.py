@@ -240,6 +240,32 @@ async def test_gcode_failure_requeues_pending_files_with_backoff(
 
 
 @pytest.mark.asyncio
+async def test_gcode_lock_busy_requeues_without_warning(
+    trigger: CodeIndexTrigger,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """gcode exit 3 means lock busy: requeue with backoff but do not warn."""
+    root_key = trigger._root_key("/repo")
+    trigger._pending_by_root[root_key] = {"src/foo.py"}
+    mock_proc = _make_mock_proc(returncode=3)
+
+    with (
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        caplog.at_level("WARNING"),
+    ):
+        await trigger._flush(root_key, "proj-1")
+
+    retry_timer = trigger._flush_timers_by_root.pop(root_key)
+    retry_timer.cancel()
+
+    assert trigger._pending_by_root[root_key] == {"src/foo.py"}
+    assert trigger._retry_delay_by_root[root_key] == 0.1
+    assert not [record for record in caplog.records if record.levelname == "WARNING"]
+
+
+@pytest.mark.asyncio
 async def test_gcode_timeout_requeues_pending_files_with_backoff(
     trigger: CodeIndexTrigger, tmp_path: Path
 ) -> None:

@@ -612,13 +612,13 @@ class CronJobStorage(CronRunStorageMixin):
                 """
                 DELETE FROM cron_runs
                  WHERE cron_job_id IN (
-                    SELECT id FROM cron_jobs WHERE name LIKE %s
+                    SELECT id FROM cron_jobs WHERE name LIKE %s ESCAPE '\\'
                  )
                 """,
                 (pattern,),
             )
             cursor = conn.execute(
-                "DELETE FROM cron_jobs WHERE name LIKE %s",
+                "DELETE FROM cron_jobs WHERE name LIKE %s ESCAPE '\\'",
                 (pattern,),
             )
         return cursor.rowcount

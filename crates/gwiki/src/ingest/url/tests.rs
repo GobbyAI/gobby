@@ -343,6 +343,87 @@ fn reingesting_changed_url_supersedes_manifest_record() {
 }
 
 #[test]
+fn unchanged_html_url_reingest_reuses_raw_capture_and_record_timestamp() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let first = ingest_snapshot_without_index(
+        temp.path(),
+        test_snapshot(
+            "https://example.test/stable",
+            "https://example.test/stable",
+            "Stable",
+            "2026-07-01T00:00:00Z",
+        ),
+    )
+    .expect("first ingest");
+    let first_raw = std::fs::read_to_string(temp.path().join(&first.raw_path)).expect("first raw");
+
+    let second = ingest_snapshot_without_index(
+        temp.path(),
+        test_snapshot(
+            "https://example.test/stable",
+            "https://example.test/stable",
+            "Stable",
+            "2026-07-02T00:00:00Z",
+        ),
+    )
+    .expect("unchanged reingest");
+    let second_raw =
+        std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("second raw");
+
+    assert_eq!(second.record, first.record);
+    assert_eq!(second.raw_path, first.raw_path);
+    assert_eq!(second_raw, first_raw);
+    assert!(second_raw.contains("2026-07-01T00:00:00Z"));
+    assert!(!second_raw.contains("2026-07-02T00:00:00Z"));
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1);
+}
+
+#[test]
+fn unchanged_non_html_url_reingest_reuses_raw_capture_and_asset() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let body = b"%PDF stable bytes\n".to_vec();
+    let first = ingest_snapshot_without_index(
+        temp.path(),
+        UrlSnapshot {
+            requested_url: "https://example.test/report".to_string(),
+            final_url: "https://example.test/report.pdf".to_string(),
+            fetched_at: "2026-07-01T00:00:00Z".to_string(),
+            body: body.clone(),
+            content_type: Some("application/pdf".to_string()),
+        },
+    )
+    .expect("first ingest");
+    let first_raw = std::fs::read_to_string(temp.path().join(&first.raw_path)).expect("first raw");
+    let first_asset = first.asset_path.clone().expect("first asset path");
+
+    let second = ingest_snapshot_without_index(
+        temp.path(),
+        UrlSnapshot {
+            requested_url: "https://example.test/report".to_string(),
+            final_url: "https://example.test/report.pdf".to_string(),
+            fetched_at: "2026-07-02T00:00:00Z".to_string(),
+            body: body.clone(),
+            content_type: Some("application/pdf".to_string()),
+        },
+    )
+    .expect("unchanged reingest");
+    let second_raw =
+        std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("second raw");
+
+    assert_eq!(second.record, first.record);
+    assert_eq!(second.raw_path, first.raw_path);
+    assert_eq!(second.asset_path.as_ref(), Some(&first_asset));
+    assert_eq!(
+        std::fs::read(temp.path().join(&first_asset)).expect("asset bytes"),
+        body
+    );
+    assert_eq!(second_raw, first_raw);
+    assert!(second_raw.contains("2026-07-01T00:00:00Z"));
+    assert!(!second_raw.contains("2026-07-02T00:00:00Z"));
+}
+
+#[test]
 fn batch_url_ingest_indexes_once_after_accepted_batch() {
     let temp = tempfile::tempdir().expect("tempdir");
     let urls = vec![

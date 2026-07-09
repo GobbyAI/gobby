@@ -104,6 +104,60 @@ def _github_issue_uuid_seed(project_id: str, owner: str, repo: str, issue_num: i
     return f"{project_id}/github/{_legacy_github_issue_uuid_seed(owner, repo, issue_num)}"
 
 
+def _ensure_task_sequence_metadata(
+    conn: Any,
+    *,
+    project_id: str,
+    task_id: str,
+    updated_at: datetime,
+) -> None:
+    row = conn.execute(
+        """
+        SELECT seq_num, path_cache, parent_task_id
+          FROM tasks
+         WHERE project_id = %s
+           AND id = %s
+        """,
+        (project_id, task_id),
+    ).fetchone()
+    if row is None:
+        return
+
+    seq_num = row["seq_num"]
+    if seq_num is None:
+        max_seq_row = conn.execute(
+            "SELECT MAX(seq_num) as max_seq FROM tasks WHERE project_id = %s",
+            (project_id,),
+        ).fetchone()
+        seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
+        conn.execute(
+            "UPDATE tasks SET seq_num = %s, updated_at = %s WHERE project_id = %s AND id = %s",
+            (seq_num, updated_at, project_id, task_id),
+        )
+
+    if row["path_cache"]:
+        return
+
+    path_parts = [str(seq_num)]
+    current_parent = row["parent_task_id"]
+    for _ in range(100):
+        if not current_parent:
+            break
+        parent_row = conn.execute(
+            "SELECT seq_num, parent_task_id FROM tasks WHERE project_id = %s AND id = %s",
+            (project_id, current_parent),
+        ).fetchone()
+        if not parent_row or parent_row["seq_num"] is None:
+            break
+        path_parts.insert(0, str(parent_row["seq_num"]))
+        current_parent = parent_row["parent_task_id"]
+
+    conn.execute(
+        "UPDATE tasks SET path_cache = %s, updated_at = %s WHERE project_id = %s AND id = %s",
+        (".".join(path_parts), updated_at, project_id, task_id),
+    )
+
+
 class TaskSyncManager:
     """
     Manages synchronization of tasks to the filesystem (JSONL) for Git versioning.
@@ -746,6 +800,12 @@ class TaskSyncManager:
                         )
                         imported_count += 1
 
+                    _ensure_task_sequence_metadata(
+                        conn,
+                        project_id=project_id,
+                        task_id=task_id,
+                        updated_at=updated_at,
+                    )
                     imported.append(task_id)
 
             return {

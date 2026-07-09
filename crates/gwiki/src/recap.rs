@@ -446,6 +446,9 @@ mod tests {
                 text: format!("## Overview\n\nShipped the recap feature [source: {citation}]."),
                 model: Some("test-model".to_string()),
                 route: "test",
+                tool_use_count: None,
+                turns: None,
+                usage: None,
             })
         }
     }
@@ -605,6 +608,9 @@ mod tests {
                 text: "## Overview\n\nUpdated [source: knowledge/sources/s-a.md].".to_string(),
                 model: None,
                 route: "test",
+                tool_use_count: None,
+                turns: None,
+                usage: None,
             })
         };
         let second = run(

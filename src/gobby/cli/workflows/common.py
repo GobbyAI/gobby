@@ -14,13 +14,19 @@ _db_instance: HubDatabase | None = None
 _session_var_manager_instance: SessionVariableManager | None = None
 
 
-def get_workflow_loader() -> WorkflowLoader:
+def create_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
     """Get a DB-backed workflow loader.
 
     Workflow and pipeline definitions live in the DB registry; a loader
     without a database cannot see bundled definitions.
     """
+    if db is not None:
+        return WorkflowLoader(db=db)
     return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
+
+
+def get_workflow_loader() -> WorkflowLoader:
+    return create_workflow_loader()
 
 
 def get_session_var_manager(db: HubDatabase | None = None) -> SessionVariableManager:

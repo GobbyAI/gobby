@@ -192,7 +192,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # produce a commit, so they must stay out of the session/task
                     # edit ledgers that arm commit-before-status gates.
                     committable_edit = True
-                    if repo_edit is not None:
+                    if not is_internal and in_repo_edit and repo_edit is not None:
                         from gobby.utils.git import is_path_gitignored
 
                         committable_edit = not is_path_gitignored(

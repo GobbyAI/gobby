@@ -55,6 +55,13 @@ __all__ = [
 ]
 
 
+def _best_effort_child_session_setup(action: Callable[[], Any], warning: str) -> None:
+    try:
+        action()
+    except Exception:
+        logger.warning(warning, exc_info=True)
+
+
 class PipelineExecutor(
     PipelineExecutorEventsMixin,
     PipelineExecutorStepMixin,
@@ -219,6 +226,7 @@ class PipelineExecutor(
                     )
                     if span.is_recording():
                         span.set_attribute("execution_id", str(execution.id))
+                    execution_id = execution.id
 
                 # 2. Update status to RUNNING
                 updated = self.execution_manager.update_execution_status(
@@ -260,30 +268,24 @@ class PipelineExecutor(
                         # Mark the session as a deterministic executor so
                         # LLM-behavior rules (skill gates, audience filters)
                         # can tell it apart from agent sessions.
-                        try:
-                            from gobby.workflows.state_manager import SessionVariableManager
+                        from gobby.workflows.state_manager import SessionVariableManager
 
-                            SessionVariableManager(self.db).set_variable(
+                        _best_effort_child_session_setup(
+                            lambda: SessionVariableManager(self.db).set_variable(
                                 child_session.id, "_agent_type", "pipeline"
-                            )
-                        except Exception:
-                            logger.warning(
-                                "Failed to mark pipeline child session agent type",
-                                exc_info=True,
-                            )
+                            ),
+                            "Failed to mark pipeline child session agent type",
+                        )
                         # The heartbeat resolves spawned agents through
                         # execution.session_id (list_by_parent); without the
                         # child session persisted, long wait steps get marked
                         # FAILED as "stalled, no agents" while the agent runs.
-                        try:
-                            self.execution_manager.update_execution_session(
-                                execution.id, child_session.id
-                            )
-                        except Exception:
-                            logger.warning(
-                                "Failed to persist pipeline child session on execution",
-                                exc_info=True,
-                            )
+                        _best_effort_child_session_setup(
+                            lambda: self.execution_manager.update_execution_session(
+                                execution_id, child_session.id
+                            ),
+                            "Failed to persist pipeline child session on execution",
+                        )
                         logger.info(
                             f"Created child session {child_session.id} for pipeline "
                             f"{pipeline.name} (parent={caller_session_id})"

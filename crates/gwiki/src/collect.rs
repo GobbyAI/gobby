@@ -217,7 +217,7 @@ fn accept_item(
     report: &mut CollectReport,
 ) -> Result<(), WikiError> {
     let previous_manifest = SourceManifest::read(vault_root)?;
-    let (record_kind, raw_path, asset_path) = match kind {
+    let (record_kind, raw_path, asset_path, asset_preexisting) = match kind {
         InboxKind::Url(url) => {
             let record = SourceManifest::register(
                 vault_root,
@@ -247,7 +247,7 @@ fn accept_item(
                     }
                 },
             };
-            (record.kind, raw_path, None)
+            (record.kind, raw_path, None, false)
         }
         InboxKind::File(kind) => {
             let file_name = path
@@ -268,8 +268,10 @@ fn accept_item(
             )?;
             let predicted_asset_path =
                 should_store_asset(&kind).then(|| source_asset_path(&record, file_name));
+            let mut asset_preexisting = false;
             let asset_path = match predicted_asset_path.as_ref() {
                 Some(predicted_asset_path) => {
+                    asset_preexisting = vault_root.join(predicted_asset_path).exists();
                     match write_asset(vault_root, &record, file_name, &bytes) {
                         Ok(asset_path) => Some(asset_path),
                         Err(error) => {
@@ -277,7 +279,7 @@ fn accept_item(
                                 vault_root,
                                 &previous_manifest,
                                 None,
-                                Some(predicted_asset_path),
+                                None,
                                 error,
                             );
                         }
@@ -306,20 +308,22 @@ fn accept_item(
                             vault_root,
                             &previous_manifest,
                             Some(&predicted_raw_path),
-                            asset_path.as_ref(),
+                            asset_path.as_ref().filter(|_| !asset_preexisting),
                             error,
                         );
                     }
                 },
             };
-            (record.kind, raw_path, asset_path)
+            (record.kind, raw_path, asset_path, asset_preexisting)
         }
     };
 
     if let Err(error) = fs::remove_file(&path) {
         let mut cleanup_errors = Vec::new();
         cleanup_collect_file(vault_root, &raw_path, &mut cleanup_errors);
-        if let Some(asset_path) = &asset_path {
+        if let Some(asset_path) = &asset_path
+            && !asset_preexisting
+        {
             cleanup_collect_file(vault_root, asset_path, &mut cleanup_errors);
         }
         let original_error = io_error("remove accepted inbox item", &path, error);
@@ -800,6 +804,43 @@ mod tests {
         assert!(raw.contains("2026-05-29T18:00:00Z"));
         assert!(!raw.contains("2026-06-01T09:00:00Z"));
         assert!(!temp.path().join("inbox/notes.md").exists());
+    }
+
+    #[test]
+    fn collect_asset_write_failure_does_not_delete_preexisting_asset() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bytes = b"%PDF-1.7\nfresh\n%%EOF\n".to_vec();
+        write_file(temp.path(), "inbox/paper.pdf", &bytes);
+        let relative = "inbox/paper.pdf";
+        let record = SourceManifest::register(
+            temp.path(),
+            SourceDraft::new(
+                relative.to_string(),
+                SourceKind::Pdf,
+                "2026-05-29T18:00:00Z".to_string(),
+                bytes,
+            )
+            .with_title(markdown_title("paper.pdf"))
+            .with_citation(relative.to_string()),
+        )
+        .expect("pre-register source");
+        let asset_path = source_asset_path(&record, "paper.pdf");
+        write_file(
+            temp.path(),
+            &path_to_string(&asset_path),
+            b"different existing asset",
+        );
+
+        let error =
+            collect_inbox(temp.path(), "2026-05-29T18:00:00Z").expect_err("asset mismatch fails");
+
+        assert_eq!(error.code(), "invalid_input");
+        assert_eq!(
+            std::fs::read(temp.path().join(asset_path)).expect("preexisting asset survives"),
+            b"different existing asset"
+        );
+        let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+        assert_eq!(manifest.entries.len(), 1);
     }
 
     #[test]

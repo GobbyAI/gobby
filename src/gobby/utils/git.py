@@ -99,7 +99,7 @@ def is_path_gitignored(path: str, cwd: str | Path) -> bool:
     (including non-git directories) are treated as not ignored so callers
     gating commit requirements stay conservative.
     """
-    return run_git_command(["git", "check-ignore", "-q", path], cwd=cwd) is not None
+    return run_git_command(["git", "check-ignore", "-q", "--", path], cwd=cwd) is not None
 
 
 def _resolve_git_directory(cwd: str | Path | None) -> Path | None:

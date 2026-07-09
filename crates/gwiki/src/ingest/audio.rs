@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai_context::AiContext;
@@ -230,7 +231,22 @@ pub(crate) fn ingest_audio_with_transcription_without_index(
                 &record.content_hash,
                 &asset_path,
             );
-            write_raw_markdown(vault_root, &record, &raw_markdown)?
+            match write_raw_markdown(vault_root, &record, &raw_markdown) {
+                Ok(raw_path) => raw_path,
+                Err(error) => {
+                    let asset_full_path = vault_root.join(&asset_path);
+                    if let Err(cleanup_error) = fs::remove_file(&asset_full_path)
+                        && cleanup_error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        log::warn!(
+                            "failed to clean up audio asset {} after raw markdown write failed: {}",
+                            asset_full_path.display(),
+                            cleanup_error
+                        );
+                    }
+                    return Err(error);
+                }
+            }
         }
     };
     let request = TranscriptionRequest {
@@ -917,6 +933,46 @@ mod tests {
         assert_eq!(manifest.entries.len(), 1);
         assert_eq!(manifest.entries[0].kind, SourceKind::Audio);
         assert_eq!(manifest.entries[0].content_hash, expected_hash);
+    }
+
+    #[test]
+    fn raw_markdown_failure_removes_written_audio_asset() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let snapshot = sample_snapshot();
+        let content_hash = content_hash(&snapshot.bytes);
+        let record = SourceManifest::register_with_content_hash(
+            temp.path(),
+            SourceDraft::new(
+                snapshot.location.clone(),
+                SourceKind::Audio,
+                snapshot.fetched_at.clone(),
+                Vec::new(),
+            )
+            .with_title(markdown_title(&snapshot.file_name))
+            .with_citation(snapshot.location.clone()),
+            content_hash,
+        )
+        .expect("pre-register source");
+        let raw_path = super::super::raw_markdown_relative_path(&record);
+        std::fs::create_dir_all(temp.path().join(&raw_path)).expect("raw path blocker");
+        let expected_asset_path = PathBuf::from("raw/assets").join(format!("{}.wav", record.id));
+        let mut store = MemoryWikiStore::default();
+        let context = test_context(AiRouting::Off, None);
+
+        let error = ingest_audio(
+            temp.path(),
+            &mut store,
+            ScopeIdentity::topic("field-work"),
+            snapshot,
+            &context,
+        )
+        .expect_err("raw markdown blocker fails ingest");
+
+        assert_eq!(error.code(), "io_error");
+        assert!(
+            !temp.path().join(expected_asset_path).exists(),
+            "asset written before raw failure should be removed"
+        );
     }
 
     #[test]

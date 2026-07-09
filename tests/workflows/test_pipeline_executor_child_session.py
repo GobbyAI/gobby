@@ -23,6 +23,8 @@ class TestPipelineChildSession:
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         mock_session_manager = MagicMock()
+        mock_db.fetchone.return_value = None
+        mock_session_manager.db = mock_db
         child_session = MagicMock()
         child_session.id = "child-session-123"
         mock_session_manager.register.return_value = child_session
@@ -56,6 +58,7 @@ class TestPipelineChildSession:
         """Context session_id should be the child session, not the caller."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
+        mock_db.fetchone.return_value = None
         mock_session_manager = MagicMock()
         child_session = MagicMock()
         child_session.id = "child-session-abc"
@@ -150,6 +153,8 @@ class TestPipelineChildSession:
         child_session = MagicMock()
         child_session.id = "child-session-mcp"
         mock_session_manager.register.return_value = child_session
+        mock_db.fetchone.return_value = None
+        mock_session_manager.db = mock_db
         mock_session_manager.resolve_session_reference.return_value = "child-session-mcp"
 
         tool_proxy = AsyncMock()

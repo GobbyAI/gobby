@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::index::MAX_FILE_SIZE;
 
-use super::classification::classify_file;
-use super::hidden::HiddenPathAllowlist;
+use super::classification::classify_file_with_context;
+use super::hidden::HiddenPathContext;
 use super::types::{DiscoveryOptions, FileClassification};
 
 /// Discover files eligible for indexing under `root`.
@@ -24,6 +24,7 @@ pub fn discover_files_with_options<S: AsRef<str>>(
     let mut candidates = Vec::new();
     let mut content_only = Vec::new();
     let mut seen = BTreeSet::new();
+    let hidden_context = HiddenPathContext::load(root);
 
     let mut settings = gobby_core::indexing::WalkerSettings::new(root);
     settings.respect_gitignore = options.respect_gitignore;
@@ -42,18 +43,19 @@ pub fn discover_files_with_options<S: AsRef<str>>(
             root,
             path,
             exclude_patterns,
+            &hidden_context,
             &mut candidates,
             &mut content_only,
             &mut seen,
         );
     }
 
-    let hidden_allowlist = HiddenPathAllowlist::load(root);
-    for path in hidden_allowlist.discover(root) {
+    for path in hidden_context.allowlist().discover(root) {
         push_classified_file(
             root,
             &path,
             exclude_patterns,
+            &hidden_context,
             &mut candidates,
             &mut content_only,
             &mut seen,
@@ -67,6 +69,7 @@ fn push_classified_file(
     root: &Path,
     path: &Path,
     exclude_patterns: &[impl AsRef<str>],
+    hidden_context: &HiddenPathContext,
     candidates: &mut Vec<PathBuf>,
     content_only: &mut Vec<PathBuf>,
     seen: &mut BTreeSet<PathBuf>,
@@ -76,7 +79,7 @@ fn push_classified_file(
         return;
     }
 
-    match classify_file(root, path, exclude_patterns) {
+    match classify_file_with_context(root, path, exclude_patterns, hidden_context) {
         Some(FileClassification::Ast) => candidates.push(path.to_path_buf()),
         Some(FileClassification::ContentOnly) => content_only.push(path.to_path_buf()),
         None => {}

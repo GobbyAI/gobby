@@ -66,6 +66,17 @@ pub(crate) fn source_asset_paths_for_id(
             path: Some(asset_dir.clone()),
             source: error,
         })?;
+        if !entry
+            .file_type()
+            .map_err(|error| WikiError::Io {
+                action: "read raw source asset entry type",
+                path: Some(entry.path()),
+                source: error,
+            })?
+            .is_file()
+        {
+            continue;
+        }
         let file_name = entry.file_name();
         if file_name.to_str().is_some_and(|name| {
             let path = Path::new(name);
@@ -201,6 +212,7 @@ mod tests {
         let asset_dir = temp.path().join("raw/assets");
         fs::create_dir_all(&asset_dir).expect("asset dir");
         fs::write(asset_dir.join("src-abc.png"), "asset").expect("write asset");
+        fs::create_dir(asset_dir.join("src-abc.pdf")).expect("asset-like directory");
         let record = source_record("src-abc");
 
         let paths = source_record_paths(temp.path(), &record).expect("record paths");

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -91,7 +92,7 @@ def mock_components() -> MagicMock:
 
 
 @pytest.fixture
-def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
+def manager_with_mocks(mock_components: MagicMock, tmp_path: Path) -> Iterator[HookManager]:
     """Create a HookManager with all subsystems mocked."""
     with (
         patch("gobby.hooks.hook_manager.HookManagerFactory") as mock_factory,
@@ -104,7 +105,7 @@ def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
         manager = HookManager(
             daemon_host="localhost",
             daemon_port=60887,
-            log_file="/tmp/test-hook-manager.log",
+            log_file=str(tmp_path / "test-hook-manager.log"),
         )
         # Pre-warm health monitor cache
         manager._health_monitor.get_cached_status.return_value = (True, "ready", "ready", None)

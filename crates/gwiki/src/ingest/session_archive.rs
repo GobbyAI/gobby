@@ -133,6 +133,7 @@ pub(crate) struct SessionArchiveSyncRequest<'a> {
     pub wiki_dir: &'a Path,
     pub limit: Option<usize>,
     pub raw_mode: RawArchiveMode,
+    pub enrich: bool,
     pub fetched_at: &'a str,
 }
 
@@ -147,6 +148,7 @@ pub(crate) fn sync_session_transcript_archives(
         wiki_dir,
         limit,
         raw_mode,
+        enrich,
         fetched_at,
     } = request;
     if matches!(limit, Some(0)) {
@@ -207,7 +209,7 @@ pub(crate) fn sync_session_transcript_archives(
     let summarizer = SessionSummarizer::resolve(raw_mode == RawArchiveMode::Summarize);
     // Connections enrichment resolves once per batch too; AI being unavailable
     // degrades it to gathering the body's inline links, never disables ingest.
-    let enricher = ConnectionsEnricher::resolve();
+    let enricher = enrich.then(ConnectionsEnricher::resolve);
     let scanned = work.len();
     let mut accepted = Vec::new();
     let mut skipped = Vec::new();
@@ -270,7 +272,7 @@ pub(crate) fn sync_session_transcript_archives(
                         ingest_session_wiki_file_without_index(
                             vault_root,
                             snapshot,
-                            Some(&enricher),
+                            enricher.as_ref(),
                         ),
                         IngestBookkeeping {
                             known_session_hashes: &mut known_session_hashes,
@@ -347,7 +349,7 @@ pub(crate) fn sync_session_transcript_archives(
                                 ingest_session_wiki_file_without_index(
                                     vault_root,
                                     snapshot,
-                                    Some(&enricher),
+                                    enricher.as_ref(),
                                 ),
                                 IngestBookkeeping {
                                     known_session_hashes: &mut known_session_hashes,

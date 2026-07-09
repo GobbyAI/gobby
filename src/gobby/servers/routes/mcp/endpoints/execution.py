@@ -41,6 +41,12 @@ def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _success_response_payload(result: Any, response_time_ms: float) -> dict[str, Any]:
+    """Build the MCP success wire payload.
+
+    Tool dicts that already report success=True are flattened with
+    response_time_ms added. Other results are wrapped under result while adding
+    success=True and response_time_ms.
+    """
     if isinstance(result, dict) and result.get("success") is True:
         return _json_safe_payload({**result, "response_time_ms": response_time_ms})
     return _json_safe_payload(

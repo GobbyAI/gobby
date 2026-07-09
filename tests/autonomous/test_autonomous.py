@@ -443,6 +443,36 @@ class TestProgressTrackerToolCall:
         assert event.progress_type == ProgressType.TOOL_CALL
         assert event.is_high_value is False
 
+    def test_record_tool_call_mcp_error_payload_is_low_value(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """A structured error payload without success=false demotes a mutation."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="mcp__gobby__call_tool",
+            tool_args={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            tool_result='{"error": "timeout"}',
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TOOL_CALL
+        assert event.is_high_value is False
+
+    def test_record_tool_call_mcp_status_update_is_mutating(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Status-update tools are mutating even though they start with status."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="mcp__gobby__call_tool",
+            tool_args={"server_name": "example", "tool_name": "status_update_task"},
+            tool_result='{"success": true}',
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.MCP_MUTATION
+        assert event.is_high_value is True
+
     def test_record_tool_call_does_not_match_test_substrings(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:

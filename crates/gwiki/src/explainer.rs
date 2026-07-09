@@ -9,6 +9,7 @@
 
 use std::path::Path;
 
+use gobby_core::ai_types::TokenUsage;
 use serde::Serialize;
 
 use crate::synthesis::{SynthesisInput, relative_path};
@@ -54,6 +55,9 @@ pub struct ExplainerResponse {
     pub text: String,
     pub model: Option<String>,
     pub route: &'static str,
+    pub tool_use_count: Option<usize>,
+    pub turns: Option<usize>,
+    pub usage: Option<TokenUsage>,
 }
 
 /// Transport seam: the CLI wires daemon/direct gcore transports; tests inject
@@ -70,6 +74,9 @@ pub enum ExplainerGeneration {
         body: String,
         model: Option<String>,
         route: &'static str,
+        tool_use_count: Option<usize>,
+        turns: Option<usize>,
+        usage: Option<TokenUsage>,
     },
     Failed {
         error: String,
@@ -84,6 +91,12 @@ pub struct ExplainerReport {
     pub route: Option<&'static str>,
     pub model: Option<String>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turns: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
     pub citations_kept: usize,
     pub citations_stripped: usize,
     pub fallback_sections: usize,
@@ -96,6 +109,9 @@ impl ExplainerReport {
             route: None,
             model: None,
             error: None,
+            tool_use_count: None,
+            turns: None,
+            usage: None,
             citations_kept: 0,
             citations_stripped: 0,
             fallback_sections: 0,
@@ -204,6 +220,9 @@ pub fn generate_explainer(
                     body,
                     model: response.model,
                     route: response.route,
+                    tool_use_count: response.tool_use_count,
+                    turns: response.turns,
+                    usage: response.usage,
                 }
             }
         }
@@ -561,6 +580,9 @@ mod tests {
                 text: "  \n".to_string(),
                 model: None,
                 route: "direct",
+                tool_use_count: None,
+                turns: None,
+                usage: None,
             })
         };
         assert!(matches!(
@@ -578,12 +600,17 @@ mod tests {
                 text: "\n## Overview\nAlpha grounds compile [source: raw/a.md].\n".to_string(),
                 model: Some("gemma".to_string()),
                 route: "daemon",
+                tool_use_count: None,
+                turns: None,
+                usage: None,
             })
         };
 
         let generation = generate_explainer(&input, &prompt, Some(&mut generator));
         match generation {
-            ExplainerGeneration::Generated { body, model, route } => {
+            ExplainerGeneration::Generated {
+                body, model, route, ..
+            } => {
                 assert!(body.starts_with("## Overview"));
                 assert_eq!(model.as_deref(), Some("gemma"));
                 assert_eq!(route, "daemon");

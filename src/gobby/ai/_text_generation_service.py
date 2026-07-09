@@ -76,6 +76,7 @@ _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
 # open state is purely time-based so it can never latch permanently.
 _CIRCUIT_BREAKER_FAILURE_THRESHOLD = 8
 _CIRCUIT_BREAKER_COOLDOWN_SECONDS = 60.0
+_CIRCUIT_BREAKER_MAX_KEYS = 256
 
 
 class _CircuitOpenError(RuntimeError):
@@ -231,16 +232,19 @@ class TextGenerationService:
         """Seconds until the breaker for key reopens, or 0.0 when it is closed."""
         if self._circuit_breaker_failure_threshold <= 0:
             return 0.0
+        self._prune_breaker_state()
         remaining = self._breaker_open_until.get(key, 0.0) - time.monotonic()
         return remaining if remaining > 0.0 else 0.0
 
     def _breaker_record_success(self, key: str) -> None:
         self._breaker_failures.pop(key, None)
         self._breaker_open_until.pop(key, None)
+        self._prune_breaker_state()
 
     def _breaker_record_failure(self, key: str, *, retry_after: float | None = None) -> None:
         if self._circuit_breaker_failure_threshold <= 0:
             return
+        self._prune_breaker_state()
         if retry_after is not None and retry_after > 0.0:
             # A provider-reported cooldown (e.g. a rate-limit reset window) is
             # definitive: open the breaker immediately for the reported window
@@ -250,6 +254,7 @@ class TextGenerationService:
                 self._breaker_open_until.get(key, 0.0),
                 time.monotonic() + retry_after,
             )
+            self._prune_breaker_state()
             return
         failures = self._breaker_failures.get(key, 0) + 1
         self._breaker_failures[key] = failures
@@ -257,6 +262,22 @@ class TextGenerationService:
             self._breaker_open_until[key] = (
                 time.monotonic() + self._circuit_breaker_cooldown_seconds
             )
+        self._prune_breaker_state()
+
+    def _prune_breaker_state(self) -> None:
+        now = time.monotonic()
+        expired = [key for key, open_until in self._breaker_open_until.items() if open_until <= now]
+        for key in expired:
+            self._breaker_open_until.pop(key, None)
+            self._breaker_failures.pop(key, None)
+
+        keys = list(dict.fromkeys([*self._breaker_failures, *self._breaker_open_until]))
+        overflow = len(keys) - _CIRCUIT_BREAKER_MAX_KEYS
+        if overflow <= 0:
+            return
+        for key in keys[:overflow]:
+            self._breaker_failures.pop(key, None)
+            self._breaker_open_until.pop(key, None)
 
     def _candidate_timeout_for_binding(
         self, request: TextGenerationRequest, binding: CapabilityBinding | None
@@ -430,17 +451,17 @@ class TextGenerationService:
                         request=candidate,
                         binding=binding,
                     )
-                    text_result = _coerce_text_result(
-                        result,
-                        applied_reasoning_effort=candidate.reasoning_effort,
-                    )
-                    _validate_text_generation_output(candidate, text_result.text)
                 except Exception as exc:
                     self._breaker_record_failure(
                         breaker_key, retry_after=_retry_after_from_exception(exc)
                     )
                     raise
                 self._breaker_record_success(breaker_key)
+                text_result = _coerce_text_result(
+                    result,
+                    applied_reasoning_effort=candidate.reasoning_effort,
+                )
+                _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,

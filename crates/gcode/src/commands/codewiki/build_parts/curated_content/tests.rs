@@ -304,6 +304,42 @@ fn code_index_edges_evidence_a_flow_without_a_documented_chain() {
 }
 
 #[test]
+fn documented_chain_and_graph_edge_do_not_duplicate_stage_pair() {
+    let modules = [
+        module_doc(
+            "walker",
+            "Discovers candidate files. Flow: walker -> parser.",
+        ),
+        module_doc("parser", "Extracts the AST."),
+    ];
+    let mut walker_file = file_doc("src/walker.rs", "Walks the tree.");
+    walker_file.module = "walker".to_string();
+    walker_file.component_ids = vec!["comp_walker".to_string()];
+    let mut parser_file = file_doc("src/parser.rs", "Parses files.");
+    parser_file.module = "parser".to_string();
+    parser_file.component_ids = vec!["comp_parser".to_string()];
+    let files = [walker_file, parser_file];
+    let member_modules = vec!["walker".to_string(), "parser".to_string()];
+    let graph_edges = [CodewikiGraphEdge::call("comp_walker", "comp_parser")];
+
+    let section = compose_flow(
+        &["flowchart LR\n    s0 --> s1\n"],
+        &member_modules,
+        &[],
+        &modules,
+        &files,
+        &graph_edges,
+    )
+    .expect("flow drawn from chain evidence");
+
+    assert!(section.contains("s0 --> s1"), "{section}");
+    assert!(
+        !section.contains("calls"),
+        "same source/target stage edge should not be added twice: {section}"
+    );
+}
+
+#[test]
 fn marks_degraded_when_a_member_summary_is_missing() {
     let modules = [
         module_doc("walker", "Discovers files. Flow: walker -> parser."),

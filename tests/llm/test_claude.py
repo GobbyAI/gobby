@@ -856,26 +856,24 @@ class TestGenerateTextNoBackend:
 
 
 class TestClassifyResultMessage:
-    """Unit tests for ClaudeLLMProvider._classify_result_message (no SDK needed)."""
+    """Unit tests for Claude SDK error-result classification."""
 
     def test_usage_limit_body_marks_rate_limit_and_parses_reset(self) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+        from gobby.llm.claude_errors import ClaudeSDKRateLimited, classify_result_message
 
         message = MockResultMessage(
             result="Claude AI usage limit reached|1700001000",
             is_error=True,
             subtype="success",
         )
-        failure = ClaudeLLMProvider._classify_result_message(
-            message, "generate_text", now=1_700_000_000.0
-        )
+        failure = classify_result_message(message, "generate_text", now=1_700_000_000.0)
 
         assert isinstance(failure, ClaudeSDKRateLimited)
         assert failure.reset_at == 1_700_001_000.0
         assert failure.retry_after == 1000.0
 
     def test_rate_limit_event_reset_is_preferred_over_body(self) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+        from gobby.llm.claude_errors import ClaudeSDKRateLimited, classify_result_message
 
         message = MockResultMessage(
             result="Claude AI usage limit reached|9999",
@@ -883,7 +881,7 @@ class TestClassifyResultMessage:
             subtype="success",
         )
         info = MockRateLimitInfo(status="rejected", resets_at=5000, rate_limit_type="seven_day")
-        failure = ClaudeLLMProvider._classify_result_message(
+        failure = classify_result_message(
             message, "generate_text", now=1000.0, rate_limit_info=info
         )
 
@@ -893,25 +891,23 @@ class TestClassifyResultMessage:
         assert "window=seven_day" in str(failure)
 
     def test_past_reset_yields_no_retry_after(self) -> None:
-        from gobby.llm.claude import ClaudeLLMProvider, ClaudeSDKRateLimited
+        from gobby.llm.claude_errors import ClaudeSDKRateLimited, classify_result_message
 
         message = MockResultMessage(
             result="Claude AI usage limit reached|1699999000",
             is_error=True,
             subtype="success",
         )
-        failure = ClaudeLLMProvider._classify_result_message(
-            message, "generate_text", now=1_700_000_000.0
-        )
+        failure = classify_result_message(message, "generate_text", now=1_700_000_000.0)
 
         assert isinstance(failure, ClaudeSDKRateLimited)
         assert failure.retry_after is None
 
     def test_generic_error_result_is_not_rate_limited(self) -> None:
-        from gobby.llm.claude import (
-            ClaudeLLMProvider,
+        from gobby.llm.claude_errors import (
             ClaudeSDKProviderFailure,
             ClaudeSDKRateLimited,
+            classify_result_message,
         )
 
         message = MockResultMessage(
@@ -919,7 +915,7 @@ class TestClassifyResultMessage:
             is_error=True,
             subtype="success",
         )
-        failure = ClaudeLLMProvider._classify_result_message(message, "generate_json", now=1000.0)
+        failure = classify_result_message(message, "generate_json", now=1000.0)
 
         assert isinstance(failure, ClaudeSDKProviderFailure)
         assert not isinstance(failure, ClaudeSDKRateLimited)

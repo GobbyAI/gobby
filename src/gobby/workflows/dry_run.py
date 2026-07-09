@@ -501,21 +501,41 @@ def _check_native_tool_refs(
     if not isinstance(tools, list):
         return
     for ref in tools:
-        if ":" in ref or is_known_native_tool(ref):
+        if ":" in ref:
+            mcp_field_name = field_name.replace("_tools", "_mcp_tools")
+            consequence = (
+                "the native-tool block never fires (fail-open)"
+                if blocking
+                else "the MCP tool is never allowed by this native-tool field"
+            )
+            _flag_gate_ref(
+                owner,
+                field_name,
+                ref,
+                result,
+                blocking=blocking,
+                code="MCP_TOOL_REF_IN_NATIVE_GATE",
+                message=(
+                    f"{owner} {field_name} contains MCP ref '{ref}'; use "
+                    f"{mcp_field_name} instead — {consequence}"
+                ),
+            )
+            continue
+        if is_known_native_tool(ref):
             continue
         consequence = (
             "the block never fires (fail-open)" if blocking else "the tool is never allowed"
         )
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="error" if blocking else "warning",
-                code="UNKNOWN_NATIVE_TOOL",
-                message=(
-                    f"{owner} {field_name} references unknown native tool '{ref}' — {consequence}"
-                ),
-                detail={"owner": owner, "field": field_name, "ref": ref},
-            )
+        _flag_gate_ref(
+            owner,
+            field_name,
+            ref,
+            result,
+            blocking=blocking,
+            code="UNKNOWN_NATIVE_TOOL",
+            message=(
+                f"{owner} {field_name} references unknown native tool '{ref}' — {consequence}"
+            ),
         )
 
 
@@ -536,18 +556,39 @@ def _check_mcp_ref_format(
         consequence = (
             "the block never fires (fail-open)" if blocking else "the tool is never allowed"
         )
-        result.items.append(
-            EvaluationItem(
-                layer="structure",
-                level="error" if blocking else "warning",
-                code="MALFORMED_MCP_TOOL_REF",
-                message=(
-                    f"{owner} {field_name} entry '{ref}' is not 'server:tool' or "
-                    f"'server:*' — {consequence}"
-                ),
-                detail={"owner": owner, "field": field_name, "ref": ref},
-            )
+        _flag_gate_ref(
+            owner,
+            field_name,
+            ref,
+            result,
+            blocking=blocking,
+            code="MALFORMED_MCP_TOOL_REF",
+            message=(
+                f"{owner} {field_name} entry '{ref}' is not 'server:tool' or "
+                f"'server:*' — {consequence}"
+            ),
         )
+
+
+def _flag_gate_ref(
+    owner: str,
+    field_name: str,
+    ref: str,
+    result: WorkflowEvaluation,
+    *,
+    blocking: bool,
+    code: str,
+    message: str,
+) -> None:
+    result.items.append(
+        EvaluationItem(
+            layer="structure",
+            level="error" if blocking else "warning",
+            code=code,
+            message=message,
+            detail={"owner": owner, "field": field_name, "ref": ref},
+        )
+    )
 
 
 def _bfs_reachable(

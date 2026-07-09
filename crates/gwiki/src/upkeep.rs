@@ -217,7 +217,17 @@ pub fn run(
     // an entity page and the vault's broken links would never converge.
     let mut digest_records: BTreeMap<PathBuf, usize> = BTreeMap::new();
     for (index, record) in records.iter().enumerate() {
-        digest_records.insert(paths::derived_markdown_path(record)?, index);
+        match paths::derived_markdown_path(record) {
+            Ok(path) => {
+                digest_records.insert(path, index);
+            }
+            Err(error) => {
+                notes.push(format!(
+                    "skipping source `{}` during upkeep digest scan: {error}",
+                    record.id
+                ));
+            }
+        }
     }
 
     let lint_report = lint::run(&vault_root, scope.clone())?;
@@ -536,13 +546,22 @@ pub fn run(
     Ok(report)
 }
 
-/// Directories upkeep scans for pages whose filenames collide with agent
-/// instruction files, mapped to the slug suffix writers now apply (#17645).
-const RESERVED_MIGRATION_DIRS: &[(&str, &str)] = &[
-    ("knowledge/concepts", "concept"),
-    ("knowledge/topics", "topic"),
-    ("knowledge/sources", "source"),
-];
+fn reserved_migration_dirs() -> [(&'static str, &'static str); 3] {
+    [
+        (
+            ArticleKind::Concept.directory(),
+            ArticleKind::Concept.reserved_suffix(),
+        ),
+        (
+            ArticleKind::Topic.directory(),
+            ArticleKind::Topic.reserved_suffix(),
+        ),
+        (
+            ArticleKind::Source.directory(),
+            ArticleKind::Source.reserved_suffix(),
+        ),
+    ]
+}
 
 /// Rename vault pages whose filename stem case-insensitively matches an agent
 /// instruction filename (`claude.md` == `CLAUDE.md` on APFS), then retarget
@@ -557,7 +576,8 @@ fn migrate_reserved_pages(
     use gobby_core::vault::reserved::is_reserved_instruction_stem;
 
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for (directory, suffix) in RESERVED_MIGRATION_DIRS {
+    let mut planned_destinations: BTreeSet<PathBuf> = BTreeSet::new();
+    for (directory, suffix) in reserved_migration_dirs() {
         let absolute = vault_root.join(directory);
         let Ok(entries) = fs::read_dir(&absolute) else {
             continue;
@@ -575,16 +595,24 @@ fn migrate_reserved_pages(
                 continue;
             }
             let base = format!("{}-{suffix}", stem.to_ascii_lowercase());
-            let Some(new_stem) = (1usize..=99)
-                .map(|index| {
-                    if index == 1 {
-                        base.clone()
-                    } else {
-                        format!("{base}-{index}")
-                    }
-                })
-                .find(|candidate| !absolute.join(format!("{candidate}.md")).exists())
-            else {
+            let mut new_stem = None;
+            for index in 1usize..=99 {
+                let candidate = if index == 1 {
+                    base.clone()
+                } else {
+                    format!("{base}-{index}")
+                };
+                let candidate_relative = PathBuf::from(directory).join(format!("{candidate}.md"));
+                if absolute.join(format!("{candidate}.md")).exists()
+                    || planned_destinations.contains(&candidate_relative)
+                {
+                    continue;
+                }
+                planned_destinations.insert(candidate_relative);
+                new_stem = Some(candidate);
+                break;
+            }
+            let Some(new_stem) = new_stem else {
                 notes.push(format!(
                     "reserved-slug migration: no free name for {directory}/{stem}.md; left in place"
                 ));
@@ -611,19 +639,35 @@ fn migrate_reserved_pages(
         return Ok(());
     }
 
+    let mut completed: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (old, new) in &renames {
-        fs::rename(vault_root.join(old), vault_root.join(new)).map_err(|error| WikiError::Io {
-            action: "rename reserved-slug page",
-            path: Some(vault_root.join(old)),
-            source: error,
-        })?;
+        if let Err(error) = fs::rename(vault_root.join(old), vault_root.join(new)) {
+            retarget_completed_reserved_renames(vault_root, &completed, notes)?;
+            return Err(WikiError::Io {
+                action: "rename reserved-slug page",
+                path: Some(vault_root.join(old)),
+                source: error,
+            });
+        }
+        completed.push((old.clone(), new.clone()));
         notes.push(format!(
             "reserved-slug migration: renamed {} -> {} (agent instruction filename collision)",
             old.display(),
             new.display()
         ));
     }
-    let rewritten = retarget_renamed_links(vault_root, &renames)?;
+    retarget_completed_reserved_renames(vault_root, &completed, notes)
+}
+
+fn retarget_completed_reserved_renames(
+    vault_root: &Path,
+    renames: &[(PathBuf, PathBuf)],
+    notes: &mut Vec<String>,
+) -> Result<(), WikiError> {
+    if renames.is_empty() {
+        return Ok(());
+    }
+    let rewritten = retarget_renamed_links(vault_root, renames)?;
     if rewritten > 0 {
         notes.push(format!(
             "reserved-slug migration: retargeted {rewritten} path-form links"
@@ -1432,6 +1476,37 @@ mod tests {
     }
 
     #[test]
+    fn upkeep_skips_sources_with_invalid_digest_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a", "No entity mentions here.\n");
+        SourceManifest::update(root, |manifest| {
+            manifest.entries.push(pending_record("../bad"));
+            Ok(true)
+        })
+        .expect("seed invalid manifest entry");
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run skips bad digest path");
+
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("skipping source `../bad`")),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    #[test]
     fn upkeep_migrates_reserved_instruction_filename_pages() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
@@ -1489,6 +1564,50 @@ mod tests {
             "{:?}",
             report.notes
         );
+    }
+
+    #[test]
+    fn upkeep_reserved_filename_migration_claims_batch_destinations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        seed_source(root, "src-a", "No entity mentions here.\n");
+        write_file(
+            root,
+            "knowledge/concepts/claude.md",
+            "---\ntitle: \"Claude\"\n---\n\n# Claude\n",
+        );
+        write_file(
+            root,
+            "knowledge/concepts/CLAUDE.md",
+            "---\ntitle: \"CLAUDE\"\n---\n\n# CLAUDE\n",
+        );
+        let source_count = fs::read_dir(root.join("knowledge/concepts"))
+            .expect("read concepts")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("claude.md")
+            })
+            .count();
+
+        run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        assert!(root.join("knowledge/concepts/claude-concept.md").exists());
+        if source_count > 1 {
+            assert!(root.join("knowledge/concepts/claude-concept-2.md").exists());
+        }
+        assert!(!root.join("knowledge/concepts/claude.md").exists());
+        assert!(!root.join("knowledge/concepts/CLAUDE.md").exists());
     }
 
     #[test]

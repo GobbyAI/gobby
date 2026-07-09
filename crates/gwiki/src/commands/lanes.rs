@@ -1,7 +1,7 @@
 //! Shared AI lane resolution for article-synthesizing commands (`compile`,
-//! `upkeep`): Lane B tool-loop generators and the Lane A one-shot explainer
-//! transport, resolved through the same gcore routing every other gwiki
-//! capability uses.
+//! `upkeep`, `recap`): Lane B tool-loop generators and the Lane A one-shot
+//! explainer transport, resolved through the same gcore routing every other
+//! gwiki capability uses.
 
 use std::path::{Path, PathBuf};
 
@@ -19,14 +19,14 @@ use crate::{ScopeIdentity, ScopeSelection};
 
 use super::vault_tools::VaultToolExecutor;
 
-/// Compiled wiki articles are gwiki's curated narrative surface, so they
-/// generate on the aggregate tier — for both the `compile` command and the
-/// `upkeep` conductor, which synthesize through the same pipeline. Tier ->
-/// feature profile is owned by gcore's `profile_for_tier` (Aggregate ->
-/// feature_high); provider/model resolution stays in config and is never
-/// pinned here. The Daemon route forwards the resolved profile name; the
-/// Direct route resolves it to a concrete target so a standalone gcore.yaml
-/// routes synthesis to its own provider/model/api_key.
+/// Compiled wiki articles and recaps are gwiki's curated narrative surface, so
+/// they generate on the aggregate tier — for the `compile` command, the
+/// `upkeep` conductor, and `recap`, which synthesize through the same pipeline.
+/// Tier -> feature profile is owned by gcore's `profile_for_tier` (Aggregate ->
+/// feature_high); provider/model resolution stays in config and is never pinned
+/// here. The Daemon route forwards the resolved profile name; the Direct route
+/// resolves it to a concrete target so a standalone gcore.yaml routes synthesis
+/// to its own provider/model/api_key.
 pub(crate) const ARTICLE_TIER: GenerationTier = GenerationTier::Aggregate;
 
 /// Owned Lane B explainer generator (the boxed counterpart of the borrowed
@@ -205,6 +205,9 @@ fn run_lane_b(
                 text,
                 model: result.model,
                 route: routing_label(route),
+                tool_use_count: Some(result.tool_use_count),
+                turns: Some(result.turns),
+                usage: result.usage,
             })
         }
         AiRouting::Direct => {
@@ -246,6 +249,9 @@ fn run_lane_b(
                 text: content,
                 model,
                 route: routing_label(route),
+                tool_use_count: None,
+                turns: None,
+                usage: None,
             })
         }
         AiRouting::Off | AiRouting::Auto => Err("tool-chat route is off or unresolved".to_string()),
@@ -333,6 +339,9 @@ impl ExplainerTransport {
                     text: result.text,
                     model: result.model,
                     route: routing_label(*route),
+                    tool_use_count: None,
+                    turns: None,
+                    usage: result.usage,
                 })
             }
         }

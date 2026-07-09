@@ -51,7 +51,7 @@ impl RuntimeServices {
     }
 
     pub(crate) fn semantic_available(&self) -> bool {
-        self.qdrant.is_some() && self.embedding.is_some()
+        self.qdrant.is_some() && self.semantic_embedding.is_some()
     }
 
     /// Live semantic search backend, when Qdrant and an embedding route are

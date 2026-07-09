@@ -387,6 +387,41 @@ fn changed_local_file_replays_and_removes_old_raw_assets() {
 }
 
 #[test]
+fn changed_local_file_carries_compiled_status_forward() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let record = seed_local_file(temp.path(), "artifact.txt", b"old");
+    SourceManifest::update(temp.path(), |manifest| {
+        let entry = manifest
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == record.id)
+            .expect("seeded record present");
+        entry.compile_status = CompileStatus::Compiled;
+        Ok(true)
+    })
+    .expect("mark compiled");
+    fs::write(temp.path().join("artifact.txt"), b"new").expect("change source");
+
+    let outcome = execute_resolved_with_fetcher(
+        test_scope(temp.path()),
+        vec![record.id.clone()],
+        false,
+        |_record, _fetched_at| unreachable!("local refresh does not fetch URLs"),
+    )
+    .expect("refresh local changed");
+
+    assert_eq!(outcome.result.payload["status"], "refreshed");
+    let new_id = outcome.result.payload["refreshed"][0]["new_id"]
+        .as_str()
+        .expect("new source id");
+    let manifest = SourceManifest::read(temp.path()).expect("read manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].id, new_id);
+    assert_eq!(manifest.entries[0].compile_status, CompileStatus::Compiled);
+    assert!(manifest.entries[0].replay.is_some());
+}
+
+#[test]
 fn explicit_unsupported_and_missing_sources_fail_structurally() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file = seed_file_without_replay(temp.path());

@@ -13,11 +13,10 @@ import pytest
 from gobby.storage.hub import postgres
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
-pytestmark = pytest.mark.unit
-
 _DUMMY_DSN = "postgresql://gobby:secret@localhost/gobby"
 
 
+@pytest.mark.unit
 def test_new_database_is_tracked_for_atexit_close() -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
     try:
@@ -26,6 +25,7 @@ def test_new_database_is_tracked_for_atexit_close() -> None:
         db.close()
 
 
+@pytest.mark.unit
 def test_atexit_sweep_closes_open_databases() -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
 
@@ -36,16 +36,23 @@ def test_atexit_sweep_closes_open_databases() -> None:
     postgres._close_open_databases_at_exit()
 
 
+@pytest.mark.unit
 def test_atexit_sweep_continues_past_close_errors() -> None:
     failing = PostgresHubDatabase(_DUMMY_DSN)
     healthy = PostgresHubDatabase(_DUMMY_DSN)
+    original_failing_close = failing.close
     failing.close = lambda: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[method-assign]
 
-    postgres._close_open_databases_at_exit()
+    try:
+        postgres._close_open_databases_at_exit()
+        assert healthy._pool_closed is True
+    finally:
+        failing.close = original_failing_close  # type: ignore[method-assign]
+        failing.close()
+        healthy.close()
 
-    assert healthy._pool_closed is True
 
-
+@pytest.mark.unit
 def test_collected_database_leaves_tracking_set() -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
     db.close()
@@ -57,6 +64,7 @@ def test_collected_database_leaves_tracking_set() -> None:
     assert ref() is None
 
 
+@pytest.mark.integration
 def test_cli_exit_without_close_prints_no_finalization_noise(
     postgres_database_url: str,
 ) -> None:

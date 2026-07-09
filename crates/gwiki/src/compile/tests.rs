@@ -1,4 +1,6 @@
 use super::*;
+use gobby_core::ai_types::TokenUsage;
+
 use crate::explainer::{ExplainerPrompt, ExplainerResponse};
 use crate::provenance::ProvenanceGraph;
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
@@ -911,6 +913,13 @@ fn compile_explainer_generates_grounded_prose_sections() {
                     .to_string(),
                 model: Some("mock-model".to_string()),
                 route: "daemon",
+                tool_use_count: Some(4),
+                turns: Some(3),
+                usage: Some(TokenUsage {
+                    input_tokens: Some(120),
+                    output_tokens: Some(45),
+                    total_tokens: Some(165),
+                }),
             })
         };
         compile_to_wiki_with_options(
@@ -942,6 +951,12 @@ fn compile_explainer_generates_grounded_prose_sections() {
     assert_eq!(report.status, "generated");
     assert_eq!(report.route, Some("daemon"));
     assert_eq!(report.model.as_deref(), Some("mock-model"));
+    assert_eq!(report.tool_use_count, Some(4));
+    assert_eq!(report.turns, Some(3));
+    assert_eq!(
+        report.usage.as_ref().and_then(TokenUsage::token_count),
+        Some(165)
+    );
     assert_eq!(report.citations_kept, 1);
     assert_eq!(report.citations_stripped, 1);
 

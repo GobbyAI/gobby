@@ -12,7 +12,7 @@
 //! string. That keeps `concepts.rs` under the 1,000-line rule while this file
 //! owns the content-pass + fallback logic.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use super::super::*;
@@ -593,6 +593,13 @@ struct FlowComponent {
     role: Option<String>,
 }
 
+/// Flow stages plus the component-id ownership index derived from the same
+/// module-first/file-fallback resolution.
+struct ResolvedFlowStages {
+    components: Vec<FlowComponent>,
+    component_owner: BTreeMap<String, usize>,
+}
+
 /// Bounded source-excerpt budget (chars per file) scanned for a documented
 /// data-flow chain. Keeps the hint grounded in real excerpts without pulling
 /// whole files into the scan.
@@ -626,7 +633,8 @@ pub(crate) fn curated_flow_diagram(
     graph_edges: &[CodewikiGraphEdge],
     generate: &mut Option<&mut TextGenerator<'_>>,
 ) -> Option<String> {
-    let components = flow_components(member_modules, member_files, module_lookup, file_lookup);
+    let stages = resolve_flow_stages(member_modules, member_files, module_lookup, file_lookup);
+    let components = stages.components;
     if components.len() < 2 {
         return None;
     }
@@ -638,15 +646,7 @@ pub(crate) fn curated_flow_diagram(
         file_lookup,
         leading_chunks,
     );
-    let evidence = curated_flow_evidence(
-        &components,
-        &hint,
-        member_modules,
-        member_files,
-        module_lookup,
-        file_lookup,
-        graph_edges,
-    );
+    let evidence = curated_flow_evidence(&components, &hint, &stages.component_owner, graph_edges);
     let degraded = components.iter().any(|component| component.role.is_none());
 
     let block = compose_flowchart(
@@ -686,10 +686,7 @@ appears by name only.\n\n",
 fn curated_flow_evidence(
     components: &[FlowComponent],
     hint: &str,
-    member_modules: &[String],
-    member_files: &[String],
-    module_lookup: &BTreeMap<&str, &ModuleDoc>,
-    file_lookup: &BTreeMap<&str, &FileDoc>,
+    component_owner: &BTreeMap<String, usize>,
     graph_edges: &[CodewikiGraphEdge],
 ) -> DiagramEvidence {
     let mut evidence = DiagramEvidence::default();
@@ -704,22 +701,16 @@ fn curated_flow_evidence(
     // Documented data-flow chain: an `A -> B -> C` arrow chain in the member
     // summaries or bounded source excerpts evidences its consecutive pairs.
     let chain = parse_flow_chain(hint, components);
+    let mut stage_edges: BTreeSet<(usize, usize)> = BTreeSet::new();
     for pair in chain.windows(2) {
-        evidence.push_edge(
-            format!("s{}", pair[0]),
-            format!("s{}", pair[1]),
-            None,
-            false,
-        );
+        push_stage_edge_once(&mut evidence, &mut stage_edges, pair[0], pair[1], None);
     }
 
     // Member-level call/import edges from the code index: attribute each
     // graph edge through the components' owning members and keep only
     // cross-member edges. Which member owns a component follows the same
-    // resolution as `flow_components`: modules own their files' components
+    // resolution as `resolve_flow_stages`: modules own their files' components
     // (including descendant modules); explicit member files own their own.
-    let component_owner =
-        component_owner_map(member_modules, member_files, module_lookup, file_lookup);
     for edge in graph_edges {
         let Some(source) = component_owner.get(edge.source_component_id.as_str()) else {
             continue;
@@ -734,82 +725,71 @@ fn curated_flow_evidence(
             CodewikiGraphEdgeKind::Call => "calls",
             CodewikiGraphEdgeKind::Import => "imports",
         };
-        evidence.push_edge(
-            format!("s{source}"),
-            format!("s{target}"),
+        push_stage_edge_once(
+            &mut evidence,
+            &mut stage_edges,
+            *source,
+            *target,
             Some(label.to_string()),
-            false,
         );
     }
 
     evidence
 }
 
-/// Map component ids to the index of the flow stage that owns them, mirroring
-/// the member resolution in [`flow_components`]: member modules (in order,
-/// counting only those with docs) own the components of every file in their
-/// module subtree; member files — appended as stages only when fewer than two
-/// module stages exist — own their own components. The first owning stage
-/// wins, deterministically, so a member file inside a member module's subtree
-/// attributes to the module.
-fn component_owner_map(
-    member_modules: &[String],
-    member_files: &[String],
-    module_lookup: &BTreeMap<&str, &ModuleDoc>,
-    file_lookup: &BTreeMap<&str, &FileDoc>,
-) -> BTreeMap<String, usize> {
-    let mut owners: BTreeMap<String, usize> = BTreeMap::new();
-    let mut stage = 0usize;
-    for module in member_modules {
-        if !module_lookup.contains_key(module.as_str()) {
-            continue;
-        }
-        for file in file_lookup.values() {
-            if file.module == *module || module_is_ancestor(module, &file.module) {
-                for component in &file.component_ids {
-                    owners.entry(component.clone()).or_insert(stage);
-                }
-            }
-        }
-        stage += 1;
+fn push_stage_edge_once(
+    evidence: &mut DiagramEvidence,
+    stage_edges: &mut BTreeSet<(usize, usize)>,
+    source: usize,
+    target: usize,
+    label: Option<String>,
+) {
+    if !stage_edges.insert((source, target)) {
+        return;
     }
-    if stage < 2 {
-        for file in member_files {
-            let Some(doc) = file_lookup.get(file.as_str()) else {
-                continue;
-            };
-            for component in &doc.component_ids {
-                owners.entry(component.clone()).or_insert(stage);
-            }
-            stage += 1;
-        }
-    }
-    owners
+    evidence.push_edge(format!("s{source}"), format!("s{target}"), label, false);
 }
 
 /// Resolve the page's members into flow stages. Modules are the subsystem unit;
 /// files only flesh out the flow when there are too few modules to chain on
-/// their own.
-fn flow_components(
+/// their own. The returned ownership map is derived from the same ordered stage
+/// list so flow stage ids and component ownership cannot drift.
+fn resolve_flow_stages(
     member_modules: &[String],
     member_files: &[String],
     module_lookup: &BTreeMap<&str, &ModuleDoc>,
     file_lookup: &BTreeMap<&str, &FileDoc>,
-) -> Vec<FlowComponent> {
+) -> ResolvedFlowStages {
     let mut components: Vec<FlowComponent> = Vec::new();
+    let mut component_owner: BTreeMap<String, usize> = BTreeMap::new();
     for module in member_modules {
         if let Some(doc) = module_lookup.get(module.as_str()) {
+            let stage = components.len();
             components.push(component_from(&doc.module, &doc.summary));
+            for file in file_lookup.values() {
+                if file.module == *module || module_is_ancestor(module, &file.module) {
+                    for component in &file.component_ids {
+                        component_owner.entry(component.clone()).or_insert(stage);
+                    }
+                }
+            }
         }
     }
     if components.len() < 2 {
         for file in member_files {
             if let Some(doc) = file_lookup.get(file.as_str()) {
+                let stage = components.len();
                 components.push(component_from(&doc.path, &doc.summary));
+                for component in &doc.component_ids {
+                    component_owner.entry(component.clone()).or_insert(stage);
+                }
             }
         }
     }
-    components
+    ResolvedFlowStages {
+        components,
+        component_owner,
+    }
 }
 
 fn component_from(name: &str, summary: &str) -> FlowComponent {

@@ -104,9 +104,19 @@ impl DiagramEvidence {
         label: Option<String>,
         dotted: bool,
     ) {
+        let from = from.into();
+        let to = to.into();
+        debug_assert!(
+            self.node(&from).is_some(),
+            "diagram evidence edge references missing source node `{from}`"
+        );
+        debug_assert!(
+            self.node(&to).is_some(),
+            "diagram evidence edge references missing target node `{to}`"
+        );
         let edge = EvidenceEdge {
-            from: from.into(),
-            to: to.into(),
+            from,
+            to,
             label,
             dotted,
         };
@@ -567,19 +577,20 @@ pub(crate) fn compose_flowchart(
         // supplied in the prompt, so the Lane B tool loop adds cost without
         // adding grounding (same rationale as curated page bodies).
         let mut no_tool_loop: Option<&mut ToolLoopGenerator<'_>> = None;
-        let aggregate = generate_aggregate(
+        let Ok(aggregate) = generate_aggregate(
             &mut no_tool_loop,
             generate,
             &prompt,
             prompts::FLOW_DIAGRAM_SYSTEM,
             context,
-        )
-        .ok()?;
+        ) else {
+            break;
+        };
         let candidate = match aggregate.content {
             GenerationContent::Generated(text) => text,
             // A diagram is optional page furniture: a failed or skipped
             // generation means no diagram, never a degraded page.
-            GenerationContent::Failed(_) | GenerationContent::Skipped => return None,
+            GenerationContent::Failed(_) | GenerationContent::Skipped => break,
         };
 
         let (verified, issues) = verify_candidate(&candidate, evidence);
@@ -590,7 +601,12 @@ pub(crate) fn compose_flowchart(
             // Verification dropped something: keep the survivors as the
             // deterministic-repair backstop, but give the model one chance to
             // redraw cleanly.
-            best = Some(verified);
+            if best
+                .as_ref()
+                .is_none_or(|best| verified.edges.len() > best.edges.len())
+            {
+                best = Some(verified);
+            }
         }
         feedback = Some(
             issues
@@ -764,6 +780,53 @@ mod tests {
         assert!(block.contains("- a: Alpha"));
         assert!(block.contains("- a -> b"));
         assert!(block.contains("- b -> c (required)"));
+    }
+
+    #[test]
+    #[should_panic(expected = "diagram evidence edge references missing target node `ghost`")]
+    fn evidence_edges_must_reference_existing_nodes() {
+        let mut evidence = DiagramEvidence::default();
+        evidence.push_node("a", "Alpha", NodeShape::Box);
+        evidence.push_edge("a", "ghost", None, false);
+    }
+
+    #[test]
+    fn failed_repair_attempt_preserves_best_surviving_candidate() {
+        let mut responses = vec![Some("flowchart TD\n    a --> b\n    c --> a\n".to_string())];
+        let mut generator =
+            |_prompt: &str, _system: &str, _tier: PromptTier| responses.pop().flatten();
+        let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+
+        let block = compose_flowchart(&mut generate, &evidence(), "test flow").expect("diagram");
+
+        assert!(block.contains("a --> b"));
+        assert!(!block.contains("c --> a"));
+    }
+
+    #[test]
+    fn worse_partial_repair_does_not_replace_best_candidate() {
+        let mut evidence = evidence();
+        evidence.push_node("x", "Xi", NodeShape::Box);
+        evidence.push_node("y", "Ypsilon", NodeShape::Box);
+        evidence.push_edge("x", "y", None, false);
+        let mut responses = vec![
+            "flowchart TD\n    a --> b\n    b -.-> c\n    x --> y\n".to_string(),
+            "flowchart TD\n    a --> b\n    c --> a\n".to_string(),
+        ];
+        let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
+            (!responses.is_empty()).then(|| responses.remove(0))
+        };
+        let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+
+        let block = compose_flowchart(&mut generate, &evidence, "test flow").expect("diagram");
+
+        assert!(block.contains("a --> b"));
+        assert!(
+            block.contains("b -.->"),
+            "best two-edge survivor should win over one-edge repair: {block}"
+        );
+        assert!(!block.contains("x --> y"));
+        assert!(!block.contains("c --> a"));
     }
 
     #[test]

@@ -258,8 +258,14 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
     # Heal project-scoped rows sourced from bundled template trees: they
     # shadow the installed rows synced above with stale template content
     # (#17606). Creation is blocked in storage; this purges pre-existing rows.
-    purged = storage.purge_bundled_template_project_skills()
-    result["purged_project_overrides"] = len(purged)
+    try:
+        purged = storage.purge_bundled_template_project_skills()
+        result["purged_project_overrides"] = len(purged)
+    except Exception as e:
+        error_msg = f"Failed to purge bundled template project skills: {e}"
+        logger.error(error_msg)
+        result["success"] = False
+        result["errors"].append(error_msg)
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(

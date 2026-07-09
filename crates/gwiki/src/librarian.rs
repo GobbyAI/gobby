@@ -1087,6 +1087,13 @@ mod tests {
 
     #[test]
     fn librarian_probed_options_reflect_runtime_services() {
+        let embedding = EmbeddingConfig {
+            api_base: "http://localhost:1234/v1".to_string(),
+            model: "embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 30,
+        };
         let services = RuntimeServices {
             postgres_configured: true,
             falkor: Some(FalkorConfig {
@@ -1098,14 +1105,10 @@ mod tests {
                 url: Some("http://localhost:6333".to_string()),
                 api_key: None,
             }),
-            embedding: Some(EmbeddingConfig {
-                api_base: "http://localhost:1234/v1".to_string(),
-                model: "embed-model".to_string(),
-                api_key: None,
-                query_prefix: None,
-                timeout_seconds: 30,
-            }),
-            semantic_embedding: None,
+            embedding: Some(embedding.clone()),
+            semantic_embedding: Some(crate::search::semantic::SemanticEmbedding::Direct(
+                embedding,
+            )),
         };
 
         assert_eq!(

@@ -1088,6 +1088,7 @@ CREATE TABLE cron_runs (
     error TEXT,
     agent_run_id UUID,
     pipeline_execution_id UUID,
+    scheduler_owner TEXT,
     created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -1100,6 +1101,8 @@ CREATE INDEX idx_cron_runs_status ON cron_runs(status);
 CREATE INDEX idx_cron_runs_agent_run ON cron_runs(agent_run_id) WHERE agent_run_id IS NOT NULL;
 
 CREATE INDEX idx_cron_runs_pipeline_execution ON cron_runs(pipeline_execution_id) WHERE pipeline_execution_id IS NOT NULL;
+
+CREATE INDEX idx_cron_runs_scheduler_owner_active ON cron_runs(scheduler_owner) WHERE status IN ('pending', 'running');
 
 CREATE UNIQUE INDEX idx_cron_runs_one_active_per_job ON cron_runs(cron_job_id) WHERE status IN ('pending', 'running');
 

@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 from gobby.gwiki_gateway import (
-    COMPILE_KINDS,
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
+    normalize_kind,
+    resolve_ask_timeout,
 )
 from gobby.wiki import WikiUpdateCoordinator
 from gobby.wiki.scope_resolution import (
@@ -81,14 +82,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         ask_query = _one_query(q, query)
         ai_value = _normalize_ai(ai) if ai is not None else None
-        # AI-routed asks run an LLM completion; give the subprocess the
-        # generation guard instead of the interactive one.
-        ai_may_generate = llm or (ai_value is not None and ai_value != "off")
-        timeout_seconds = (
-            GENERATION_GWIKI_TIMEOUT_SECONDS
-            if ai_may_generate
-            else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
-        )
+        timeout_seconds = resolve_ask_timeout(llm, ai_value)
         try:
             return await _read(
                 server,
@@ -372,13 +366,10 @@ def _normalize_ai(value: str) -> str:
 
 
 def _normalize_kind(value: str | None) -> str | None:
-    if value is None:
-        return None
-    kind = value.strip().lower()
-    if kind not in COMPILE_KINDS:
-        allowed = ", ".join(sorted(COMPILE_KINDS))
-        raise HTTPException(status_code=400, detail=f"kind must be one of {allowed}")
-    return kind
+    try:
+        return normalize_kind(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _required_string(value: Any, detail: str) -> str:

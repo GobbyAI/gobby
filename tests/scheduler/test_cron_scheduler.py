@@ -476,7 +476,7 @@ async def test_orphaned_active_run_is_swept_and_job_redispatched(
         action_config={"command": "echo"},
         interval_seconds=60,
     )
-    orphan_run = cron_storage.create_run(job.id)
+    orphan_run = cron_storage.create_run(job.id, scheduler_owner=scheduler._scheduler_owner)
     assert orphan_run is not None
     if orphan_status == "running":
         cron_storage.update_run(orphan_run.id, status="running", started_at=past)
@@ -496,6 +496,38 @@ async def test_orphaned_active_run_is_swept_and_job_redispatched(
     mock_executor.execute.assert_awaited_once()
     assert mock_executor.execute.await_args.args[0].id == job.id
     assert len(cron_storage.list_runs(job.id, limit=10)) == 2
+
+
+@pytest.mark.asyncio
+async def test_orphaned_active_run_owned_by_other_scheduler_is_not_swept(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """A scheduler only sweeps active rows that it owns."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="foreign-wedged",
+        schedule_type="interval",
+        action_type="shell",
+        action_config={"command": "echo"},
+        interval_seconds=60,
+    )
+    orphan_run = cron_storage.create_run(job.id, scheduler_owner="other-scheduler")
+    assert orphan_run is not None
+    cron_storage.update_run(orphan_run.id, status="running", started_at=past)
+    cron_storage.update_job(job.id, next_run_at=past)
+
+    await scheduler._check_due_jobs()
+    await drain_asyncio_tasks()
+
+    mock_executor.execute.assert_not_awaited()
+    preserved_run = cron_storage.get_run(orphan_run.id)
+    assert preserved_run is not None
+    assert preserved_run.status == "running"
+    assert len(cron_storage.list_runs(job.id, limit=10)) == 1
 
 
 @pytest.mark.asyncio
@@ -559,7 +591,7 @@ async def test_run_now_sweeps_orphaned_run_and_proceeds(
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
-    orphan_run = cron_storage.create_run(job.id)
+    orphan_run = cron_storage.create_run(job.id, scheduler_owner=scheduler._scheduler_owner)
     assert orphan_run is not None
     cron_storage.update_run(orphan_run.id, status="running")
 

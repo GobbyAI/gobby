@@ -12,7 +12,7 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
-from gobby.utils.datetime import parse_stored_datetime, utc_now
+from gobby.utils.datetime import require_stored_datetime, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +335,7 @@ class WorkflowAuditManager:
                 except json.JSONDecodeError:
                     pass
 
-            timestamp = parse_stored_datetime(row["timestamp"]) or datetime.now(UTC)
+            timestamp = require_stored_datetime(row["timestamp"], "timestamp")
 
             entries.append(
                 WorkflowAuditEntry(

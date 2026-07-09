@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Literal
@@ -57,6 +58,7 @@ class CronScheduler:
         self._cleanup_task: asyncio.Task[None] | None = None
         self._active_tasks: set[asyncio.Task[None]] = set()
         self._active_run_ids: set[str] = set()
+        self._scheduler_owner = str(uuid.uuid4())
         self.on_run_complete: Callable[[CronJob, CronRun], Awaitable[None]] | None = None
 
     async def start(self) -> None:
@@ -113,7 +115,7 @@ class CronScheduler:
         swept, no matter how old their run is.
         """
         swept = 0
-        for run in self.storage.list_active_runs():
+        for run in self.storage.list_active_runs(scheduler_owner=self._scheduler_owner):
             if run.id in self._active_run_ids:
                 continue
             if self.storage.fail_run_if_active(
@@ -218,7 +220,7 @@ class CronScheduler:
                             continue
 
                 # Create run and advance next_run_at immediately to prevent re-dispatch
-                run = self.storage.create_run(job.id)
+                run = self.storage.create_run(job.id, scheduler_owner=self._scheduler_owner)
                 if run is None:
                     logger.debug(
                         "Skipping cron job %s (%s): previous run still active",
@@ -285,6 +287,14 @@ class CronScheduler:
 
             except Exception as e:
                 logger.error(f"Unexpected error executing cron job {job.id}: {e}", exc_info=True)
+                now = datetime.now(UTC).isoformat()
+                failures = job.consecutive_failures + 1
+                self._update_job_bookkeeping(
+                    job,
+                    last_run_at=now,
+                    last_status="failed",
+                    consecutive_failures=failures,
+                )
                 # The executor normally terminalizes the run row; if it raised
                 # instead, fail the row so it cannot wedge the job's dispatch.
                 try:
@@ -294,6 +304,7 @@ class CronScheduler:
                     )
                 except Exception:
                     logger.debug("Failed to finalize errored cron run %s", run.id, exc_info=True)
+                result = self.storage.get_run(run.id)
 
             # Fire event callback (best-effort, non-blocking)
             if self.on_run_complete and result:
@@ -355,6 +366,7 @@ class CronScheduler:
         run, running_count = self.storage.create_run_if_admitted(
             job.id,
             max_concurrent_jobs=self.config.max_concurrent_jobs,
+            scheduler_owner=self._scheduler_owner,
         )
         if run is None and running_count >= self.config.max_concurrent_jobs:
             raise CronRunRejected(

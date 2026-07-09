@@ -69,6 +69,20 @@ def hooks_list(ctx: click.Context, json_format: bool) -> None:
             click.echo(f"    {hook['description']}")
 
 
+@hooks.command("resolve-wiki-vault")
+@click.argument("project_root", required=False, type=click.Path(file_okay=False, dir_okay=True))
+def hooks_resolve_wiki_vault(project_root: str | None) -> None:
+    """Print the initialized wiki vault path for hook scripts."""
+    from pathlib import Path
+
+    from gobby.utils.wiki_vault import existing_vault_dir
+
+    vault = existing_vault_dir(Path(project_root or os.getcwd()))
+    if vault is None:
+        raise SystemExit(1)
+    click.echo(os.fspath(vault))
+
+
 def _get_hook_description(event_type: HookEventType) -> str:
     """Get description for a hook event type."""
     from gobby.hooks.events import HookEventType

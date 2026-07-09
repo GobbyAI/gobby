@@ -20,6 +20,21 @@ INTERACTIVE_GWIKI_TIMEOUT_SECONDS = 30.0
 GENERATION_GWIKI_TIMEOUT_SECONDS = 270.0
 
 
+def normalize_kind(value: str | None) -> str | None:
+    if value is None:
+        return None
+    kind = value.strip().lower()
+    if kind not in COMPILE_KINDS:
+        allowed = ", ".join(sorted(COMPILE_KINDS))
+        raise ValueError(f"kind must be one of {allowed}")
+    return kind
+
+
+def resolve_ask_timeout(llm: bool, ai: str | None) -> float:
+    ai_may_generate = llm or (ai is not None and ai != "off")
+    return GENERATION_GWIKI_TIMEOUT_SECONDS if ai_may_generate else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+
+
 class GwikiGatewayError(RuntimeError):
     """Base error for Gwiki gateway failures."""
 
@@ -167,14 +182,12 @@ class GwikiGateway:
         write_intent: bool = False,
         ai: str | None = None,
     ) -> dict[str, Any]:
-        if kind is not None and kind not in COMPILE_KINDS:
-            allowed = ", ".join(sorted(COMPILE_KINDS))
-            raise ValueError(f"kind must be one of {allowed}")
+        kind_value = normalize_kind(kind)
         args = ["compile"]
         if topic is not None:
             args.append(topic)
-        if kind is not None:
-            args.extend(["--kind", kind])
+        if kind_value is not None:
+            args.extend(["--kind", kind_value])
         for source in sources or ():
             args.extend(["--source", source])
         for heading in outline or ():

@@ -494,6 +494,15 @@ mod tests {
                 None,
             )
         );
+        assert_eq!(
+            wiki_scope_params(&WikiStoreScope::topic("research")).unwrap(),
+            (
+                "topic".to_string(),
+                "research".to_string(),
+                None,
+                Some("research".to_string()),
+            )
+        );
     }
 
     #[test]

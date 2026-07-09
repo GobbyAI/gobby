@@ -234,35 +234,9 @@ fi
 if [ "$PUBLISH_WIKI" = true ]; then
     REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 
-    # Resolve the wiki vault the way gobby_core::vault does: prefer `wiki`,
-    # then `gobby-wiki`, then `gobby-wiki-001`..`gobby-wiki-999`; a candidate
-    # counts only when initialized (`_gwiki/scope.json`), and the first free
-    # slot ends the search because the resolver would claim it.
     WIKI_VAULT=""
-    if [ -n "$REPO_ROOT" ]; then
-        for CANDIDATE in "$REPO_ROOT/wiki" "$REPO_ROOT/gobby-wiki"; do
-            if [ ! -e "$CANDIDATE" ]; then
-                break
-            fi
-            if [ -f "$CANDIDATE/_gwiki/scope.json" ]; then
-                WIKI_VAULT="$CANDIDATE"
-                break
-            fi
-        done
-        if [ -z "$WIKI_VAULT" ] && [ -e "$REPO_ROOT/wiki" ] && [ -e "$REPO_ROOT/gobby-wiki" ]; then
-            N=1
-            while [ "$N" -le 999 ]; do
-                CANDIDATE="$REPO_ROOT/$(printf 'gobby-wiki-%03d' "$N")"
-                if [ ! -e "$CANDIDATE" ]; then
-                    break
-                fi
-                if [ -f "$CANDIDATE/_gwiki/scope.json" ]; then
-                    WIKI_VAULT="$CANDIDATE"
-                    break
-                fi
-                N=$((N + 1))
-            done
-        fi
+    if [ -n "$REPO_ROOT" ] && command -v gobby >/dev/null 2>&1; then
+        WIKI_VAULT=$(gobby hooks resolve-wiki-vault "$REPO_ROOT" 2>/dev/null || true)
     fi
 
     if [ -n "$WIKI_VAULT" ]; then

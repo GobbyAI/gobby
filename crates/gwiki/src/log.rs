@@ -29,7 +29,7 @@ pub struct LogWriteReport {
 }
 
 /// Entry for a source accepted into the manifest. `raw_path` is the
-/// vault-relative digest path from [`crate::ingest::IngestResult`].
+/// vault-relative raw ingested asset path from [`crate::ingest::IngestResult`].
 pub fn source_ingested_entry(
     timestamp: &str,
     scope: &ScopeIdentity,
@@ -52,13 +52,11 @@ pub fn append_sources_ingested<'a>(
     timestamp: &str,
     results: impl IntoIterator<Item = &'a crate::ingest::IngestResult>,
 ) -> Result<(), WikiError> {
-    for result in results {
-        append_logs(
-            vault_root,
-            None,
-            &source_ingested_entry(timestamp, scope, &result.record, &result.raw_path),
-        )?;
-    }
+    let entries = results
+        .into_iter()
+        .map(|result| source_ingested_entry(timestamp, scope, &result.record, &result.raw_path))
+        .collect::<Vec<_>>();
+    append_log_entries(vault_root, None, &entries)?;
     Ok(())
 }
 
@@ -88,8 +86,39 @@ pub fn append_logs(
     })
 }
 
+fn append_log_entries(
+    scope_root: &Path,
+    global_hub_root: Option<&Path>,
+    entries: &[LogEntry],
+) -> Result<Option<LogWriteReport>, WikiError> {
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let scope_log = scope_root.join("log.md");
+    append_log_entries_to_file(&scope_log, entries)?;
+    let global_log = global_hub_root
+        .map(|root| root.join("log.md"))
+        .map(|path| {
+            if !same_log_path(&scope_log, &path) {
+                append_log_entries_to_file(&path, entries)?;
+            }
+            Ok::<PathBuf, WikiError>(path)
+        })
+        .transpose()?;
+
+    let report = LogWriteReport {
+        scope_log,
+        global_log,
+    };
+    Ok(Some(report))
+}
+
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
+    append_log_entries_to_file(path, std::slice::from_ref(entry))
+}
+
+fn append_log_entries_to_file(path: &Path, entries: &[LogEntry]) -> Result<(), WikiError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create log directory",
@@ -121,7 +150,8 @@ fn append_log(path: &Path, entry: &LogEntry) -> Result<(), WikiError> {
             })?;
     }
 
-    file.write_all(render_entry(entry).as_bytes())
+    let rendered = entries.iter().map(render_entry).collect::<String>();
+    file.write_all(rendered.as_bytes())
         .map_err(|error| WikiError::Io {
             action: "write log",
             path: Some(path.to_path_buf()),

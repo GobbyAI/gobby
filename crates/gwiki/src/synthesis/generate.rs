@@ -113,7 +113,14 @@ fn ground_article_explainer(
     explainer: &ExplainerGeneration,
 ) -> (Option<String>, ExplainerReport) {
     match explainer {
-        ExplainerGeneration::Generated { body, model, route } => {
+        ExplainerGeneration::Generated {
+            body,
+            model,
+            route,
+            tool_use_count,
+            turns,
+            usage,
+        } => {
             let targets: Vec<CitationTarget> = input
                 .accepted_sources
                 .iter()
@@ -134,6 +141,9 @@ fn ground_article_explainer(
                 route: Some(*route),
                 model: model.clone(),
                 error: None,
+                tool_use_count: *tool_use_count,
+                turns: *turns,
+                usage: usage.clone(),
                 citations_kept: grounded.citations_kept,
                 citations_stripped: grounded.citations_stripped,
                 fallback_sections: grounded.fallback_sections,

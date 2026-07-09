@@ -1416,6 +1416,33 @@ class TestTaskLifecycleSkillGates:
         assert "task-transitions" in (blocked.reason or "")
         assert allowed.decision == "allow"
 
+    @pytest.mark.asyncio
+    async def test_transition_gate_exempts_pipeline_sessions(self, db, manager) -> None:
+        """Deterministic pipeline executors cannot load skills; transition gate must not fire."""
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "reopen_task",
+                    "arguments": {"task_id": "#42"},
+                },
+            },
+        )
+
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"_agent_type": "pipeline"},
+        )
+
+        assert allowed.decision == "allow"
+
 
 def _make_reopen_event(task_id: str) -> HookEvent:
     """Create a direct MCP reopen_task before_tool event."""

@@ -6,8 +6,8 @@ use crate::index::{MAX_DATA_LANGUAGE_AST_SIZE, MAX_FILE_SIZE};
 
 use super::generated::is_generated_js_bundle;
 use super::hidden::{
-    HiddenPathAllowlist, is_generated_wiki_metadata, is_hidden_metadata_content_only,
-    is_hidden_path,
+    HiddenPathContext, is_generated_wiki_metadata_with_context,
+    is_hidden_metadata_content_only_with_context, is_hidden_path,
 };
 use super::types::{DiscoveryOptions, FileClassification};
 
@@ -17,17 +17,27 @@ pub fn classify_file(
     path: &Path,
     exclude_patterns: &[impl AsRef<str>],
 ) -> Option<FileClassification> {
+    let context = HiddenPathContext::load(root);
+    classify_file_with_context(root, path, exclude_patterns, &context)
+}
+
+pub(super) fn classify_file_with_context(
+    root: &Path,
+    path: &Path,
+    exclude_patterns: &[impl AsRef<str>],
+    context: &HiddenPathContext,
+) -> Option<FileClassification> {
     if !is_safe_text_file(root, path, exclude_patterns) {
         return None;
     }
-    if is_generated_wiki_metadata(root, path) {
+    if is_generated_wiki_metadata_with_context(root, path, context) {
         return None;
     }
     if is_generated_js_bundle(path) {
         return None;
     }
 
-    if is_hidden_metadata_content_only(root, path) {
+    if is_hidden_metadata_content_only_with_context(root, path, context) {
         return Some(FileClassification::ContentOnly);
     }
 
@@ -59,10 +69,11 @@ pub fn classify_explicit_file_with_options(
     exclude_patterns: &[impl AsRef<str>],
     options: DiscoveryOptions,
 ) -> Option<FileClassification> {
-    if options.respect_gitignore && !explicit_path_visible(root, path, options) {
+    let context = HiddenPathContext::load(root);
+    if options.respect_gitignore && !explicit_path_visible(root, path, options, &context) {
         return None;
     }
-    classify_file(root, path, exclude_patterns)
+    classify_file_with_context(root, path, exclude_patterns, &context)
 }
 
 /// Return true when `path` is an unsupported, safe text file suitable for chunks.
@@ -92,11 +103,16 @@ pub fn content_language(path: &Path) -> String {
     }
 }
 
-fn explicit_path_visible(root: &Path, path: &Path, options: DiscoveryOptions) -> bool {
+fn explicit_path_visible(
+    root: &Path,
+    path: &Path,
+    options: DiscoveryOptions,
+    context: &HiddenPathContext,
+) -> bool {
     // Allowlisted metadata (vault markdown, .gobby/plans, CI workflows) is
     // rescued from both hidden filtering and gitignore, matching discovery —
     // the vault is gitignored in real repos, so the walk below cannot see it.
-    if HiddenPathAllowlist::load(root).matches(root, path) {
+    if context.allowlist().matches(root, path) {
         return true;
     }
     if is_hidden_path(root, path) {

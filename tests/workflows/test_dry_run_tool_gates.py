@@ -94,6 +94,15 @@ class TestStepToolGates:
         check_step_tool_gates(step, result)
         assert result.items == []
 
+    def test_mcp_ref_in_native_tool_gate_is_wrong_field_error(self) -> None:
+        step = WorkflowStep(name="work", blocked_tools=["gobby-agents:kill_agent"])
+        result = _evaluation()
+        check_step_tool_gates(step, result)
+        errors = [i for i in result.items if i.level == "error"]
+        assert len(errors) == 1
+        assert errors[0].code == "MCP_TOOL_REF_IN_NATIVE_GATE"
+        assert "blocked_mcp_tools" in errors[0].message
+
     def test_allowed_tools_all_skipped(self) -> None:
         step = WorkflowStep(name="work", allowed_tools="all")
         result = _evaluation()

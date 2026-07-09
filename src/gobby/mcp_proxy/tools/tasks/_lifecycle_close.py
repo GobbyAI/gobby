@@ -4,6 +4,7 @@ Handles the close_task tool registration including validation,
 commit checks, session linking, and worktree status updates.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -212,7 +213,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         target_task_had_edits = target_task_has_edits(session_vars, resolved_id)
         if target_task_had_edits:
             edited_paths = task_edited_file_set(session_vars, resolved_id)
-            target_task_had_edits = _has_committable_edits(edited_paths, cwd)
+            target_task_had_edits = await asyncio.to_thread(
+                _has_committable_edits,
+                edited_paths,
+                cwd,
+            )
 
         autolink_error = _auto_link_claim_window_commits(
             ctx=ctx,

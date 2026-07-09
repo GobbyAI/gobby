@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase, SessionVariableMutation
 from gobby.storage.session_resolution import is_session_uuid
-from gobby.utils.datetime import parse_stored_datetime
+from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
 
 from .definitions import WorkflowInstance
 
@@ -143,12 +143,8 @@ class WorkflowInstanceManager:
             total_action_count=row["total_action_count"],
             variables=_decode_variables_payload(row["variables"]),
             context_injected=bool(row["context_injected"]),
-            created_at=(
-                parse_stored_datetime(row["created_at"]) if row["created_at"] else datetime.now(UTC)
-            ),
-            updated_at=(
-                parse_stored_datetime(row["updated_at"]) if row["updated_at"] else datetime.now(UTC)
-            ),
+            created_at=require_stored_datetime(row["created_at"], "created_at"),
+            updated_at=require_stored_datetime(row["updated_at"], "updated_at"),
         )
 
 

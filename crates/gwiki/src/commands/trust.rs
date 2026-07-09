@@ -380,6 +380,8 @@ fn render_text(report: &TrustReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
     use serde_json::json;
 
     fn indexed_counts() -> TrustIndexCounts {
@@ -484,6 +486,80 @@ mod tests {
             ),
             "attention_required"
         );
+    }
+
+    #[test]
+    fn trust_report_counts_only_non_source_broken_links_as_curated() {
+        let scope = ScopeIdentity::topic("rust");
+        let health = health::HealthReport {
+            command: "health",
+            scope: scope.clone(),
+            root: "wiki-root".into(),
+            stale_pages: Vec::new(),
+            stale_citations: Vec::new(),
+            uncited_sources: Vec::new(),
+            broken_links: vec![
+                crate::lint::LinkIssue {
+                    path: PathBuf::from("knowledge/sources/digest-one.md"),
+                    line: 3,
+                    target: "Entity One".to_string(),
+                    kind: "broken_link".to_string(),
+                },
+                crate::lint::LinkIssue {
+                    path: PathBuf::from("knowledge/sources/nested/digest-two.md"),
+                    line: 5,
+                    target: "Entity Two".to_string(),
+                    kind: "broken_link".to_string(),
+                },
+                crate::lint::LinkIssue {
+                    path: PathBuf::from("knowledge/concepts/topic.md"),
+                    line: 8,
+                    target: "Entity Three".to_string(),
+                    kind: "broken_link".to_string(),
+                },
+            ],
+            duplicate_concepts: Vec::new(),
+            duplicate_sources: Vec::new(),
+            uncompiled_sources: Vec::new(),
+            json_path: "meta/health/latest.json".into(),
+            text_path: "meta/health/latest.md".into(),
+        };
+        let audit = audit::AuditReport {
+            command: "audit",
+            scope: scope.clone(),
+            root: "wiki-root".into(),
+            unsupported_claims: Vec::new(),
+            source_context: Arc::new(Vec::new()),
+        };
+        let index = IndexCountsOutcome {
+            counts: counts::IndexCounts {
+                documents: 1,
+                chunks: 1,
+                links: 3,
+                sources: 0,
+                ingestions: 0,
+            },
+            backend: "memory",
+            degradations: Vec::new(),
+        };
+        let report = TrustReport::from_parts(
+            scope,
+            "wiki-root".into(),
+            "memory",
+            json!({
+                "postgres": {"configured": true},
+                "falkordb": {"configured": true},
+                "qdrant": {"configured": true},
+                "embeddings": {"configured": true}
+            }),
+            index,
+            &health,
+            &audit,
+        );
+
+        assert_eq!(report.link_summary.broken_link_count, 3);
+        assert_eq!(report.link_summary.curated_broken_link_count, 1);
+        assert_eq!(report.trust_status, "attention_required");
     }
 
     #[test]

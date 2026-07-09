@@ -118,11 +118,16 @@ pub(crate) fn breadcrumb_stub_docs(
     let mut file_pages = BTreeSet::new();
     let mut repo_exists = false;
     for page in collect_generated_doc_pages(out_dir)? {
+        let is_stub_page = is_stub_meta(doc_meta.get(&page));
         if let Some(module) = scoped_module_doc(&page) {
-            module_pages.insert(module.to_string());
+            if !is_stub_page {
+                module_pages.insert(module.to_string());
+            }
         } else if let Some(file) = scoped_file_doc(&page) {
-            file_pages.insert(file.to_string());
-        } else if page == REPO_DOC_PATH {
+            if !is_stub_page {
+                file_pages.insert(file.to_string());
+            }
+        } else if page == REPO_DOC_PATH && !is_stub_page {
             repo_exists = true;
         }
     }
@@ -256,4 +261,44 @@ fn repo_stub_doc(
         doc.push('\n');
     }
     stub_doc(REPO_DOC_PATH.to_string(), doc, summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub_meta() -> CodewikiDocMeta {
+        CodewikiDocMeta {
+            invalidation_key: Some("stub:test".to_string()),
+            ..CodewikiDocMeta::default()
+        }
+    }
+
+    fn write_page(out_dir: &Path, path: &str) {
+        let path = out_dir.join(path);
+        std::fs::create_dir_all(path.parent().expect("page parent")).expect("create parent");
+        std::fs::write(
+            path,
+            "---\ntitle: Stub\nstub: true\n---\n# Stub\n\nStructural placeholder.\n",
+        )
+        .expect("write stub page");
+    }
+
+    #[test]
+    fn stub_pages_do_not_seed_breadcrumb_closure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(temp.path(), REPO_DOC_PATH);
+        write_page(temp.path(), "code/modules/src.md");
+        let doc_meta = BTreeMap::from([
+            (REPO_DOC_PATH.to_string(), stub_meta()),
+            ("code/modules/src.md".to_string(), stub_meta()),
+        ]);
+
+        let docs = breadcrumb_stub_docs(temp.path(), &doc_meta).expect("compute stubs");
+
+        assert!(
+            docs.is_empty(),
+            "stub-only vault should not keep stubs alive: {docs:?}"
+        );
+    }
 }

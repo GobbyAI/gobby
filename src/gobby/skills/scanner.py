@@ -4,6 +4,7 @@ import hashlib
 import logging
 import tempfile
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -239,7 +240,8 @@ def scan_parsed_skill(parsed_skill: "ParsedSkill", name: str | None = None) -> d
 # Serve-time scan results keyed by (extension, content sha256). Each unique
 # content is scanned once per process; the extension is part of the key because
 # it selects ClawCare's scan mode (markdown AST vs plain regex).
-_serve_scan_cache: dict[tuple[str, str], dict[str, Any]] = {}
+_SERVE_SCAN_CACHE_MAX_SIZE = 256
+_serve_scan_cache: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
 
 
 def reset_serve_scan_cache() -> None:
@@ -268,10 +270,14 @@ def scan_served_content(content: str, name: str, path: str = "SKILL.md") -> dict
     )
     cached = _serve_scan_cache.get(key)
     if cached is not None:
+        _serve_scan_cache.move_to_end(key)
         return cached
     if path == "SKILL.md":
         result = scan_skill_content(content, name=name)
     else:
         result = scan_skill_content("", name=name, files={path: content})
     _serve_scan_cache[key] = result
+    _serve_scan_cache.move_to_end(key)
+    while len(_serve_scan_cache) > _SERVE_SCAN_CACHE_MAX_SIZE:
+        _serve_scan_cache.popitem(last=False)
     return result

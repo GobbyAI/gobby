@@ -6,7 +6,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
 use gobby_wiki::{
     BenchmarkOptions, Command, IngestFileOptions, ReadTarget, ScopeSelection, SyncSessionsOptions,
-    WikiError, output,
+    UpkeepOptions, WikiError, output,
 };
 use serde_json::json;
 
@@ -301,6 +301,10 @@ struct SyncSessionsArgs {
     /// AI is unavailable. A later daemon synthesis supersedes the page.
     #[arg(long)]
     summarize: bool,
+
+    /// Skip connection enrichment for daemon-synthesized session wiki pages.
+    #[arg(long = "no-enrich")]
+    no_enrich: bool,
 }
 
 #[derive(Debug, Args)]
@@ -394,15 +398,27 @@ struct LibrarianArgs {
 #[derive(Debug, Args)]
 struct UpkeepArgs {
     /// Maximum concept pages synthesized in one run.
-    #[arg(long = "max-pages", value_name = "N", default_value = "10")]
+    #[arg(
+        long = "max-pages",
+        value_name = "N",
+        default_value_t = UpkeepOptions::DEFAULT_MAX_PAGES
+    )]
     max_pages: usize,
 
     /// Minimum digest mentions before an unresolved target forms a cluster.
-    #[arg(long = "min-mentions", value_name = "N", default_value = "2")]
+    #[arg(
+        long = "min-mentions",
+        value_name = "N",
+        default_value_t = UpkeepOptions::DEFAULT_MIN_MENTIONS
+    )]
     min_mentions: usize,
 
     /// Maximum accepted sources compiled into one concept page.
-    #[arg(long = "max-sources-per-page", value_name = "N", default_value = "12")]
+    #[arg(
+        long = "max-sources-per-page",
+        value_name = "N",
+        default_value_t = UpkeepOptions::DEFAULT_MAX_SOURCES_PER_PAGE
+    )]
     max_sources_per_page: usize,
 
     /// Plan the run without writing anything to the vault.
@@ -697,6 +713,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 limit: args.limit,
                 raw: args.raw,
                 summarize: args.summarize,
+                enrich: !args.no_enrich,
             },
         }),
         CliCommand::Refresh(args) => Ok(Command::Refresh {

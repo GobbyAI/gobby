@@ -96,6 +96,24 @@ def _seed_memory_recall_vars(handler: Any, session_id: str) -> None:
 
 
 _WIKI_OVERVIEW_WORD_CAP = 500
+_INJECTED_CONTEXT_MARKERS = (
+    "<!-- gobby:injected-context:begin -->",
+    "<!-- gobby:injected-context:end -->",
+)
+
+
+def sanitize_wiki_overview(overview: str) -> str:
+    """Remove context-boundary controls before overview text is injected."""
+    sanitized = overview
+    for marker in _INJECTED_CONTEXT_MARKERS:
+        sanitized = sanitized.replace(marker, "")
+    sanitized = "".join(char for char in sanitized if char in "\n\t" or ord(char) >= 32)
+    lines = [
+        line
+        for line in sanitized.splitlines()
+        if not line.strip().startswith("<!-- gobby:")
+    ]
+    return "\n".join(lines).strip()
 
 
 def load_wiki_overview(project_root: Path) -> str | None:
@@ -130,7 +148,8 @@ def load_wiki_overview(project_root: Path) -> str | None:
     words = overview.split()
     if len(words) > _WIKI_OVERVIEW_WORD_CAP:
         overview = " ".join(words[:_WIKI_OVERVIEW_WORD_CAP])
-    return overview
+    sanitized = sanitize_wiki_overview(overview)
+    return sanitized or None
 
 
 def _seed_wiki_overview_var(handler: Any, session_id: str, project_id: str | None) -> None:

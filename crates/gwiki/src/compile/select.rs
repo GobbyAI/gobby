@@ -145,10 +145,22 @@ fn current_raw_path_for_stale_note(
         .file_stem()
         .and_then(|stem| stem.to_str())
         .and_then(source_id_slug)?;
-    let record = manifest
+    let matches = manifest
         .entries
         .iter()
-        .find(|record| source_id_slug(&record.id) == Some(stale_slug))?;
+        .filter(|record| source_id_slug(&record.id) == Some(stale_slug))
+        .collect::<Vec<_>>();
+    let record = match matches.as_slice() {
+        [record] => *record,
+        [] => return None,
+        _ => {
+            eprintln!(
+                "warning: stale accepted note `{}` matched multiple current source records with slug `{stale_slug}`; pass an explicit source id",
+                stale_path.display()
+            );
+            return None;
+        }
+    };
     let current_path = paths::raw_source_path(&record.id).ok()?;
     vault_root
         .join(&current_path)
@@ -409,6 +421,43 @@ mod tests {
 
         assert!(changed);
         assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn reconcile_drops_stale_note_when_slug_matches_multiple_current_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let first = source_record(
+            "src-f8564a331c2de6-example-com-a",
+            "https://example.com/a?one",
+            "https://example.com/a?one",
+            Some("Example A One"),
+        );
+        let second = source_record(
+            "src-abcdefabcdef-example-com-a",
+            "https://example.com/a?two",
+            "https://example.com/a?two",
+            Some("Example A Two"),
+        );
+        write_raw_source(root, &first);
+        write_raw_source(root, &second);
+        let manifest = SourceManifest {
+            entries: vec![first, second],
+        };
+        let mut notes = vec![session::AcceptedResearchNote {
+            title: "Example A".to_string(),
+            path: PathBuf::from("raw/src-ae5a51a7122bac-example-com-a.md"),
+            code_citations: Vec::new(),
+            degradation: None,
+        }];
+
+        let changed = reconcile_accepted_notes_with_manifest(root, &mut notes, &manifest);
+
+        assert!(changed);
+        assert!(
+            notes.is_empty(),
+            "ambiguous stale slug should not pick an arbitrary current record"
+        );
     }
 
     #[test]

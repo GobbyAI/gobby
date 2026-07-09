@@ -174,6 +174,7 @@ class CronRun:
     error: str | None = None
     agent_run_id: str | None = None
     pipeline_execution_id: str | None = None
+    scheduler_owner: str | None = None
     child: CronRunChild | None = None
 
     @classmethod
@@ -194,6 +195,7 @@ class CronRun:
             pipeline_execution_id=(
                 row["pipeline_execution_id"] if "pipeline_execution_id" in keys else None
             ),
+            scheduler_owner=row["scheduler_owner"] if "scheduler_owner" in keys else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,6 +211,7 @@ class CronRun:
             "error": self.error,
             "agent_run_id": self.agent_run_id,
             "pipeline_execution_id": self.pipeline_execution_id,
+            "scheduler_owner": self.scheduler_owner,
             "child": self.child.to_dict() if self.child else None,
             "created_at": self.created_at,
         }
@@ -224,5 +227,6 @@ class CronRun:
             "error": self.error,
             "agent_run_id": self.agent_run_id,
             "pipeline_execution_id": self.pipeline_execution_id,
+            "scheduler_owner": self.scheduler_owner,
             "child": self.child.to_dict() if self.child else None,
         }

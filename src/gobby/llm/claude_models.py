@@ -7,8 +7,21 @@ decomposition.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgenticGenerationResult:
+    """Result of a tool-enabled agentic investigation run."""
+
+    text: str
+    model: str
+    tool_use_count: int = 0
+    turns: int = 0
+    tools: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] | None = None
+    applied_reasoning_effort: str | None = None
 
 
 @dataclass

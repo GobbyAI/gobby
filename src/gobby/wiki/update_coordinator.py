@@ -80,6 +80,15 @@ class WikiUpdateCoordinator:
                 }
             }
 
+        if not _envelope_ok(index_result):
+            return {
+                "index_handoff": {
+                    "status": "degraded",
+                    "changed_paths_by_scope": changed_paths,
+                    "degradation": _envelope_degradation(index_result),
+                }
+            }
+
         return {
             "index_handoff": {
                 "status": "indexed",
@@ -98,7 +107,7 @@ class WikiUpdateCoordinator:
         results_by_scope: dict[str, dict[str, Any]] = {}
         for scope in changed_paths:
             try:
-                results_by_scope[scope] = await local_gateway_factory(scope).index()
+                scope_result = await local_gateway_factory(scope).index()
             except GwikiCommandError as exc:
                 return {
                     "index_handoff": {
@@ -119,6 +128,17 @@ class WikiUpdateCoordinator:
                         "degradation": _gateway_error_degradation(exc),
                     }
                 }
+            if not _envelope_ok(scope_result):
+                return {
+                    "index_handoff": {
+                        "status": "degraded",
+                        "changed_paths_by_scope": changed_paths,
+                        "results_by_scope": results_by_scope,
+                        "failed_scope": scope,
+                        "degradation": _envelope_degradation(scope_result),
+                    }
+                }
+            results_by_scope[scope] = scope_result
 
         return {
             "index_handoff": {
@@ -168,6 +188,14 @@ class WikiUpdateCoordinator:
             }
             return response
 
+        if not _envelope_ok(index_result):
+            response["index_handoff"] = {
+                "status": "degraded",
+                "changed_paths": changed_paths,
+                "degradation": _envelope_degradation(index_result),
+            }
+            return response
+
         response["index_handoff"] = {
             "status": "indexed",
             "changed_paths": changed_paths,
@@ -207,6 +235,12 @@ def _changed_paths(payload: dict[str, Any]) -> list[str]:
 
 
 _WRITTEN_CLUSTER_ACTIONS = frozenset({"created", "updated"})
+
+
+def written_cluster_paths(entries: Any) -> list[str]:
+    paths: list[str] = []
+    _extend_cluster_paths(paths, entries)
+    return paths
 
 
 def _extend_cluster_paths(paths: list[str], entries: Any) -> None:
@@ -275,4 +309,22 @@ def _gateway_error_degradation(exc: GwikiGatewayError) -> dict[str, Any]:
         "stderr": "",
         "payload": None,
         "error": {"type": exc.__class__.__name__},
+    }
+
+
+def _envelope_ok(envelope: dict[str, Any]) -> bool:
+    return bool(envelope.get("ok", False))
+
+
+def _envelope_degradation(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Degradation for gwiki failure envelopes returned without raising (e.g. timeouts)."""
+    error = envelope.get("error")
+    error_info = error if isinstance(error, dict) else {}
+    return {
+        "type": "index_handoff_failed",
+        "command": str(envelope.get("command", "index")),
+        "message": str(error_info.get("message", "gwiki index reported failure")),
+        "stderr": str(envelope.get("stderr", "")),
+        "payload": envelope.get("payload"),
+        "error": {"type": str(error_info.get("type", "envelope"))},
     }

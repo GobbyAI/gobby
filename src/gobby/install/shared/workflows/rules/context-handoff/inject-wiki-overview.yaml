@@ -1,4 +1,4 @@
-tags: [context-handoff, wiki, overview, lifecycle, gobby, default]
+tags: [context-handoff, context, wiki, overview, lifecycle, gobby, default]
 
 rules:
   inject-wiki-overview:

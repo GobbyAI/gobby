@@ -92,6 +92,7 @@ pub(crate) fn architecture_diagram_evidence(model: &SystemModel) -> DiagramEvide
         };
         evidence.push_node(node_id(&krate.name), krate.name.clone(), shape);
     }
+    let crate_names: BTreeSet<&str> = model.crates.iter().map(|c| c.name.as_str()).collect();
 
     // Service boundary nodes (only the ones the model actually reaches).
     for service in &model.services {
@@ -104,14 +105,15 @@ pub(crate) fn architecture_diagram_evidence(model: &SystemModel) -> DiagramEvide
 
     // Crate -> crate dependency edges.
     for Edge { from, to } in &model.edges {
-        evidence.push_edge(node_id(from), node_id(to), None, false);
+        if crate_names.contains(from.as_str()) && crate_names.contains(to.as_str()) {
+            evidence.push_edge(node_id(from), node_id(to), None, false);
+        }
     }
 
     // Crate -> service edges, attributed from each boundary's `pulled_in_by`
     // provenance so the arrow originates from the crate that pulls it in.
     // "workspace (...)" provenance has no crate node and is left unlinked (the
     // node still shows when another crate reaches it).
-    let crate_names: BTreeSet<&str> = model.crates.iter().map(|c| c.name.as_str()).collect();
     for service in &model.services {
         for provenance in &service.pulled_in_by {
             if let Some(name) = provenance_crate(provenance, &crate_names) {
@@ -621,19 +623,49 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let input = dir.path().join("emitted.md");
         let output = dir.path().join("emitted.out.md");
+        let puppeteer = dir.path().join("puppeteer.json");
         std::fs::write(&input, &doc).expect("write emitted blocks");
+        std::fs::write(
+            &puppeteer,
+            r#"{"args":["--no-sandbox","--disable-setuid-sandbox"]}"#,
+        )
+        .expect("write puppeteer config");
 
-        let run = std::process::Command::new("npx")
+        let run = match std::process::Command::new("npx")
             .args(["-y", "@mermaid-js/mermaid-cli", "-i"])
             .arg(&input)
             .arg("-o")
             .arg(&output)
+            .arg("-p")
+            .arg(&puppeteer)
             .output()
-            .expect("run mmdc");
+        {
+            Ok(run) => run,
+            Err(error) => {
+                eprintln!("skipping: failed to launch mmdc after probe succeeded: {error}");
+                return;
+            }
+        };
+        if !run.status.success() && is_chromium_launch_failure(&run.stderr) {
+            eprintln!(
+                "skipping: mmdc resolved but Chromium could not launch:\n{}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            return;
+        }
         assert!(
             run.status.success(),
             "mmdc rejected an emitted block:\n--- stderr ---\n{}\n--- blocks ---\n{doc}",
             String::from_utf8_lossy(&run.stderr)
         );
+    }
+
+    fn is_chromium_launch_failure(stderr: &[u8]) -> bool {
+        let stderr = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+        stderr.contains("failed to launch the browser process")
+            || stderr.contains("no usable sandbox")
+            || stderr.contains("running as root without --no-sandbox")
+            || stderr.contains("could not find chrome")
+            || stderr.contains("could not find chromium")
     }
 }

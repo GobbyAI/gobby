@@ -170,6 +170,7 @@ def sync_bundled_agents(db: HubDatabase) -> dict[str, Any]:
                         "Rename or delete the row to restore sync management."
                     )
                     logger.error(error_msg)
+                    result["success"] = False
                     result["errors"].append(error_msg)
                     result["shadowed"] += 1
                     result["skipped"] += 1

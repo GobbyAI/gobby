@@ -18,7 +18,7 @@ const MAX_CONNECTIONS: usize = 12;
 const MAX_ENTITY_CHARS: usize = 64;
 
 /// Char budget for the summary excerpt handed to the extraction completion.
-#[cfg(feature = "ai")]
+#[cfg(any(feature = "ai", test))]
 const EXTRACTION_BODY_BUDGET: usize = 6_000;
 
 /// Per-batch Connections enricher.
@@ -134,13 +134,7 @@ impl ConnectionsEnricher {
     fn extract_entities(&self, ai: &AiRouted, body: &str) -> Vec<String> {
         use gobby_core::ai::generation::{GenerationTier, generate_one_shot};
 
-        let excerpt: String = body.chars().take(EXTRACTION_BODY_BUDGET).collect();
-        let prompt = format!(
-            "List up to {MAX_CONNECTIONS} named entities this session summary is about: tools, \
-             systems, services, libraries, projects, and durable concepts. One entity per line, \
-             the exact name only - no brackets, no bullets, no commentary. Skip generic words, \
-             file paths, and one-off identifiers.\n\nSummary:\n{excerpt}"
-        );
+        let prompt = entity_extraction_prompt(body);
         let result = generate_one_shot(
             &ai.context,
             ai.route,
@@ -159,6 +153,17 @@ impl ConnectionsEnricher {
             }
         }
     }
+}
+
+#[cfg(any(feature = "ai", test))]
+pub(super) fn entity_extraction_prompt(body: &str) -> String {
+    let excerpt: String = body.chars().take(EXTRACTION_BODY_BUDGET).collect();
+    format!(
+        "List up to {MAX_CONNECTIONS} named entities this session summary is about: tools, \
+         systems, services, libraries, projects, and durable concepts. One entity per line, \
+         the exact name only - no brackets, no bullets, no commentary. Skip generic words, \
+         file paths, and one-off identifiers.\n\nSummary:\n{excerpt}"
+    )
 }
 
 /// Byte range of the `## Connections` section body (heading line excluded,

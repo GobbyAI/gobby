@@ -21,7 +21,7 @@ from gobby.ai import (
     TextGenerationRequest,
     TextGenerationService,
 )
-from gobby.ai._text_generation_service import _CircuitOpenError
+from gobby.ai._text_generation_service import _CIRCUIT_BREAKER_MAX_KEYS, _CircuitOpenError
 
 pytestmark = pytest.mark.unit
 
@@ -53,6 +53,15 @@ class _ScriptedAdapter:
         if index < len(self.outcomes) and self.outcomes[index]:
             raise RuntimeError("provider degraded")
         return "ok"
+
+
+class _BlankAdapter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.calls += 1
+        return " "
 
 
 def _breaker_service(adapter: object, *, threshold: int, cooldown: float) -> TextGenerationService:
@@ -163,6 +172,28 @@ async def test_breaker_disabled_when_threshold_not_positive() -> None:
         with pytest.raises(RuntimeError):
             await _call(service)
     assert adapter.calls == 6
+
+
+@pytest.mark.asyncio
+async def test_local_validation_errors_do_not_open_breaker() -> None:
+    adapter = _BlankAdapter()
+    service = _breaker_service(adapter, threshold=1, cooldown=60.0)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            await _call(service)
+
+    assert adapter.calls == 2
+
+
+def test_breaker_state_is_bounded() -> None:
+    service = _breaker_service(_CountingFailAdapter(), threshold=2, cooldown=60.0)
+
+    for index in range(_CIRCUIT_BREAKER_MAX_KEYS + 10):
+        service._breaker_record_failure(f"provider:model-{index}")
+
+    assert len(service._breaker_failures) <= _CIRCUIT_BREAKER_MAX_KEYS
+    assert len(service._breaker_open_until) <= _CIRCUIT_BREAKER_MAX_KEYS
 
 
 class _CooldownError(RuntimeError):

@@ -160,12 +160,18 @@ pub struct UpkeepOptions {
     pub dry_run: bool,
 }
 
+impl UpkeepOptions {
+    pub const DEFAULT_MAX_PAGES: usize = crate::upkeep::DEFAULT_MAX_PAGES;
+    pub const DEFAULT_MIN_MENTIONS: usize = crate::upkeep::DEFAULT_MIN_MENTIONS;
+    pub const DEFAULT_MAX_SOURCES_PER_PAGE: usize = crate::upkeep::DEFAULT_MAX_SOURCES_PER_PAGE;
+}
+
 impl Default for UpkeepOptions {
     fn default() -> Self {
         Self {
-            max_pages: crate::upkeep::DEFAULT_MAX_PAGES,
-            min_mentions: crate::upkeep::DEFAULT_MIN_MENTIONS,
-            max_sources_per_page: crate::upkeep::DEFAULT_MAX_SOURCES_PER_PAGE,
+            max_pages: Self::DEFAULT_MAX_PAGES,
+            min_mentions: Self::DEFAULT_MIN_MENTIONS,
+            max_sources_per_page: Self::DEFAULT_MAX_SOURCES_PER_PAGE,
             dry_run: false,
         }
     }
@@ -231,7 +237,7 @@ pub struct IngestFileOptions {
     pub text_routing: Option<AiRouting>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncSessionsOptions {
     pub archive_dir: Option<PathBuf>,
     pub wiki_dir: Option<PathBuf>,
@@ -241,6 +247,21 @@ pub struct SyncSessionsOptions {
     /// synthesis, instead of the structural skeleton. Degrades to skeleton when
     /// AI is unavailable.
     pub summarize: bool,
+    /// Enrich daemon-synthesized session pages with connection links before write.
+    pub enrich: bool,
+}
+
+impl Default for SyncSessionsOptions {
+    fn default() -> Self {
+        Self {
+            archive_dir: None,
+            wiki_dir: None,
+            limit: None,
+            raw: false,
+            summarize: false,
+            enrich: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

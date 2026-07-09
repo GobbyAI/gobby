@@ -15,6 +15,10 @@ from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, S
 logger = logging.getLogger("gobby.storage.pipelines")
 
 
+class PipelineExecutionNotFoundError(RuntimeError):
+    """Raised when an execution-scoped update matches no rows."""
+
+
 class PipelineExecutionStorageMixin:
     """Pipeline execution CRUD, queries, search, and recovery methods."""
 
@@ -178,7 +182,7 @@ class PipelineExecutionStorageMixin:
         session, when any, remains reachable as the child's parent).
         """
         project_clause, project_params = self._project_predicate()
-        self.db.execute(
+        cursor = self.db.execute(
             f"""
             UPDATE pipeline_executions
             SET session_id = %s, updated_at = %s
@@ -186,6 +190,10 @@ class PipelineExecutionStorageMixin:
             """,  # nosec B608
             (session_id, utc_now(), execution_id, *project_params),
         )
+        if cursor.rowcount == 0:
+            message = f"Pipeline execution {execution_id} was not found in current project scope"
+            logger.warning(message)
+            raise PipelineExecutionNotFoundError(message)
 
     def _build_executions_filter(
         self,

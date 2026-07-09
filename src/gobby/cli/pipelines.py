@@ -25,6 +25,8 @@ from gobby.cli.pipelines_runs import (
     search_executions,
     show_pipeline_run,
 )
+from gobby.cli.workflows.common import create_workflow_loader
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_url import DaemonUrlError
 from gobby.utils.json_helpers import json_dumps
 from gobby.workflows.loader import WorkflowLoader
@@ -35,15 +37,13 @@ from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipeline
 logger = logging.getLogger(__name__)
 
 
-def get_workflow_loader() -> WorkflowLoader:
+def get_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
     """Get a DB-backed workflow loader.
 
     Pipeline definitions live in the DB registry; a loader without a database
     cannot see bundled pipelines such as wiki-research.
     """
-    from gobby.storage.hub.runtime import open_runtime_hub_database
-
-    return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
+    return create_workflow_loader(db)
 
 
 def get_project_path() -> Path | None:
@@ -91,7 +91,7 @@ def get_pipeline_executor() -> Any:
         db=db,
         execution_manager=execution_manager,
         llm_service=None,  # Not needed for exec steps
-        loader=get_workflow_loader(),
+        loader=get_workflow_loader(db),
         template_engine=TemplateEngine(),
     )
 
@@ -141,7 +141,7 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
     except (click.ClickException, DaemonUrlError, ValueError) as e:
         logger.debug("Daemon run unavailable for %s: %s", name, e, exc_info=True)
         return None
-    except httpx.TimeoutException:
+    except httpx.ReadTimeout:
         # The daemon accepted the run and is still executing it (long-running
         # pipelines wait on spawned agents). Falling back to the local
         # executor here would start a DUPLICATE execution.

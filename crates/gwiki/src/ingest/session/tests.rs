@@ -223,6 +223,30 @@ fn session_wiki_ingest_strips_daemon_frontmatter_and_redacts() {
 }
 
 #[test]
+fn session_wiki_connection_extraction_prompt_uses_redacted_body() {
+    let openai_key = format!("{}{}", "sk-proj-", "abcdefghijklmnopqrstuvwxyz123456");
+    let daemon_md = format!(
+        concat!(
+            "---\n",
+            "title: \"Session: abcd1234 — 2026-06-24\"\n",
+            "source: claude\n",
+            "---\n",
+            "\n",
+            "## Summary\n\nToken {key} was loaded from /Users/casey/secret.env while wiring Qdrant.\n"
+        ),
+        key = openai_key
+    );
+    let mut page = DaemonWikiPage::parse(&daemon_md);
+    page.set_body(redact_session_markdown(page.body()));
+
+    let prompt = connections::entity_extraction_prompt(page.body());
+
+    assert!(prompt.contains("[REDACTED_API_KEY]"), "{prompt}");
+    assert!(!prompt.contains(&openai_key), "{prompt}");
+    assert!(!prompt.contains("/Users/casey"), "{prompt}");
+}
+
+#[test]
 fn wiki_ingest_enriches_connections_for_both_summary_formats() {
     let temp = tempfile::tempdir().expect("tempdir");
     let enricher = ConnectionsEnricher::deterministic();

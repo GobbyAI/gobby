@@ -1,10 +1,14 @@
 import json
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
@@ -34,7 +38,7 @@ def _legacy_github_issue_task_id(repo_url: str, issue_num: int) -> str:
 
 
 @pytest.fixture
-def sync_manager(hub_db, tmp_path):
+def sync_manager(hub_db: HubDatabase, tmp_path: Path) -> Iterator[TaskSyncManager]:
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
     task_manager = LocalTaskManager(hub_db)
     manager = TaskSyncManager(task_manager, str(export_path))
@@ -42,12 +46,12 @@ def sync_manager(hub_db, tmp_path):
 
 
 @pytest.fixture
-def task_manager(hub_db):
+def task_manager(hub_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(hub_db)
 
 
 @pytest.fixture
-def sample_project(hub_db):
+def sample_project(hub_db: HubDatabase) -> dict[str, Any]:
     project = LocalProjectManager(hub_db).create(
         name="test-project",
         repo_path="/tmp/test-project",
@@ -56,7 +60,7 @@ def sample_project(hub_db):
     return project.to_dict()
 
 
-def _insert_session(db, session_id: str, project_id: str) -> None:
+def _insert_session(db: HubDatabase, session_id: str, project_id: str) -> None:
     db.execute(
         """
         INSERT INTO sessions (id, external_id, machine_id, source, project_id)
@@ -817,7 +821,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_no_open_issues(self, sync_manager, sample_project):
+    async def test_import_no_open_issues(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import when there are no open issues."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
@@ -836,7 +842,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_without_project_context(self, sync_manager):
+    async def test_import_issues_without_project_context(
+        self, sync_manager: TaskSyncManager
+    ) -> None:
         """Test import fails without project context."""
         issues_json = json.dumps(
             [
@@ -866,7 +874,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_with_project_id(self, sync_manager, sample_project):
+    async def test_import_issues_with_project_id(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import with explicit project_id."""
         issues_json = json.dumps(
             [
@@ -908,7 +918,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_updates_existing(self, sync_manager, sample_project):
+    async def test_import_issues_updates_existing(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import updates existing issues."""
         # First import
         issues_json = json.dumps(
@@ -968,8 +980,8 @@ class TestImportFromGitHubIssues:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_import_issues_updates_existing_by_github_identifiers(
-        self, sync_manager, sample_project
-    ):
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import updates a task already linked by GitHub identifiers."""
         existing = sync_manager.task_manager.create_task(
             project_id=sample_project["id"],
@@ -1011,7 +1023,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_updates_existing_legacy_url_id(self, sync_manager, sample_project):
+    async def test_import_issues_updates_existing_legacy_url_id(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import updates rows that used the legacy repo URL UUID seed."""
         repo_url = "https://github.com/owner/repo"
         legacy_task_id = _legacy_github_issue_task_id(repo_url, 8)
@@ -1058,8 +1072,8 @@ class TestImportFromGitHubIssues:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_import_issues_updates_current_project_legacy_normalized_id(
-        self, sync_manager, sample_project
-    ):
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import updates old normalized-ID rows only in the requested project."""
         repo_url = "https://github.com/owner/repo"
         legacy_task_id = _legacy_normalized_github_issue_task_id(9)
@@ -1106,8 +1120,8 @@ class TestImportFromGitHubIssues:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_import_issues_ignores_legacy_id_in_other_project(
-        self, sync_manager, sample_project
-    ):
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test legacy ID fallback is scoped to the requested project."""
         other_project = LocalProjectManager(sync_manager.db).create(
             name="other-project",
@@ -1164,7 +1178,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_skip_no_number(self, sync_manager, sample_project):
+    async def test_import_issues_skip_no_number(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import skips issues without number."""
         issues_json = json.dumps(
             [
@@ -1193,7 +1209,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_skip_non_integer_number(self, sync_manager, sample_project):
+    async def test_import_issues_skip_non_integer_number(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import skips issues with non-integer numbers."""
         issues_json = json.dumps(
             [
@@ -1224,7 +1242,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_json_decode_error(self, sync_manager, sample_project):
+    async def test_import_issues_json_decode_error(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import handles invalid JSON from gh."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
@@ -1242,7 +1262,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_finds_project_by_url(self, sync_manager, sample_project):
+    async def test_import_issues_finds_project_by_url(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import finds project by matching github_url."""
         issues_json = json.dumps(
             [
@@ -1272,7 +1294,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_general_exception(self, sync_manager, sample_project):
+    async def test_import_issues_general_exception(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import handles general exceptions."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
@@ -1290,7 +1314,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_issues_with_project_context(self, sync_manager, sample_project):
+    async def test_import_issues_with_project_context(
+        self, sync_manager: TaskSyncManager, sample_project: dict[str, Any]
+    ) -> None:
         """Test import uses project context when project_id not provided."""
         issues_json = json.dumps(
             [

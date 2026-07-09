@@ -10,9 +10,6 @@ const DEFAULT_HIDDEN_ALLOWLIST_PATTERNS: &[&str] = &[
     ".github/workflows/**/*.yaml",
 ];
 
-/// Directory name of the wiki vault resolved for `root` (`wiki`, or a
-/// `gobby-wiki` collision fallback). Resolution costs a handful of `stat`s per
-/// call, in line with the per-path config probing this module already does.
 fn vault_dir_name(root: &Path) -> Option<String> {
     resolve_vault_dir(root)?
         .file_name()
@@ -21,17 +18,42 @@ fn vault_dir_name(root: &Path) -> Option<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct HiddenPathContext {
+    vault_dir_name: Option<String>,
+    allowlist: HiddenPathAllowlist,
+}
+
+impl HiddenPathContext {
+    pub(super) fn load(root: &Path) -> Self {
+        let vault_dir_name = vault_dir_name(root);
+        let allowlist = HiddenPathAllowlist::load_with_vault(root, vault_dir_name.as_deref());
+        Self {
+            vault_dir_name,
+            allowlist,
+        }
+    }
+
+    pub(super) fn allowlist(&self) -> &HiddenPathAllowlist {
+        &self.allowlist
+    }
+
+    fn vault_dir_name(&self) -> Option<&str> {
+        self.vault_dir_name.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HiddenPathAllowlist {
     patterns: Vec<String>,
 }
 
 impl HiddenPathAllowlist {
-    pub(super) fn load(root: &Path) -> Self {
+    fn load_with_vault(root: &Path, vault_dir_name: Option<&str>) -> Self {
         let mut patterns = DEFAULT_HIDDEN_ALLOWLIST_PATTERNS
             .iter()
             .map(|pattern| (*pattern).to_string())
             .collect::<Vec<_>>();
-        if let Some(vault) = vault_dir_name(root) {
+        if let Some(vault) = vault_dir_name {
             patterns.push(format!("{vault}/**/*.md"));
         }
         patterns.extend(read_project_hidden_allowlist(root));
@@ -134,7 +156,11 @@ pub(super) fn is_hidden_path(root: &Path, path: &Path) -> bool {
     })
 }
 
-pub(super) fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool {
+pub(super) fn is_hidden_metadata_content_only_with_context(
+    root: &Path,
+    path: &Path,
+    context: &HiddenPathContext,
+) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let components = rel
         .components()
@@ -154,7 +180,7 @@ pub(super) fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool 
 
     if components.len() >= 2
         && path_has_extension(path, &["md"])
-        && vault_dir_name(root).as_deref() == Some(components[0])
+        && context.vault_dir_name() == Some(components[0])
     {
         return true;
     }
@@ -165,7 +191,11 @@ pub(super) fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool 
         && path_has_extension(path, &["yml", "yaml"])
 }
 
-pub(super) fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
+pub(super) fn is_generated_wiki_metadata_with_context(
+    root: &Path,
+    path: &Path,
+    context: &HiddenPathContext,
+) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let components = rel
         .components()
@@ -175,10 +205,10 @@ pub(super) fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
         })
         .collect::<Vec<_>>();
 
-    let Some(vault) = vault_dir_name(root) else {
+    let Some(vault) = context.vault_dir_name() else {
         return false;
     };
-    if components.first().copied() != Some(vault.as_str()) {
+    if components.first().copied() != Some(vault) {
         return false;
     }
 

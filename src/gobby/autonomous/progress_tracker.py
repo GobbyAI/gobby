@@ -83,6 +83,10 @@ MCP_READONLY_TOOL_PREFIXES = (
     "show",
     "status",
 )
+MCP_MUTATING_TOOL_PREFIX_DENYLIST = (
+    "check_and_fix",
+    "status_update",
+)
 
 
 def _normalize_tool_args(tool_args: dict[str, Any] | None) -> str:
@@ -145,9 +149,33 @@ def _is_mcp_proxy_call(tool_name: str) -> bool:
 
 
 def _mcp_result_indicates_failure(result_str: str) -> bool:
-    """Detect an explicit success=false payload from a proxied MCP call."""
-    compact = "".join(result_str.split()).lower()
-    return '"success":false' in compact or "'success':false" in compact
+    """Detect failed proxied MCP calls from structured payloads when possible."""
+    if not result_str:
+        return False
+    try:
+        payload = json.loads(result_str)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return _result_indicates_failure(result_str)
+    if not isinstance(payload, dict):
+        return False
+    success = payload.get("success")
+    if success is False:
+        return True
+    if success is True:
+        return False
+    return bool(payload.get("error") or payload.get("errors"))
+
+
+def _is_readonly_mcp_tool(tool_name: str) -> bool:
+    if any(
+        tool_name == prefix or tool_name.startswith(f"{prefix}_")
+        for prefix in MCP_MUTATING_TOOL_PREFIX_DENYLIST
+    ):
+        return False
+    return any(
+        tool_name == prefix or tool_name.startswith(f"{prefix}_")
+        for prefix in MCP_READONLY_TOOL_PREFIXES
+    )
 
 
 def _classify_mcp_call(tool_args: dict[str, Any] | None, tool_result: Any) -> ProgressType:
@@ -157,7 +185,7 @@ def _classify_mcp_call(tool_args: dict[str, Any] | None, tool_result: Any) -> Pr
     executed; only an explicit success=false payload demotes it.
     """
     inner_tool = str((tool_args or {}).get("tool_name") or "")
-    if not inner_tool or inner_tool.startswith(MCP_READONLY_TOOL_PREFIXES):
+    if not inner_tool or _is_readonly_mcp_tool(inner_tool):
         return ProgressType.TOOL_CALL
     result_str = str(tool_result) if tool_result else ""
     if _mcp_result_indicates_failure(result_str):

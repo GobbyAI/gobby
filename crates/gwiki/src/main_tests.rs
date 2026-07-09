@@ -397,6 +397,7 @@ fn sync_sessions_cli_flags_map_to_command_options() {
         "--limit",
         "3",
         "--raw",
+        "--no-enrich",
     ])
     .expect("parse sync-sessions command");
     let CliCommand::SyncSessions(args) = cli.command else {
@@ -412,6 +413,7 @@ fn sync_sessions_cli_flags_map_to_command_options() {
     );
     assert_eq!(args.limit, Some(3));
     assert!(args.raw);
+    assert!(args.no_enrich);
 
     let command = command_from_cli(CliCommand::SyncSessions(args), cli.scope.into())
         .expect("map sync-sessions command");
@@ -432,6 +434,7 @@ fn sync_sessions_cli_flags_map_to_command_options() {
     );
     assert_eq!(options.limit, Some(3));
     assert!(options.raw);
+    assert!(!options.enrich);
 
     let default_cli = Cli::try_parse_from(["gwiki", "sync-sessions"])
         .expect("parse default sync-sessions command");
@@ -439,6 +442,7 @@ fn sync_sessions_cli_flags_map_to_command_options() {
         panic!("expected parsed sync-sessions command");
     };
     assert!(!default_args.raw);
+    assert!(!default_args.no_enrich);
     let default_command = command_from_cli(
         CliCommand::SyncSessions(default_args),
         default_cli.scope.into(),
@@ -452,6 +456,7 @@ fn sync_sessions_cli_flags_map_to_command_options() {
         panic!("expected sync-sessions command");
     };
     assert!(!default_options.raw);
+    assert!(default_options.enrich);
 }
 
 #[test]

@@ -84,7 +84,9 @@ def mock_storage() -> Iterator[MagicMock]:
     mock_db = MagicMock()
     mock_st = MagicMock()
     # Non-uuid job refs (the "cj-abc123" fixtures) resolve by name first.
-    mock_st.get_job_by_name.return_value = _make_job()
+    mock_st.get_job_by_name.side_effect = (
+        lambda name: _make_job() if name == "cj-abc123" else None
+    )
     with patch("gobby.cli.cron.get_cron_storage", return_value=(mock_db, mock_st)):
         yield mock_st
 
@@ -295,7 +297,7 @@ class TestCronRun:
             result = runner.invoke(cli, ["cron", "run", "cj-nonexistent"])
 
         assert result.exit_code != 0
-        assert "Cron job not found: cj-nonexistent" in result.output
+        assert "Job not found: cj-nonexistent" in result.output
         mock_storage.create_run.assert_not_called()
 
     def test_run_json_output(self, runner, mock_storage) -> None:

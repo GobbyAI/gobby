@@ -159,6 +159,7 @@ pub(crate) fn ingest_session_wiki_file_without_index(
 ) -> Result<IngestResult, WikiError> {
     let text = text_from_utf8_lossy(&snapshot.bytes);
     let mut page = DaemonWikiPage::parse(&text);
+    page.set_body(redact_session_markdown(page.body()));
     // Connections enrichment keeps digests wikilinked regardless of the
     // upstream summary format; the daemon handoff prompt stays untouched.
     if let Some(enricher) = enricher

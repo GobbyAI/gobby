@@ -42,7 +42,7 @@ class CronRunStorageMixin:
 
     db: HubDatabase
 
-    def create_run(self, cron_job_id: str) -> CronRun | None:
+    def create_run(self, cron_job_id: str, *, scheduler_owner: str | None = None) -> CronRun | None:
         """Create a cron run unless this job already has pending/running work."""
         run_id = str(uuid.uuid4())
         now = utc_now()
@@ -59,9 +59,9 @@ class CronRunStorageMixin:
             INSERT INTO cron_runs (
                 id, cron_job_id, triggered_at, started_at, completed_at,
                 status, output, error, agent_run_id,
-                pipeline_execution_id, created_at
+                pipeline_execution_id, scheduler_owner, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
             DO NOTHING
             RETURNING *
@@ -77,6 +77,7 @@ class CronRunStorageMixin:
                 candidate.error,
                 candidate.agent_run_id,
                 candidate.pipeline_execution_id,
+                scheduler_owner,
                 now,
             ),
         )
@@ -89,6 +90,7 @@ class CronRunStorageMixin:
         cron_job_id: str,
         *,
         max_concurrent_jobs: int,
+        scheduler_owner: str | None = None,
     ) -> tuple[CronRun | None, int]:
         """Create a cron run after atomically checking global active-run capacity."""
         if max_concurrent_jobs < 1:
@@ -117,9 +119,9 @@ class CronRunStorageMixin:
                 INSERT INTO cron_runs (
                     id, cron_job_id, triggered_at, started_at, completed_at,
                     status, output, error, agent_run_id,
-                    pipeline_execution_id, created_at
+                    pipeline_execution_id, scheduler_owner, created_at
                 )
-                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                   FROM cron_jobs
                  WHERE id = %s
                 ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
@@ -136,6 +138,7 @@ class CronRunStorageMixin:
                     candidate.error,
                     candidate.agent_run_id,
                     candidate.pipeline_execution_id,
+                    scheduler_owner,
                     now,
                     candidate.cron_job_id,
                 ),
@@ -217,14 +220,21 @@ class CronRunStorageMixin:
         )
         return row is not None
 
-    def list_active_runs(self) -> list[CronRun]:
+    def list_active_runs(self, *, scheduler_owner: str | None = None) -> list[CronRun]:
         """Return all pending/running cron runs across jobs."""
+        owner_clause = ""
+        params: tuple[str, ...] = ()
+        if scheduler_owner is not None:
+            owner_clause = "AND scheduler_owner = %s"
+            params = (scheduler_owner,)
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT * FROM cron_runs
              WHERE status IN ('pending', 'running')
+               {owner_clause}
              ORDER BY created_at ASC
-            """
+            """,  # nosec B608
+            params,
         )
         return hydrate_run_children(self.db, [CronRun.from_row(row) for row in rows])
 

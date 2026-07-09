@@ -224,9 +224,6 @@ pub(super) fn source_page_paths(
         .collect()
 }
 
-/// True when the page at `page_path` is a compile-emitted stub for the source
-/// identified by `identity` (its vault-relative raw path). Unreadable or
-/// unparseable pages never match, so they keep colliding into fresh slugs.
 /// True when an existing page's frontmatter title matches the topic exactly —
 /// the article identity used by [`resolve_article_path`]. Pages whose
 /// frontmatter fails to parse never match, so they keep colliding into
@@ -238,6 +235,9 @@ fn page_matches_topic(page_path: &Path, topic: &str) -> bool {
     parse_frontmatter(&markdown).is_ok_and(|parsed| parsed.metadata.title.as_deref() == Some(topic))
 }
 
+/// True when the page at `page_path` is a compile-emitted stub for the source
+/// identified by `identity` (its vault-relative raw path). Unreadable or
+/// unparseable pages never match, so they keep colliding into fresh slugs.
 fn page_matches_source_identity(page_path: &Path, identity: &str) -> bool {
     let Ok(markdown) = std::fs::read_to_string(page_path) else {
         return false;

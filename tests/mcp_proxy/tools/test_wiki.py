@@ -661,6 +661,11 @@ async def test_wiki_compile_uses_generation_gateway_timeout() -> None:
     assert result["success"] is True
     assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
 
+    result = await registry.call("wiki_compile", {})
+
+    assert result["success"] is True
+    assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
