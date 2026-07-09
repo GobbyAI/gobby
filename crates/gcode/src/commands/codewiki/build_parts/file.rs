@@ -4,8 +4,8 @@ use super::super::{
     AiDepth, CodewikiProgress, DeprecationIndex, FileDoc, GenerationContent, GenerationOutcome,
     LeadingChunk, PromptTier, RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TestIndex,
     TextGenerator, TextVerifier, VerifyNote, VerifyOutcome, citation_list, component_label,
-    file_doc_path, ground_text, maybe_generate, prompts, structural_file_summary,
-    structural_symbol_purpose, verify_with_notes, write_section,
+    file_doc_path, ground_text, maybe_generate, prompts, restamp_file_module_link,
+    structural_file_summary, structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::models::Symbol;
 
@@ -49,6 +49,14 @@ pub(crate) fn build_file_doc(
     let neighbors = relationships.neighbor_files(file);
     let reused = reuse.as_deref_mut().and_then(|plan| {
         plan.reusable_page_with_summary_and_neighbors(&file_doc_path(file), &sources, &neighbors)
+    });
+    // Cluster assignment is a render input those hashes cannot see: clustering
+    // is global, so an unchanged file can be assigned a new module this run
+    // (a synthetic cluster renamed or dissolved, #17731). Re-stamp the
+    // deterministic `Module:` link with this run's module; a page without a
+    // recognizable link falls back to regeneration.
+    let reused = reused.and_then(|(page, summary)| {
+        restamp_file_module_link(&page, &module).map(|page| (page, summary))
     });
     let file_verb = if reused.is_some() {
         "reusing"

@@ -139,6 +139,7 @@ mod relationship_facts;
 mod render;
 mod repair;
 mod reuse;
+mod reuse_guard;
 mod run;
 mod strict_markdown;
 mod stubs;
@@ -156,6 +157,10 @@ pub(crate) use build::{
     build_codewiki_changes_doc, build_codewiki_index_snapshot, build_curated_navigation_docs,
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
+};
+pub(crate) use reuse_guard::{
+    file_module_link_key, module_child_links_key, restamp_file_module_link,
+    reused_module_child_links_current,
 };
 pub(crate) use truth_digest::build_truth_digest;
 // Module clustering and graph-to-file helpers.

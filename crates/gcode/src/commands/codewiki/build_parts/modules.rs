@@ -125,6 +125,13 @@ pub(crate) fn build_module_docs_with_filter(
         let reused = reuse.as_deref_mut().and_then(|plan| {
             plan.reusable_page_with_summary(&module_doc_path(&module), &span_files(&source_spans))
         });
+        // A child cluster rename keeps this module's member-file span set
+        // (same files, new child name), so hashes alone would reuse the page
+        // while its Child Modules links dangle (#17731). Child names also
+        // feed the brief prompt, so a changed child set regenerates the page
+        // instead of patching links.
+        let reused =
+            reused.filter(|(page, _)| reused_module_child_links_current(page, &child_modules));
         progress.emit(format!(
             "{} module doc module {}/{} {}",
             if reused.is_some() {

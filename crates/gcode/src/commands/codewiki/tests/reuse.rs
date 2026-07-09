@@ -1300,3 +1300,262 @@ fn keyed_aggregate_page_reuse_honors_generation_settings() {
         "a candidate change must invalidate the keyed page even when its digest matches"
     );
 }
+
+/// Project whose call graph chains three files across sibling subdirectories
+/// into one synthetic cross-directory cluster: `src/db/ids.rs` calls
+/// `src/graph/write.rs` calls `src/graph/sync_plan.rs`. A direct `src/main.rs`
+/// keeps `src` as a single subsystem root so the chain merges. Cluster name
+/// derives from member stems: `src/ids_plan` with all three, `src/ids_write`
+/// once `sync_plan.rs` leaves.
+fn cluster_rename_project() -> (tempfile::TempDir, CodewikiInput) {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/db")).expect("db dir");
+    std::fs::create_dir_all(project.path().join("src/graph")).expect("graph dir");
+    for (path, content) in [
+        ("src/main.rs", "fn main() {}\n"),
+        ("src/db/ids.rs", "pub fn ids() {}\n"),
+        ("src/graph/write.rs", "pub fn write() {}\n"),
+        ("src/graph/sync_plan.rs", "pub fn sync_plan() {}\n"),
+    ] {
+        std::fs::write(project.path().join(path), content).expect("write source");
+    }
+    let symbols = vec![
+        test_symbol("src/main.rs", "main", "function", 1, "fn main()"),
+        test_symbol("src/db/ids.rs", "ids", "function", 1, "pub fn ids()"),
+        test_symbol(
+            "src/graph/write.rs",
+            "write",
+            "function",
+            1,
+            "pub fn write()",
+        ),
+        test_symbol(
+            "src/graph/sync_plan.rs",
+            "sync_plan",
+            "function",
+            1,
+            "pub fn sync_plan()",
+        ),
+    ];
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/main.rs".to_string(),
+            "src/db/ids.rs".to_string(),
+            "src/graph/write.rs".to_string(),
+            "src/graph/sync_plan.rs".to_string(),
+        ],
+        graph_edges: vec![
+            CodewikiGraphEdge::call(
+                test_component_id("src/db/ids.rs", "ids", "function"),
+                test_component_id("src/graph/write.rs", "write", "function"),
+            ),
+            CodewikiGraphEdge::call(
+                test_component_id("src/graph/write.rs", "write", "function"),
+                test_component_id("src/graph/sync_plan.rs", "sync_plan", "function"),
+            ),
+        ],
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols,
+    };
+    (project, input)
+}
+
+/// Every `[[code/modules/...]]` wikilink in the emitted doc set must target an
+/// emitted module page — the invariant #17731 saw broken by verbatim reuse.
+fn assert_module_links_resolve(docs: &[BuiltDoc]) {
+    let paths = docs
+        .iter()
+        .map(|doc| doc.path.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for doc in docs {
+        let mut rest = doc.content.as_str();
+        while let Some(start) = rest.find("[[code/modules/") {
+            let after = &rest[start + 2..];
+            let end = after.find(['|', ']']).unwrap_or(after.len());
+            let target = &after[..end];
+            assert!(
+                paths.contains(format!("{target}.md").as_str()),
+                "doc {} links module page {target} that this run does not emit",
+                doc.path
+            );
+            rest = &after[end..];
+        }
+    }
+}
+
+#[test]
+fn cluster_dissolve_restamps_module_links_on_reused_file_pages() {
+    let (project, input) = cluster_rename_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("First prose.".to_string());
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    assert!(
+        first
+            .iter()
+            .any(|doc| doc.path == "code/modules/src/ids_plan.md"),
+        "first run must emit the synthetic cluster module page"
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+    let ids_page_before = std::fs::read_to_string(out_dir.join("code/files/src/db/ids.rs.md"))
+        .expect("ids.rs page on disk");
+    assert!(ids_page_before.contains("code/modules/src/ids_plan|"));
+
+    // `sync_plan.rs` is deleted: the cluster keeps `ids.rs` and `write.rs` but
+    // its purpose-derived name changes. `ids.rs` (sources and neighbors
+    // untouched — its only edge is to `write.rs`) stays reusable and must be
+    // re-stamped, not left linking the dissolved module.
+    std::fs::remove_file(project.path().join("src/graph/sync_plan.rs")).expect("delete source");
+    let mut second_input = input;
+    second_input
+        .files
+        .retain(|file| file != "src/graph/sync_plan.rs");
+    second_input
+        .symbols
+        .retain(|symbol| symbol.file_path != "src/graph/sync_plan.rs");
+    second_input.graph_edges.truncate(1);
+
+    let mut second_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = generate_hierarchical_docs_with_reuse(
+        &second_input,
+        Some(&mut second_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+
+    // Reuse held (byte-identical page except the re-stamped, equal-length
+    // module link) — no regeneration for the unchanged file.
+    let ids_doc = second
+        .iter()
+        .find(|doc| doc.path == "code/files/src/db/ids.rs.md")
+        .expect("ids.rs doc emitted");
+    let expected = ids_page_before.replace(
+        "code/modules/src/ids_plan|src/ids_plan",
+        "code/modules/src/ids_write|src/ids_write",
+    );
+    assert_ne!(expected, ids_page_before, "link swap must apply");
+    assert_eq!(ids_doc.content, expected);
+    assert_module_links_resolve(&second);
+
+    let changed = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
+    assert!(changed.contains(&"code/files/src/db/ids.rs.md".to_string()));
+    assert!(
+        !out_dir.join("code/modules/src/ids_plan.md").exists(),
+        "dissolved cluster module page must be pruned"
+    );
+    assert!(out_dir.join("code/modules/src/ids_write.md").exists());
+    let ids_page_after = std::fs::read_to_string(out_dir.join("code/files/src/db/ids.rs.md"))
+        .expect("ids.rs page after heal");
+    assert!(!ids_page_after.contains("ids_plan"));
+}
+
+#[test]
+fn child_cluster_rename_regenerates_parent_module_page() {
+    let (project, input) = cluster_rename_project();
+    let out_dir = project.path().join("codewiki");
+
+    let mut first_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("First prose.".to_string());
+    let mut progress = CodewikiProgress::silent();
+    let first = generate_hierarchical_docs_with_progress(
+        &input,
+        Some(&mut first_generator),
+        AiDepth::Symbols,
+        &mut progress,
+    );
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+    let src_page_before = std::fs::read_to_string(out_dir.join("code/modules/src.md"))
+        .expect("src module page on disk");
+    assert!(src_page_before.contains("code/modules/src/ids_plan|"));
+
+    // Only the call edge between `write.rs` and `sync_plan.rs` disappears: no
+    // file content changes, so `src.md`'s member-file span hashes all still
+    // match. The cluster splits and renames, and the parent's Child Modules
+    // links are stale — hash-based reuse alone would ship them verbatim.
+    let mut second_input = input;
+    second_input.graph_edges.truncate(1);
+
+    let mut second_generator =
+        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
+    let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
+    let mut reuse = Some(&mut plan);
+    let mut progress = CodewikiProgress::silent();
+    let second = generate_hierarchical_docs_with_reuse(
+        &second_input,
+        Some(&mut second_generator),
+        AiDepth::Symbols,
+        &mut reuse,
+        &mut progress,
+    );
+
+    let src_doc = second
+        .iter()
+        .find(|doc| doc.path == "code/modules/src.md")
+        .expect("src module doc emitted");
+    assert!(
+        src_doc.content.contains("code/modules/src/ids_write|"),
+        "parent page must link the renamed child cluster"
+    );
+    assert!(
+        !src_doc.content.contains("ids_plan"),
+        "parent page must not keep the stale child link"
+    );
+    assert_module_links_resolve(&second);
+
+    // The regenerated parent must land on disk: its member-file span hashes
+    // all match, so only the child-link invalidation key forces the write.
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &second,
+        None,
+        "symbols",
+        DocPruneScope::unscoped(),
+    )
+    .expect("second write");
+    let src_page_after = std::fs::read_to_string(out_dir.join("code/modules/src.md"))
+        .expect("src module page after heal");
+    assert!(src_page_after.contains("code/modules/src/ids_write|"));
+    assert!(!src_page_after.contains("ids_plan"));
+    assert!(
+        !out_dir.join("code/modules/src/ids_plan.md").exists(),
+        "renamed cluster's old module page must be pruned"
+    );
+}

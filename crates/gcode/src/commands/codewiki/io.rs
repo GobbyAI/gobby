@@ -205,8 +205,11 @@ impl<'a> DocSink<'a> {
         };
         let previous_meta = self.previous_docs.get(&doc.path);
         let doc_ai_settings = self.ai_settings.for_path(&doc.path);
+        // Keyed docs take the fast path only while their key is unchanged: a
+        // key move (aggregate digest, module link, child-link set) must fall
+        // through to the full gate and rewrite even under `--since` (#17731).
         if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
-            && doc.invalidation_key.is_none()
+            && doc.invalidation_key == meta.invalidation_key
             && target.exists()
             && !meta.degraded
             && meta.ai_mode == self.ai_mode
@@ -264,6 +267,11 @@ impl<'a> DocSink<'a> {
                     && match &doc.invalidation_key {
                         Some(key) => {
                             meta.invalidation_key.as_deref() == Some(key.as_str())
+                                // Summary backfill (#681) applies to keyed
+                                // source pages (file/module docs) exactly like
+                                // unkeyed ones; aggregates carry no summary,
+                                // so the condition is vacuous for them.
+                                && (doc.summary.is_none() || meta.summary.is_some())
                                 && (!doc.invalidation_key_requires_sources
                                     || (!source_hashes.is_empty()
                                         && meta.source_hashes == source_hashes
@@ -282,11 +290,11 @@ impl<'a> DocSink<'a> {
         // re-hash differently — so a run is scoped to the change set plus
         // dependents. Keyed aggregates and provenance-less pages keep their
         // normal logic above, so a manifest/contract change still rebuilds them.
-        let since_unchanged = doc.invalidation_key.is_none()
-            && !source_hashes.is_empty()
+        let since_unchanged = !source_hashes.is_empty()
             && target.exists()
             && previous_meta.is_some_and(|meta| {
-                !meta.degraded
+                meta.invalidation_key == doc.invalidation_key
+                    && !meta.degraded
                     && meta.ai_mode == self.ai_mode
                     && meta.ai_route == ai_outcome.route_label()
                     && meta.ai_fallback == ai_outcome.fallback

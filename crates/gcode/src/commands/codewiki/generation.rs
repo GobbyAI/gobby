@@ -13,10 +13,10 @@ use super::{
     build_curated_navigation_docs, build_deprecations_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
     build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
-    is_ai_generation_failure_code, is_core_file, module_doc_path, module_for_file,
-    relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
-    render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
-    render_module_doc, render_onboarding_doc, span_files,
+    file_module_link_key, is_ai_generation_failure_code, is_core_file, module_child_links_key,
+    module_doc_path, module_for_file, relationship_facts_for_file, render_architecture_doc,
+    render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
+    render_infrastructure_doc, render_module_doc, render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -365,8 +365,13 @@ pub(crate) fn generate_hierarchical_docs_core(
                 degraded: file_doc.degraded,
                 summary: Some(file_doc.summary.clone()),
                 neighbors: BTreeSet::new(),
-                invalidation_key: None,
-                invalidation_key_requires_sources: false,
+                // The module link is a render input source hashes cannot see:
+                // clustering is global, so an unchanged file can carry a new
+                // module this run (#17731). Keying it makes the persist gate
+                // write the re-stamped page instead of keeping stale disk
+                // content; `requires_sources` keeps the hash checks alongside.
+                invalidation_key: Some(file_module_link_key(&file_doc.module)),
+                invalidation_key_requires_sources: true,
             }
             // Record the cross-file neighbor set so a caller/import-target edit
             // invalidates this page on the next run (#885, Leaf H).
@@ -394,10 +399,13 @@ pub(crate) fn generate_hierarchical_docs_core(
                 summary: Some(module.summary.clone()),
                 // A module aggregate invalidates through its member files'
                 // source hashes (member-set + members hash), recorded as the
-                // page's provenance — no separate key or neighbor set needed.
+                // page's provenance. A child cluster RENAME keeps that span
+                // set (same files, new name), so the child-link set is keyed
+                // separately — the persist gate then writes the regenerated
+                // page instead of keeping stale child links (#17731).
                 neighbors: BTreeSet::new(),
-                invalidation_key: None,
-                invalidation_key_requires_sources: false,
+                invalidation_key: Some(module_child_links_key(&module.child_modules)),
+                invalidation_key_requires_sources: true,
             })
         },
     )?;
@@ -472,6 +480,22 @@ pub(crate) fn generate_hierarchical_docs_core(
             .flat_map(|module| module.source_spans.iter().cloned())
             .collect::<Vec<_>>(),
     );
+    // The model-less fallback still keys on the module names the page links:
+    // a synthetic cluster rename keeps every span-file hash, so source-set
+    // reuse alone would ship the page with dangling module links (#17731).
+    // The full architecture key subsumes this; model-supplied runs ignore it.
+    let architecture_fallback_key = format!(
+        "architecture-links:{}",
+        hasher::content_hash(
+            module_docs
+                .iter()
+                .map(|module| module.module.as_str())
+                .chain(file_docs.iter().map(|file| file.module.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .as_bytes(),
+        )
+    );
     let reused_architecture = match architecture_key.as_deref() {
         Some(key) => reuse.as_deref_mut().and_then(|plan| {
             plan.reusable_page_keyed_with_ai_outcome(
@@ -481,19 +505,26 @@ pub(crate) fn generate_hierarchical_docs_core(
             )
         }),
         None => reuse.as_deref_mut().and_then(|plan| {
-            plan.reusable_page_with_ai_outcome(
+            plan.reusable_page_keyed_with_sources_and_ai_outcome(
                 "code/_architecture.md",
+                &architecture_fallback_key,
                 &architecture_sources,
                 aggregate_ai_outcome,
             )
         }),
     };
+    let effective_architecture_key = architecture_key
+        .clone()
+        .unwrap_or_else(|| architecture_fallback_key.clone());
+    let key_requires_sources = architecture_key.is_none();
     let architecture_built = match reused_architecture {
         Some(page) => {
             progress.emit("reusing architecture docs (system model unchanged)");
-            match architecture_key.clone() {
-                Some(key) => BuiltDoc::derived("code/_architecture.md", page, key),
-                None => BuiltDoc::healthy("code/_architecture.md", page),
+            let doc = BuiltDoc::derived("code/_architecture.md", page, effective_architecture_key);
+            if key_requires_sources {
+                doc.with_source_sensitive_key()
+            } else {
+                doc
             }
         }
         None => {
@@ -516,8 +547,8 @@ pub(crate) fn generate_hierarchical_docs_core(
                     .any(|source| is_ai_generation_failure_code(source)),
                 summary: None,
                 neighbors: BTreeSet::new(),
-                invalidation_key: architecture_key.clone(),
-                invalidation_key_requires_sources: false,
+                invalidation_key: Some(effective_architecture_key),
+                invalidation_key_requires_sources: key_requires_sources,
             }
         }
     };
