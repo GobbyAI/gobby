@@ -12,8 +12,6 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
     _SHELL_CONTROL_TOKENS,
-    _SHELL_INPUT_REDIRECTION_TOKENS,
-    _SHELL_OUTPUT_REDIRECTION_TOKENS,
     ShellToken,
     _get_command_text,
     _has_perl_inplace_option,
@@ -22,11 +20,12 @@ from gobby.hooks._normalization_shell import (
     _looks_path_target,
     _shell_positional_args,
     extract_redirection_paths,
+    has_mutating_output_redirection,
     has_shell_input_redirection,
-    has_shell_redirection,
     is_shell_input_redirection_token,
     is_unquoted_shell_control_token,
     shell_token_values,
+    strip_output_redirections,
     tokenize_shell_command,
 )
 from gobby.hooks._path_scope import apply_path_scope_metadata
@@ -55,7 +54,8 @@ _CANONICAL_WRITE_TOOL_NAMES = frozenset(
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
     {"cat", "cut", "grep", "head", "jq", "rg", "sed", "sort", "tail", "tr", "uniq", "wc"}
 )
-_SHELL_REDIRECTION_PREFIXES = (">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", "<", "<<", "<<<")
+# Characters in echo arguments that imply command substitution rather than a plain marker.
+_ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,22 +130,24 @@ def _truncate_positional_paths(parts: list[str]) -> list[str]:
     ]
 
 
-def _has_shell_redirection(parts: list[str]) -> bool:
-    return any(
-        token in _SHELL_INPUT_REDIRECTION_TOKENS
-        or token in _SHELL_OUTPUT_REDIRECTION_TOKENS
-        or token.startswith(_SHELL_REDIRECTION_PREFIXES)
-        for token in parts
-    )
-
-
-def _is_read_only_pipeline_stage(parts: list[str]) -> bool:
-    if not parts or _has_shell_redirection(parts):
+def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
+    if not parts:
+        return False
+    if has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens):
         return False
     cmd = shell_command_name(parts[0])
     if cmd == "sed" and _has_sed_inplace_option(parts):
         return False
     return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS
+
+
+def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool:
+    """Return True for side-effect-free ``echo`` segments used as output markers."""
+    if not parts or shell_command_name(parts[0]) != "echo":
+        return False
+    if has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens):
+        return False
+    return not any(ch in part for part in parts[1:] for ch in _ECHO_UNSAFE_CHARS)
 
 
 def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
@@ -407,7 +409,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
             metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
             continue
 
-        if segment.separator_before == "|" and _is_read_only_pipeline_stage(parts):
+        if segment.separator_before == "|" and _is_read_only_pipeline_stage(segment.tokens, parts):
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
@@ -429,11 +431,22 @@ def _classify_shell_segment(
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_shell_paths(_input_redirection_paths(tokens), cwd)
 
-    gcode_metadata = gcode_navigation_metadata(parts)
-    if gcode_metadata and not has_shell_redirection(tokens):
+    # Classify the base command without redirection operators/targets so a
+    # redirect target never masquerades as a positional file argument.
+    plain_tokens = strip_output_redirections(tokens)
+    plain_parts = (
+        parts
+        if len(plain_tokens) == len(tokens)
+        else _strip_shell_wrappers(shell_token_values(plain_tokens))
+    )
+
+    gcode_metadata = gcode_navigation_metadata(plain_parts)
+    if gcode_metadata and not (
+        has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens)
+    ):
         kind, extra = gcode_metadata
         gcode_paths = _rebase_shell_paths(
-            [path for path in parts[2:] if _looks_file_like(path)],
+            [path for path in plain_parts[2:] if _looks_file_like(path)],
             cwd,
         )
         return _ShellSegmentMetadata(
@@ -444,7 +457,7 @@ def _classify_shell_segment(
         )
 
     if redirection_paths:
-        base_metadata = _classify_shell_segment_without_redirection(parts, cwd)
+        base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
         extra = _without_code_index_navigation(base_metadata.extra)
         base_paths = list(base_metadata.paths)
         return _ShellSegmentMetadata(
@@ -457,7 +470,7 @@ def _classify_shell_segment(
         )
 
     if input_paths:
-        base_metadata = _classify_shell_segment_without_redirection(parts, cwd)
+        base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
         base_paths = list(base_metadata.paths)
         return _ShellSegmentMetadata(
             base_metadata.kind,
@@ -472,13 +485,19 @@ def _classify_shell_segment(
     if has_shell_input_redirection(tokens):
         return _ShellSegmentMetadata("execute")
 
-    return _classify_shell_segment_without_redirection(parts, cwd)
+    if _is_neutral_echo_segment(tokens, plain_parts):
+        return _ShellSegmentMetadata("execute", neutral_setup=True)
+
+    return _classify_shell_segment_without_redirection(plain_parts, cwd)
 
 
 def _classify_shell_segment_without_redirection(
     parts: list[str],
     cwd: str | None,
 ) -> _ShellSegmentMetadata:
+    if not parts:
+        return _ShellSegmentMetadata("execute")
+
     cmd = shell_command_name(parts[0])
 
     if cmd in {"rg", "grep", "git", "find"}:

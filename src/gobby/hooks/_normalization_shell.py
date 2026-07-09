@@ -35,6 +35,9 @@ _SHELL_CONTROL_TOKENS = (
 )
 _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 
+# Output sinks that never mutate files; redirecting to them is not a write.
+_BENIGN_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
+
 # Characters that strongly imply an inline sed/awk script rather than a file path.
 _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 
@@ -180,11 +183,44 @@ def has_shell_input_redirection(tokens: list[ShellToken]) -> bool:
     return any(is_shell_input_redirection_token(token) for token in tokens)
 
 
-def has_shell_redirection(tokens: list[ShellToken]) -> bool:
-    return any(
-        is_shell_input_redirection_token(token) or is_shell_output_redirection_token(token)
-        for token in tokens
-    )
+def is_benign_redirect_target(path: str) -> bool:
+    """Return True when redirecting output to ``path`` cannot mutate a file."""
+    return path in _BENIGN_REDIRECT_TARGETS
+
+
+def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
+    """Return True when any output redirection may write somewhere other than a benign sink.
+
+    Fails closed: a redirection with a missing or undeterminable target counts
+    as mutating.
+    """
+    for idx, token in enumerate(tokens):
+        if not is_shell_output_redirection_token(token):
+            continue
+        if idx + 1 >= len(tokens):
+            return True
+        candidate = tokens[idx + 1]
+        if is_unquoted_shell_control_token(candidate):
+            return True
+        if not is_benign_redirect_target(candidate.value):
+            return True
+    return False
+
+
+def strip_output_redirections(tokens: list[ShellToken]) -> list[ShellToken]:
+    """Drop output-redirection operators and their immediate targets from tokens."""
+    stripped: list[ShellToken] = []
+    skip_next = False
+    for idx, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if is_shell_output_redirection_token(token):
+            if idx + 1 < len(tokens) and not is_unquoted_shell_control_token(tokens[idx + 1]):
+                skip_next = True
+            continue
+        stripped.append(token)
+    return stripped
 
 
 def extract_redirection_paths(tokens: list[ShellToken]) -> list[str]:
@@ -195,6 +231,8 @@ def extract_redirection_paths(tokens: list[ShellToken]) -> list[str]:
             continue
         candidate = tokens[idx + 1]
         if is_unquoted_shell_control_token(candidate):
+            continue
+        if is_benign_redirect_target(candidate.value):
             continue
         if _looks_path_target(candidate.value):
             _append_unique_path(paths, candidate.value)
@@ -296,6 +334,8 @@ def _extract_redirection_paths(parts: list[str]) -> list[str]:
         ):
             continue
         candidate = parts[idx + 1]
+        if is_benign_redirect_target(candidate):
+            continue
         if _looks_path_target(candidate):
             _append_unique_path(paths, candidate)
     return paths

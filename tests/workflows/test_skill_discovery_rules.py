@@ -2969,6 +2969,62 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
+    async def test_all_gcode_with_echo_separator_is_allowed(self, db, tmp_path) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._normalized_bash_event(
+            'gcode grep "a" src -m 10 ; echo === ; gcode grep "b" src -m 10',
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+
+        assert event.data["canonical_code_index_navigation"] is True
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_gcode_with_stderr_suppression_is_allowed(self, db, tmp_path) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._normalized_bash_event(
+            'gcode grep "pattern" src -m 50 2>/dev/null',
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+
+        assert event.data["canonical_code_index_navigation"] is True
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_shell_search_with_stderr_suppression_still_blocks(self, db, tmp_path) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        event = self._normalized_bash_event(
+            "rg pattern src 2>/dev/null",
+            cwd=str(repo),
+            project_path=str(repo),
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "block"
+
+    @pytest.mark.asyncio
     async def test_unnormalized_repo_search_with_cwd_and_project_path_still_blocks(
         self,
         db,

@@ -357,6 +357,39 @@ class TestRequireTaskBeforeEdit:
         result = evaluator.evaluate(condition)
         assert result is True, "Should block shell write to source file without task"
 
+    def test_when_condition_ignores_stderr_suppression(self) -> None:
+        """Read-only commands with benign redirects carry no mutation metadata."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
+        )
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "grep -r pattern src 2>/dev/null"},
+        }
+        normalize_tool_fields(data)
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "event": type("Event", (), {"data": data})(),
+            "tool_input": data["tool_input"],
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert not result, "Stderr suppression on a read-only command must not require a task"
+
     def test_plan_mode_exempts_markdown(self) -> None:
         """In plan mode, writing .md files should not be blocked."""
         from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file

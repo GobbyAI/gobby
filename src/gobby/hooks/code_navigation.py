@@ -36,11 +36,16 @@ GCODE_NAVIGATION_COMMANDS = frozenset(
         "search-content",
         "outline",
         "symbol",
+        "symbol-at",
         "symbols",
         "callers",
         "usages",
         "imports",
+        "path",
         "blast-radius",
+        "tree",
+        "repo-outline",
+        "kinds",
     )
 )
 GCODE_SEARCH_COMMANDS = frozenset(

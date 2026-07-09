@@ -695,7 +695,11 @@ class TestCanonicalToolMetadata:
             ('gcode search-content "query" src', "search"),
             ("gcode outline src/app.py", "read"),
             ("gcode symbol 00000000-0000-0000-0000-000000000000", "read"),
+            ("gcode symbol-at src/app.py:42", "read"),
             ("gcode callers TaskValidator", "read"),
+            ("gcode tree src", "read"),
+            ("gcode repo-outline", "read"),
+            ('gcode symbol-at src/app.py:42 ; gcode grep "a" src -m 10', "search"),
             # A gcode navigation piped to a read-only filter is still navigation:
             # `gcode symbol <id> | jq -r .source` is the documented way to read
             # symbol source, and `| head`/`| rg` are common too. Without this the
@@ -714,6 +718,14 @@ class TestCanonicalToolMetadata:
                 "gcode outline src/app.py ; gcode symbol 00000000-0000-0000-0000-000000000000",
                 "read",
             ),
+            # Plain-text echo markers between gcode calls are neutral separators,
+            # and redirects to benign sinks like /dev/null mutate nothing.
+            ("gcode symbol 00000000-0000-0000-0000-000000000000 ; echo done", "read"),
+            ('gcode grep "a" src ; echo done', "search"),
+            ('gcode grep "a" src -m 10 ; echo === ; gcode grep "b" src -m 10', "search"),
+            ('gcode grep "pattern" src -m 50 2>/dev/null', "search"),
+            ("gcode outline src/app.py 2>/dev/null", "read"),
+            ('gcode grep "a" src 2>/dev/null | rg fn', "search"),
         ],
     )
     def test_exec_command_gcode_navigation_is_canonical(
@@ -732,24 +744,38 @@ class TestCanonicalToolMetadata:
         "command",
         [
             "gcode outline src/app.py && rm -rf build",
-            "gcode symbol 00000000-0000-0000-0000-000000000000 ; echo done",
-            'gcode grep "a" src ; echo done',
             "gcode grep pattern src || true",
             "gcode outline src/app.py | tee out.txt",
             "gcode symbol 00000000-0000-0000-0000-000000000000 | jq -r .source > out.txt",
             "gcode symbol 00000000-0000-0000-0000-000000000000 > out.txt | head -1",
+            'gcode grep "a" src ; echo $(date)',
+            'gcode grep "a" src ; echo done > out.txt',
+            'gcode grep "a" src > results.txt',
         ],
     )
     def test_exec_command_gcode_with_side_effects_loses_pure_navigation(self, command: str) -> None:
-        # `&&`/`;`/`||` joining a *non-gcode* command (possibly side-effecting)
-        # drops pure navigation; only all-gcode sequences and `|` pipelines of
-        # read-only filters keep it.
+        # `&&`/`;`/`||` joining a *non-gcode*, non-neutral command (possibly
+        # side-effecting) drops pure navigation; only all-gcode sequences,
+        # plain echo markers, and `|` pipelines of read-only filters keep it.
         data = {"tool_name": "exec_command", "tool_input": {"command": command}}
 
         normalize_tool_fields(data)
 
         assert data["tool_name"] == "Bash"
         assert data["canonical_tool_kind"] in {"read", "search", "write"}
+        assert "canonical_code_index_navigation" not in data
+
+    def test_exec_command_gcode_with_fd_dup_loses_pure_navigation(self) -> None:
+        # Known limitation (gobby-#17743): `2>&1` tokenizes as `2>` + `&` + `1`,
+        # so fd duplication still drops the code-index exemption.
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": 'gcode grep "a" src 2>&1'},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
         assert "canonical_code_index_navigation" not in data
 
     def test_exec_command_gcode_with_broad_read_loses_pure_navigation(self) -> None:
@@ -893,6 +919,45 @@ class TestCanonicalToolMetadata:
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "src/app.py"
         assert data["tool_input"]["file_path"] == "src/app.py"
+
+    @pytest.mark.parametrize(
+        ("command", "expected_kind"),
+        [
+            ("grep -r pattern src 2>/dev/null", "search"),
+            ("find src -name '*.py' 2>/dev/null", "search"),
+            ("cat src/app.py > /dev/null", "read"),
+            ("rg pattern src >/dev/null 2>&1", "search"),
+            ("head -n 40 src/app.py 2>>/dev/null", "read"),
+        ],
+    )
+    def test_exec_command_benign_redirect_is_not_write(
+        self, command: str, expected_kind: str
+    ) -> None:
+        # Redirecting output to /dev/null-style sinks mutates nothing; the
+        # segment keeps its base read/search classification.
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == expected_kind
+        assert "canonical_repo_mutation" not in data
+        assert "/dev/null" not in data.get("canonical_file_paths", [])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "grep pattern src > results.txt",
+            "grep pattern src 2> errors.log",
+            "echo hi > src/notes.txt",
+        ],
+    )
+    def test_exec_command_redirect_to_real_file_is_still_write(self, command: str) -> None:
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
 
     def test_exec_command_pipeline_tee_sets_canonical_write_fields(self) -> None:
         data = {
