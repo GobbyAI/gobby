@@ -285,10 +285,10 @@ def _render_excerpted_diff(
         return "".join(parts), omissions
 
     for index, file in enumerate(files):
-        remaining_files = max(1, len(files) - index)
+        remaining_files = files[index:]
         current = "".join(parts)
         remaining_budget = max_chars - len(current)
-        omission_reserve = 160 * remaining_files
+        omission_reserve = 160 * len(remaining_files)
         available = remaining_budget - omission_reserve
         if available < 240:
             omissions.append(
@@ -296,9 +296,16 @@ def _render_excerpted_diff(
             )
             continue
 
+        # Fair share proportional to this file's diff size among the files
+        # still to render, so an early large file cannot starve later files
+        # of their evidence; unused share carries over via remaining_budget.
+        remaining_diff_chars = sum(len(candidate.diff) for candidate in remaining_files) or 1
+        share = int(available * len(file.diff) / remaining_diff_chars)
+        allowed = min(available, max(240, share))
+
         excerpt, file_omissions = _excerpt_file_diff(
             file,
-            max_chars=available,
+            max_chars=allowed,
             max_hunk_lines=max_hunk_lines,
         )
         omissions.extend(file_omissions)
@@ -315,43 +322,87 @@ def _excerpt_file_diff(
     max_chars: int,
     max_hunk_lines: int,
 ) -> tuple[str, list[EvidenceOmission]]:
+    # Truncation keeps head AND tail around an elision marker: appended
+    # code (new tests especially) lives at hunk and file tails, so
+    # head-only cuts systematically drop the evidence validators need.
     omissions: list[EvidenceOmission] = []
+    all_lines = file.diff.splitlines()
     lines: list[str] = []
-    hunk_header = ""
-    hunk_line_count = 0
-    skipping_hunk = False
-    for line in file.diff.splitlines():
-        if _HUNK_HEADER_RE.match(line):
-            hunk_header = line
-            hunk_line_count = 0
-            skipping_hunk = False
-            lines.append(line)
+    index = 0
+    while index < len(all_lines) and not _HUNK_HEADER_RE.match(all_lines[index]):
+        lines.append(all_lines[index])
+        index += 1
+    while index < len(all_lines):
+        hunk_header = all_lines[index]
+        index += 1
+        body: list[str] = []
+        while index < len(all_lines) and not _HUNK_HEADER_RE.match(all_lines[index]):
+            body.append(all_lines[index])
+            index += 1
+        lines.append(hunk_header)
+        if len(body) <= max_hunk_lines:
+            lines.extend(body)
             continue
-        if hunk_header and (line.startswith("+") or line.startswith("-") or line.startswith(" ")):
-            hunk_line_count += 1
-            if hunk_line_count > max_hunk_lines:
-                if not skipping_hunk:
-                    lines.append(f"... [hunk truncated for {file.path}: {hunk_header}] ...")
-                    omissions.append(
-                        EvidenceOmission(
-                            file.path,
-                            f"hunk {hunk_header} truncated after {max_hunk_lines} lines",
-                        )
-                    )
-                    skipping_hunk = True
-                continue
-        lines.append(line)
+        head_count = max(1, max_hunk_lines * 3 // 5)
+        tail_count = max(1, max_hunk_lines - head_count)
+        omitted_body = body[head_count : len(body) - tail_count]
+        signatures = _added_signature_names(omitted_body)
+        signature_note = f"; omitted definitions: {', '.join(signatures)}" if signatures else ""
+        lines.extend(body[:head_count])
+        lines.append(
+            f"... [hunk truncated for {file.path}: {hunk_header}; "
+            f"{len(omitted_body)} middle lines omitted{signature_note}] ..."
+        )
+        lines.extend(body[-tail_count:])
+        omissions.append(
+            EvidenceOmission(
+                file.path,
+                f"hunk {hunk_header} kept {head_count} head and {tail_count} tail "
+                f"of {len(body)} lines",
+            )
+        )
 
     excerpt = "\n".join(lines)
     if len(excerpt) <= max_chars:
         return excerpt, omissions
 
-    marker = f"\n... [diff excerpt truncated for {file.path}] ...\n"
-    keep_chars = max(0, max_chars - len(marker))
+    base_marker = f"\n... [diff excerpt truncated for {file.path}; middle omitted] ...\n"
+    keep_chars = max(0, max_chars - len(base_marker))
+    head_chars = keep_chars * 3 // 5
+    tail_chars = keep_chars - head_chars
+    signatures = _added_signature_names(
+        excerpt[head_chars : len(excerpt) - tail_chars].splitlines()
+    )
+    marker = (
+        f"\n... [diff excerpt truncated for {file.path}; middle omitted; "
+        f"omitted definitions: {', '.join(signatures)}] ...\n"
+        if signatures
+        else base_marker
+    )
     omissions.append(
         EvidenceOmission(file.path, "diff excerpt shortened to fit validation evidence budget")
     )
-    return excerpt[:keep_chars].rstrip() + marker, omissions
+    head = excerpt[:head_chars].rstrip()
+    tail = excerpt[len(excerpt) - tail_chars :].lstrip() if tail_chars > 0 else ""
+    return head + marker + tail, omissions
+
+
+_SIGNATURE_LINE_RE = re.compile(
+    r"^\+\s*(?:async\s+def|def|class|(?:pub\s+)?(?:async\s+)?fn|function)\s+([\w:]+)"
+)
+
+
+def _added_signature_names(lines: Sequence[str], limit: int = 12) -> list[str]:
+    """Names of added definitions in omitted diff lines, so elision markers
+    still prove the definitions exist."""
+    names: list[str] = []
+    for line in lines:
+        match = _SIGNATURE_LINE_RE.match(line)
+        if match:
+            names.append(match.group(1))
+            if len(names) >= limit:
+                break
+    return names
 
 
 def _render_omissions(omissions: Sequence[EvidenceOmission]) -> str:

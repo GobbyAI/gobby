@@ -116,6 +116,51 @@ class TestValidationPromptBudget:
         assert included.agent_summary_included is True
         assert omitted.agent_summary_included is False
 
+    def test_diff_evidence_keeps_tail_of_later_files(self) -> None:
+        """A large first file cannot starve later files of their evidence."""
+        source_lines = "".join(f"+source_line_{line}_{'s' * 40}\n" for line in range(120))
+        test_lines = "".join(f"+test_line_{line}_{'t' * 40}\n" for line in range(100))
+        diff = (
+            "diff --git a/src/big.py b/src/big.py\n"
+            "index abc..def 100644\n"
+            "--- a/src/big.py\n"
+            "+++ b/src/big.py\n"
+            "@@ -1 +1,120 @@\n"
+            + source_lines
+            + "diff --git a/tests/test_big.py b/tests/test_big.py\n"
+            "index abc..def 100644\n"
+            "--- a/tests/test_big.py\n"
+            "+++ b/tests/test_big.py\n"
+            "@@ -1 +1,100 @@\n" + test_lines
+        )
+
+        evidence = build_diff_validation_evidence(diff, max_chars=6000, max_hunk_lines=200)
+
+        assert "### tests/test_big.py" in evidence.text
+        assert "+test_line_99_" in evidence.text
+
+    def test_diff_evidence_keeps_hunk_tail_lines(self) -> None:
+        """Oversized hunks keep tail lines, where appended tests live."""
+        body = "".join(
+            f"+def test_case_{line}():\n" if line == 40 else f"+hunk_line_{line}\n"
+            for line in range(80)
+        )
+        diff = (
+            "diff --git a/tests/test_tail.py b/tests/test_tail.py\n"
+            "index abc..def 100644\n"
+            "--- a/tests/test_tail.py\n"
+            "+++ b/tests/test_tail.py\n"
+            "@@ -1 +1,80 @@\n" + body
+        )
+
+        evidence = build_diff_validation_evidence(diff, max_chars=1200, max_hunk_lines=20)
+
+        assert "+hunk_line_0" in evidence.text
+        assert "+hunk_line_79" in evidence.text
+        assert "middle lines omitted" in evidence.text
+        assert "omitted definitions: test_case_40" in evidence.text
+        assert "Omitted Evidence:" in evidence.text
+
     def test_diff_evidence_names_omitted_files(self) -> None:
         diff = "\n".join(
             f"diff --git a/src/file_{index}.py b/src/file_{index}.py\n"
