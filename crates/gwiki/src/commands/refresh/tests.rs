@@ -569,3 +569,33 @@ fn all_source_refresh_skips_unsupported_records() {
     assert_eq!(outcome.result.payload["planned"][0]["id"], url.id);
     assert_eq!(outcome.result.payload["skipped"][0]["id"], file.id);
 }
+
+#[test]
+fn all_source_refresh_skips_missing_replay_metadata_records() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let url = seed_url(temp.path(), "https://example.test/a", "then", b"same");
+    let file = seed_file_without_replay(temp.path());
+
+    let outcome = execute_resolved_with_fetcher(
+        test_scope(temp.path()),
+        Vec::new(),
+        false,
+        |record, _fetched_at| Ok(snapshot(&record.location, "same")),
+    )
+    .expect("refresh all");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.result.payload["status"], "unchanged");
+    assert_eq!(outcome.result.payload["planned"][0]["id"], url.id);
+    assert!(
+        outcome.result.payload["failed"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(outcome.result.payload["skipped"][0]["id"], file.id);
+    assert_eq!(
+        outcome.result.payload["skipped"][0]["code"],
+        "missing_replay_metadata"
+    );
+}

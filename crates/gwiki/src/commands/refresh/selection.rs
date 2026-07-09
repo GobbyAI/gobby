@@ -13,10 +13,19 @@ pub(crate) fn select_sources(entries: &[SourceRecord], source_ids: &[String]) ->
                     Err(error) => failed.push(refresh_plan_failure(record, error)),
                 },
                 Err(SelectionFailure::MissingReplayMetadata) => {
-                    failed.push(selection_failure(
-                        record,
-                        SelectionFailure::MissingReplayMetadata,
-                    ));
+                    // A source without local replay metadata can never refresh on
+                    // this machine; in a bulk sweep that is a permanent skip, not
+                    // an actionable failure. Explicit source_ids still fail below.
+                    skipped.push(SkippedRefresh {
+                        id: record.id.clone(),
+                        location: record.location.clone(),
+                        source_kind: record.kind.clone(),
+                        code: "missing_replay_metadata".to_string(),
+                        message: format!(
+                            "source `{}` has kind `{}` but no local replay metadata",
+                            record.id, record.kind
+                        ),
+                    });
                 }
                 Err(SelectionFailure::UnsupportedSourceKind) => {
                     skipped.push(SkippedRefresh {
