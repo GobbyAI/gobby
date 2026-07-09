@@ -39,6 +39,27 @@ class FailingCoordinator:
         raise RuntimeError("index failed")
 
 
+class SequencedHandoffCoordinator:
+    """Returns queued index_handoff payloads, then indexed handoffs."""
+
+    def __init__(self, handoffs: list[dict[str, Any]]) -> None:
+        self._handoffs = list(handoffs)
+        self.calls: list[dict[str, list[str]]] = []
+
+    async def handle_local_changes(
+        self, changed_paths_by_scope: dict[str, list[Path]]
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {
+                scope: [path.name for path in paths]
+                for scope, paths in changed_paths_by_scope.items()
+            }
+        )
+        if self._handoffs:
+            return {"index_handoff": self._handoffs.pop(0)}
+        return {"index_handoff": {"status": "indexed"}}
+
+
 async def _eventually(predicate: Callable[[], bool]) -> None:
     deadline = asyncio.get_running_loop().time() + 2.0
     while True:
@@ -441,3 +462,109 @@ async def test_initialize_snapshots_survives_value_error(
 
     assert watcher._snapshots == {}
     assert watcher._snapshots_initialized is True
+
+
+@pytest.mark.asyncio
+async def test_degraded_flush_keeps_unindexed_scopes_and_skips_timestamp(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "project"
+    topic_root = tmp_path / "topic"
+    project_root.mkdir()
+    topic_root.mkdir()
+    coordinator = SequencedHandoffCoordinator(
+        [
+            {
+                "status": "degraded",
+                "results_by_scope": {"project": {"ok": True}},
+                "failed_scope": "topic:notes",
+                "degradation": {"type": "index_handoff_failed", "message": "boom"},
+            }
+        ]
+    )
+    watcher = WikiWatcher(
+        scopes=[
+            WikiWatchScope(name="project", root=project_root),
+            WikiWatchScope(name="topic:notes", root=topic_root),
+        ],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    await watcher.record_change(project_root / "a.md")
+    await watcher.record_change(topic_root / "b.md")
+
+    with caplog.at_level("WARNING", logger="gobby.wiki.watcher"):
+        result = await watcher.flush_pending()
+
+    assert result is not None
+    assert result["index_handoff"]["status"] == "degraded"
+    health = watcher.health()
+    assert health["last_index_time"] is None
+    assert health["pending_changes"] == 1
+    assert health["pending_debounce"] is True
+    assert set(watcher._pending) == {"topic:notes"}
+    assert watcher._pending_since is not None
+    warnings = [
+        record for record in caplog.records if "Wiki index handoff degraded" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "topic:notes" in warnings[0].getMessage()
+    assert "boom" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_degraded_flush_without_scope_results_keeps_all_pending(tmp_path: Path) -> None:
+    coordinator = SequencedHandoffCoordinator(
+        [
+            {
+                "status": "degraded",
+                "degradation": {"type": "index_handoff_failed", "message": "gwiki timed out"},
+            }
+        ]
+    )
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    await watcher.record_change(tmp_path / "note.md")
+
+    result = await watcher.flush_pending()
+
+    assert result is not None
+    health = watcher.health()
+    assert health["last_index_time"] is None
+    assert health["pending_changes"] == 1
+    assert coordinator.calls == [{"project": ["note.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_degraded_flush_retries_pending_scopes_on_next_flush(tmp_path: Path) -> None:
+    coordinator = SequencedHandoffCoordinator(
+        [
+            {
+                "status": "degraded",
+                "degradation": {"type": "index_handoff_failed", "message": "boom"},
+            }
+        ]
+    )
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        poll_interval=0.01,
+    )
+    await watcher.record_change(tmp_path / "note.md")
+
+    await watcher.flush_pending()
+    result = await watcher.flush_pending()
+
+    assert result is not None
+    assert result["index_handoff"]["status"] == "indexed"
+    assert coordinator.calls == [{"project": ["note.md"]}, {"project": ["note.md"]}]
+    health = watcher.health()
+    assert health["pending_changes"] == 0
+    assert health["last_index_time"] is not None

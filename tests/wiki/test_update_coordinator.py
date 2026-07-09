@@ -315,3 +315,73 @@ async def test_cli_indexed_batches_do_not_duplicate(command: str) -> None:
     assert gateway.index_calls == 0
     assert result["payload"]["indexed"] == {"documents": 1}
     assert result["index_handoff"] == {"status": "skipped", "reason": "cli_indexed_batch"}
+
+
+_TIMEOUT_ENVELOPE: dict[str, Any] = {
+    "ok": False,
+    "command": "index",
+    "status": "degraded",
+    "payload": None,
+    "stderr": "",
+    "error": {"type": "timeout", "message": "gwiki command timed out"},
+}
+
+
+async def test_write_result_envelope_failure_degrades() -> None:
+    gateway = RecordingGateway(index_result=dict(_TIMEOUT_ENVELOPE))
+    coordinator = WikiUpdateCoordinator(gateway)
+
+    result = await coordinator.handle_write_result(
+        _result("ingest-file", {"changed_paths": ["raw/source.md"]})
+    )
+
+    assert gateway.index_calls == 1
+    assert result["index_handoff"]["status"] == "degraded"
+    assert result["index_handoff"]["degradation"] == {
+        "type": "index_handoff_failed",
+        "command": "index",
+        "message": "gwiki command timed out",
+        "stderr": "",
+        "payload": None,
+        "error": {"type": "timeout"},
+    }
+
+
+async def test_local_changes_envelope_failure_degrades() -> None:
+    gateway = RecordingGateway(index_result=dict(_TIMEOUT_ENVELOPE))
+    coordinator = WikiUpdateCoordinator(gateway)
+
+    result = await coordinator.handle_local_changes({"project": [Path("/repo/wiki/a.md")]})
+
+    assert gateway.index_calls == 1
+    handoff = result["index_handoff"]
+    assert handoff["status"] == "degraded"
+    assert handoff["changed_paths_by_scope"] == {"project": ["/repo/wiki/a.md"]}
+    assert handoff["degradation"]["error"] == {"type": "timeout"}
+
+
+async def test_scoped_local_changes_envelope_failure_degrades() -> None:
+    def local_gateway(scope: str) -> RecordingGateway:
+        if scope == "topic:research":
+            return RecordingGateway(index_result=dict(_TIMEOUT_ENVELOPE))
+        return RecordingGateway()
+
+    coordinator = WikiUpdateCoordinator(
+        RecordingGateway(),
+        local_gateway_factory=local_gateway,
+    )
+
+    result = await coordinator.handle_local_changes(
+        {
+            "project": [Path("/repo/wiki/a.md")],
+            "topic:research": [Path("/topics/research/b.md")],
+            "topic:notes": [Path("/topics/notes/c.md")],
+        }
+    )
+
+    handoff = result["index_handoff"]
+    assert handoff["status"] == "degraded"
+    assert handoff["failed_scope"] == "topic:research"
+    assert set(handoff["results_by_scope"]) == {"project"}
+    assert handoff["degradation"]["type"] == "index_handoff_failed"
+    assert handoff["degradation"]["error"] == {"type": "timeout"}

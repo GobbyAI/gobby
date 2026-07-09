@@ -100,8 +100,20 @@ class WikiWatcher:
             if not pending:
                 return None
             result = await self._coordinator.handle_local_changes(pending)
+            handoff = result.get("index_handoff") if isinstance(result, dict) else None
+            if not isinstance(handoff, dict):
+                handoff = {}
+            degraded = handoff.get("status") == "degraded"
+            if degraded:
+                indexed_scopes = self._degraded_indexed_scopes(handoff)
+                self._log_degraded_handoff(handoff, pending, indexed_scopes)
+            else:
+                indexed_scopes = set(pending)
             async with self._lock:
-                for scope, paths in pending.items():
+                for scope in indexed_scopes:
+                    paths = pending.get(scope)
+                    if not paths:
+                        continue
                     current = self._pending.get(scope)
                     if current is None:
                         continue
@@ -110,8 +122,44 @@ class WikiWatcher:
                         self._pending.pop(scope, None)
                 if not self._pending:
                     self._pending_since = None
-            self._last_index_time = time.time()
+                elif degraded:
+                    # Restart the debounce window so retries back off instead of
+                    # re-flushing on every poll tick while gwiki stays degraded.
+                    self._pending_since = time.monotonic()
+            if not degraded:
+                self._last_index_time = time.time()
             return result
+
+    @staticmethod
+    def _degraded_indexed_scopes(handoff: dict[str, Any]) -> set[str]:
+        """Scopes that finished indexing before a degraded handoff failed."""
+        results_by_scope = handoff.get("results_by_scope")
+        if not isinstance(results_by_scope, dict):
+            return set()
+        indexed = set(results_by_scope)
+        indexed.discard(handoff.get("failed_scope"))
+        return indexed
+
+    def _log_degraded_handoff(
+        self,
+        handoff: dict[str, Any],
+        pending: dict[str, list[Path]],
+        indexed_scopes: set[str],
+    ) -> None:
+        degradation = handoff.get("degradation")
+        message = (
+            degradation.get("message") if isinstance(degradation, dict) else None
+        ) or "unknown"
+        retained = sorted(set(pending) - indexed_scopes)
+        retained_paths = sum(len(pending.get(scope, [])) for scope in retained)
+        logger.warning(
+            "Wiki index handoff degraded (failed scope: %s, reason: %s); "
+            "keeping %d path(s) in scope(s) %s pending for retry",
+            handoff.get("failed_scope") or "unknown",
+            message,
+            retained_paths,
+            retained,
+        )
 
     def health(self) -> dict[str, Any]:
         pending_changes = sum(len(paths) for paths in self._pending.values())
