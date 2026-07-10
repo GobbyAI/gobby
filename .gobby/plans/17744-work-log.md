@@ -334,3 +334,23 @@ daemon's gateway and HTTP routes, plus gzip for the large graph payloads.
   `gwiki pages --prefix code/ --project … --format json` and
   `gwiki graph --stdout --include knowledge --project … --format json`
   return well-formed envelopes for the live vault.
+
+### Found during close: validator guard bug (#17807)
+
+`close_task` was rejected twice with a contradiction: the validator's prose
+said "All acceptance criteria are met … No gaps found" but
+`validation_status=invalid`. Root cause (daemon log 12:57): the
+`validate_leaf_task_with_llm` failure-precedence guard regex-matched the TDD
+red evidence the validator echoed ("red (3 failed …)", "red (3 failing
+tests …)") and demoted the valid verdict. The validation_criteria template
+itself contains "Red evidence: failing test output captured before
+implementation", so every TDD-required task whose validator quotes it is
+exposed. Fixed under bug #17807 (own commit): four TDD red-evidence strippers
+added to `_searchable_feedback` in `src/gobby/tasks/_validation_feedback.py`
+(red parenthetical, red/TDD-evidence window with contrastive guard,
+failure-before-implementation proximity, failed-as-expected idiom), red→green
+regression tests in
+`tests/mcp_proxy/tools/tasks/test_lifecycle_validation_feedback.py`
+(5 stripped shapes incl. both observed #17754 messages verbatim-shaped, plus
+2 preserved genuine admissions). 87 guard tests + 248 task-tools tests +
+155 validation tests pass; ruff/mypy clean; audit 0 new.

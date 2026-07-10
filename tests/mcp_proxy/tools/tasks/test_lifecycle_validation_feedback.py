@@ -262,6 +262,42 @@ def test_resolved_regression_summaries_do_not_admit_failure(feedback: str) -> No
 @pytest.mark.parametrize(
     "feedback",
     [
+        # The #17754 incident: the validator echoed TDD red evidence and the
+        # precedence guard demoted a 'valid' verdict to 'invalid' twice.
+        "All acceptance criteria are met. TDD evidence is documented: red "
+        "(3 failed - 404s and missing content-encoding), green (23 passed), "
+        "refactor/final-green (59 passed), with exact pytest commands captured.",
+        "All acceptance criteria are met. TDD evidence is documented: red "
+        "(3 failing tests, 404s and missing content-encoding header), green "
+        "(23 passed in test_wiki_routes.py), final-green (59 passed).",
+        # The validation_criteria template phrase validators echo verbatim.
+        "Red evidence: failing test output captured before implementation.",
+        "TDD evidence includes 2 tests failing prior to implementation and a green run after.",
+        "The red test run failed as expected; green and final-green runs pass.",
+    ],
+)
+def test_tdd_red_evidence_does_not_admit_failure(feedback: str) -> None:
+    """TDD red-phase descriptions are expected failures, not admissions."""
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "Red evidence was captured, but the final test run failed.",
+        "Tests are still failing in the required check after the TDD cycle.",
+    ],
+)
+def test_current_failures_near_tdd_wording_still_admit_failure(feedback: str) -> None:
+    """Genuine admissions keep their failure evidence despite TDD context."""
+    assert matched_required_validation_failure_pattern(feedback) is not None
+    assert feedback_admits_required_validation_failure(feedback) is True
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
         # Exact fragment from the #15950 round-2 verdict that misfired: the
         # override flipped a 'valid' LLM verdict because "test ... failed"
         # matched inside a description of an assertion.

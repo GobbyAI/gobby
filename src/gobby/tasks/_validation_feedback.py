@@ -37,6 +37,39 @@ _RESOLVED_REGRESSION_FRAGMENT_RE = re.compile(
     r")\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_TDD_RED_PARENTHETICAL_RE = re.compile(
+    # Example: "TDD evidence is documented: red (3 failing tests, 404s and
+    # missing content-encoding header), green (23 passed)" — the parenthetical
+    # after "red" describes the intentional pre-implementation failure, not a
+    # current gate failure.
+    r"\bred\s*\([^()]{0,200}\)",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_TDD_RED_EVIDENCE_FRAGMENT_RE = re.compile(
+    # Example: "Red evidence: failing test output captured before
+    # implementation" — a description of the TDD red phase. The window must
+    # not cross a contrastive clause, so "red evidence was captured, but the
+    # final test run failed" keeps its failure evidence.
+    r"\b(?:tdd|red)(?:\s+(?:phase|step|run|stage))?\s+evidence\b"
+    r"(?:(?!\b(?:but|however|yet|although|though)\b)[^.!?]){0,140}",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_PRE_IMPLEMENTATION_FAILURE_FRAGMENT_RE = re.compile(
+    # Example: "2 tests failing prior to implementation" — the expected TDD
+    # red failure, not a current one. The gap must not cross a contrastive
+    # clause so trailing genuine admissions survive.
+    r"\bfail(?:ed|ing|ures?)\b"
+    r"(?:(?!\b(?:but|however|yet)\b)[^.!?]){0,80}"
+    r"\b(?:before|prior\s+to|pre)[\s-]*(?:the\s+)?implementation\b"
+    r"|\bpre-?implementation\b[^.!?]{0,60}\bfail(?:ed|ing|ures?)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_FAILED_AS_EXPECTED_FRAGMENT_RE = re.compile(
+    # Example: "the red test run failed as expected" — an intentional TDD
+    # failure description, not an admission.
+    r"\bfail(?:ed|ing|s)?\s+as\s+(?:expected|designed|intended)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _QUOTED_FEEDBACK_FRAGMENT_RE = re.compile(
     r"(?:\"[^\"]{1,240}\"|`[^`]{1,240}`|(?<!\w)'[^']{1,240}'(?!\w))",
     _FAILURE_FEEDBACK_FLAGS,
@@ -201,6 +234,10 @@ def _searchable_feedback(feedback: str) -> str:
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
     normalized_feedback = _NEGATED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _RESOLVED_REGRESSION_FRAGMENT_RE.sub("", normalized_feedback)
+    normalized_feedback = _TDD_RED_PARENTHETICAL_RE.sub("", normalized_feedback)
+    normalized_feedback = _TDD_RED_EVIDENCE_FRAGMENT_RE.sub("", normalized_feedback)
+    normalized_feedback = _PRE_IMPLEMENTATION_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
+    normalized_feedback = _FAILED_AS_EXPECTED_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _STATUS_VALUE_FAILURE_TOKEN_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_BUCKET_DESTINATION_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_COLLECTION_NOUN_RE.sub("", normalized_feedback)
