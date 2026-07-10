@@ -280,6 +280,28 @@ def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
     assert record.error == "unexpected disk failure"
 
 
+def test_codewiki_status_requires_trigger(client: TestClient) -> None:
+    response = client.get("/api/code-index/codewiki/status")
+    assert response.status_code == 503
+
+
+def test_codewiki_status_returns_snapshot(client: TestClient, mock_server: MagicMock) -> None:
+    snapshot = {
+        "pending_roots": ["/repo"],
+        "running_roots": [],
+        "active_flush_tasks": 0,
+        "last_run": None,
+    }
+    trigger = MagicMock()
+    trigger.status.return_value = snapshot
+    mock_server.services.codewiki_trigger = trigger
+
+    response = client.get("/api/code-index/codewiki/status")
+
+    assert response.status_code == 200
+    assert response.json() == snapshot
+
+
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:
     response = client.get(
         "/api/code-index/graph/file/src/app.py",

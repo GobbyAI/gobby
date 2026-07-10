@@ -505,4 +505,14 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             "reason": None if accepted else "wiki.codewiki_on_commit disabled",
         }
 
+    @router.get("/codewiki/status")
+    async def codewiki_status() -> dict[str, Any]:
+        """Return the refresh trigger's pending/running/last-run snapshot."""
+        trigger = getattr(server.services, "codewiki_trigger", None)
+        status_fn = getattr(trigger, "status", None)
+        if not callable(status_fn):
+            raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
+        snapshot: dict[str, Any] = status_fn()
+        return snapshot
+
     return router

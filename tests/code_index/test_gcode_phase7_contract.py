@@ -165,18 +165,20 @@ def test_phase7_falkor_client_pins_core_graph_client_facade_contract() -> None:
     connection = _read("crates/gcode/src/graph/code_graph/connection.rs")
 
     client = _struct_body(falkor, "GraphClient")
-    _assert_field(client, "graph: SyncGraph")
+    _assert_fields(client, ("connection: Connection", "graph_name: String"))
 
     _assert_contains_all(
         falkor,
         (
             "pub type Row = HashMap<String, Value>",
             "pub struct GraphClient",
-            "FalkorClientBuilder",
-            "FalkorConnectionInfo",
             "GraphClient::from_config",
             "with_graph_client",
-            "urlencoding::encode(password)",
+            "DEFAULT_CONNECT_TIMEOUT",
+            "DEFAULT_SOCKET_TIMEOUT",
+            "set_read_timeout",
+            "set_write_timeout",
+            "GRAPH.QUERY",
         ),
     )
     _assert_matches(
@@ -184,6 +186,7 @@ def test_phase7_falkor_client_pins_core_graph_client_facade_contract() -> None:
         (
             r"pub\s+type\s+Row\s*=\s*HashMap<String,\s*Value>",
             r"pub\s+fn\s+from_config\(config:\s*&FalkorConfig,\s*graph_name:\s*&str\)",
+            r"pub\s+fn\s+from_config_with_timeouts\(",
             r"pub\s+fn\s+query\(\s*&mut\s+self,\s*cypher:\s*&str,\s*"
             r"params:\s*Option<HashMap<String,\s*String>>",
             r"pub\s+fn\s+with_graph<T>\(\s*config:\s*Option<&FalkorConfig>,\s*"
@@ -220,7 +223,8 @@ def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
 
     package_names = {package["name"] for package in lockfile["package"]}
     assert "gobby-core" in package_names
-    assert "falkordb" in package_names
+    assert "redis" in package_names
+    assert "falkordb" not in package_names
     assert "urlencoding" in package_names
     assert "neo4j" not in package_names
     assert "neo4rs" not in package_names

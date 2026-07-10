@@ -684,3 +684,33 @@ Tests (TDD):
   tests/test_app_context.py --baseline .gobby/test-quality-baseline.json --fail-on-new
   --min-severity high` → exit 0 (3 MEDIUM below gate: two `asyncio.sleep(0)` event-loop
   yields for done-callbacks, one delegation test complemented by real-SQL storage tests).
+
+## #17757 — Codewiki refresh status endpoint (plan section 1.7)
+
+### Investigation
+- `CodewikiRefreshTrigger` (`src/gobby/code_index/codewiki_trigger.py`) already tracks all live state needed for a snapshot: `_pending_by_root` (debounced requests), `_flush_timers_by_root`, `_flush_tasks` (in-flight asyncio tasks), `_running_roots`. `_run_refresh` logs the `CodewikiRefreshResult` (or gateway error) and discards it — nothing is retained for later inspection.
+- `_run_refresh` catches `CodewikiGatewayConstructionError` and `(GcodeGatewayError, GwikiGatewayError)`; `CancelledError` re-raises; unexpected exceptions propagate to `_flush_task_done` (logged there).
+- Routes: `create_code_index_router` uses prefix `/api/code-index`; refresh is `@router.post("/codewiki/refresh", status_code=202)` and 503s when `server.services.codewiki_trigger` is missing. Status route mirrors that guard.
+- Route handlers run on the daemon event loop — the same loop that mutates trigger state via `call_soon_threadsafe`/timers — so a read-only `status()` called directly from the handler is race-free; copies are returned to keep the snapshot immutable.
+
+### Changes
+1. Trigger `_run_refresh`: capture `started_at = datetime.now(UTC)`; on success or handled gateway error call `_record_last_run(request, started_at, result=... | error=...)` storing `self._last_run: dict[str, Any]` with `outcome` (success/error), `root_path`, `project_id`, `changed_count`, `indexed`, `error`, `started_at`/`finished_at` ISO timestamps. Cancellation records nothing.
+2. Trigger `status()` (acceptance 1.7.1): returns `{"pending_roots": sorted(...), "running_roots": sorted(...), "active_flush_tasks": len(self._flush_tasks), "last_run": copy | None}`.
+3. Route `GET /api/code-index/codewiki/status` (acceptance 1.7.2): 503 when trigger/status unavailable, else returns `trigger.status()`.
+
+### Tests (red first)
+- `tests/code_index/test_codewiki_trigger.py`: `test_status_reports_pending_and_running_state`, `test_status_records_last_run_success`, `test_status_records_last_run_error`, `test_status_endpoint_snapshot` (FastAPI app + router + real trigger after a full refresh cycle — acceptance test).
+- `tests/servers/routes/test_code_index_routes.py`: `test_codewiki_status_requires_trigger` (503 when trigger is None).
+- Command: `GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_codewiki_trigger.py tests/servers/routes/test_code_index_routes.py -v`
+
+### Implementation notes (#17757)
+- `CodewikiRefreshTrigger` gained `_last_run: dict[str, Any] | None`, a `status()` snapshot (`pending_roots`/`running_roots` sorted, `active_flush_tasks` count, copied `last_run`), and `_record_last_run(request, started_at, *, result|error)` invoked from `_run_refresh` on success and on both handled gateway-error paths. Cancellation re-raises without recording. Timestamps are `datetime.now(UTC).isoformat()` strings so the snapshot is JSON-safe end to end.
+- `GET /api/code-index/codewiki/status` added to `create_code_index_router`, mirroring the refresh route's 503 guard (`getattr` trigger + callable `status`).
+- Found-it-own-it fix: `tests/code_index/test_gcode_phase7_contract.py` had 2 pre-existing failures — commit `9f7311de0` ([gobby-#17712] bound FalkorDB socket I/O) replaced the `falkordb` crate with a hand-rolled redis-backed client (`connection: Connection` + `graph_name: String`, bounded connect/read/write timeouts) and updated `crates/gcore/tests/public_boundary.rs` but not this Python contract test. Re-pinned the facade contract on the new surface (timeout constants, `set_read_timeout`/`set_write_timeout`, `GRAPH.QUERY`, `from_config_with_timeouts`) and the lockfile assertions (`redis` in, `falkordb` out).
+
+### TDD evidence (#17757)
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/test_codewiki_trigger.py tests/servers/routes/test_code_index_routes.py -v` → 6 failed as expected (4× `AttributeError: no attribute 'status'` / 404 on status route in trigger file, 2× 404 in routes file), 41 passed.
+- Green: same command → 47 passed.
+- Final: `GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/ tests/servers/routes/test_code_index_routes.py` → 251 passed (includes the 2 repaired phase7 contract tests).
+- `uv run ruff format`/`check` clean on all 5 touched files; `uv run mypy src/gobby/code_index/codewiki_trigger.py src/gobby/servers/routes/code_index.py` → no issues.
+- `uv run gobby test-quality audit tests/code_index/test_codewiki_trigger.py tests/servers/routes/test_code_index_routes.py tests/code_index/test_gcode_phase7_contract.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 51 tests scanned, 0 issues, exit 0.

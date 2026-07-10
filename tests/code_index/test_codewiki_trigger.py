@@ -7,14 +7,19 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from gobby.code_index.codewiki_trigger import (
     CodewikiRefreshRequest,
     CodewikiRefreshTrigger,
     codewiki_on_commit_enabled,
 )
+from gobby.code_index.gcode_gateway import GcodeGatewayError
+from gobby.servers.routes.code_index import create_code_index_router
 
 pytestmark = pytest.mark.unit
 
@@ -299,3 +304,115 @@ async def test_flush_does_not_stack_while_root_is_running(tmp_path: Path) -> Non
     await trigger._flush(root_key)
 
     assert trigger._pending_by_root[root_key] == request
+
+
+@pytest.mark.asyncio
+async def test_status_reports_pending_and_running_state(tmp_path: Path) -> None:
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        debounce_seconds=60,
+    )
+    root_key = trigger._root_key(str(tmp_path))
+    trigger._schedule_request(CodewikiRefreshRequest(root_path=str(tmp_path)))
+    trigger._running_roots.add(root_key)
+
+    snapshot = trigger.status()
+
+    assert snapshot["pending_roots"] == [root_key]
+    assert snapshot["running_roots"] == [root_key]
+    assert snapshot["active_flush_tasks"] == 0
+    assert snapshot["last_run"] is None
+
+
+@pytest.mark.asyncio
+async def test_status_records_last_run_success(tmp_path: Path) -> None:
+    gcode = FakeGcodeGateway({"changed_paths": ["repo.md"]})
+    gwiki = FakeGwikiGateway()
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=lambda: gcode,
+        gwiki_gateway_factory=lambda _root: gwiki,
+        debounce_seconds=60,
+    )
+    trigger._schedule_request(
+        CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1", ai="daemon")
+    )
+    await trigger._flush(trigger._root_key(str(tmp_path)))
+
+    snapshot = trigger.status()
+
+    assert snapshot["pending_roots"] == []
+    last_run = snapshot["last_run"]
+    assert last_run is not None
+    assert last_run["outcome"] == "success"
+    assert last_run["root_path"] == str(tmp_path)
+    assert last_run["project_id"] == "proj-1"
+    assert last_run["changed_count"] == 1
+    assert last_run["indexed"] is True
+    assert last_run["error"] is None
+    assert last_run["started_at"] <= last_run["finished_at"]
+
+
+@pytest.mark.asyncio
+async def test_status_records_last_run_error(tmp_path: Path) -> None:
+    class ErroringGcodeGateway:
+        async def codewiki(
+            self,
+            _project_root: Path,
+            _out_dir: Path,
+            *,
+            ai: str | None = None,
+            scopes: list[str] | None = None,
+        ) -> dict:
+            _ = ai, scopes
+            raise GcodeGatewayError("gcode exploded")
+
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=ErroringGcodeGateway,
+        gwiki_gateway_factory=lambda _root: FakeGwikiGateway(),
+        debounce_seconds=60,
+    )
+    trigger._schedule_request(CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1"))
+    await trigger._flush(trigger._root_key(str(tmp_path)))
+
+    last_run = trigger.status()["last_run"]
+
+    assert last_run is not None
+    assert last_run["outcome"] == "error"
+    assert last_run["error"] is not None
+    assert "gcode exploded" in last_run["error"]
+    assert last_run["root_path"] == str(tmp_path)
+    assert last_run["started_at"] <= last_run["finished_at"]
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint_snapshot(tmp_path: Path) -> None:
+    gcode = FakeGcodeGateway({"changed_paths": ["repo.md"]})
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=lambda: gcode,
+        gwiki_gateway_factory=lambda _root: FakeGwikiGateway(),
+        debounce_seconds=60,
+    )
+    trigger._schedule_request(CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1"))
+    await trigger._flush(trigger._root_key(str(tmp_path)))
+
+    server = MagicMock()
+    server.services.codewiki_trigger = trigger
+    app = FastAPI()
+    app.include_router(create_code_index_router(server))
+
+    response = TestClient(app).get("/api/code-index/codewiki/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pending_roots"] == []
+    assert payload["running_roots"] == []
+    assert payload["active_flush_tasks"] == 0
+    assert payload["last_run"]["outcome"] == "success"
+    assert payload["last_run"]["changed_count"] == 1

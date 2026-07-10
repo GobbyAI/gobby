@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import psycopg
 
@@ -13,6 +15,7 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiGatewayConstructionError,
     CodewikiGenerator,
     CodewikiRefreshRequest,
+    CodewikiRefreshResult,
     CodewikiRefreshService,
     WikiIndexer,
     normalize_codewiki_ai,
@@ -88,6 +91,7 @@ class CodewikiRefreshTrigger:
         self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._running_roots: set[str] = set()
+        self._last_run: dict[str, Any] | None = None
 
     def request_refresh(
         self,
@@ -111,6 +115,15 @@ class CodewikiRefreshTrigger:
         )
         self._loop.call_soon_threadsafe(self._schedule_request, request)
         return True
+
+    def status(self) -> dict[str, Any]:
+        """Snapshot pending roots, in-flight flush tasks, and the last run outcome."""
+        return {
+            "pending_roots": sorted(self._pending_by_root),
+            "running_roots": sorted(self._running_roots),
+            "active_flush_tasks": len(self._flush_tasks),
+            "last_run": dict(self._last_run) if self._last_run is not None else None,
+        }
 
     def _schedule_request(self, request: CodewikiRefreshRequest) -> None:
         root_key = self._root_key(request.root_path)
@@ -168,6 +181,7 @@ class CodewikiRefreshTrigger:
             )
 
     async def _run_refresh(self, request: CodewikiRefreshRequest) -> None:
+        started_at = datetime.now(UTC)
         try:
             result = await self._refresh_service.refresh(request)
             logger.debug(
@@ -175,13 +189,35 @@ class CodewikiRefreshTrigger:
                 result.root,
                 result.changed_count,
             )
+            self._record_last_run(request, started_at, result=result)
         except asyncio.CancelledError:
             raise
         except CodewikiGatewayConstructionError as exc:
             logger.warning("%s", exc)
+            self._record_last_run(request, started_at, error=str(exc))
         except (GcodeGatewayError, GwikiGatewayError) as exc:
             logger.warning(
                 "codewiki refresh failed for %s: %s",
                 request.project_id or request.root_path,
                 exc,
             )
+            self._record_last_run(request, started_at, error=str(exc))
+
+    def _record_last_run(
+        self,
+        request: CodewikiRefreshRequest,
+        started_at: datetime,
+        *,
+        result: CodewikiRefreshResult | None = None,
+        error: str | None = None,
+    ) -> None:
+        self._last_run = {
+            "outcome": "success" if error is None else "error",
+            "root_path": request.root_path,
+            "project_id": request.project_id,
+            "changed_count": result.changed_count if result is not None else None,
+            "indexed": result.indexed if result is not None else None,
+            "error": error,
+            "started_at": started_at.isoformat(),
+            "finished_at": datetime.now(UTC).isoformat(),
+        }
