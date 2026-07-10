@@ -3,6 +3,8 @@
 TDD tests for ExecutionStatus, PipelineExecution, StepExecution, and ApprovalRequired.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
 from gobby.workflows.pipeline_state import (
@@ -92,7 +94,8 @@ class TestPipelineExecution:
         )
         assert execution.inputs_json == '{"files": ["a.py"]}'
         assert execution.outputs_json == '{"result": "success"}'
-        assert execution.completed_at == "2026-02-01T12:30:00Z"
+        # Stored timestamps normalize to aware datetimes on the model.
+        assert execution.completed_at == datetime(2026, 2, 1, 12, 30, tzinfo=UTC)
         assert execution.resume_token == "token-xyz"
         assert execution.session_id == "sess-456"
         assert execution.parent_execution_id == "pe-parent123"
@@ -244,7 +247,7 @@ class TestStepExecution:
         assert step.execution_id == "pe-xyz789"
         assert step.step_id == "build"
         assert step.status == StepStatus.RUNNING
-        assert step.started_at == "2026-02-01T14:00:00Z"
+        assert step.started_at == datetime(2026, 2, 1, 14, 0, tzinfo=UTC)
         assert step.input_json == '{"config": "release"}'
 
     def test_to_dict(self) -> None:

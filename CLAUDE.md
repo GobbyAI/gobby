@@ -466,11 +466,11 @@ async def fetch_data(url: str) -> dict[str, Any]:
 
 ### Database Access
 
-Use the hub database transaction boundary and project-standard `$N` placeholders:
+Use the hub database transaction boundary and psycopg `%s` placeholders:
 
 ```python
 with self.db.transaction() as conn:
-    conn.execute("INSERT INTO tasks (id, title) VALUES ($1, $2)", (task_id, title))
+    conn.execute("INSERT INTO tasks (id, title) VALUES (%s, %s)", (task_id, title))
 ```
 
 Legacy SQLite access is limited to one-shot import tooling such as

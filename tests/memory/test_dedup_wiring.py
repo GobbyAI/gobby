@@ -96,6 +96,9 @@ class TestBackgroundDedupTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
         manager._backend.create = AsyncMock(return_value=mock_record)
 
@@ -133,6 +136,9 @@ class TestBackgroundDedupTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
         manager._backend.create = AsyncMock(return_value=mock_record)
         manager._dedup_service.process = AsyncMock()
@@ -167,6 +173,9 @@ class TestBackgroundDedupTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
         manager._backend.create = AsyncMock(return_value=mock_record)
 
@@ -193,6 +202,9 @@ class TestBackgroundDedupTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
         manager._backend.create = AsyncMock(return_value=mock_record)
 
@@ -229,6 +241,9 @@ class TestBackgroundDedupTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
         manager._backend.create = AsyncMock(return_value=mock_record)
 

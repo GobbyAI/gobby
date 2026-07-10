@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -397,8 +398,8 @@ class TestKnowledgeGraphRebuildService:
                 id="mem-1",
                 memory_type="fact",
                 content="Python memory",
-                created_at="",
-                updated_at="",
+                created_at="2026-01-01T00:00:00+00:00",
+                updated_at="2026-01-01T00:00:00+00:00",
                 project_id="proj-1",
             )
         ]
@@ -450,8 +451,8 @@ class TestKnowledgeGraphRebuildService:
                 id=f"mem-{index}",
                 memory_type="fact",
                 content=f"Memory {index}",
-                created_at="",
-                updated_at="",
+                created_at="2026-01-01T00:00:00+00:00",
+                updated_at="2026-01-01T00:00:00+00:00",
                 project_id="proj-1",
             )
             for index in range(3)
@@ -534,12 +535,15 @@ class TestGraphBackgroundTask:
         mock_record.id = "test-id"
         mock_record.memory_type = "fact"
         mock_record.content = "Josh uses Python"
-        mock_record.created_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
-        mock_record.updated_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
+        mock_record.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        mock_record.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
         mock_record.project_id = None
         mock_record.source_type = "user"
         mock_record.source_session_id = None
 
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
@@ -570,12 +574,15 @@ class TestGraphBackgroundTask:
         mock_record.id = "test-id"
         mock_record.memory_type = "fact"
         mock_record.content = "test"
-        mock_record.created_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
-        mock_record.updated_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
+        mock_record.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        mock_record.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
         mock_record.project_id = None
         mock_record.source_type = "user"
         mock_record.source_session_id = None
 
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
@@ -606,12 +613,15 @@ class TestGraphBackgroundTask:
         mock_record.id = "test-id"
         mock_record.memory_type = "fact"
         mock_record.content = "test"
-        mock_record.created_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
-        mock_record.updated_at = MagicMock(isoformat=MagicMock(return_value="2026-01-01"))
+        mock_record.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        mock_record.updated_at = datetime(2026, 1, 1, tzinfo=UTC)
         mock_record.project_id = None
         mock_record.source_type = "user"
         mock_record.source_session_id = None
 
+        mock_record.deleted_at = None
+        mock_record.dream_action = None
+        mock_record.last_dreamed_at = None
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
