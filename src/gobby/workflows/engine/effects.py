@@ -586,7 +586,44 @@ class EffectsMixin:
             )
         self._track_injected_ids(render_outcome.rendered_ids, platform_session_id)
         self._record_injection_outcomes(rows)
+        if rows and render_outcome.rendered_ids:
+            self._queue_memory_usefulness(
+                platform_session_id, recall_ctx, render_outcome.rendered_ids
+            )
         return text or None
+
+    def _queue_memory_usefulness(
+        self,
+        platform_session_id: str | None,
+        recall_context: dict[str, Any],
+        rendered_ids: list[str],
+    ) -> None:
+        """Queue this turn's injected memories for the digest usefulness judge.
+
+        Only reached when injection outcomes were recorded (recall_signal_hub
+        on and the payload joinable), so queued entries always have their §2
+        join key. The digest pass consumes and clears the queue (#17195).
+        """
+        if not platform_session_id:
+            return
+        from gobby.memory.usefulness import PENDING_USEFULNESS_VARIABLE
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        try:
+            sv_mgr = SessionVariableManager(self.db)
+            pending = sv_mgr.get_variables(platform_session_id).get(PENDING_USEFULNESS_VARIABLE)
+            pending = list(pending) if isinstance(pending, list) else []
+            pending.append(
+                {
+                    "recall_request_id": recall_context.get("recall_request_id"),
+                    "memory_ids": list(rendered_ids),
+                    "project_id": recall_context.get("project_id"),
+                    "caller": recall_context.get("caller"),
+                }
+            )
+            sv_mgr.set_variable(platform_session_id, PENDING_USEFULNESS_VARIABLE, pending[-8:])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to queue memory-usefulness judgment: %s", exc)
 
     def _format_review_lessons_result(
         self,

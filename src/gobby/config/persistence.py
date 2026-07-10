@@ -539,6 +539,16 @@ class MemoryConfig(BaseModel):
             "Purely observational; independent of recall_signal_logging (#17196)."
         ),
     )
+    digest_memory_usefulness: bool = Field(
+        default=False,
+        description=(
+            "Judge injected-memory usefulness during the digest pass and append "
+            "label_source='digest' rows to recall_usefulness (#17195). Requires "
+            "recall_signal_hub: the delivery chain queues judgments only when "
+            "injection outcomes are recorded. Judge routing lives in the "
+            "top-level memory_usefulness feature config."
+        ),
+    )
 
     @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
     @classmethod

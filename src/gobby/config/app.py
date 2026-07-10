@@ -70,6 +70,7 @@ from gobby.config.sessions import (
     ContextInjectionConfig,
     DigestConfig,
     MemoryRecallConfig,
+    MemoryUsefulnessConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
@@ -247,6 +248,10 @@ class DaemonConfig(BaseModel):
     memory_recall: MemoryRecallConfig = Field(
         default_factory=MemoryRecallConfig,
         description="Daemon-owned memory recall runner configuration",
+    )
+    memory_usefulness: MemoryUsefulnessConfig = Field(
+        default_factory=MemoryUsefulnessConfig,
+        description="Digest-pass memory-usefulness judge configuration (#17195)",
     )
     recommend_tools: RecommendToolsConfig = Field(
         default_factory=RecommendToolsConfig,

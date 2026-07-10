@@ -24,6 +24,7 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
+from gobby.memory.usefulness import judge_pending_memory_usefulness
 from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.injected_context import strip_injected_context
 from gobby.utils.json_helpers import extract_json_object
@@ -703,6 +704,11 @@ async def build_turn_and_digest(
         logger.debug(f"build_turn_and_digest: skipped — no llm_service (session_id={session_id})")
         return None
 
+    # PromptLoader(db=None) opens (and leaks) a fresh runtime hub pool per
+    # render; reuse the daemon's hub handle when the caller didn't pass one.
+    if db is None:
+        db = getattr(memory_manager, "db", None)
+
     # Check DigestConfig.enabled
     digest_config = getattr(config, "digest", None) if config else None
     if digest_config and not digest_config.enabled:
@@ -822,6 +828,19 @@ async def build_turn_and_digest(
         }
         if digest_title and title_changed:
             result["title"] = digest_title
+
+        # Forward usefulness labels (#17195): judge this turn's injected
+        # memories after digest persistence so digest state is never at risk.
+        # Default-off (memory.digest_memory_usefulness) and fail-open.
+        memory_usefulness = await judge_pending_memory_usefulness(
+            memory_manager=memory_manager,
+            llm_service=llm_service,
+            config=config,
+            session_id=session_id,
+            undigested_pairs=undigested_pairs,
+        )
+        if memory_usefulness:
+            result["memory_usefulness"] = memory_usefulness
 
         return result
 
