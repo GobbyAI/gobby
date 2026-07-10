@@ -74,9 +74,10 @@ class StuckDetector:
         unable to make progress on available work.
 
     Layer 2 - Progress Stagnation:
-        Uses ProgressTracker to detect when no meaningful progress
-        (file modifications, commits, task completions) is occurring
-        despite continued activity.
+        Uses ProgressTracker to detect when the session has gone quiet —
+        no progress events of any kind for the stagnation threshold.
+        Sessions with actively flowing events (including read-only work)
+        are never flagged by this layer.
 
     Layer 3 - Tool Call Patterns:
         Detects repeated identical tool calls that indicate the agent
@@ -236,16 +237,21 @@ class StuckDetector:
         if summary.is_stagnant:
             logger.info(
                 f"Session {session_id} progress stagnant: "
-                f"{summary.stagnation_duration_seconds:.0f}s since high-value event"
+                f"{summary.stagnation_duration_seconds:.0f}s since last progress event"
             )
             return StuckDetectionResult(
                 is_stuck=True,
-                reason=f"No meaningful progress for {summary.stagnation_duration_seconds:.0f} seconds",
+                reason=(
+                    f"No progress events for {summary.stagnation_duration_seconds:.0f} seconds"
+                ),
                 layer="progress_stagnation",
                 details={
                     "total_events": summary.total_events,
                     "high_value_events": summary.high_value_events,
                     "stagnation_duration": summary.stagnation_duration_seconds,
+                    "last_event_at": (
+                        summary.last_event_at.isoformat() if summary.last_event_at else None
+                    ),
                     "last_high_value_at": (
                         summary.last_high_value_at.isoformat()
                         if summary.last_high_value_at

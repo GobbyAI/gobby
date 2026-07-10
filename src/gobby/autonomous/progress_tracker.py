@@ -241,35 +241,30 @@ class ProgressTracker:
     autonomous execution, enabling detection of stagnation (when the
     session is no longer making meaningful progress).
 
-    Stagnation is detected when:
-    1. No high-value progress events for a configured duration
-    2. Too many low-value events without high-value events
-    3. Repeated identical tool calls (loop detection)
+    Stagnation means the session has gone quiet: no progress events of any
+    kind for a configured duration. Event value is deliberately not judged
+    here — read-heavy sessions (review, research) emit only low-value events
+    yet are making real progress. Busy-loops of identical calls are caught by
+    StuckDetector's tool-loop layer, not by this tracker.
     """
 
     # Default stagnation threshold in seconds (10 minutes)
     DEFAULT_STAGNATION_THRESHOLD = 600.0
 
-    # Max low-value events before considering stagnant
-    DEFAULT_MAX_LOW_VALUE_EVENTS = 50
-
     def __init__(
         self,
         db: "HubDatabase",
         stagnation_threshold: float | None = None,
-        max_low_value_events: int | None = None,
     ):
         """Initialize the progress tracker.
 
         Args:
             db: Database connection for persistent storage
-            stagnation_threshold: Seconds without high-value progress before stagnant
-            max_low_value_events: Max low-value events since the last high-value event
+            stagnation_threshold: Seconds without any progress event before stagnant
         """
         self.db = db
         self._lock = threading.Lock()
         self.stagnation_threshold = stagnation_threshold or self.DEFAULT_STAGNATION_THRESHOLD
-        self.max_low_value_events = max_low_value_events or self.DEFAULT_MAX_LOW_VALUE_EVENTS
 
     def record_event(
         self,
@@ -455,7 +450,7 @@ class ProgressTracker:
 
         # Calculate stagnation
         is_stagnant, stagnation_duration = self._check_stagnation(
-            session_id, high_value_events, total_events, last_high_value_at
+            session_id, total_events, last_event_at
         )
 
         return ProgressSummary(
@@ -472,9 +467,8 @@ class ProgressTracker:
     def is_stagnant(self, session_id: str) -> bool:
         """Check if a session is in a stagnant state.
 
-        A session is stagnant if:
-        1. No high-value progress for longer than stagnation_threshold
-        2. Too many low-value events without high-value progress
+        A session is stagnant if it has recorded no progress events of any
+        kind for longer than stagnation_threshold.
 
         Args:
             session_id: The session to check
@@ -488,76 +482,30 @@ class ProgressTracker:
     def _check_stagnation(
         self,
         session_id: str,
-        high_value_events: int,
         total_events: int,
-        last_high_value_at: datetime | None,
+        last_event_at: datetime | None,
     ) -> tuple[bool, float]:
-        """Check for stagnation conditions.
+        """Check whether the session has gone quiet.
+
+        Duration is measured from the most recent event of any kind: a
+        session with actively flowing events is never stagnant, no matter
+        how many of them are low-value (#17779).
 
         Args:
             session_id: The session to check
-            high_value_events: Count of high-value events
             total_events: Total event count
-            last_high_value_at: Timestamp of last high-value event
+            last_event_at: Timestamp of the most recent event
 
         Returns:
-            Tuple of (is_stagnant, stagnation_duration_seconds)
+            Tuple of (is_stagnant, seconds_since_last_event)
         """
-        now = datetime.now(UTC)
-
         # No events yet - not stagnant
-        if total_events == 0:
+        if total_events == 0 or last_event_at is None:
             return False, 0.0
 
-        # Calculate time since last high-value event
-        if last_high_value_at:
-            duration = (now - last_high_value_at).total_seconds()
-        else:
-            # No high-value events ever - use first event time
-            first_event = self.db.fetchone(
-                """
-                SELECT recorded_at
-                FROM loop_progress
-                WHERE session_id = %s
-                ORDER BY recorded_at ASC
-                LIMIT 1
-                """,
-                (session_id,),
-            )
-            if first_event:
-                first_time = require_stored_datetime(first_event["recorded_at"], "recorded_at")
-                duration = (now - first_time).total_seconds()
-            else:
-                duration = 0.0
-
-        # Check time-based stagnation
+        duration = (datetime.now(UTC) - last_event_at).total_seconds()
         if duration > self.stagnation_threshold:
-            logger.info(
-                f"Session {session_id} stagnant: {duration:.0f}s since last high-value event"
-            )
-            return True, duration
-
-        # Check event count-based stagnation since the last high-value event.
-        if last_high_value_at:
-            low_value_result = self.db.fetchone(
-                """
-                SELECT COUNT(*) as count
-                FROM loop_progress
-                WHERE session_id = %s
-                    AND is_high_value IS NOT TRUE
-                    AND recorded_at > %s
-                """,
-                (session_id, last_high_value_at.isoformat()),
-            )
-            low_value_events = low_value_result["count"] if low_value_result else 0
-        else:
-            low_value_events = total_events - high_value_events
-
-        if low_value_events >= self.max_low_value_events:
-            logger.info(
-                f"Session {session_id} stagnant: "
-                f"{low_value_events} low-value events since high-value progress"
-            )
+            logger.info(f"Session {session_id} stagnant: {duration:.0f}s since last progress event")
             return True, duration
 
         return False, duration

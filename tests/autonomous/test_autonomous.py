@@ -249,17 +249,11 @@ class TestProgressTracker:
         """Test initialization with default thresholds."""
         tracker = ProgressTracker(test_db)
         assert tracker.stagnation_threshold == ProgressTracker.DEFAULT_STAGNATION_THRESHOLD
-        assert tracker.max_low_value_events == ProgressTracker.DEFAULT_MAX_LOW_VALUE_EVENTS
 
     def test_init_with_custom_thresholds(self, test_db: HubDatabase) -> None:
         """Test initialization with custom thresholds."""
-        tracker = ProgressTracker(
-            test_db,
-            stagnation_threshold=300.0,
-            max_low_value_events=25,
-        )
+        tracker = ProgressTracker(test_db, stagnation_threshold=300.0)
         assert tracker.stagnation_threshold == 300.0
-        assert tracker.max_low_value_events == 25
 
     def test_record_event_basic(self, progress_tracker: ProgressTracker, session_id: str) -> None:
         """Test recording a basic progress event."""
@@ -685,31 +679,25 @@ class TestProgressTrackerStagnation:
 
         assert progress_tracker.is_stagnant(session_id) is False
 
-    def test_stagnant_by_event_count(self, test_db: HubDatabase, session_id: str) -> None:
-        """Test stagnation detection by low-value event count."""
-        # Create tracker with low threshold for testing
-        tracker = ProgressTracker(
-            test_db,
-            stagnation_threshold=3600,  # High time threshold
-            max_low_value_events=5,  # Low event threshold
-        )
+    def test_not_stagnant_with_many_low_value_events(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Read-heavy sessions with flowing events are never stagnant (#17779)."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=3600)
 
-        # Record many low-value events without any high-value
-        for _ in range(6):
+        # Record many low-value events without any high-value ones — the
+        # shape of a review/research agent doing legitimate work.
+        for _ in range(60):
             tracker.record_event(session_id, ProgressType.FILE_READ)
 
         summary = tracker.get_summary(session_id)
-        assert summary.is_stagnant is True
+        assert summary.is_stagnant is False
         assert summary.high_value_events == 0
-        assert summary.total_events == 6
+        assert summary.total_events == 60
 
     def test_not_stagnant_with_mixed_events(self, test_db: HubDatabase, session_id: str) -> None:
-        """Test that high-value events prevent stagnation detection."""
-        tracker = ProgressTracker(
-            test_db,
-            stagnation_threshold=3600,
-            max_low_value_events=5,
-        )
+        """Test that recent events prevent stagnation detection."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=3600)
 
         # Record low-value events
         for _ in range(10):
@@ -718,49 +706,41 @@ class TestProgressTrackerStagnation:
         # Add a high-value event
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
 
-        # Should not be stagnant because we have high-value events
         assert tracker.is_stagnant(session_id) is False
 
-    def test_stagnant_by_event_count_after_high_value(
+    def test_not_stagnant_when_events_flow_after_stale_high_value(
         self, test_db: HubDatabase, session_id: str
     ) -> None:
-        """Test count-based stagnation resets after each high-value event."""
-        tracker = ProgressTracker(
-            test_db,
-            stagnation_threshold=3600,
-            max_low_value_events=5,
-        )
+        """A stale high-value event does not mark an active session stagnant."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=3600)
 
-        tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
-        for _ in range(6):
-            tracker.record_event(session_id, ProgressType.FILE_READ)
-
-        summary = tracker.get_summary(session_id)
-        assert summary.is_stagnant is True
-        assert summary.high_value_events == 1
-        assert summary.total_events == 7
-
-    def test_stagnant_by_time(self, test_db: HubDatabase, session_id: str) -> None:
-        """Test stagnation detection by time threshold."""
-        tracker = ProgressTracker(
-            test_db,
-            stagnation_threshold=0.01,  # Very short threshold for testing
-            max_low_value_events=100,  # High event threshold
-        )
-
-        # Record a high-value event
+        # High-value event far beyond the threshold
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
         tracker.db.execute(
             "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s AND is_high_value = %s",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
+            ((datetime.now(UTC) - timedelta(seconds=7200)).isoformat(), session_id, True),
         )
 
-        # Record low-value events
+        # Fresh low-value activity keeps the session alive
         tracker.record_event(session_id, ProgressType.FILE_READ)
+
+        assert tracker.is_stagnant(session_id) is False
+
+    def test_stagnant_by_time(self, test_db: HubDatabase, session_id: str) -> None:
+        """Test stagnation detection when the session goes quiet."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=60)
+
+        # Record events, then backdate all of them past the threshold
+        tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
+        tracker.record_event(session_id, ProgressType.FILE_READ)
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), session_id),
+        )
 
         summary = tracker.get_summary(session_id)
         assert summary.is_stagnant is True
-        assert summary.stagnation_duration_seconds >= 0.01
+        assert summary.stagnation_duration_seconds >= 120
 
 
 class TestProgressTrackerClearSession:
@@ -1422,29 +1402,41 @@ class TestStuckDetectorProgressStagnation:
         assert result.is_stuck is False
 
     def test_stagnation_detected(self, test_db: HubDatabase, session_id: str) -> None:
-        """Test stagnation detection."""
-        tracker = ProgressTracker(
-            test_db,
-            stagnation_threshold=0.01,  # Very short for testing
-            max_low_value_events=100,
-        )
+        """Test stagnation detection when a session goes quiet."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=60)
         detector = StuckDetector(test_db, progress_tracker=tracker)
 
-        # Record high-value event
+        # Record events, then backdate all of them past the threshold
         tracker.record_event(session_id, ProgressType.FILE_MODIFIED)
-        tracker.db.execute(
-            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s AND is_high_value = %s",
-            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), session_id, True),
-        )
-
-        # Record low-value event to update last_event_at
         tracker.record_event(session_id, ProgressType.FILE_READ)
+        tracker.db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(), session_id),
+        )
 
         result = detector.detect_progress_stagnation(session_id)
 
         assert result.is_stuck is True
         assert result.layer == "progress_stagnation"
         assert result.suggested_action == "stop"
+        assert result.reason is not None
+        assert result.reason.startswith("No progress events for ")
+        assert result.details is not None
+        assert result.details["last_event_at"] is not None
+
+    def test_no_stagnation_for_read_heavy_session(
+        self, test_db: HubDatabase, session_id: str
+    ) -> None:
+        """Actively flowing low-value events never trigger the kill (#17779)."""
+        tracker = ProgressTracker(test_db, stagnation_threshold=60)
+        detector = StuckDetector(test_db, progress_tracker=tracker)
+
+        for _ in range(60):
+            tracker.record_event(session_id, ProgressType.FILE_READ)
+
+        result = detector.detect_progress_stagnation(session_id)
+
+        assert result.is_stuck is False
 
 
 class TestStuckDetectorToolLoop:
