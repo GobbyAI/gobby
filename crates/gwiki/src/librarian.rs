@@ -18,6 +18,10 @@ use crate::{ScopeIdentity, WikiError, audit, health, lint};
 
 const LIBRARIAN_DIR: &str = "meta/librarian";
 
+/// Reviewed disambiguation verdicts consulted by the near-duplicate scan
+/// (#17782): `{"pairs": [{"left": "<vault path>", "right": "<vault path>"}]}`.
+const DISTINCT_PAIRS_RELATIVE_PATH: &str = "meta/librarian/distinct-pairs.json";
+
 /// Cosine similarity at or above which two knowledge pages count as
 /// near-duplicates.
 const NEAR_DUPLICATE_COSINE: f64 = 0.90;
@@ -187,7 +191,10 @@ pub fn run(
     };
     let semantic_scan = if options.semantic_available {
         match semantic {
-            Some(probe) => semantic_gap_scan(&pages, &lint_report.broken_links, probe),
+            Some(probe) => {
+                let distinct_pairs = load_distinct_pairs(vault_root);
+                semantic_gap_scan(&pages, &lint_report.broken_links, probe, &distinct_pairs)
+            }
             None => SemanticGapScan::failed(
                 "semantic services resolved as available but no semantic backend was supplied",
             ),
@@ -423,8 +430,9 @@ fn semantic_gap_scan(
     pages: &[lint::WikiPage],
     broken_links: &[lint::LinkIssue],
     probe: SemanticProbe<'_>,
+    distinct_pairs: &BTreeSet<(String, String)>,
 ) -> SemanticGapScan {
-    match near_duplicate_pairs(pages, probe) {
+    match near_duplicate_pairs(pages, probe, distinct_pairs) {
         Ok(near_duplicates) => SemanticGapScan {
             near_duplicates,
             unresolved_clusters: unresolved_link_clusters(broken_links),
@@ -437,13 +445,17 @@ fn semantic_gap_scan(
 fn near_duplicate_pairs(
     pages: &[lint::WikiPage],
     probe: SemanticProbe<'_>,
+    distinct_pairs: &BTreeSet<(String, String)>,
 ) -> Result<Vec<NearDuplicatePair>, String> {
     let SemanticProbe {
         backend,
         search_scope,
     } = probe;
     let mut best_scores: BTreeMap<(PathBuf, PathBuf), f64> = BTreeMap::new();
-    for page in pages.iter().filter(|page| is_knowledge_page(page)) {
+    for page in pages
+        .iter()
+        .filter(|page| is_knowledge_page(page) && !is_folder_context(&page.relative_path))
+    {
         let query = near_duplicate_query(page);
         if query.is_empty() {
             continue;
@@ -465,6 +477,7 @@ fn near_duplicate_pairs(
             if hit.score < NEAR_DUPLICATE_COSINE
                 || hit.path == page.relative_path
                 || !hit.path.starts_with("knowledge")
+                || is_folder_context(&hit.path)
             {
                 continue;
             }
@@ -485,7 +498,9 @@ fn near_duplicate_pairs(
         .collect();
     Ok(best_scores
         .into_iter()
-        .filter(|((left, right), _)| !expected_similarity_pair(left, right, &pages_by_path))
+        .filter(|((left, right), _)| {
+            !expected_similarity_pair(left, right, &pages_by_path, distinct_pairs)
+        })
         .map(|((left, right), score)| NearDuplicatePair { left, right, score })
         .collect())
 }
@@ -493,19 +508,74 @@ fn near_duplicate_pairs(
 /// True for pairs whose high similarity is structural rather than a merge
 /// signal (#17643): a synthesis is expected to score near the source digests
 /// it cites, and session digests are distinct manifest records that must not
-/// merge even when adjacent sessions worked the same topic. Pages missing
-/// from the lookup (stale semantic index) keep their pairs.
+/// merge even when adjacent sessions worked the same topic. Reviewed
+/// disambiguation verdicts (#17782) are also honored so blessed-distinct
+/// pairs stop resurfacing. Pages missing from the lookup (stale semantic
+/// index) keep their pairs.
 fn expected_similarity_pair(
     left: &Path,
     right: &Path,
     pages_by_path: &BTreeMap<&Path, &lint::WikiPage>,
+    distinct_pairs: &BTreeSet<(String, String)>,
 ) -> bool {
+    if distinct_pairs.contains(&normalized_page_pair(
+        &left.display().to_string(),
+        &right.display().to_string(),
+    )) {
+        return true;
+    }
     let left_page = pages_by_path.get(left).copied();
     let right_page = pages_by_path.get(right).copied();
     if left_page.is_some_and(is_session_digest) && right_page.is_some_and(is_session_digest) {
         return true;
     }
     cites_source_digest(left_page, right) || cites_source_digest(right_page, left)
+}
+
+/// Reviewed disambiguation verdicts (#17782): normalized page-path pairs the
+/// near-duplicate scan must not re-flag. Stored at
+/// [`DISTINCT_PAIRS_RELATIVE_PATH`] — a librarian meta artifact rather than
+/// page frontmatter, because entity recompiles regenerate frontmatter and
+/// would silently drop an in-page marker. A missing or unparseable file is an
+/// empty set.
+fn load_distinct_pairs(vault_root: &Path) -> BTreeSet<(String, String)> {
+    #[derive(serde::Deserialize)]
+    struct DistinctPairsFile {
+        #[serde(default)]
+        pairs: Vec<DistinctPairEntry>,
+    }
+    #[derive(serde::Deserialize)]
+    struct DistinctPairEntry {
+        left: String,
+        right: String,
+    }
+    let Ok(raw) = std::fs::read_to_string(vault_root.join(DISTINCT_PAIRS_RELATIVE_PATH)) else {
+        return BTreeSet::new();
+    };
+    let Ok(parsed) = serde_json::from_str::<DistinctPairsFile>(&raw) else {
+        return BTreeSet::new();
+    };
+    parsed
+        .pairs
+        .into_iter()
+        .map(|entry| normalized_page_pair(&entry.left, &entry.right))
+        .collect()
+}
+
+/// Order-insensitive pair key tolerant of `.md`-suffixed and extensionless
+/// spellings on either side.
+fn normalized_page_pair(left: &str, right: &str) -> (String, String) {
+    let left = canonical_page_key(left);
+    let right = canonical_page_key(right);
+    if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
+fn canonical_page_key(path: &str) -> String {
+    canonical_target_key(path.strip_suffix(".md").unwrap_or(path))
 }
 
 /// A source digest recording a coding session (`source_kind: session`).
@@ -536,6 +606,14 @@ fn cites_source_digest(citing: Option<&lint::WikiPage>, source: &Path) -> bool {
 
 fn is_knowledge_page(page: &lint::WikiPage) -> bool {
     page.relative_path.starts_with("knowledge")
+}
+
+/// Generated per-folder navigation files (`_context.md`, #17730). They share
+/// one template, so sibling folders' contexts always score as near-duplicates
+/// — and merging generated navigation is meaningless, so the scan skips them
+/// on both the probe and hit sides (#17782).
+fn is_folder_context(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "_context.md")
 }
 
 fn near_duplicate_query(page: &lint::WikiPage) -> String {
@@ -1531,6 +1609,7 @@ mod tests {
                 backend: &mut backend,
                 search_scope: SearchScope::topic("ops"),
             },
+            &BTreeSet::new(),
         )
         .expect("scan succeeds");
 
@@ -1560,6 +1639,7 @@ mod tests {
                 backend: &mut backend,
                 search_scope: SearchScope::topic("ops"),
             },
+            &BTreeSet::new(),
         )
         .expect("scan succeeds");
 
@@ -1589,6 +1669,7 @@ mod tests {
                 backend: &mut backend,
                 search_scope: SearchScope::topic("ops"),
             },
+            &BTreeSet::new(),
         )
         .expect("scan succeeds");
 
@@ -1625,6 +1706,7 @@ mod tests {
                 backend: &mut backend,
                 search_scope: SearchScope::topic("ops"),
             },
+            &BTreeSet::new(),
         )
         .expect("scan succeeds");
 
@@ -1636,6 +1718,39 @@ mod tests {
                 score: 0.94,
             }]
         );
+    }
+
+    #[test]
+    fn near_duplicates_skip_generated_folder_contexts() {
+        // Per-folder `_context.md` navigation files share one template, so
+        // sibling contexts always score high; they are generated surfaces,
+        // never merge candidates (#17782).
+        let root_context = knowledge_page(
+            "knowledge/_context.md",
+            "---\ntitle: knowledge — folder context\n---\n\n# knowledge\n\n## Pages (2)\n",
+        );
+        let concepts_context = knowledge_page(
+            "knowledge/concepts/_context.md",
+            "---\ntitle: concepts — folder context\n---\n\n# concepts\n\n## Pages (5)\n",
+        );
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/_context.md", 0.93),
+                semantic_hit("knowledge/concepts/_context.md", 0.93),
+            ],
+        };
+
+        let pairs = near_duplicate_pairs(
+            &[root_context, concepts_context],
+            SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            },
+            &BTreeSet::new(),
+        )
+        .expect("scan succeeds");
+
+        assert_eq!(pairs, Vec::new());
     }
 
     struct FixedSemanticBackend {
@@ -1877,6 +1992,46 @@ mod tests {
             markdown: markdown.to_string(),
             has_frontmatter: markdown.starts_with("---"),
         }
+    }
+
+    #[test]
+    fn distinct_pairs_verdict_suppresses_near_duplicate_pair() {
+        // A reviewed disambiguation verdict (#17782) recorded in
+        // meta/librarian/distinct-pairs.json suppresses the pair in either
+        // ordering and either path spelling; unrelated pairs keep flagging.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("meta/librarian")).expect("create meta dir");
+        std::fs::write(
+            root.join(DISTINCT_PAIRS_RELATIVE_PATH),
+            r#"{"pairs": [{"left": "knowledge/concepts/transport", "right": "knowledge/concepts/action.md"}]}"#,
+        )
+        .expect("write verdicts");
+        let distinct_pairs = load_distinct_pairs(root);
+
+        let pages_by_path: BTreeMap<&Path, &lint::WikiPage> = BTreeMap::new();
+        assert!(expected_similarity_pair(
+            Path::new("knowledge/concepts/action.md"),
+            Path::new("knowledge/concepts/transport.md"),
+            &pages_by_path,
+            &distinct_pairs,
+        ));
+        assert!(expected_similarity_pair(
+            Path::new("knowledge/concepts/transport.md"),
+            Path::new("knowledge/concepts/action.md"),
+            &pages_by_path,
+            &distinct_pairs,
+        ));
+        assert!(!expected_similarity_pair(
+            Path::new("knowledge/concepts/action.md"),
+            Path::new("knowledge/concepts/unrelated.md"),
+            &pages_by_path,
+            &distinct_pairs,
+        ));
+
+        // Missing file loads as an empty set.
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert!(load_distinct_pairs(empty.path()).is_empty());
     }
 
     fn codewiki_page(relative: &str, stale: bool) -> lint::WikiPage {
