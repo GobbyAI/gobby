@@ -1,0 +1,19 @@
+use anyhow::{Context as _, bail};
+
+pub const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
+pub const AUTHORIZATION_HEADER: &str = "Authorization";
+
+pub fn read_local_cli_token() -> anyhow::Result<String> {
+    let path = crate::gobby_home()?.join(LOCAL_CLI_TOKEN_FILENAME);
+    let token = std::fs::read_to_string(&path)
+        .with_context(|| format!("missing local CLI token at {}", path.display()))?;
+    let token = token.trim();
+    if token.is_empty() {
+        bail!("local CLI token at {} is empty", path.display());
+    }
+    Ok(token.to_string())
+}
+
+pub fn authorization_bearer(token: &str) -> String {
+    format!("Bearer {token}")
+}

@@ -1,6 +1,6 @@
 use super::super::response::parse_daemon_embeddings;
-use super::super::transport::LOCAL_TOKEN_HEADER;
 use super::*;
+use crate::local_token::AUTHORIZATION_HEADER;
 
 #[test]
 fn embeddings_post_preserves_batch_and_local_token() {
@@ -17,7 +17,11 @@ fn embeddings_post_preserves_batch_and_local_token() {
     let body = request_body_json(&request);
 
     assert!(request.starts_with("POST /api/embeddings HTTP/1.1"));
-    assert!(has_header(&request, LOCAL_TOKEN_HEADER, "embed-token"));
+    assert!(has_header(
+        &request,
+        AUTHORIZATION_HEADER,
+        "Bearer embed-token"
+    ));
     assert_eq!(body["input"], serde_json::json!(["same", "same"]));
     assert_eq!(body["is_query"], true);
     assert_eq!(body["project_id"], "project-123");

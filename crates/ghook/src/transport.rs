@@ -15,6 +15,7 @@
 
 use crate::envelope::Envelope;
 use anyhow::{Context, Result};
+use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -144,7 +145,12 @@ pub fn post_and_cleanup(
         .timeout(POST_TIMEOUT)
         .set("Content-Type", "application/json");
     for (k, v) in &envelope.headers {
-        req = req.set(k, v);
+        if !k.eq_ignore_ascii_case(AUTHORIZATION_HEADER) {
+            req = req.set(k, v);
+        }
+    }
+    if let Ok(token) = read_local_cli_token() {
+        req = req.set(AUTHORIZATION_HEADER, &authorization_bearer(&token));
     }
     if let Some(envelope_id) = envelope_id_from_path(enqueued_path) {
         req = req.set(ENVELOPE_ID_HEADER, envelope_id);
@@ -475,6 +481,88 @@ mod tests {
         assert_eq!(report.status_code, Some(200));
         assert_eq!(report.response_body, Some("{}".to_string()));
         assert!(path.exists());
+    }
+
+    #[test]
+    fn post_includes_bearer_when_token_present() {
+        let home = tempdir().unwrap();
+        fs::write(home.path().join("local_cli_token"), "ghook-test-token\n").unwrap();
+
+        temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
+            let inbox = home.path().join("inbox");
+            let mut headers = BTreeMap::new();
+            headers.insert(
+                AUTHORIZATION_HEADER.to_string(),
+                "Bearer stale-token".to_string(),
+            );
+            let envelope = Envelope::new(
+                false,
+                "PreToolUse".into(),
+                serde_json::json!({"session_id": "auth-test"}),
+                "codex".into(),
+                headers,
+            );
+            let path = enqueue_to(&envelope, &inbox).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = read_http_request(&mut stream);
+                assert!(request.lines().any(|line| {
+                    line.eq_ignore_ascii_case("Authorization: Bearer ghook-test-token")
+                }));
+                let request_headers = request.split("\r\n\r\n").next().unwrap();
+                assert!(!request_headers.contains("Bearer stale-token"));
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                    .unwrap();
+            });
+
+            let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+            handle.join().unwrap();
+            assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+        });
+    }
+
+    #[test]
+    fn post_omits_authorization_when_token_missing() {
+        let home = tempdir().unwrap();
+
+        temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
+            let inbox = home.path().join("inbox");
+            let mut headers = BTreeMap::new();
+            headers.insert(
+                AUTHORIZATION_HEADER.to_string(),
+                "Bearer stale-token".to_string(),
+            );
+            let envelope = Envelope::new(
+                false,
+                "PreToolUse".into(),
+                serde_json::json!({"session_id": "anonymous-test"}),
+                "codex".into(),
+                headers,
+            );
+            let path = enqueue_to(&envelope, &inbox).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = read_http_request(&mut stream);
+                let request_headers = request.split("\r\n\r\n").next().unwrap();
+                assert!(
+                    !request_headers
+                        .lines()
+                        .any(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                );
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                    .unwrap();
+            });
+
+            let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+            handle.join().unwrap();
+            assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+        });
     }
 
     #[test]

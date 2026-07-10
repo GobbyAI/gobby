@@ -109,9 +109,8 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     let raw = handle.join().unwrap().unwrap();
     assert!(raw.starts_with("POST /api/llm/chat/completions HTTP/1.1"));
     assert!(raw.lines().any(|line| {
-        line.to_ascii_lowercase()
-            .starts_with("x-gobby-local-token:")
-            && line.contains("agentic-token")
+        line.to_ascii_lowercase().starts_with("authorization:")
+            && line.contains("Bearer agentic-token")
     }));
     let body = request_body_json(&raw);
     assert_eq!(body["profile"], "feature_high");

@@ -13,7 +13,7 @@ fn sends_local_token_and_multipart() {
     let request = request.join().unwrap().unwrap();
 
     assert!(request.starts_with("POST /api/llm/vision/extract HTTP/1.1"));
-    assert!(has_header(&request, "x-gobby-local-token", "local-secret"));
+    assert!(has_header(&request, "authorization", "Bearer local-secret"));
     assert!(request.contains("multipart/form-data"));
     assert!(request.contains("name=\"file\"; filename=\"figure.png\""));
     assert!(request.contains("Content-Type: image/png"));
@@ -33,7 +33,7 @@ fn sends_local_token_and_multipart() {
     let request = request.join().unwrap().unwrap();
 
     assert!(request.starts_with("POST /api/voice/transcribe HTTP/1.1"));
-    assert!(has_header(&request, "x-gobby-local-token", "local-secret"));
+    assert!(has_header(&request, "authorization", "Bearer local-secret"));
     assert!(request.contains("multipart/form-data"));
     assert!(request.contains("name=\"file\"; filename=\"meeting.m4a\""));
     assert!(request.contains("Content-Type: audio/mp4"));

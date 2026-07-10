@@ -2,6 +2,7 @@ use std::fmt;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -253,6 +254,7 @@ pub fn run_lifecycle_action(
 ) -> anyhow::Result<GraphLifecycleOutput> {
     let daemon_url = require_daemon_url(request.daemon_url.as_deref(), action)?;
     let url = build_lifecycle_url(daemon_url, action, &request.project_id)?;
+    let token = read_local_cli_token().context("failed to read local CLI token")?;
     let client = reqwest::blocking::Client::builder()
         .timeout(request.timeouts.for_action(action))
         .build()
@@ -261,6 +263,7 @@ pub fn run_lifecycle_action(
     let response = client
         .post(url.clone())
         .header("Accept", "application/json")
+        .header(AUTHORIZATION_HEADER, authorization_bearer(&token))
         .send()
         .with_context(|| {
             format!(
