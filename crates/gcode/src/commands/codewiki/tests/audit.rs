@@ -164,3 +164,63 @@ fn empty_deprecations_page_renders_cleanly_and_does_not_degrade() {
         "the deprecations page must never be degraded:\n{page}"
     );
 }
+
+#[test]
+fn deprecations_page_lists_only_core_files_so_file_links_resolve() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    // A deprecated symbol in a core file and one in a test file. File pages are
+    // only generated for core files, so the aggregate page must drop the test
+    // entry — its `[[code/files/tests/...]]` heading could never resolve
+    // (#17780).
+    write_source(
+        root,
+        "src/lib.rs",
+        "#[deprecated(note = \"use replacement\")]\npub fn core_dep() {}\n",
+    );
+    write_source(
+        root,
+        "tests/helpers.rs",
+        "#[deprecated(note = \"test-only marker\")]\npub fn test_dep() {}\n",
+    );
+    let core_dep = test_symbol("src/lib.rs", "core_dep", "function", 2, "pub fn core_dep()");
+    let test_dep = test_symbol(
+        "tests/helpers.rs",
+        "test_dep",
+        "function",
+        2,
+        "pub fn test_dep()",
+    );
+
+    let input = input(
+        vec![core_dep.clone(), test_dep.clone()],
+        Vec::new(),
+        CodewikiGraphAvailability::Available,
+    );
+    let audit = build_audit_context(root, &input);
+    // The scan itself still indexes both (the index also feeds file-doc badges).
+    assert!(audit.deprecations.contains_key(&core_dep.id));
+    assert!(audit.deprecations.contains_key(&test_dep.id));
+
+    let doc = build_deprecations_doc(&input, &audit.deprecations);
+    assert_eq!(
+        doc.symbols.len(),
+        1,
+        "only the core-file symbol may be listed"
+    );
+    assert_eq!(doc.symbols[0].name, "core_dep");
+
+    let page = render_deprecations_doc(&doc);
+    assert!(
+        page.contains("[[code/files/src/lib.rs|src/lib.rs]]"),
+        "core file heading must stay wikilinked:\n{page}"
+    );
+    assert!(
+        !page.contains("code/files/tests/"),
+        "no wikilink may target a test file page that never exists:\n{page}"
+    );
+    assert!(
+        !page.contains("test_dep"),
+        "test-file symbols must not be listed:\n{page}"
+    );
+}

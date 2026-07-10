@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use super::super::paths::is_core_file;
 use super::super::{CodewikiInput, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc, TestIndex};
 use crate::models::Symbol;
 
@@ -226,6 +227,11 @@ fn cap_reason(mut reason: String) -> String {
 
 /// Build the deterministic deprecations aggregate page model. Lists every
 /// deprecated symbol grouped by file (the renderer groups). Never degrades.
+///
+/// Only core (documented) files are listed: the renderer wikilinks each file
+/// heading to its `code/files/**` page, and non-core files (tests, fixtures,
+/// vendored code) never get one, so their entries would be permanently broken
+/// links (#17780).
 pub(crate) fn build_deprecations_doc(
     input: &CodewikiInput,
     deprecations: &DeprecationIndex,
@@ -233,6 +239,7 @@ pub(crate) fn build_deprecations_doc(
     let mut symbols = input
         .symbols
         .iter()
+        .filter(|symbol| is_core_file(&symbol.file_path))
         .filter_map(|symbol| {
             deprecations.get(&symbol.id).map(|reason| DeprecatedSymbol {
                 file: symbol.file_path.clone(),

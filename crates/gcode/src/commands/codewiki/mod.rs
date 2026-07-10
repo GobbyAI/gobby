@@ -66,6 +66,10 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // normalized topology flowchart (deterministic sequence diagrams retired) and
 // curated conceptual flows draw documented-chain plus code-index member edges
 // under new captions — so prior on-disk architecture/curated pages re-render.
+// 21 (#17780, deprecations only): the aggregate lists only core (documented)
+// files, so headings never wikilink test/fixture file pages that are never
+// generated — prior on-disk deprecations pages re-render without the dead
+// links.
 //
 // Per-category render versions (#1007): the single global version was replaced
 // by per-category constants so a template change in one renderer only
@@ -78,7 +82,7 @@ const RENDER_VERSION_REPO: u32 = 20;
 const RENDER_VERSION_ARCHITECTURE: u32 = 21;
 const RENDER_VERSION_INFRASTRUCTURE: u32 = 20;
 const RENDER_VERSION_FEATURES: u32 = 20;
-const RENDER_VERSION_DEPRECATIONS: u32 = 20;
+const RENDER_VERSION_DEPRECATIONS: u32 = 21;
 const RENDER_VERSION_MISC: u32 = 20;
 const RENDER_VERSION_CURATED: u32 = 21;
 const RENDER_VERSION_CHANGES: u32 = 20;
