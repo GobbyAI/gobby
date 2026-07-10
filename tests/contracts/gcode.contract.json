@@ -1325,6 +1325,14 @@
           "repeatable": false
         },
         {
+          "name": "--max-workers",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--repair-citations",
           "takes_value": false,
           "value_name": null,
