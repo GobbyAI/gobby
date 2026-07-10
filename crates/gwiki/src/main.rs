@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
 use gobby_wiki::{
-    BenchmarkOptions, Command, IngestFileOptions, ReadTarget, ScopeSelection, SyncSessionsOptions,
-    UpkeepOptions, WikiError, output,
+    BenchmarkOptions, Command, GraphCommandOptions, GraphInclude, IngestFileOptions, ReadTarget,
+    ScopeSelection, SyncSessionsOptions, UpkeepOptions, WikiError, output,
 };
 use serde_json::json;
 
@@ -135,7 +135,7 @@ enum CliCommand {
     /// Export generated bundles and reports under outputs/.
     Export(ExportArgs),
     /// Export unified wiki graph artifacts under outputs/.
-    Graph,
+    Graph(GraphArgs),
     /// Build a compact wiki graph context pack.
     GraphContext,
     ReviewReport(ReviewReportArgs),
@@ -184,6 +184,16 @@ struct NormalizeArgs {
     /// Report which authored docs need normalization without rewriting them.
     #[arg(long)]
     check: bool,
+}
+
+#[derive(Debug, Args)]
+struct GraphArgs {
+    /// Print the graph JSON envelope to stdout instead of writing artifacts.
+    #[arg(long)]
+    stdout: bool,
+    /// Restrict the graph to knowledge or code facts.
+    #[arg(long, value_enum, default_value = "all")]
+    include: GraphInclude,
 }
 
 #[derive(Debug, Args)]
@@ -815,7 +825,13 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             command: args.into(),
         }),
-        CliCommand::Graph => Ok(Command::Graph { scope }),
+        CliCommand::Graph(args) => Ok(Command::Graph {
+            scope,
+            options: GraphCommandOptions {
+                stdout: args.stdout,
+                include: args.include,
+            },
+        }),
         CliCommand::GraphContext => Ok(Command::GraphContext { scope }),
         CliCommand::ReviewReport(args) => Ok(Command::ReviewReport {
             scope,

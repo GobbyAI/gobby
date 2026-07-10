@@ -203,10 +203,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
                 "--ai",
             } <= _observed_flags(argv)
             assert argv[2] == "Ownership Story"
-        if cli_name == "health":
-            assert "--project" not in argv
-        else:
-            assert "--project" in argv
+        assert "--project" in argv
 
 
 @pytest.mark.unit
@@ -329,7 +326,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
-    assert contract["contract_version"] == 10
+    assert contract["contract_version"] == 11
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )

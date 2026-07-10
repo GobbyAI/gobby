@@ -11,6 +11,7 @@ pub use assets::{
     WorkflowAsset, bundled_workflow_assets, export_markdown_report, export_report_file,
     export_workflow_assets,
 };
+pub(crate) use graph::graph_export_error;
 pub use graph::{export_agent_artifacts, export_graph_artifacts};
 pub use pages::export_agent_pages;
 pub use write::write_export;

@@ -1,16 +1,23 @@
+use std::path::Path;
+
 use gobby_core::ai_context::{AiConfigSource, AiContext};
 use gobby_core::config::{AiRouting, ConfigSource, resolve_embedding_config};
 use gobby_core::gobby_home;
 use serde_json::json;
 
-use crate::graph::GraphExportOptions;
+use crate::graph::{GraphExportOptions, WikiGraphFacts};
 use crate::support::config::qdrant_config_has_url;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
-use crate::{CommandOutcome, ScopeSelection, WikiError, exports};
+use crate::{
+    CommandOutcome, GraphCommandOptions, ScopeIdentity, ScopeSelection, WikiError, exports,
+};
 
-pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
+pub(crate) fn execute(
+    selection: ScopeSelection,
+    options: GraphCommandOptions,
+) -> Result<CommandOutcome, WikiError> {
     let resolved = resolve_selection_context(&selection)?;
     let database_url = database_url_for("gwiki graph")?.ok_or_else(|| WikiError::Config {
         detail: "gwiki graph requires PostgreSQL index configuration".to_string(),
@@ -22,20 +29,49 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     })?;
 
     let degraded_sources = degraded_optional_sources(&mut conn)?;
-    let facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
-    let options = if degraded_sources.is_empty() {
+    let mut facts = crate::falkor_graph::load_wiki_graph_facts(&mut conn, &resolved.search_scope)?;
+    facts.retain_include(options.include);
+    let export_options = if degraded_sources.is_empty() {
         GraphExportOptions::available()
     } else {
         GraphExportOptions::degraded(degraded_sources)
     };
-    let mut artifacts =
-        exports::export_graph_artifacts(resolved.scope.root(), &facts, options.clone())?;
+    graph_outcome(
+        resolved.scope.root(),
+        &resolved.output_scope,
+        &facts,
+        export_options,
+        options,
+    )
+}
+
+fn graph_outcome(
+    root: &Path,
+    output_scope: &ScopeIdentity,
+    facts: &WikiGraphFacts,
+    export_options: GraphExportOptions,
+    options: GraphCommandOptions,
+) -> Result<CommandOutcome, WikiError> {
+    if options.stdout {
+        let export = facts
+            .export_graph(export_options)
+            .map_err(exports::graph_export_error)?;
+        let payload = json!({
+            "command": "graph",
+            "scope": output_scope,
+            "graph": export,
+        });
+        let text = format!("Exported wiki graph to stdout\nScope: {output_scope}");
+        return Ok(super::scoped_outcome("graph", output_scope, payload, text));
+    }
+
+    let mut artifacts = exports::export_graph_artifacts(root, facts, export_options.clone())?;
     // Agent-facing artifacts (graph.jsonld, llms.txt, llms-full.txt) ship from
     // the same facts so one `gwiki graph` run refreshes every graph surface.
     artifacts.extend(exports::export_agent_artifacts(
-        resolved.scope.root(),
-        &facts,
-        options,
+        root,
+        facts,
+        export_options,
     )?);
     let paths = artifacts
         .iter()
@@ -43,20 +79,15 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
         .collect::<Vec<_>>();
     let payload = json!({
         "command": "graph",
-        "scope": resolved.output_scope,
+        "scope": output_scope,
         "artifacts": artifacts,
     });
     let text = format!(
         "Exported wiki graph artifacts\nScope: {}\nArtifacts: {}",
-        resolved.output_scope,
+        output_scope,
         paths.join(", ")
     );
-    Ok(super::scoped_outcome(
-        "graph",
-        &resolved.output_scope,
-        payload,
-        text,
-    ))
+    Ok(super::scoped_outcome("graph", output_scope, payload, text))
 }
 
 fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>, WikiError> {
@@ -221,6 +252,64 @@ mod tests {
         assert_eq!(
             degraded_markers(source),
             vec!["semantic_relations_unavailable".to_string()]
+        );
+    }
+
+    fn sample_facts() -> crate::graph::WikiGraphFacts {
+        crate::graph::WikiGraphFacts {
+            documents: vec![crate::graph::WikiGraphDocument {
+                scope: crate::search::SearchScope::project("project-1"),
+                path: "knowledge/concepts/gobby.md".into(),
+                title: Some("Gobby".to_string()),
+            }],
+            links: Vec::new(),
+            sources: Vec::new(),
+            code_edges: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn graph_stdout_emits_export_envelope_without_artifacts() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let outcome = graph_outcome(
+            root.path(),
+            &crate::ScopeIdentity::project("/repo"),
+            &sample_facts(),
+            GraphExportOptions::available(),
+            GraphCommandOptions {
+                stdout: true,
+                include: crate::graph::GraphInclude::All,
+            },
+        )
+        .expect("stdout outcome");
+
+        assert_eq!(outcome.result.payload["command"], "graph");
+        assert!(outcome.result.payload["graph"]["nodes"].is_array());
+        assert!(outcome.result.payload.get("artifacts").is_none());
+        assert!(!root.path().join("outputs").exists());
+    }
+
+    #[test]
+    fn graph_default_writes_artifacts_regression() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let outcome = graph_outcome(
+            root.path(),
+            &crate::ScopeIdentity::project("/repo"),
+            &sample_facts(),
+            GraphExportOptions::available(),
+            GraphCommandOptions::default(),
+        )
+        .expect("artifact outcome");
+
+        assert!(outcome.result.payload["artifacts"].is_array());
+        assert!(outcome.result.payload.get("graph").is_none());
+        assert!(root.path().join("outputs/graph.json").exists());
+        assert!(root.path().join("outputs/GRAPH_REPORT.md").exists());
+        assert!(
+            outcome
+                .result
+                .text
+                .starts_with("Exported wiki graph artifacts")
         );
     }
 }

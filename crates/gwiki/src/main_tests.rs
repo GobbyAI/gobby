@@ -293,6 +293,33 @@ fn compile_source_flags_are_repeatable_and_map_to_command() {
 }
 
 #[test]
+fn graph_cli_maps_to_command_options() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from(["gwiki", "graph", "--stdout", "--include", "knowledge"])
+        .expect("parse graph command");
+    let CliCommand::Graph(args) = cli.command else {
+        panic!("expected parsed graph command");
+    };
+    assert!(args.stdout);
+
+    let command = command_from_cli(CliCommand::Graph(args), ScopeSelection::Detect)
+        .expect("map graph command");
+    let Command::Graph { options, .. } = command else {
+        panic!("expected graph command");
+    };
+    assert!(options.stdout);
+    assert_eq!(options.include, GraphInclude::Knowledge);
+
+    let default_cli = Cli::try_parse_from(["gwiki", "graph"]).expect("parse default graph");
+    let CliCommand::Graph(default_args) = default_cli.command else {
+        panic!("expected parsed graph command");
+    };
+    assert!(!default_args.stdout);
+    assert_eq!(default_args.include, GraphInclude::All);
+}
+
+#[test]
 fn graph_context_cli_maps_to_command() {
     let cli = Cli::try_parse_from([
         "gwiki",

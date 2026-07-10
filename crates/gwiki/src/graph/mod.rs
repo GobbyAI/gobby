@@ -67,6 +67,47 @@ pub struct WikiGraphFacts {
     pub code_edges: Vec<WikiGraphCodeEdge>,
 }
 
+/// Scope filter applied to graph facts before export.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum GraphInclude {
+    /// Knowledge pages (`knowledge/`, `recaps/`, root pages) without code edges.
+    Knowledge,
+    /// `code/**` documents plus code edges.
+    Code,
+    /// Every fact.
+    #[default]
+    All,
+}
+
+impl WikiGraphFacts {
+    /// Retain only the facts selected by `include`. Analytics downstream see
+    /// the filtered set because `export_graph` recomputes them from `self`.
+    pub fn retain_include(&mut self, include: GraphInclude) {
+        let retain: fn(&Path) -> bool = match include {
+            GraphInclude::All => return,
+            GraphInclude::Knowledge => is_knowledge_document_path,
+            GraphInclude::Code => is_code_document_path,
+        };
+        self.documents.retain(|document| retain(&document.path));
+        self.links.retain(|link| retain(&link.source_path));
+        self.sources.retain(|source| retain(&source.document_path));
+        if matches!(include, GraphInclude::Knowledge) {
+            self.code_edges.clear();
+        }
+    }
+}
+
+fn is_knowledge_document_path(path: &Path) -> bool {
+    let graph_path = graph_path(path);
+    graph_path.starts_with("knowledge/")
+        || graph_path.starts_with("recaps/")
+        || !graph_path.contains('/')
+}
+
+fn is_code_document_path(path: &Path) -> bool {
+    graph_path(path).starts_with("code/")
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GraphExportOptions {
     pub degraded_sources: Vec<String>,
@@ -971,5 +1012,137 @@ mod tests {
             raw_target: target.to_string(),
             target: WikiGraphLinkTarget::Unresolved(target.to_string()),
         }
+    }
+
+    fn code_edge(scope: SearchScope, document_path: &str) -> WikiGraphCodeEdge {
+        WikiGraphCodeEdge {
+            scope,
+            document_path: document_path.into(),
+            source: "crates/gwiki/src/main.rs".to_string(),
+            target: "crates/gwiki/src/api.rs".to_string(),
+            kind: "imports".to_string(),
+            direction: "out".to_string(),
+            line: Some(1),
+            provenance: "code-index".to_string(),
+        }
+    }
+
+    fn mixed_facts(scope: SearchScope) -> WikiGraphFacts {
+        WikiGraphFacts {
+            documents: vec![
+                doc(scope.clone(), "knowledge/concepts/ownership.md"),
+                doc(scope.clone(), "recaps/2026-07-09.md"),
+                doc(scope.clone(), "Home.md"),
+                doc(scope.clone(), "code/crates/gwiki/src/main.rs.md"),
+            ],
+            links: vec![
+                resolved_link(
+                    scope.clone(),
+                    "knowledge/concepts/ownership.md",
+                    "Home",
+                    "Home.md",
+                ),
+                unresolved_link(
+                    scope.clone(),
+                    "knowledge/concepts/ownership.md",
+                    "Borrowing",
+                ),
+                resolved_link(
+                    scope.clone(),
+                    "code/crates/gwiki/src/main.rs.md",
+                    "Ownership",
+                    "knowledge/concepts/ownership.md",
+                ),
+            ],
+            sources: vec![
+                WikiGraphSource {
+                    scope: scope.clone(),
+                    source_path: "raw/sources/example.md".into(),
+                    document_path: "knowledge/concepts/ownership.md".into(),
+                },
+                WikiGraphSource {
+                    scope: scope.clone(),
+                    source_path: "raw/sources/code.md".into(),
+                    document_path: "code/crates/gwiki/src/main.rs.md".into(),
+                },
+            ],
+            code_edges: vec![code_edge(scope, "code/crates/gwiki/src/main.rs.md")],
+        }
+    }
+
+    #[test]
+    fn retain_include_knowledge_drops_code_edges() {
+        let scope = SearchScope::project("project-1");
+        let mut facts = mixed_facts(scope);
+
+        facts.retain_include(GraphInclude::Knowledge);
+
+        let retained = facts
+            .documents
+            .iter()
+            .map(|document| graph_path(&document.path))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            retained,
+            vec![
+                "knowledge/concepts/ownership.md",
+                "recaps/2026-07-09.md",
+                "Home.md"
+            ]
+        );
+        assert_eq!(facts.links.len(), 2);
+        assert!(
+            facts
+                .links
+                .iter()
+                .all(|link| graph_path(&link.source_path).starts_with("knowledge/"))
+        );
+        assert!(facts.links.iter().any(|link| matches!(
+            &link.target,
+            WikiGraphLinkTarget::Unresolved(target) if target == "Borrowing"
+        )));
+        assert_eq!(facts.sources.len(), 1);
+        assert!(facts.code_edges.is_empty());
+
+        // Analytics recompute on the filtered facts through the normal export path.
+        let export = facts
+            .export_graph(GraphExportOptions::available())
+            .expect("filtered export");
+        assert!(export.edges.imports.is_empty());
+        assert!(
+            export
+                .nodes
+                .iter()
+                .all(|node| !node.path.starts_with("code/"))
+        );
+    }
+
+    #[test]
+    fn retain_include_code_retains_code_documents_and_edges() {
+        let scope = SearchScope::project("project-1");
+        let mut facts = mixed_facts(scope);
+
+        facts.retain_include(GraphInclude::Code);
+
+        let retained = facts
+            .documents
+            .iter()
+            .map(|document| graph_path(&document.path))
+            .collect::<Vec<_>>();
+        assert_eq!(retained, vec!["code/crates/gwiki/src/main.rs.md"]);
+        assert_eq!(facts.links.len(), 1);
+        assert_eq!(facts.sources.len(), 1);
+        assert_eq!(facts.code_edges.len(), 1);
+    }
+
+    #[test]
+    fn retain_include_all_is_noop() {
+        let scope = SearchScope::project("project-1");
+        let mut facts = mixed_facts(scope);
+        let original = facts.clone();
+
+        facts.retain_include(GraphInclude::All);
+
+        assert_eq!(facts, original);
     }
 }

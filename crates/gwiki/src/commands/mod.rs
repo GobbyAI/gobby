@@ -120,7 +120,7 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
             scope,
         ),
         Command::Export { scope, command } => export::execute(scope, command),
-        Command::Graph { scope } => graph::execute(scope),
+        Command::Graph { scope, options } => graph::execute(scope, options),
         Command::GraphContext { scope } => graph_context::execute(scope),
         Command::ReviewReport { scope, options } => review_report::execute(scope, options),
         Command::Audit { scope } => audit::execute(scope),

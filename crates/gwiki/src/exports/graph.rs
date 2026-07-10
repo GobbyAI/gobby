@@ -36,7 +36,7 @@ pub fn export_graph_artifacts(
     )
 }
 
-pub(super) fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsError) -> WikiError {
+pub(crate) fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsError) -> WikiError {
     WikiError::InvalidInput {
         field: "graph",
         message: error.to_string(),

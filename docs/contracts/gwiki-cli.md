@@ -36,6 +36,15 @@ Version 10 covers the daemon-consumed surface:
 - `trust`
 - `remove-source`
 
+Version 11 adds on-demand graph fetch flags to `graph`: `gwiki graph
+[--stdout] [--include knowledge|code|all]`. `--stdout` emits the JSON envelope
+`{"command":"graph","scope":…,"graph":<GraphExport>}` on stdout and writes no
+artifact files; without it the artifact-writing behavior is unchanged.
+`--include` (default `all`) filters facts before export and analytics:
+`knowledge` keeps `knowledge/`, `recaps/`, and root pages with their
+sources/citations and unresolved link targets while dropping code edges;
+`code` keeps `code/**` documents plus code edges.
+
 Version 10 adds the `recap` surface: `gwiki recap [--date YYYY-MM-DD]
 [--ai auto|daemon|direct|off]` writes the day's session recap page at
 `recaps/YYYY-MM-DD.md`. Days attribute by UTC: each session digest's

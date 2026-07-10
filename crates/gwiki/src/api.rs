@@ -105,6 +105,7 @@ pub enum Command {
     },
     Graph {
         scope: ScopeSelection,
+        options: GraphCommandOptions,
     },
     GraphContext {
         scope: ScopeSelection,
@@ -210,6 +211,15 @@ pub struct SetupOptions {
     pub embedding_query_prefix: Option<String>,
     pub embedding_vector_dim: Option<usize>,
     pub embedding_api_key: Option<String>,
+}
+
+/// Behavior flags for `gwiki graph`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphCommandOptions {
+    /// Emit the graph JSON envelope on stdout instead of writing artifacts.
+    pub stdout: bool,
+    /// Restrict exported facts to knowledge or code surfaces.
+    pub include: crate::graph::GraphInclude,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

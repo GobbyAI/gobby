@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 10,
+        contract_version: 11,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -272,8 +272,11 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
-                flags: vec![],
-                json_output_keys: scoped_keys(vec!["artifacts"]),
+                flags: vec![
+                    FlagContract::switch("--stdout"),
+                    FlagContract::value("--include", "knowledge|code|all"),
+                ],
+                json_output_keys: scoped_keys(vec!["artifacts", "graph"]),
                 ..CommandContract::new(
                     "graph",
                     "Export unified wiki graph artifacts under outputs.",
