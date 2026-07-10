@@ -93,3 +93,36 @@ Entry format:
   fix into their commit (their features.rs edit; not in c92e52613). They
   also own a pre-existing gobby-wiki `upkeep_near_duplicate_hit...` failure
   they flagged back.
+
+## 2026-07-10 19:35 UTC — #17533 — Relocate lane_b_dump debug artifacts out of the codewiki output tree — CLOSED
+
+- Changes: Lane B / nav-plan failure dumps relocated off the page surface.
+  `run()` now resolves the dump directory once
+  (`resolve_lane_b_dump_dir`: `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` scratch-dir
+  override, else the live output's `_meta/lane_b/`) and threads it as
+  `GenerateDocsOptions.lane_b_dump_dir` through
+  `build_curated_navigation_docs` → `render_curated_navigation_docs` →
+  `curated_page_body`; `maybe_dump_lane_b_failure` and
+  `maybe_dump_nav_failure` take `Option<&Path>` instead of reading the env
+  var at the write site. Diagnostics are captured by default on hard-fail
+  now (previously lost unless the env var was set); `_meta/` is never
+  visited by the `code/`-scoped walker, so dumps are excluded from
+  page-count/lint/orphan-GC/ingest surfaces by construction. `None`
+  (tests/library callers) disables dumping. No CLI/contract changes.
+- Commits: bfe6e38fb
+- Validation: `cargo test -p gobby-code` fully green — 996 lib + 109
+  integration tests, 0 failed; `cargo clippy -p gobby-code --tests` clean
+  (one documented `too_many_arguments` allow on the dump fn, params are the
+  dump-artifact sections); `cargo fmt -p gobby-code --check` clean;
+  `gobby test-quality audit` on 3 touched test files: 14 tests scanned,
+  0 issues, 0 new vs baseline. New tests: resolver default/override/
+  blank-override, dump write + `None` no-op, exhausted-nav-plan dump
+  end-to-end through the options plumbing, walker exclusion of
+  `_meta/lane_b` artifacts.
+- Deferred: none. Binary NOT reinstalled (bakeoff freeze); deploys with the
+  post-arm-G rebuild. No daemon restarts this task.
+- Note: the curated-page Lane B hard-fail dump path is currently
+  unreachable in production (curated bodies are Lane A one-shot per
+  gobby-cli #1001; `tool_loop` is not forwarded to `curated_page_body`), so
+  it is covered by unit tests; the nav-plan dump fires on real Lane A parse
+  exhaustion and is covered end-to-end.
