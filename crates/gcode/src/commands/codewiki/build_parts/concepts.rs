@@ -40,24 +40,23 @@ const MAX_EXTRA_NARRATIVE_PAGES: usize = 2;
 /// degrading the whole curated layer on a one-off malformed emission (#993).
 const CURATED_NAV_PLAN_MAX_ATTEMPTS: usize = 3;
 
-/// Diagnostic-only dump of a curated navigation plan that never parsed across
-/// all attempts. When `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` is set, write the nav
-/// prompt and the last raw model output to `<dir>/curated_navigation_plan.dump.md`
-/// so a persistent parse failure can be reproduced offline. Off by default.
-fn maybe_dump_nav_failure(prompt: &str, raw: &str) {
-    let Ok(dir) = std::env::var("GOBBY_CODEWIKI_LANE_B_DUMP_DIR") else {
+/// Diagnostic dump of a curated navigation plan that never parsed across all
+/// attempts: write the nav prompt and the last raw model output to
+/// `<dump_dir>/curated_navigation_plan.dump.md` so a persistent parse failure
+/// can be reproduced offline. `dump_dir` comes from
+/// [`super::curated_content::resolve_lane_b_dump_dir`] via the run options;
+/// `None` (tests, library callers) is a no-op.
+fn maybe_dump_nav_failure(dump_dir: Option<&std::path::Path>, prompt: &str, raw: &str) {
+    let Some(dir) = dump_dir else {
         return;
     };
-    if dir.trim().is_empty() {
-        return;
-    }
-    let path = std::path::Path::new(&dir).join("curated_navigation_plan.dump.md");
+    let path = dir.join("curated_navigation_plan.dump.md");
     let dump = format!(
         "# Curated navigation plan: unparseable after {CURATED_NAV_PLAN_MAX_ATTEMPTS} attempts\n\n\
          - raw_bytes: {}\n\n## NAV PROMPT\n\n{prompt}\n\n## LAST RAW OUTPUT\n\n{raw}\n",
         raw.len(),
     );
-    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, dump)) {
+    if let Err(err) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, dump)) {
         eprintln!("warning: failed to write nav-plan failure dump to {path:?}: {err}");
     }
 }
@@ -68,6 +67,7 @@ pub(crate) fn build_curated_navigation_docs(
     modules: &[ModuleDoc],
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     graph_edges: &[CodewikiGraphEdge],
+    lane_b_dump_dir: Option<&std::path::Path>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -160,7 +160,7 @@ pub(crate) fn build_curated_navigation_docs(
             // capture the last raw output for offline diagnosis, mark the layer
             // degraded, and fall back to the deterministic taxonomy.
             if let Some(raw) = &last_unparseable {
-                maybe_dump_nav_failure(&nav_prompt, raw);
+                maybe_dump_nav_failure(lane_b_dump_dir, &nav_prompt, raw);
                 degraded_sources.push("grounding-empty".to_string());
             }
             fallback_plan(files, modules)
@@ -176,6 +176,7 @@ pub(crate) fn build_curated_navigation_docs(
         &plan_observability,
         leading_chunks,
         graph_edges,
+        lane_b_dump_dir,
         generate,
         verify,
     )

@@ -1,4 +1,20 @@
+use std::path::{Path, PathBuf};
+
 use super::CuratedPageKind;
+
+/// Where Lane B failure dumps land for a run (#17533). The
+/// `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` override redirects dumps to a scratch
+/// directory (e.g. mid-bakeoff); otherwise they default to the output's
+/// `_meta/lane_b/`, which the doc walkers never visit, so diagnostics are
+/// always captured without polluting the page/ingest surfaces. Resolved once
+/// by the CLI runtime and threaded down as data — library code never reads
+/// the environment.
+pub(crate) fn resolve_lane_b_dump_dir(env_override: Option<&str>, out_dir: &Path) -> PathBuf {
+    match env_override {
+        Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
+        _ => out_dir.join("_meta").join("lane_b"),
+    }
+}
 
 /// Filesystem-safe slug for a curated page title, used to name a Lane B failure
 /// dump. Non-alphanumeric runs collapse to single underscores so the path stays
@@ -23,13 +39,17 @@ fn lane_b_dump_slug(title: &str) -> String {
     }
 }
 
-/// Diagnostic-only dump of a Lane B curated hard-fail. When
-/// `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` is set, write the page's system prompt, seed
-/// prompt, raw model output, post-verify text, and grounded text to
-/// `<dir>/<slug>.dump.md` so a hard-fail is reproducible offline (replay the
-/// captured prompt against the model) without re-running the whole pipeline.
-/// Off by default: no env var means a no-op, so production runs are unaffected.
+/// Diagnostic dump of a Lane B curated hard-fail: write the page's system
+/// prompt, seed prompt, raw model output, post-verify text, and grounded text
+/// to `<dump_dir>/<slug>.dump.md` so a hard-fail is reproducible offline
+/// (replay the captured prompt against the model) without re-running the whole
+/// pipeline. `dump_dir` comes from [`resolve_lane_b_dump_dir`] via the run
+/// options; `None` (tests, library callers) is a no-op.
+// Each parameter is one section of the dump artifact; a struct would only
+// restate the dump format.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn maybe_dump_lane_b_failure(
+    dump_dir: Option<&Path>,
     kind: CuratedPageKind,
     title: &str,
     system: &str,
@@ -38,17 +58,14 @@ pub(super) fn maybe_dump_lane_b_failure(
     verified_text: &str,
     grounded: &str,
 ) {
-    let Ok(dir) = std::env::var("GOBBY_CODEWIKI_LANE_B_DUMP_DIR") else {
+    let Some(dir) = dump_dir else {
         return;
     };
-    if dir.trim().is_empty() {
-        return;
-    }
     let kind_name = match kind {
         CuratedPageKind::Concept => "Concept",
         CuratedPageKind::Narrative => "Narrative",
     };
-    let path = std::path::Path::new(&dir).join(format!("{}.dump.md", lane_b_dump_slug(title)));
+    let path = dir.join(format!("{}.dump.md", lane_b_dump_slug(title)));
     let dump = format!(
         "# Lane B curated hard-fail dump\n\n\
          - title: {title}\n- kind: {kind_name}\n\
@@ -60,7 +77,7 @@ pub(super) fn maybe_dump_lane_b_failure(
         verified_text.len(),
         grounded.trim().len(),
     );
-    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, dump)) {
+    if let Err(err) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, dump)) {
         eprintln!("warning: failed to write Lane B failure dump to {path:?}: {err}");
     }
 }
@@ -76,5 +93,70 @@ mod tests {
         assert_eq!(lane_b_dump_slug("  CLI / API!  "), "cli_api");
         // Degenerate titles still produce a usable filename stem.
         assert_eq!(lane_b_dump_slug("///"), "page");
+    }
+
+    #[test]
+    fn dump_dir_defaults_under_meta_and_env_override_wins() {
+        let out = Path::new("/vault/wiki");
+        // Default: diagnostics live under `_meta/`, which the doc walkers
+        // never visit — dumps can never appear among generated pages (#17533).
+        assert_eq!(
+            resolve_lane_b_dump_dir(None, out),
+            Path::new("/vault/wiki/_meta/lane_b")
+        );
+        assert_eq!(
+            resolve_lane_b_dump_dir(Some("/scratch/arm-s"), out),
+            Path::new("/scratch/arm-s")
+        );
+        // A blank override is treated as unset, not as the output tree root.
+        assert_eq!(
+            resolve_lane_b_dump_dir(Some("   "), out),
+            Path::new("/vault/wiki/_meta/lane_b")
+        );
+    }
+
+    #[test]
+    fn dump_writes_slugged_file_into_dump_dir_and_none_is_a_noop() {
+        let dir = tempfile::tempdir().expect("dump tempdir");
+        let dump_dir = dir.path().join("_meta").join("lane_b");
+        maybe_dump_lane_b_failure(
+            Some(&dump_dir),
+            CuratedPageKind::Concept,
+            "Core Logic Engine",
+            "SYSTEM PROMPT",
+            "SEED PROMPT",
+            "raw output",
+            "verified output",
+            "grounded output",
+        );
+        let written = std::fs::read_to_string(dump_dir.join("core_logic_engine.dump.md"))
+            .expect("dump file exists at <dir>/<slug>.dump.md");
+        for fragment in [
+            "- title: Core Logic Engine",
+            "- kind: Concept",
+            "SYSTEM PROMPT",
+            "SEED PROMPT",
+            "raw output",
+            "verified output",
+            "grounded output",
+        ] {
+            assert!(written.contains(fragment), "dump is missing {fragment:?}");
+        }
+
+        let untouched = dir.path().join("untouched");
+        maybe_dump_lane_b_failure(
+            None,
+            CuratedPageKind::Narrative,
+            "No Dump",
+            "s",
+            "p",
+            "r",
+            "v",
+            "g",
+        );
+        assert!(
+            !untouched.exists() && !dump_dir.join("no_dump.dump.md").exists(),
+            "a `None` dump dir must write nothing"
+        );
     }
 }

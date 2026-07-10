@@ -37,6 +37,28 @@ fn write_doc_rejects_symlinked_target() {
 }
 
 #[test]
+fn generated_page_walker_never_visits_meta_dump_artifacts() {
+    // Lane B failure dumps default to `_meta/lane_b/` (#17533). The orphan-GC
+    // walker is scoped to `code/`, so dumps must never count as generated
+    // pages — they can neither be reclaimed as orphans nor surface on the
+    // page-count/lint paths that consume this listing.
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+    std::fs::create_dir_all(out_dir.join("code/files")).expect("code tree");
+    std::fs::create_dir_all(out_dir.join("_meta/lane_b")).expect("dump tree");
+    std::fs::write(out_dir.join("code/files/a.md"), "# A\n").expect("page");
+    std::fs::write(
+        out_dir.join("_meta/lane_b/core_logic_engine.dump.md"),
+        "# Lane B curated hard-fail dump\n",
+    )
+    .expect("dump");
+
+    let pages = super::io::collect_generated_doc_pages(&out_dir).expect("walk generated pages");
+
+    assert_eq!(pages, vec!["code/files/a.md".to_string()]);
+}
+
+#[test]
 fn write_doc_normalizes_markdown_only() {
     let project = tempfile::tempdir().expect("project tempdir");
     let out_dir = project.path().join("codewiki");

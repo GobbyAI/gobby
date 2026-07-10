@@ -169,7 +169,7 @@ pub(crate) use build::{
     build_codewiki_changes_doc, build_codewiki_index_snapshot, build_curated_navigation_docs,
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
-    resolve_file_reuse,
+    resolve_file_reuse, resolve_lane_b_dump_dir,
 };
 pub(crate) use publication::{CodewikiPublication, PublicationFingerprint};
 pub(crate) use reuse_guard::{

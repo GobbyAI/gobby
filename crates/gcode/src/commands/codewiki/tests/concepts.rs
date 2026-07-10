@@ -238,6 +238,46 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
 }
 
 #[test]
+fn exhausted_nav_plan_dumps_into_the_configured_dump_dir_not_the_page_set() {
+    // Relocated debug artifacts (#17533): when every nav-plan attempt emits
+    // unparseable JSON, the diagnostic dump goes to the run's resolved dump
+    // directory (`_meta/lane_b/` in production) and never surfaces as an
+    // emitted page.
+    let dump_root = tempfile::tempdir().expect("dump tempdir");
+    let dump_dir = dump_root.path().join("_meta").join("lane_b");
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some("Sure, here is the plan: { \"concept_modules\": [ {".to_string())
+        } else {
+            None
+        }
+    };
+
+    let docs = collect_doc_pairs(
+        &concept_input(),
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            lane_b_dump_dir: Some(&dump_dir),
+            ..Default::default()
+        },
+    );
+
+    let dump = std::fs::read_to_string(dump_dir.join("curated_navigation_plan.dump.md"))
+        .expect("nav-plan dump written under the configured dump dir");
+    assert!(
+        dump.contains("Sure, here is the plan"),
+        "dump must capture the last raw output: {dump}"
+    );
+    assert!(
+        docs.iter().all(|(path, _)| !path.ends_with(".dump.md")),
+        "dump artifacts must never be emitted as pages"
+    );
+    // The exhausted plan still falls back to the structural taxonomy.
+    let index = rendered_doc(&docs, "code/concepts/index.md");
+    assert!(index.contains("degraded: true"), "{index}");
+}
+
+#[test]
 fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
     let docs = collect_doc_pairs(&concept_input(), GenerateDocsOptions::default());
     let repo = rendered_doc(&docs, "code/repo.md");

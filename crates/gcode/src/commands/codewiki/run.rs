@@ -19,8 +19,9 @@ use super::{
     TextGenerator, TextVerifier, build_audit_context, build_codewiki_changes_doc,
     build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
     build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
-    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
-    resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
+    in_scope, io, is_core_file, read_ownership_meta, resolve_lane_b_dump_dir,
+    resolve_text_generator, resolve_text_verifier, resolve_tool_loop_generator,
+    write_ownership_meta, write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -257,6 +258,17 @@ pub fn run(
         sink.persist_with_ai_outcome(&doc, write_outcome)?;
         Ok(())
     };
+    // Lane B / nav-plan failure dumps land under the live output's `_meta/`
+    // — which the doc walkers never visit — instead of among the generated
+    // pages; `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` redirects them to a scratch
+    // directory (#17533). Resolved here once so library code never reads the
+    // environment.
+    let lane_b_dump_dir = resolve_lane_b_dump_dir(
+        std::env::var("GOBBY_CODEWIKI_LANE_B_DUMP_DIR")
+            .ok()
+            .as_deref(),
+        out_path,
+    );
     // Serial `FnMut` adapters over the shared thread-safe callables; the file
     // worker pool (`file_workers` above) shares the originals across threads
     // (#17532).
@@ -288,6 +300,7 @@ pub fn run(
             reuse: Some(&mut reuse_plan),
             progress: Some(&mut progress),
             doc_scope: Some(&doc_scope),
+            lane_b_dump_dir: Some(&lane_b_dump_dir),
             file_workers,
         },
         &mut emit,

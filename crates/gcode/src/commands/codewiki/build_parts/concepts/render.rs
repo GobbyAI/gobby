@@ -18,6 +18,7 @@ pub(super) fn render_curated_navigation_docs(
     plan_observability: &GenerationObservability,
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     graph_edges: &[CodewikiGraphEdge],
+    lane_b_dump_dir: Option<&std::path::Path>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
@@ -55,6 +56,7 @@ pub(super) fn render_curated_navigation_docs(
             &file_lookup,
             leading_chunks,
             &all_spans,
+            lane_b_dump_dir,
             generate,
             verify,
         )?;
@@ -75,6 +77,7 @@ pub(super) fn render_curated_navigation_docs(
             &file_lookup,
             leading_chunks,
             &all_spans,
+            lane_b_dump_dir,
             generate,
             verify,
         )?;

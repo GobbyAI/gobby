@@ -23,6 +23,8 @@ mod lane_b_dump;
 #[path = "curated_content/tests.rs"]
 mod tests;
 
+pub(crate) use lane_b_dump::resolve_lane_b_dump_dir;
+
 /// Cap on key-symbol evidence rows fed into one content prompt. Bounds prompt
 /// size; the structural fallback table reuses the same cap.
 const MAX_PAGE_SYMBOL_ROWS: usize = 12;
@@ -70,6 +72,7 @@ pub(crate) fn curated_page_body(
     file_lookup: &BTreeMap<&str, &FileDoc>,
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     spans: &[SourceSpan],
+    lane_b_dump_dir: Option<&std::path::Path>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> anyhow::Result<CuratedBody> {
@@ -152,7 +155,14 @@ pub(crate) fn curated_page_body(
                     // citation" (spans too narrow) from "missing a required
                     // section" (model output shape).
                     lane_b_dump::maybe_dump_lane_b_failure(
-                        kind, title, system, &prompt, &raw_text, &text, &grounded,
+                        lane_b_dump_dir,
+                        kind,
+                        title,
+                        system,
+                        &prompt,
+                        &raw_text,
+                        &text,
+                        &grounded,
                     );
                     return Err(anyhow::anyhow!(
                         "Lane B curated page '{title}' produced an invalid body \
