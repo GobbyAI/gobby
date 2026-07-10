@@ -12,7 +12,7 @@ fn real_model_infrastructure_cites_only_real_modules_on_disk() {
     let root = repo_root();
     let model = build_system_model(&root);
 
-    let doc = build_infrastructure_doc(Some(&model))
+    let doc = build_infrastructure_doc(Some(&model), &std::collections::BTreeSet::new())
         .expect("infrastructure doc present for the real workspace model");
     assert!(
         !doc.sections.is_empty(),
@@ -76,8 +76,8 @@ fn real_model_infrastructure_cites_only_real_modules_on_disk() {
 fn real_model_includes_feature_gated_datastore_sections() {
     let root = repo_root();
     let model = build_system_model(&root);
-    let doc =
-        build_infrastructure_doc(Some(&model)).expect("infrastructure doc present for real model");
+    let doc = build_infrastructure_doc(Some(&model), &std::collections::BTreeSet::new())
+        .expect("infrastructure doc present for real model");
 
     // gcode enables postgres/falkor/qdrant/ai, so each feature-gated adapter
     // boundary must surface as a section. Map by the system model's stable
@@ -114,7 +114,8 @@ fn absent_boundary_is_omitted_from_rendered_doc() {
         notes: Vec::new(),
     };
 
-    let doc = build_infrastructure_doc(Some(&model)).expect("doc present");
+    let documented = std::collections::BTreeSet::from(["crates/gcore/src/postgres.rs"]);
+    let doc = build_infrastructure_doc(Some(&model), &documented).expect("doc present");
     assert_eq!(
         doc.sections.len(),
         1,
@@ -131,17 +132,30 @@ fn absent_boundary_is_omitted_from_rendered_doc() {
     assert!(!rendered.contains("Media toolchain"));
     // The Postgres adapter is still cited (as a `path:line` citation).
     assert!(rendered.contains("crates/gcore/src/postgres.rs:16"));
+    // The documented adapter file is stamped as frontmatter provenance
+    // (#17781); an undocumented adapter would stamp nothing.
+    assert!(
+        rendered.contains("- file: crates/gcore/src/postgres.rs"),
+        "documented adapter file must appear as provenance:\n{rendered}"
+    );
+    let undocumented = build_infrastructure_doc(Some(&model), &std::collections::BTreeSet::new())
+        .expect("doc present");
+    assert!(
+        undocumented.source_spans.is_empty(),
+        "adapter files outside the documented set must not be stamped"
+    );
 }
 
 #[test]
 fn infrastructure_doc_is_non_degrading_and_omitted_without_a_model() {
     // No model -> no page (mirrors the architecture diagrams).
-    assert!(build_infrastructure_doc(None).is_none());
+    assert!(build_infrastructure_doc(None, &std::collections::BTreeSet::new()).is_none());
 
     // A present doc never marks itself degraded.
     let root = repo_root();
     let model = build_system_model(&root);
-    let doc = build_infrastructure_doc(Some(&model)).expect("doc present for real model");
+    let doc = build_infrastructure_doc(Some(&model), &std::collections::BTreeSet::new())
+        .expect("doc present for real model");
     assert!(
         doc.degraded_sources.is_empty(),
         "infra page is deterministic and never degrades: {:?}",

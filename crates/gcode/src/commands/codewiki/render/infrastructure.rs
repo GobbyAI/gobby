@@ -4,14 +4,15 @@ use super::super::*;
 
 /// Render the deterministic infra-stack page (#892). The page is derived purely
 /// from the workspace's Cargo manifests and service boundaries — no LLM, no
-/// graph, no network — so it carries no source-span provenance and never marks
-/// itself degraded. One `##` section per [`InfraSection`], each citing the real
-/// adapter module that talks to the service.
+/// graph, no network — and never marks itself degraded. Frontmatter provenance
+/// names each section's adapter file (#17781). One `##` section per
+/// [`InfraSection`], each citing the real adapter module that talks to the
+/// service.
 pub(crate) fn render_infrastructure_doc(doc: &InfrastructureDoc) -> String {
     let mut out = frontmatter_with_degradation_without_ranges(
         "Infrastructure Stack",
         "code_infrastructure",
-        &[],
+        &doc.source_spans,
         &doc.degraded_sources,
     );
     out.push_str("# Infrastructure Stack\n\n");

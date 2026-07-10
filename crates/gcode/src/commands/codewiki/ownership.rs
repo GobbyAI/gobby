@@ -92,7 +92,7 @@ pub(crate) fn build_ownership_doc(
         );
     }
     let degraded_sources = degraded_sources(&status, &by_file);
-    let mut doc = ownership_frontmatter(status.partial, &degraded_sources);
+    let mut doc = ownership_frontmatter(status.partial, &degraded_sources, &by_file);
     doc.push_str("# Code Ownership\n\n");
     if status.partial {
         doc.push_str(

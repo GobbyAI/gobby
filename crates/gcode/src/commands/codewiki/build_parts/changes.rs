@@ -8,7 +8,44 @@ pub(crate) fn build_codewiki_changes_doc(
 ) -> anyhow::Result<String> {
     let baseline = previous.is_none();
     let degraded = !current.degraded_sources.is_empty();
-    let mut doc = changes_frontmatter(baseline, degraded, &current.degraded_sources)?;
+    let added_files = previous
+        .map(|previous| {
+            current
+                .files
+                .keys()
+                .filter(|file| !previous.files.contains_key(*file))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let changed_files = previous
+        .map(|previous| {
+            current
+                .files
+                .iter()
+                .filter(|(file, current_file)| {
+                    previous.files.get(*file).is_some_and(|previous_file| {
+                        previous_file.content_hash != current_file.content_hash
+                    })
+                })
+                .map(|(file, _)| file.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    // Frontmatter provenance names the current-snapshot files whose index
+    // rows this diff derives from (#17781); a baseline page diffs nothing
+    // and stamps none.
+    let provenance_files = added_files
+        .iter()
+        .chain(changed_files.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut doc = changes_frontmatter(
+        baseline,
+        degraded,
+        &current.degraded_sources,
+        &provenance_files,
+    )?;
     doc.push_str("# Index Changes\n\n");
     doc.push_str("## Current Snapshot\n\n");
     doc.push_str(&format!("- Files: {}\n", current.files.len()));
@@ -27,27 +64,11 @@ pub(crate) fn build_codewiki_changes_doc(
         return Ok(doc);
     };
 
-    let added_files = current
-        .files
-        .keys()
-        .filter(|file| !previous.files.contains_key(*file))
-        .cloned()
-        .collect::<Vec<_>>();
     let removed_files = previous
         .files
         .keys()
         .filter(|file| !current.files.contains_key(*file))
         .cloned()
-        .collect::<Vec<_>>();
-    let changed_files = current
-        .files
-        .iter()
-        .filter(|(file, current_file)| {
-            previous.files.get(*file).is_some_and(|previous_file| {
-                previous_file.content_hash != current_file.content_hash
-            })
-        })
-        .map(|(file, _)| file.clone())
         .collect::<Vec<_>>();
     let new_symbols = current
         .symbols
@@ -101,9 +122,17 @@ pub(crate) fn build_codewiki_changes_doc(
 }
 
 #[derive(Serialize)]
+struct ChangesProvenanceFile<'a> {
+    file: &'a str,
+}
+
+#[derive(Serialize)]
 struct ChangesFrontmatter<'a> {
     title: &'a str,
     kind: &'a str,
+    provenance: Vec<ChangesProvenanceFile<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance_truncated: Option<usize>,
     generated_by: &'a str,
     trust: &'a str,
     freshness: &'a str,
@@ -116,10 +145,22 @@ fn changes_frontmatter(
     baseline: bool,
     degraded: bool,
     degraded_sources: &[String],
+    provenance_files: &BTreeSet<String>,
 ) -> anyhow::Result<String> {
+    // Capped like the shared frontmatter writer, with the omitted count
+    // recorded so truncation is visible (#17781).
+    let cap = super::super::MAX_FRONTMATTER_PROVENANCE_FILES;
+    let provenance = provenance_files
+        .iter()
+        .take(cap)
+        .map(|file| ChangesProvenanceFile { file })
+        .collect::<Vec<_>>();
+    let omitted = provenance_files.len().saturating_sub(cap);
     let data = ChangesFrontmatter {
         title: "Index Changes",
         kind: "code_changes",
+        provenance,
+        provenance_truncated: (omitted > 0).then_some(omitted),
         generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
         trust: gobby_core::codewiki_contract::TRUST_GENERATED,
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,

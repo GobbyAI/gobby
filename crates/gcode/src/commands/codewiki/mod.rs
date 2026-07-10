@@ -70,6 +70,12 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // files, so headings never wikilink test/fixture file pages that are never
 // generated — prior on-disk deprecations pages re-render without the dead
 // links.
+// 21 (#17781, deterministic aggregates): deprecations, features,
+// infrastructure, changes, and ownership (misc) now stamp frontmatter
+// provenance naming their derivation inputs (scanned files with deprecation
+// markers; contract JSONs + handler files; documented adapter files; diffed
+// index files; blame-analyzed files) instead of `provenance: []`, so prior
+// on-disk pages re-render with provenance recorded.
 //
 // Per-category render versions (#1007): the single global version was replaced
 // by per-category constants so a template change in one renderer only
@@ -80,12 +86,12 @@ const RENDER_VERSION_FILE: u32 = 20;
 const RENDER_VERSION_MODULE: u32 = 20;
 const RENDER_VERSION_REPO: u32 = 20;
 const RENDER_VERSION_ARCHITECTURE: u32 = 21;
-const RENDER_VERSION_INFRASTRUCTURE: u32 = 20;
-const RENDER_VERSION_FEATURES: u32 = 20;
+const RENDER_VERSION_INFRASTRUCTURE: u32 = 21;
+const RENDER_VERSION_FEATURES: u32 = 21;
 const RENDER_VERSION_DEPRECATIONS: u32 = 21;
-const RENDER_VERSION_MISC: u32 = 20;
+const RENDER_VERSION_MISC: u32 = 21;
 const RENDER_VERSION_CURATED: u32 = 21;
-const RENDER_VERSION_CHANGES: u32 = 20;
+const RENDER_VERSION_CHANGES: u32 = 21;
 
 /// Returns the render-version constant for a doc page path. Each page category
 /// (file docs, module docs, architecture, curated narrative, etc.) has its own
@@ -241,9 +247,10 @@ pub(crate) use tool_executor::CodewikiToolExecutor;
 pub(crate) use text::LaneBResult;
 pub(crate) use text::{
     CitationResolver, FrontmatterLaneB, GRAPH_UNAVAILABLE, GenerationContent,
-    GenerationObservability, GenerationOutcome, LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator,
-    VerifyOutcome, append_curated_source_files, append_relevant_source_files, citation_list,
-    citation_markers, collect_link_spans, direct_route_candidate_error, display_child_summary,
+    GenerationObservability, GenerationOutcome, LANE_ONE_SHOT, LANE_TOOL_LOOP,
+    MAX_FRONTMATTER_PROVENANCE_FILES, ToolLoopGenerator, VerifyOutcome,
+    append_curated_source_files, append_relevant_source_files, citation_list, citation_markers,
+    collect_link_spans, direct_route_candidate_error, display_child_summary,
     frontmatter_aggregate_with_verify_notes, frontmatter_aggregate_without_ranges,
     frontmatter_with_degradation, frontmatter_with_degradation_and_verify_notes_without_ranges,
     frontmatter_with_degradation_without_ranges, generate_aggregate, ground_text,

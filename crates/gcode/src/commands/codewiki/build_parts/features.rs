@@ -376,6 +376,10 @@ fn section_for_binary(
 
     Some(FeatureBinarySection {
         binary: descriptor.binary.to_string(),
+        contract_file: format!(
+            "crates/{}/contract/{}",
+            descriptor.crate_dir, descriptor.contract_file
+        ),
         entries,
     })
 }

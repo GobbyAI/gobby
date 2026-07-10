@@ -428,7 +428,8 @@ pub(crate) fn generate_hierarchical_docs_core(
     // Build the infrastructure page once here (reused at its emission site
     // below) and link every page that will actually be emitted into the repo
     // overview's appendix, so they are reachable instead of orphaned.
-    let infrastructure_doc = build_infrastructure_doc(system_model);
+    let documented_files = files.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let infrastructure_doc = build_infrastructure_doc(system_model, &documented_files);
     let audit_links = repo_audit_links(
         audit.is_some(),
         feature_catalog.is_some(),

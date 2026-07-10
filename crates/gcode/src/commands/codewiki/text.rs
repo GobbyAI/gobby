@@ -10,9 +10,10 @@ pub(crate) use citations::{
     replace_citations_with_markers, write_references,
 };
 pub(crate) use frontmatter::{
-    FrontmatterLaneB, append_curated_source_files, append_relevant_source_files,
-    frontmatter_aggregate_with_verify_notes, frontmatter_aggregate_without_ranges,
-    frontmatter_with_degradation, frontmatter_with_degradation_and_verify_notes_without_ranges,
+    FrontmatterLaneB, MAX_FRONTMATTER_PROVENANCE_FILES, append_curated_source_files,
+    append_relevant_source_files, frontmatter_aggregate_with_verify_notes,
+    frontmatter_aggregate_without_ranges, frontmatter_with_degradation,
+    frontmatter_with_degradation_and_verify_notes_without_ranges,
     frontmatter_with_degradation_without_ranges,
 };
 pub(crate) use generation::{
@@ -39,8 +40,6 @@ pub(crate) use generation::generate_with_bounded_retry;
 
 #[cfg(test)]
 use citations::{fallback_spans, wrap_citation_items};
-#[cfg(test)]
-use frontmatter::MAX_FRONTMATTER_PROVENANCE_FILES;
 #[cfg(test)]
 use generation::{GENERATION_RETRY_BACKOFF, is_model_refusal, is_prompt_echo};
 

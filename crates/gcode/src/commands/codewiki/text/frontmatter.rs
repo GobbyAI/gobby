@@ -58,8 +58,9 @@ struct FrontmatterVerifyNote<'a> {
 
 /// Cap on the number of provenance files listed in page frontmatter; pages
 /// rolling up more files keep the top contributors by span count and record
-/// the omitted count as `provenance_truncated`.
-pub(super) const MAX_FRONTMATTER_PROVENANCE_FILES: usize = 30;
+/// the omitted count as `provenance_truncated`. `pub(crate)` so hand-rolled
+/// frontmatter writers (ownership) apply the same cap.
+pub(crate) const MAX_FRONTMATTER_PROVENANCE_FILES: usize = 30;
 
 #[cfg(test)]
 pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) -> String {

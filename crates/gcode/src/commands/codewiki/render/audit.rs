@@ -6,10 +6,22 @@ use super::super::*;
 /// deprecated symbol grouped by file; renders a clear "none found" line when
 /// empty. Never degrades.
 pub(crate) fn render_deprecations_doc(doc: &DeprecationsDoc) -> String {
+    // Frontmatter provenance names the exact scanned files whose deprecation
+    // markers produced each listed symbol (#17781); ranges are not rendered
+    // on this surface.
+    let spans: Vec<SourceSpan> = doc
+        .symbols
+        .iter()
+        .map(|symbol| SourceSpan {
+            file: symbol.file.clone(),
+            line_start: symbol.line,
+            line_end: symbol.line,
+        })
+        .collect();
     let mut out = frontmatter_with_degradation_without_ranges(
         "Deprecations",
         "code_deprecations",
-        &[],
+        &spans,
         &doc.degraded_sources,
     );
     out.push_str("# Deprecations\n\n");

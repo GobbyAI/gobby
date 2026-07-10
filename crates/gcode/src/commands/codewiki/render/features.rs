@@ -4,15 +4,34 @@ use super::super::*;
 
 /// Render the deterministic feature catalog page (#888). The page is derived
 /// purely from the pinned CLI contract JSONs plus a curated dispatch resolver —
-/// no LLM, no graph, no network — so it carries no source-span provenance and
-/// never marks itself degraded. One `##` section per binary, one table row per
-/// contract subcommand, each linking to the handler file's codewiki page as the
-/// explaining doc.
+/// no LLM, no graph, no network — and never marks itself degraded. Frontmatter
+/// provenance names those derivation inputs: each section's pinned contract
+/// JSON plus every resolved handler file (#17781). One `##` section per
+/// binary, one table row per contract subcommand, each linking to the handler
+/// file's codewiki page as the explaining doc.
 pub(crate) fn render_feature_catalog_doc(doc: &FeatureCatalogDoc) -> String {
+    let spans: Vec<SourceSpan> = doc
+        .sections
+        .iter()
+        .flat_map(|section| {
+            std::iter::once(section.contract_file.as_str()).chain(
+                section
+                    .entries
+                    .iter()
+                    .map(|entry| entry.handler_file.as_str())
+                    .filter(|handler_file| !handler_file.is_empty()),
+            )
+        })
+        .map(|file| SourceSpan {
+            file: file.to_string(),
+            line_start: 1,
+            line_end: 1,
+        })
+        .collect();
     let mut out = frontmatter_with_degradation_without_ranges(
         "Feature Catalog",
         "code_features",
-        &[],
+        &spans,
         &doc.degraded_sources,
     );
     out.push_str("# Feature Catalog\n\n");

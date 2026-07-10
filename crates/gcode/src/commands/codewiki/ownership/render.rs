@@ -33,13 +33,23 @@ pub(super) fn degraded_sources(
     sources
 }
 
-pub(super) fn ownership_frontmatter(partial: bool, degraded_sources: &[String]) -> String {
+pub(super) fn ownership_frontmatter(
+    partial: bool,
+    degraded_sources: &[String],
+    by_file: &BTreeMap<String, FileOwnership>,
+) -> String {
+    #[derive(Serialize)]
+    struct ProvenanceFile<'a> {
+        file: &'a str,
+    }
     #[derive(Serialize)]
     struct Frontmatter<'a> {
         title: &'static str,
         #[serde(rename = "type")]
         kind: &'static str,
-        provenance: Vec<&'a str>,
+        provenance: Vec<ProvenanceFile<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provenance_truncated: Option<usize>,
         generated_by: &'static str,
         trust: &'static str,
         freshness: &'static str,
@@ -51,10 +61,23 @@ pub(super) fn ownership_frontmatter(partial: bool, degraded_sources: &[String]) 
         partial: bool,
     }
 
+    // Ownership derives from CODEOWNERS declarations + git blame over the
+    // analyzed files; stamp those files as provenance, capped like the shared
+    // frontmatter writer with the omitted count recorded (#17781).
+    let provenance = by_file
+        .keys()
+        .take(super::super::MAX_FRONTMATTER_PROVENANCE_FILES)
+        .map(|file| ProvenanceFile { file })
+        .collect::<Vec<_>>();
+    let omitted = by_file
+        .len()
+        .saturating_sub(super::super::MAX_FRONTMATTER_PROVENANCE_FILES);
+
     let data = Frontmatter {
         title: "Code Ownership",
         kind: "code_ownership",
-        provenance: Vec::new(),
+        provenance,
+        provenance_truncated: (omitted > 0).then_some(omitted),
         generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
         trust: gobby_core::codewiki_contract::TRUST_GENERATED,
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,

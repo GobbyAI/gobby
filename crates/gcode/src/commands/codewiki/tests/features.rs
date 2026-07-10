@@ -175,4 +175,14 @@ fn rendered_catalog_names_a_known_command_and_links_to_a_source_page() {
     );
     // Deterministic page: derived from contracts, no LLM.
     assert!(rendered.contains("derived deterministically from the pinned CLI contracts"));
+    // Frontmatter provenance names the derivation inputs: the pinned contract
+    // JSONs plus resolved handler files (#17781).
+    assert!(
+        rendered.contains("- file: crates/gcode/contract/gcode.contract.json"),
+        "features page must stamp its contract JSON as provenance:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("- file: crates/gcode/src/commands/search.rs"),
+        "features page must stamp handler files as provenance:\n{rendered}"
+    );
 }

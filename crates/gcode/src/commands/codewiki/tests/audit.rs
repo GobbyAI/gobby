@@ -215,6 +215,16 @@ fn deprecations_page_lists_only_core_files_so_file_links_resolve() {
         page.contains("[[code/files/src/lib.rs|src/lib.rs]]"),
         "core file heading must stay wikilinked:\n{page}"
     );
+    // Frontmatter provenance names the scanned files that produced the listed
+    // symbols (#17781) — and only those, so the dropped test file stays out.
+    assert!(
+        page.contains("- file: src/lib.rs"),
+        "deprecations page must stamp scanned files as provenance:\n{page}"
+    );
+    assert!(
+        !page.contains("- file: tests/helpers.rs"),
+        "non-core files must not be stamped as provenance:\n{page}"
+    );
     assert!(
         !page.contains("code/files/tests/"),
         "no wikilink may target a test file page that never exists:\n{page}"

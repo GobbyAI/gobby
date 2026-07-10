@@ -679,11 +679,25 @@ fn weak_provenance_pages(pages: &[lint::WikiPage], provenance: &ProvenanceGraph)
     let mut paths = pages
         .iter()
         .filter(|page| page_is_codewiki(page))
+        .filter(|page| !page_records_provenance(page))
         .filter(|page| !provenance_mentions_page(provenance, &page.relative_path))
         .map(|page| page.relative_path.clone())
         .collect::<Vec<_>>();
     paths.sort();
     paths
+}
+
+/// Codewiki pages stamp their own provenance in frontmatter — the source files
+/// each page was generated from. A non-empty `provenance` entry IS
+/// source-to-section provenance by construction; only pages missing it fall
+/// back to the ingest provenance graph (#17781). An empty list (`provenance:
+/// []`) records nothing and stays weak.
+fn page_records_provenance(page: &lint::WikiPage) -> bool {
+    match &page.parsed.frontmatter.provenance {
+        Some(Value::Array(entries)) => !entries.is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
+    }
 }
 
 fn provenance_mentions_page(provenance: &ProvenanceGraph, path: &Path) -> bool {
@@ -1064,6 +1078,49 @@ mod tests {
 
         assert!(report.check("weak_provenance").items.is_empty());
         assert!(report.check("outdated_codewiki").items.is_empty());
+    }
+
+    #[test]
+    fn codewiki_frontmatter_provenance_is_not_weak_provenance() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // Codewiki pages stamp the source files they were generated from in
+        // frontmatter; that IS their provenance (#17781). Only pages recording
+        // nothing (missing key or an empty list) may be flagged.
+        write_page(
+            root,
+            "code/files/src/lib.rs.md",
+            "---\ntitle: src/lib.rs\nprovenance:\n  - file: src/lib.rs\ngenerated_by: gcode-codewiki\n---\n# src/lib.rs\nDocumented.\n",
+        );
+        write_page(
+            root,
+            "code/deprecations.md",
+            "---\ntitle: Deprecations\nprovenance: []\ngenerated_by: gcode-codewiki\n---\n# Deprecations\nDerived scan.\n",
+        );
+        write_page(
+            root,
+            "code/bare.md",
+            "---\ntitle: Bare\ngenerated_by: gcode-codewiki\n---\n# Bare\nNo provenance recorded.\n",
+        );
+
+        let report = run(
+            root,
+            ScopeIdentity::project("project-1"),
+            Options {
+                shared_code_graph_available: true,
+                ..Options::offline()
+            },
+            None,
+        )
+        .expect("librarian runs");
+
+        assert_eq!(
+            report.check("weak_provenance").items,
+            vec![
+                PathBuf::from("code/bare.md"),
+                PathBuf::from("code/deprecations.md"),
+            ]
+        );
     }
 
     #[test]

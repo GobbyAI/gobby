@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::super::*;
 
 /// Curated, human-authored descriptor for one infrastructure boundary: what
@@ -116,8 +118,13 @@ pub(crate) fn infra_descriptor(kind: ServiceKind) -> InfraDescriptor {
 /// entirely. Otherwise emits one [`InfraSection`] per service boundary, looked
 /// up in the curated descriptor map; a boundary kind with no descriptor is
 /// defensively skipped. Never degrades — `degraded_sources` is always empty.
+///
+/// `documented_files` gates the provenance spans: a curated adapter path is
+/// stamped only when it belongs to this project's documented input set, so the
+/// reuse machinery never hashes a file the project does not have (#17781).
 pub(crate) fn build_infrastructure_doc(
     system_model: Option<&SystemModel>,
+    documented_files: &BTreeSet<&str>,
 ) -> Option<InfrastructureDoc> {
     let model = system_model?;
 
@@ -137,8 +144,22 @@ pub(crate) fn build_infrastructure_doc(
         .collect();
     sections.sort_by(|a, b| a.service.cmp(&b.service));
 
+    let source_spans = sections
+        .iter()
+        .filter_map(|section| {
+            let (file, line) = section.adapter_module.rsplit_once(':')?;
+            let line = line.parse::<usize>().ok()?;
+            documented_files.contains(file).then(|| SourceSpan {
+                file: file.to_string(),
+                line_start: line,
+                line_end: line,
+            })
+        })
+        .collect();
+
     Some(InfrastructureDoc {
         sections,
+        source_spans,
         // Deterministic, non-degrading: derived solely from Cargo manifests +
         // service boundaries.
         degraded_sources: Vec::new(),

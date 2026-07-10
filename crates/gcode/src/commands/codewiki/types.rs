@@ -283,6 +283,10 @@ pub(crate) struct InfraSection {
 #[derive(Debug, Clone)]
 pub(crate) struct InfrastructureDoc {
     pub(crate) sections: Vec<InfraSection>,
+    /// Frontmatter provenance spans: each section's curated adapter file,
+    /// kept only when that file is part of the documented input set so the
+    /// reuse machinery can hash it (#17781).
+    pub(crate) source_spans: Vec<SourceSpan>,
     pub(crate) degraded_sources: Vec<String>,
 }
 
@@ -305,6 +309,9 @@ pub(crate) struct FeatureEntry {
 #[derive(Debug, Clone)]
 pub(crate) struct FeatureBinarySection {
     pub(crate) binary: String,
+    /// Repo-relative path of the pinned contract JSON this section was
+    /// projected from, stamped as page provenance (#17781).
+    pub(crate) contract_file: String,
     pub(crate) entries: Vec<FeatureEntry>,
 }
 
