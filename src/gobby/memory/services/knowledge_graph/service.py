@@ -23,7 +23,7 @@ from .models import (
     _GraphEntity,
 )
 from .normalization import display_entity_name, normalize_entities, normalize_relationships
-from .reader import KnowledgeGraphReader
+from .reader import KnowledgeGraphReader, RelatedMemoryTraversal
 from .writer import COOCCUR_MAX_ENTITIES, KnowledgeGraphWriter
 
 if TYPE_CHECKING:
@@ -629,7 +629,7 @@ class KnowledgeGraphService:
         limit: int = 20,
         project_id: str | None = None,
         include_global: bool = True,
-    ) -> list[str]:
+    ) -> RelatedMemoryTraversal:
         """Traverse from entities through relationships to find related memory IDs."""
         return await self._reader.find_related_memory_ids(
             entity_keys=entity_keys,

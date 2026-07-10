@@ -150,7 +150,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             falkordb_rrf_k=falkordb_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
             run_db=run_db,
-            search_debug_sink=make_recall_signal_sink(config),
+            search_debug_sink=make_recall_signal_sink(config, db),
         )
         self._indexing_service = IndexingService(
             storage=self.storage,

@@ -303,18 +303,28 @@ def create_memory_registry(
             tags_none: Memory must have NONE of these tags
         """
         try:
+            from uuid import uuid4
+
+            from gobby.utils.session_context import get_current_session_id
+
             effective_min_score = min_score if min_score > 0 else 0.0
+            # Joinable correlation id (contract §2): threads the signal event,
+            # the returned payload, and any downstream injection outcome.
+            recall_request_id = str(uuid4())
+            current_project_id = get_current_project_id()
 
             # Fetch extra candidates so we can report diagnostics when
             # nothing passes the threshold.
             candidates = await memory_manager.search_memories(
                 query=query,
-                project_id=get_current_project_id(),
+                project_id=current_project_id,
                 limit=limit * 2 if effective_min_score > 0 else limit,
                 min_score=None,  # no threshold — filter below
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
+                session_id=get_current_session_id(),
+                recall_request_id=recall_request_id,
                 caller="mcp_proxy.memory.search_memories",
             )
 
@@ -349,6 +359,8 @@ def create_memory_registry(
             result: dict[str, Any] = {
                 "success": True,
                 "memories": above,
+                "recall_request_id": recall_request_id,
+                "project_id": current_project_id,
             }
             if not above and below_count > 0:
                 result["below_threshold_count"] = below_count

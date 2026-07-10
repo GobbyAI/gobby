@@ -24,6 +24,7 @@ def emit_search_debug(
     ranking_score_map: dict[str, float],
     rrf_applied: bool,
     graph_score_map: dict[str, float] | None = None,
+    graph_component_map: dict[str, dict[str, float | None]] | None = None,
 ) -> None:
     """Emit a best-effort search diagnostics snapshot."""
     if search_debug_sink is None:
@@ -41,6 +42,7 @@ def emit_search_debug(
         recall_request_id=recall_request_id,
         caller=caller,
         graph_score_map=graph_scores,
+        graph_component_map=dict(graph_component_map or {}),
         returned_hits=[
             SearchDebugHit(
                 memory_id=mem.id,

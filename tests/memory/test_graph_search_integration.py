@@ -261,7 +261,7 @@ class TestFindRelatedMemoryIds:
             limit=20,
         )
 
-        assert result == ["mem-100", "mem-200", "mem-300"]
+        assert result.memory_ids == ["mem-100", "mem-200", "mem-300"]
 
     async def test_traversal_query_is_bounded_entity_to_entity(
         self,
@@ -374,13 +374,13 @@ class TestFindRelatedMemoryIds:
                 result = await service.find_related_memory_ids(
                     entity_keys=[entity_key(None, "Python")]
                 )
-                assert result == []
+                assert result.memory_ids == []
 
             assert mock_falkor.query.await_count == 3
             mock_falkor.query.reset_mock()
 
             result = await service.find_related_memory_ids(entity_keys=[entity_key(None, "Python")])
-            assert result == []
+            assert result.memory_ids == []
             mock_falkor.query.assert_not_awaited()
 
             clock[0] = 61.0
@@ -396,7 +396,7 @@ class TestFindRelatedMemoryIds:
                 max_hops=1,
             )
 
-        assert result == ["mem-100"]
+        assert result.memory_ids == ["mem-100"]
 
     async def test_clamps_max_hops(
         self,
@@ -436,7 +436,7 @@ class TestFindRelatedMemoryIds:
 
         result = await service.find_related_memory_ids(entity_keys=[entity_key(None, "Python")])
 
-        assert result == []
+        assert result.memory_ids == []
 
     async def test_returns_empty_for_empty_names(
         self,
@@ -444,7 +444,7 @@ class TestFindRelatedMemoryIds:
     ) -> None:
         """find_related_memory_ids returns empty for empty entity names."""
         result = await service.find_related_memory_ids(entity_keys=[])
-        assert result == []
+        assert result.memory_ids == []
 
 
 class TestSearchGraphUpgraded:

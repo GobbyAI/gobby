@@ -10,7 +10,7 @@ from gobby.memory.services._search_access import update_access_stats as update_m
 from gobby.memory.services._search_backfill import collect_active_results
 from gobby.memory.services._search_constants import DEFAULT_SEARCH_LIMIT
 from gobby.memory.services._search_debug import emit_search_debug
-from gobby.memory.services._search_graph import search_graph_scored
+from gobby.memory.services._search_graph import GraphScoredResult, search_graph_scored
 from gobby.memory.services._search_keyword import KeywordSearch, keyword_fallback, keyword_ranked
 from gobby.memory.services._search_models import SearchDebugHit, SearchDebugSnapshot, _Candidates
 from gobby.memory.services._search_paths import search_qdrant_keyword, search_with_graph
@@ -300,6 +300,7 @@ class SearchService:
         ranking_score_map: dict[str, float],
         rrf_applied: bool,
         graph_score_map: dict[str, float] | None = None,
+        graph_component_map: dict[str, dict[str, float | None]] | None = None,
     ) -> None:
         emit_search_debug(
             search_debug_sink=self._search_debug_sink,
@@ -313,6 +314,7 @@ class SearchService:
             ranking_score_map=ranking_score_map,
             rrf_applied=rrf_applied,
             graph_score_map=graph_score_map,
+            graph_component_map=graph_component_map,
         )
 
     def _build_results(
@@ -362,7 +364,7 @@ class SearchService:
         min_score: float = 0.5,
         project_id: str | None = None,
         include_global: bool = True,
-    ) -> list[tuple[str, float]]:
+    ) -> GraphScoredResult:
         return await search_graph_scored(
             kg_service=self._require_kg_service(),
             query_embedding=query_embedding,
@@ -379,13 +381,13 @@ class SearchService:
         min_score: float = 0.5,
         project_id: str | None = None,
     ) -> list[str]:
-        scored = await self._search_graph_scored(
+        result = await self._search_graph_scored(
             query_embedding=query_embedding,
             limit=limit,
             min_score=min_score,
             project_id=project_id,
         )
-        return [memory_id for memory_id, _ in scored]
+        return [memory_id for memory_id, _ in result.scored]
 
     async def _keyword_ranked(
         self,

@@ -8,6 +8,7 @@ from .export import backup_memories, export_memories, restore_memories
 from .graph import clear_graph, graph_counts, invalidate, rebuild_graph
 from .indices import rebuild_crossrefs, reconcile, reindex_embeddings
 from .maintenance import dedupe_memories, fix_null_project
+from .signals import recall_signals
 
 
 @click.group()
@@ -36,3 +37,4 @@ memory.add_command(clear_graph)
 memory.add_command(graph_counts)
 memory.add_command(rebuild_graph)
 memory.add_command(invalidate)
+memory.add_command(recall_signals)

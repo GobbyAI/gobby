@@ -11,6 +11,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from gobby.hooks.events import HookEvent
@@ -292,33 +293,51 @@ def _fit_memory_line(content: str, suffix: str, max_len: int) -> str | None:
     return f"{prefix}{truncated}{marker}{suffix}"
 
 
-def _format_project_memories(
+@dataclass
+class ProjectMemoryRenderOutcome:
+    """Per-memory render decisions for the ``<project-memory>`` block.
+
+    Feeds the durable injection-outcome record (contract §5): ``rendered_ids``
+    are injected in render order (index = ``injection_position``);
+    ``empty_content_ids`` and ``omitted_ids`` map to the ``empty_content`` and
+    ``budget`` drop reasons. Memories without an ``id`` are untracked.
+    """
+
+    rendered_ids: list[str] = field(default_factory=list)
+    empty_content_ids: list[str] = field(default_factory=list)
+    omitted_ids: list[str] = field(default_factory=list)
+
+
+def format_project_memories_with_outcome(
     memories: list[Any],
     *,
     budget: int = PROJECT_MEMORY_CONTEXT_BUDGET,
-) -> str:
-    candidates: list[tuple[str, str]] = []
+) -> tuple[str, ProjectMemoryRenderOutcome]:
+    outcome = ProjectMemoryRenderOutcome()
+    candidates: list[tuple[str | None, str, str]] = []
     for memory in memories:
         if not isinstance(memory, dict):
             continue
-        content = str(memory.get("content", "")).strip()
-        if not content:
-            continue
-
         memory_id = memory.get("id")
         if memory_id is not None:
             memory_id = str(memory_id)
+        content = str(memory.get("content", "")).strip()
+        if not content:
+            if memory_id:
+                outcome.empty_content_ids.append(memory_id)
+            continue
+
         score = memory.get("similarity")
         via = memory.get("search_via")
         suffix = format_memory_metadata_suffix(memory_id, score=score, via=via)
-        candidates.append((content, suffix))
+        candidates.append((memory_id, content, suffix))
 
     if not candidates:
-        return ""
+        return "", outcome
 
     body_lines: list[str] = []
     omitted_count = 0
-    for index, (content, suffix) in enumerate(candidates):
+    for index, (_, content, suffix) in enumerate(candidates):
         remaining_after_current = len(candidates) - index - 1
         full_line = f"- {content}{suffix}"
         if _project_memory_render_len(body_lines + [full_line], remaining_after_current) <= budget:
@@ -343,7 +362,24 @@ def _format_project_memories(
         body_lines.pop()
         omitted_count += 1
         result = _render_project_memory(body_lines, omitted_count)
-    return result if len(result) <= budget else ""
+    if len(result) > budget:
+        result = ""
+        body_lines = []
+    # The render loop appends at most one line per candidate, in order, so the
+    # first len(body_lines) candidates are exactly the rendered ones.
+    rendered_n = len(body_lines)
+    outcome.rendered_ids = [mid for mid, _, _ in candidates[:rendered_n] if mid]
+    outcome.omitted_ids = [mid for mid, _, _ in candidates[rendered_n:] if mid]
+    return result, outcome
+
+
+def _format_project_memories(
+    memories: list[Any],
+    *,
+    budget: int = PROJECT_MEMORY_CONTEXT_BUDGET,
+) -> str:
+    text, _ = format_project_memories_with_outcome(memories, budget=budget)
+    return text
 
 
 def dispatch_mcp_calls(

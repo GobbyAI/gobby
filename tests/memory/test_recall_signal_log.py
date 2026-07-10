@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,10 +15,39 @@ from gobby.memory.recall_signal_log import (
     append_recall_signal_events,
     build_recall_signal_event,
     default_recall_signal_path,
+    make_injection_outcome_recorder,
     make_recall_signal_sink,
     resolve_recall_signal_path,
 )
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot
+
+
+class _FakeCursor:
+    rowcount = 1
+
+
+class _FakeTxn:
+    def __init__(self, calls: list[tuple[str, Any]]) -> None:
+        self._calls = calls
+
+    def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+        self._calls.append((sql, params))
+        return _FakeCursor()
+
+
+class _FakeHubDb:
+    """Minimal HubDatabase stand-in recording executed SQL."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Any]] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[_FakeTxn]:
+        yield _FakeTxn(self.calls)
+
+    def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+        self.calls.append((sql, params))
+        return _FakeCursor()
 
 
 def _snapshot() -> SearchDebugSnapshot:
@@ -30,6 +62,14 @@ def _snapshot() -> SearchDebugSnapshot:
         recall_request_id="request-1",
         caller="memory.recall",
         graph_score_map={"graph": 0.8, "bad": float("nan")},
+        graph_component_map={
+            "graph": {
+                "edge_cosine": 0.8,
+                "edge_support_norm": 0.6,
+                "edge_weight_blend": 0.7,
+                "edge_decay_factor": 1.0,
+            }
+        },
         returned_hits=[
             SearchDebugHit(
                 memory_id="semantic",
@@ -85,7 +125,7 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
         },
     )
 
-    assert event["schema_version"] == 2
+    assert event["schema_version"] == 3
     assert event["timestamp"] == "2026-06-15T00:00:00+00:00"
     assert event["project_id"] == "project-1"
     assert event["session_id"] == "session-1"
@@ -101,6 +141,16 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
     assert event["hits"][1]["ranking_mode"] == "graph_synthetic"
     assert event["hits"][1]["graph_score"] == 0.8
     assert event["hits"][1]["ranking_score"] is None
+    # §3.2 edge-component breakdown: present for the traversal-admitted hit,
+    # None for hits that entered through other paths.
+    assert event["hits"][1]["edge_cosine"] == 0.8
+    assert event["hits"][1]["edge_support_norm"] == 0.6
+    assert event["hits"][1]["edge_weight_blend"] == 0.7
+    assert event["hits"][1]["edge_decay_factor"] == 1.0
+    assert event["hits"][0]["edge_cosine"] is None
+    assert event["hits"][0]["edge_support_norm"] is None
+    assert event["hits"][0]["edge_weight_blend"] is None
+    assert event["hits"][0]["edge_decay_factor"] is None
     json.dumps(event, allow_nan=False)
 
 
@@ -198,3 +248,50 @@ def test_make_recall_signal_sink_is_default_off_and_writes_when_enabled(tmp_path
     assert event["weighting"]["cluster_expansion_per_entity"] == 7
     assert event["weighting"]["cluster_min_cluster_size"] == 8
     assert event["weighting"]["cluster_min_samples"] is None
+
+
+def test_make_recall_signal_sink_hub_dual_write(tmp_path: Path) -> None:
+    """recall_signal_hub alone enables the sink and writes hub rows, not JSONL."""
+    # Hub flag without a db stays off.
+    assert make_recall_signal_sink(MemoryConfig(recall_signal_hub=True)) is None
+
+    db = _FakeHubDb()
+    path = tmp_path / "recall_signal.jsonl"
+    sink = make_recall_signal_sink(
+        MemoryConfig(recall_signal_hub=True, recall_signal_log_path=str(path)),
+        db,
+    )
+    assert sink is not None
+
+    sink(_snapshot())
+
+    assert not path.exists()
+    request_inserts = [sql for sql, _ in db.calls if "recall_signal_requests" in sql]
+    hit_inserts = [sql for sql, _ in db.calls if "recall_signal_hits" in sql]
+    assert len(request_inserts) == 1
+    assert len(hit_inserts) == 2
+
+
+def test_make_injection_outcome_recorder_default_off_and_records() -> None:
+    db = _FakeHubDb()
+    assert make_injection_outcome_recorder(MemoryConfig(), db) is None
+    assert make_injection_outcome_recorder(MemoryConfig(recall_signal_hub=True)) is None
+
+    recorder = make_injection_outcome_recorder(MemoryConfig(recall_signal_hub=True), db)
+    assert recorder is not None
+
+    recorder(
+        [
+            {
+                "session_id": "session-1",
+                "recall_request_id": "request-1",
+                "memory_id": "memory-1",
+                "outcome": "injected",
+                "injection_position": 0,
+                "caller": "memory.recall",
+            }
+        ]
+    )
+
+    outcome_inserts = [sql for sql, _ in db.calls if "recall_injection_outcomes" in sql]
+    assert len(outcome_inserts) == 1

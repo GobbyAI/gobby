@@ -13,6 +13,7 @@ from gobby.memory.vectorstore import is_recoverable_vector_store_error
 from gobby.storage.memories import Memory
 
 if TYPE_CHECKING:
+    from gobby.memory.services._search_graph import GraphScoredResult
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class SearchPathHost(Protocol):
         min_score: float = 0.5,
         project_id: str | None = None,
         include_global: bool = True,
-    ) -> list[tuple[str, float]]: ...
+    ) -> GraphScoredResult: ...
 
     async def _keyword_ranked(
         self,
@@ -84,6 +85,7 @@ class SearchPathHost(Protocol):
         ranking_score_map: dict[str, float],
         rrf_applied: bool,
         graph_score_map: dict[str, float] | None = None,
+        graph_component_map: dict[str, dict[str, float | None]] | None = None,
     ) -> None: ...
 
 
@@ -173,8 +175,10 @@ async def search_with_graph(
                 exc_info=graph_result,
             )
             graph_scored: list[tuple[str, float]] = []
+            graph_component_map: dict[str, dict[str, float | None]] = {}
         else:
-            graph_scored = graph_result
+            graph_scored = graph_result.scored
+            graph_component_map = graph_result.component_map
 
         graph_ranked = [memory_id for memory_id, _ in graph_scored]
         graph_score_map = dict(graph_scored)
@@ -230,6 +234,7 @@ async def search_with_graph(
             rrf_applied=rrf_applied,
             graph_ranked=graph_ranked,
             graph_score_map=graph_score_map,
+            graph_component_map=graph_component_map,
             exhausted=(
                 len(qdrant_results) < candidate_limit
                 and len(graph_scored) < candidate_limit
@@ -271,6 +276,7 @@ async def search_with_graph(
         ranking_score_map=candidates.ranking_score_map,
         rrf_applied=candidates.rrf_applied,
         graph_score_map=candidates.graph_score_map,
+        graph_component_map=candidates.graph_component_map,
     )
     return results
 

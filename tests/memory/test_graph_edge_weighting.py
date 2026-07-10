@@ -381,14 +381,18 @@ async def test_traversal_orders_neighbors_by_weight_in_python() -> None:
     falkor = RecordingFalkor(_neighbor_responder(rows))
     reader = _reader(falkor)
 
-    result = await reader._find_related_entity_keys(
+    related_keys, components_by_key, admission_scores = await reader._find_related_entity_keys(
         ["seed"], max_hops=1, limit=20, project_id=None, include_global=True
     )
 
     # Ordering is by edge weight DESC in both the Cypher candidate pull and Python cap.
-    assert result == ["high", "mid", "low"]
+    assert related_keys == ["high", "mid", "low"]
+    assert set(components_by_key) == {"high", "mid", "low"}
+    assert admission_scores["high"] > admission_scores["mid"] > admission_scores["low"]
     neighbor_cypher = falkor.find("related_entity_key")[0][0]
     assert "coalesce(r.weight, 1.0) AS edge_weight" in neighbor_cypher
+    assert "r.weight AS raw_weight" in neighbor_cypher
+    assert "r.support AS edge_support" in neighbor_cypher
     assert "r.updated_at AS updated_at" in neighbor_cypher
     assert "ORDER BY coalesce(r.weight, 1.0) DESC" in neighbor_cypher
 
@@ -403,11 +407,76 @@ async def test_traversal_unweighted_edges_use_neutral_weight() -> None:
     falkor = RecordingFalkor(_neighbor_responder(rows))
     reader = _reader(falkor)
 
-    result = await reader._find_related_entity_keys(
+    related_keys, _, _ = await reader._find_related_entity_keys(
         ["seed"], max_hops=1, limit=20, project_id=None, include_global=True
     )
 
-    assert result == ["alpha", "beta"]
+    assert related_keys == ["alpha", "beta"]
+
+
+async def test_find_related_memory_ids_attributes_edge_components() -> None:
+    """Traversal-admitted memories carry the #17096 component breakdown (§3.2)."""
+
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" in cypher:
+            return [
+                {
+                    "related_entity_key": "neighbor",
+                    "edge_weight": 0.7,
+                    "raw_weight": 0.7,
+                    "edge_support": 3,
+                    "updated_at": None,
+                }
+            ]
+        if "RETURN DISTINCT m.memory_id" in cypher:
+            return [{"memory_id": "memory-1", "updated_at": 1}]
+        if "RETURN e.entity_key AS entity_key, m.memory_id AS memory_id" in cypher:
+            assert params is not None
+            assert params["entity_keys"] == ["neighbor"]
+            assert params["memory_ids"] == ["memory-1"]
+            return [{"entity_key": "neighbor", "memory_id": "memory-1"}]
+        return []
+
+    reader = _reader(RecordingFalkor(respond))
+
+    traversal = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5)
+
+    assert traversal.memory_ids == ["memory-1"]
+    components = traversal.component_map["memory-1"]
+    # weight = alpha * cos01 + (1 - alpha) * support_norm with alpha=0.5, cap=5:
+    # support_norm = 3/5 = 0.6, cosine = (0.7 - 0.5 * 0.6) / 0.5 = 0.8.
+    assert components["edge_weight_blend"] == pytest.approx(0.7)
+    assert components["edge_support_norm"] == pytest.approx(3 / COOCCUR_SUPPORT_CAP)
+    assert components["edge_cosine"] == pytest.approx(0.8)
+    assert components["edge_decay_factor"] == 1.0
+
+
+async def test_find_related_memory_ids_unweighted_edges_skip_attribution() -> None:
+    """Unweighted edges (no r.weight/r.support) yield no components and no extra query."""
+
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" in cypher:
+            return [
+                {
+                    "related_entity_key": "neighbor",
+                    "edge_weight": 1.0,
+                    "raw_weight": None,
+                    "edge_support": None,
+                    "updated_at": None,
+                }
+            ]
+        if "RETURN DISTINCT m.memory_id" in cypher:
+            return [{"memory_id": "memory-1", "updated_at": 1}]
+        return []
+
+    falkor = RecordingFalkor(respond)
+    reader = _reader(falkor)
+
+    traversal = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5)
+
+    assert traversal.memory_ids == ["memory-1"]
+    assert traversal.component_map == {}
+    assert not falkor.find("RETURN e.entity_key AS entity_key, m.memory_id AS memory_id")
 
 
 async def test_fetch_project_entity_vectors_uses_project_scope() -> None:
@@ -474,23 +543,25 @@ async def test_cluster_expansion_runs_from_seed_when_traversal_has_no_neighbors(
         cluster_expansion_per_entity=2,
     )
 
-    memory_ids = await reader.find_related_memory_ids(
+    traversal = await reader.find_related_memory_ids(
         ["seed"],
         max_hops=1,
         limit=5,
         project_id="project-1",
     )
 
-    assert memory_ids == ["memory-from-cluster"]
+    assert traversal.memory_ids == ["memory-from-cluster"]
+    # Cluster-expansion entrants carry no admitting-edge components.
+    assert traversal.component_map == {}
 
 
 async def test_cluster_expansion_is_default_off_for_seed_only_traversal() -> None:
     falkor = RecordingFalkor(_neighbor_responder([]))
     reader = _reader(falkor)
 
-    memory_ids = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5)
+    traversal = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5)
 
-    assert memory_ids == []
+    assert traversal.memory_ids == []
     assert not falkor.find("candidate.cluster_id")
 
 

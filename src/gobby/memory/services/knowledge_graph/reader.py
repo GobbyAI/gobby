@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,7 @@ from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.scoring import temporal_decay
 
 from .clustering import EntityVector
+from .writer import COOCCUR_ALPHA, COOCCUR_SUPPORT_CAP
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -56,6 +58,31 @@ def _edge_timestamp_to_iso(value: Any) -> str | None:
         except (ValueError, OverflowError, OSError):
             return None
     return None
+
+
+def _components_have_signal(components: dict[str, float | None]) -> bool:
+    """True when an edge-component breakdown carries any non-default term."""
+    if components.get("edge_cosine") is not None:
+        return True
+    if components.get("edge_support_norm") is not None:
+        return True
+    if components.get("edge_weight_blend") is not None:
+        return True
+    decay = components.get("edge_decay_factor")
+    return decay is not None and decay != 1.0
+
+
+@dataclass
+class RelatedMemoryTraversal:
+    """Result of entity-graph traversal to related memories.
+
+    ``component_map`` carries the #17096 edge-weight component breakdown
+    (contract §3.2) for each memory admitted via weighted traversal, keyed by
+    memory_id. Memories reached only through cluster expansion have no entry.
+    """
+
+    memory_ids: list[str] = field(default_factory=list)
+    component_map: dict[str, dict[str, float | None]] = field(default_factory=dict)
 
 
 class KnowledgeGraphReader:
@@ -245,6 +272,47 @@ class KnowledgeGraphReader:
             return weight
         return weight * temporal_decay(iso, self._edge_half_life_days)
 
+    def _edge_components(
+        self,
+        raw_weight: Any,
+        edge_support: Any,
+        updated_at: Any,
+    ) -> dict[str, float | None]:
+        """Decompose one traversal edge into the #17096 formula terms (§3.2).
+
+        ``edge_cosine`` is recovered algebraically from the stored blend —
+        ``weight = alpha * cos01 + (1 - alpha) * support_norm`` — because
+        CO_OCCURS edges persist ``weight`` and ``support`` but not the raw
+        cosine. Unweighted edges (no ``r.weight``/``r.support``) yield None
+        components; ``edge_decay_factor`` is 1.0 when edge decay is off.
+        """
+        blend: float | None
+        try:
+            blend = float(raw_weight) if raw_weight is not None else None
+        except (TypeError, ValueError):
+            blend = None
+        support_norm: float | None = None
+        try:
+            if edge_support is not None and COOCCUR_SUPPORT_CAP > 0:
+                support_norm = min(int(edge_support), COOCCUR_SUPPORT_CAP) / COOCCUR_SUPPORT_CAP
+        except (TypeError, ValueError):
+            support_norm = None
+        cosine: float | None = None
+        if blend is not None and support_norm is not None and COOCCUR_ALPHA > 0:
+            cosine = (blend - (1.0 - COOCCUR_ALPHA) * support_norm) / COOCCUR_ALPHA
+            cosine = min(max(cosine, 0.0), 1.0)
+        decay = 1.0
+        if self._graph_edge_decay:
+            iso = _edge_timestamp_to_iso(updated_at)
+            if iso is not None:
+                decay = temporal_decay(iso, self._edge_half_life_days)
+        return {
+            "edge_cosine": cosine,
+            "edge_support_norm": support_norm,
+            "edge_weight_blend": blend,
+            "edge_decay_factor": decay,
+        }
+
     async def _find_related_entity_keys(
         self,
         seed_keys: list[str],
@@ -252,8 +320,11 @@ class KnowledgeGraphReader:
         limit: int,
         project_id: str | None,
         include_global: bool,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, dict[str, float | None]], dict[str, float]]:
+        """Return admitted entity keys, their admitting-edge components, and path scores."""
         related_keys: list[str] = []
+        components_by_key: dict[str, dict[str, float | None]] = {}
+        admission_score_by_key: dict[str, float] = {}
         seen = set(seed_keys)
         # Frontier carries the accumulated path score so multi-hop ranking is global
         # rather than only per-source.
@@ -265,6 +336,7 @@ class KnowledgeGraphReader:
 
         for _ in range(max_hops):
             hop_best: dict[str, float] = {}
+            hop_components: dict[str, dict[str, float | None]] = {}
             for source_key, source_score in frontier:
                 rows = await self._falkor.query(
                     "MATCH (start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity) "
@@ -274,7 +346,8 @@ class KnowledgeGraphReader:
                     "OR ($include_global AND neighbor.project_id IS NULL)) "
                     "AND NOT (type(r) IN $excluded_relationship_types) "
                     "RETURN neighbor.entity_key AS related_entity_key, "
-                    "coalesce(r.weight, 1.0) AS edge_weight, r.updated_at AS updated_at "
+                    "coalesce(r.weight, 1.0) AS edge_weight, r.weight AS raw_weight, "
+                    "r.support AS edge_support, r.updated_at AS updated_at "
                     "ORDER BY coalesce(r.weight, 1.0) DESC "
                     "LIMIT $neighbor_limit",
                     {
@@ -288,6 +361,7 @@ class KnowledgeGraphReader:
                 # Score each candidate, keep the strongest edge per neighbor, then cap
                 # to the top _RELATED_ENTITY_NEIGHBOR_LIMIT for this source.
                 best_by_key: dict[str, float] = {}
+                best_row_by_key: dict[str, dict[str, Any]] = {}
                 for row in rows:
                     related_key = row.get("related_entity_key")
                     if not related_key or related_key in seen:
@@ -295,11 +369,18 @@ class KnowledgeGraphReader:
                     edge_score = self._edge_score(row.get("edge_weight"), row.get("updated_at"))
                     if related_key not in best_by_key or edge_score > best_by_key[related_key]:
                         best_by_key[related_key] = edge_score
+                        best_row_by_key[related_key] = row
                 scored = sorted(best_by_key.items(), key=lambda item: (-item[1], item[0]))
                 for related_key, edge_score in scored[:_RELATED_ENTITY_NEIGHBOR_LIMIT]:
                     path_score = source_score * edge_score
                     if related_key not in hop_best or path_score > hop_best[related_key]:
                         hop_best[related_key] = path_score
+                        row = best_row_by_key[related_key]
+                        hop_components[related_key] = self._edge_components(
+                            row.get("raw_weight"),
+                            row.get("edge_support"),
+                            row.get("updated_at"),
+                        )
             if not hop_best:
                 break
             # Globally order this hop's fresh neighbors by accumulated path score.
@@ -310,6 +391,8 @@ class KnowledgeGraphReader:
                     continue
                 seen.add(related_key)
                 related_keys.append(related_key)
+                components_by_key[related_key] = hop_components.get(related_key, {})
+                admission_score_by_key[related_key] = path_score
                 next_frontier.append((related_key, path_score))
                 if len(related_keys) >= max_related_entities:
                     break
@@ -317,7 +400,7 @@ class KnowledgeGraphReader:
                 break
             frontier = next_frontier
 
-        return related_keys
+        return related_keys, components_by_key, admission_score_by_key
 
     async def fetch_project_entity_vectors(
         self,
@@ -416,20 +499,24 @@ class KnowledgeGraphReader:
         limit: int = 20,
         project_id: str | None = None,
         include_global: bool = True,
-    ) -> list[str]:
+    ) -> RelatedMemoryTraversal:
         """Traverse from entities through relationships to find related memory IDs."""
         if not entity_keys or limit <= 0:
-            return []
+            return RelatedMemoryTraversal()
         if self._related_traversal_is_disabled():
-            return []
+            return RelatedMemoryTraversal()
 
         max_hops = max(1, min(max_hops, 3))
         seed_keys = list(dict.fromkeys(entity_keys))[:_RELATED_ENTITY_SEED_LIMIT]
         if not seed_keys:
-            return []
+            return RelatedMemoryTraversal()
 
         try:
-            related_entity_keys = await self._find_related_entity_keys(
+            (
+                related_entity_keys,
+                components_by_entity,
+                admission_score_by_entity,
+            ) = await self._find_related_entity_keys(
                 seed_keys,
                 max_hops,
                 limit,
@@ -446,7 +533,7 @@ class KnowledgeGraphReader:
             memory_entity_keys = list(dict.fromkeys([*related_entity_keys, *cluster_entity_keys]))
             if not memory_entity_keys:
                 self._record_traversal_success()
-                return []
+                return RelatedMemoryTraversal()
 
             rows = await self._falkor.query(
                 "UNWIND $entity_keys AS entity_key "
@@ -465,22 +552,85 @@ class KnowledgeGraphReader:
                     "include_global": include_global,
                 },
             )
+            memory_ids = [r["memory_id"] for r in rows if r.get("memory_id")]
+            component_map = await self._attribute_edge_components(
+                memory_ids=memory_ids,
+                components_by_entity=components_by_entity,
+                admission_score_by_entity=admission_score_by_entity,
+                project_id=project_id,
+                include_global=include_global,
+            )
             self._record_traversal_success()
-            return [r["memory_id"] for r in rows if r.get("memory_id")]
+            return RelatedMemoryTraversal(memory_ids=memory_ids, component_map=component_map)
         except FalkorConnectionError as e:
             if self._is_query_timeout_error(e):
                 self._record_traversal_timeout(e)
-                return []
+                return RelatedMemoryTraversal()
             self._record_traversal_success()
             logger.warning(f"FalkorDB unreachable during graph traversal: {e}")
-            return []
+            return RelatedMemoryTraversal()
         except Exception as e:
             if self._is_query_timeout_error(e):
                 self._record_traversal_timeout(e)
-                return []
+                return RelatedMemoryTraversal()
             self._record_traversal_success()
             logger.warning(f"Graph traversal failed: {e}")
-            return []
+            return RelatedMemoryTraversal()
+
+    async def _attribute_edge_components(
+        self,
+        *,
+        memory_ids: list[str],
+        components_by_entity: dict[str, dict[str, float | None]],
+        admission_score_by_entity: dict[str, float],
+        project_id: str | None,
+        include_global: bool,
+    ) -> dict[str, dict[str, float | None]]:
+        """Map admitting-edge components (contract §3.2) onto traversed memories.
+
+        A memory mentioned by several traversal-admitted entities takes the
+        components of the entity with the strongest accumulated path score.
+        Entities admitted only through unweighted edges (all component terms
+        None, no decay) are skipped — their hits stay componentless, so the
+        attribution query never runs in the unweighted regime.
+        """
+        entity_keys = [
+            key
+            for key, comps in components_by_entity.items()
+            if comps and _components_have_signal(comps)
+        ]
+        if not memory_ids or not entity_keys:
+            return {}
+
+        rows = await self._falkor.query(
+            "UNWIND $entity_keys AS entity_key "
+            "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+            "WHERE m.memory_id IN $memory_ids "
+            "AND (e.project_id = $project_id "
+            "OR ($include_global AND e.project_id IS NULL)) "
+            "RETURN e.entity_key AS entity_key, m.memory_id AS memory_id",
+            {
+                "entity_keys": entity_keys,
+                "memory_ids": memory_ids,
+                "project_id": project_id,
+                "include_global": include_global,
+            },
+        )
+        component_map: dict[str, dict[str, float | None]] = {}
+        best_score: dict[str, float] = {}
+        for row in rows:
+            entity_key = row.get("entity_key")
+            memory_id = row.get("memory_id")
+            if not entity_key or not memory_id:
+                continue
+            components = components_by_entity.get(entity_key)
+            if not components:
+                continue
+            score = admission_score_by_entity.get(entity_key, 0.0)
+            if memory_id not in best_score or score > best_score[memory_id]:
+                best_score[memory_id] = score
+                component_map[memory_id] = components
+        return component_map
 
     async def get_entity_graph(
         self,

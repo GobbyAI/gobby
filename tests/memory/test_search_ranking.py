@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.memory.services._search_graph import GraphScoredResult
 from gobby.memory.services._search_keyword import KeywordSearch
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
 from gobby.storage.memories import Memory
@@ -422,8 +423,18 @@ async def test_graph_path_emits_debug_snapshot(monkeypatch: Any) -> None:
         falkordb_graph_search=True,
     )
 
-    async def graph_search(**kwargs: Any) -> list[tuple[str, float]]:
-        return [("graph", 0.05)]
+    async def graph_search(**kwargs: Any) -> GraphScoredResult:
+        return GraphScoredResult(
+            scored=[("graph", 0.05)],
+            component_map={
+                "graph": {
+                    "edge_cosine": 0.8,
+                    "edge_support_norm": 0.4,
+                    "edge_weight_blend": 0.6,
+                    "edge_decay_factor": 1.0,
+                }
+            },
+        )
 
     monkeypatch.setattr(service, "_search_graph_scored", graph_search)
     results = await service._search_with_graph(
@@ -447,6 +458,14 @@ async def test_graph_path_emits_debug_snapshot(monkeypatch: Any) -> None:
     assert snapshots[0].rrf_applied is True
     assert snapshots[0].query == "query"
     assert snapshots[0].graph_score_map == {"graph": 0.05}
+    assert snapshots[0].graph_component_map == {
+        "graph": {
+            "edge_cosine": 0.8,
+            "edge_support_norm": 0.4,
+            "edge_weight_blend": 0.6,
+            "edge_decay_factor": 1.0,
+        }
+    }
     assert snapshots[0].returned_hits[1].memory_id == "graph"
     assert snapshots[0].returned_hits[1].ranking_mode == "graph_synthetic"
     assert snapshots[0].returned_hits[1].graph_score == 0.05

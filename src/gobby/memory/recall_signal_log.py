@@ -16,10 +16,11 @@ from gobby.paths import get_gobby_home
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
     from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
-RECALL_SIGNAL_SCHEMA_VERSION = 2
+RECALL_SIGNAL_SCHEMA_VERSION = 3
 
 _WRITE_LOCK = threading.Lock()
 
@@ -36,9 +37,19 @@ def resolve_recall_signal_path(path: str | None) -> Path:
     return Path(path).expanduser()
 
 
-def make_recall_signal_sink(config: MemoryConfig) -> Callable[[SearchDebugSnapshot], None] | None:
-    """Build the default-off SearchService debug sink for recall signal logging."""
-    if not getattr(config, "recall_signal_logging", False):
+def make_recall_signal_sink(
+    config: MemoryConfig,
+    db: HubDatabase | None = None,
+) -> Callable[[SearchDebugSnapshot], None] | None:
+    """Build the default-off SearchService debug sink for recall signal logging.
+
+    JSONL append is gated by ``recall_signal_logging``; the Postgres hub
+    dual-write (#17196) is gated by ``recall_signal_hub`` and requires ``db``.
+    Both writes fail open — signal capture never disturbs search.
+    """
+    jsonl_enabled = getattr(config, "recall_signal_logging", False)
+    hub_db = db if getattr(config, "recall_signal_hub", False) else None
+    if not jsonl_enabled and hub_db is None:
         return None
 
     path = resolve_recall_signal_path(getattr(config, "recall_signal_log_path", None))
@@ -49,9 +60,44 @@ def make_recall_signal_sink(config: MemoryConfig) -> Callable[[SearchDebugSnapsh
             timestamp=datetime.now(UTC).isoformat(),
             weighting=_weighting_snapshot(config),
         )
-        append_recall_signal_events([event], path)
+        if jsonl_enabled:
+            append_recall_signal_events([event], path)
+        if hub_db is not None:
+            try:
+                from gobby.storage.recall_signals import RecallSignalStore
+
+                RecallSignalStore(hub_db).insert_signal_event(event)
+            except Exception:
+                logger.debug("Recall signal hub dual-write failed", exc_info=True)
 
     return sink
+
+
+def make_injection_outcome_recorder(
+    config: MemoryConfig,
+    db: HubDatabase | None = None,
+) -> Callable[[list[dict[str, Any]]], None] | None:
+    """Build the default-off durable injection-outcome writer (contract §5).
+
+    Gated by ``recall_signal_hub`` and requires ``db``. The returned callable
+    accepts ``recall_injection_outcomes`` row dicts and fails open — outcome
+    capture never disturbs delivery.
+    """
+    hub_db = db if getattr(config, "recall_signal_hub", False) else None
+    if hub_db is None:
+        return None
+
+    def record(rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        try:
+            from gobby.storage.recall_signals import RecallSignalStore
+
+            RecallSignalStore(hub_db).record_injection_outcomes(rows)
+        except Exception:
+            logger.debug("Injection-outcome hub write failed", exc_info=True)
+
+    return record
 
 
 def build_recall_signal_event(
@@ -80,7 +126,11 @@ def build_recall_signal_event(
         "graph_score_map": graph_score_map,
         "weighting": dict(weighting),
         "hits": [
-            _hit_to_event(hit=hit, graph_score_map=graph_score_map)
+            _hit_to_event(
+                hit=hit,
+                graph_score_map=graph_score_map,
+                graph_component_map=snapshot.graph_component_map,
+            )
             for hit in snapshot.returned_hits
         ],
     }
@@ -123,8 +173,12 @@ def _hit_to_event(
     *,
     hit: SearchDebugHit,
     graph_score_map: Mapping[str, float | None],
+    graph_component_map: Mapping[str, Mapping[str, float | None]] | None = None,
 ) -> dict[str, Any]:
     graph_score = graph_score_map.get(hit.memory_id)
+    # Edge-weight component breakdown (contract §3.2): present only for hits
+    # that entered via weighted graph traversal; None otherwise.
+    components = (graph_component_map or {}).get(hit.memory_id) or {}
     return {
         "memory_id": hit.memory_id,
         "rank": hit.rank,
@@ -135,6 +189,10 @@ def _hit_to_event(
         "ranking_score": _finite_or_none(hit.ranking_score),
         "ranking_mode": hit.ranking_mode,
         "graph_score": graph_score,
+        "edge_cosine": _finite_or_none(components.get("edge_cosine")),
+        "edge_support_norm": _finite_or_none(components.get("edge_support_norm")),
+        "edge_weight_blend": _finite_or_none(components.get("edge_weight_blend")),
+        "edge_decay_factor": _finite_or_none(components.get("edge_decay_factor")),
     }
 
 

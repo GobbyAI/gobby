@@ -505,3 +505,103 @@ async def test_apply_effect_dispatch_switch_cancel_stale_helpers_no_op(
 
     assert response.context is None
     assert response.metadata.get("mcp_calls", []) == []
+
+
+class TestInjectionOutcomeCapture:
+    """Contract-§5 durable injection outcomes at the delivery chain (#17196)."""
+
+    @staticmethod
+    def _engine_with_recorder(
+        db: HubDatabase,
+    ) -> tuple[RuleEngine, list[dict[str, Any]]]:
+        recorded: list[dict[str, Any]] = []
+        engine = RuleEngine(db, injection_outcome_recorder=recorded.extend)
+        return engine, recorded
+
+    def test_memory_recall_delivery_records_positions_and_drops(self, db: HubDatabase) -> None:
+        engine, recorded = self._engine_with_recorder(db)
+        _set_injected(db, PLATFORM_SESSION_ID, ["m-old"])
+        payload = {
+            "type": "memory_recall",
+            "producer": "daemon_memory_recall",
+            "origin_turn_seq": 4,
+            "recall_request_id": "recall-123",
+            "project_id": PROJECT_ID,
+            "memories": [
+                {"id": "m-lesson", "content": "lesson", "tags": ["review-lesson"]},
+                {"id": "m-old", "content": "seen before"},
+                {"id": "m-new", "content": "fresh fact", "type": "fact"},
+            ],
+        }
+
+        result = engine._format_memory_recall_delivery(payload, PLATFORM_SESSION_ID, _variables())
+
+        assert result is not None
+        assert "fresh fact" in result
+        by_id = {row["memory_id"]: row for row in recorded}
+        assert by_id["m-lesson"]["outcome"] == "filtered"
+        assert by_id["m-lesson"]["drop_reason"] == "review_lesson"
+        assert by_id["m-old"]["outcome"] == "filtered"
+        assert by_id["m-old"]["drop_reason"] == "already_injected"
+        assert by_id["m-new"]["outcome"] == "injected"
+        assert by_id["m-new"]["injection_position"] == 0
+        assert by_id["m-new"]["injection_group"] == "fact"
+        assert by_id["m-new"]["turn_seq"] == 4
+        assert by_id["m-new"]["caller"] == "memory.recall"
+        assert by_id["m-new"]["project_id"] == PROJECT_ID
+        assert by_id["m-new"]["session_id"] == PLATFORM_SESSION_ID
+        assert all(row["recall_request_id"] == "recall-123" for row in recorded)
+        # Only the rendered memory joins the already-known id in session state.
+        assert set(_vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"]) == {"m-old", "m-new"}
+
+    def test_stale_delivery_records_whole_payload_drop(self, db: HubDatabase) -> None:
+        engine, recorded = self._engine_with_recorder(db)
+        payload = {
+            "type": "memory_recall",
+            "producer": "daemon_memory_recall",
+            "origin_turn_seq": 2,  # parent_turn_seq=5 → stale (needs 4)
+            "recall_request_id": "recall-stale",
+            "memories": [{"id": "m1", "content": "late"}],
+        }
+
+        result = engine._format_memory_recall_delivery(payload, PLATFORM_SESSION_ID, _variables())
+
+        assert result is None
+        assert len(recorded) == 1
+        assert recorded[0]["memory_id"] == "m1"
+        assert recorded[0]["outcome"] == "filtered"
+        assert recorded[0]["drop_reason"] == "other"
+        assert recorded[0]["drop_detail"] == "stale_delivery"
+
+    def test_inline_search_memories_result_records_outcomes(self, db: HubDatabase) -> None:
+        engine, recorded = self._engine_with_recorder(db)
+
+        result = engine._format_search_memories_result(
+            {
+                "memories": [{"id": "m1", "content": "hit", "type": "pattern"}],
+                "recall_request_id": "req-inline",
+                "project_id": PROJECT_ID,
+            },
+            PLATFORM_SESSION_ID,
+            _variables(),
+        )
+
+        assert result is not None
+        assert len(recorded) == 1
+        assert recorded[0]["recall_request_id"] == "req-inline"
+        assert recorded[0]["caller"] == "mcp_proxy.memory.search_memories"
+        assert recorded[0]["outcome"] == "injected"
+        assert recorded[0]["injection_position"] == 0
+        assert recorded[0]["injection_group"] == "pattern"
+
+    def test_no_rows_without_recall_request_id(self, db: HubDatabase) -> None:
+        engine, recorded = self._engine_with_recorder(db)
+
+        result = engine._format_search_memories_result(
+            {"memories": [{"id": "m1", "content": "hit"}]},
+            PLATFORM_SESSION_ID,
+            _variables(),
+        )
+
+        assert result is not None
+        assert recorded == []

@@ -710,3 +710,68 @@ async def test_runner_deferred_mode_keeps_result_after_turn_advances(
     assert payload is not None
     assert payload.origin_turn_seq == 3
     assert [memory["id"] for memory in payload.memories] == ["mem-1"]
+
+
+@pytest.mark.asyncio
+async def test_runner_records_selection_outcomes_for_non_selected(
+    temp_db: HubDatabase,
+) -> None:
+    """Returned-but-not-selected candidates get durable filtered rows (§5)."""
+    from gobby.config.persistence import MemoryConfig
+
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    memory_manager = FakeMemoryManager(
+        [
+            _memory("mem-1", "Selected memory."),
+            _memory("mem-2", "Not selected."),
+            _memory("mem-3", "Review lesson.", tags=["review-lesson"]),
+        ]
+    )
+    memory_manager.config = MemoryConfig(recall_signal_hub=True)  # type: ignore[attr-defined]
+    llm = FakeLLMService({"memory_ids": ["mem-1"]})
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallConfig(),
+    )
+
+    payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is not None
+    assert [memory["id"] for memory in payload.memories] == ["mem-1"]
+    rows = temp_db.fetchall(
+        "SELECT memory_id, outcome, drop_reason, drop_detail, turn_seq, caller "
+        "FROM recall_injection_outcomes WHERE recall_request_id = %s",
+        (payload.recall_request_id,),
+    )
+    by_id = {row["memory_id"]: row for row in rows}
+    # The selected memory's outcome is written later, at the delivery chain.
+    assert set(by_id) == {"mem-2", "mem-3"}
+    assert all(row["outcome"] == "filtered" for row in rows)
+    assert by_id["mem-2"]["drop_reason"] == "other"
+    assert by_id["mem-2"]["drop_detail"] == "selector_not_selected"
+    assert by_id["mem-3"]["drop_reason"] == "review_lesson"
+    assert all(row["turn_seq"] == 3 for row in rows)
+    assert all(row["caller"] == "memory.recall" for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_runner_records_no_outcomes_when_hub_flag_off(
+    temp_db: HubDatabase,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    memory_manager = FakeMemoryManager([_memory("mem-1"), _memory("mem-2")])
+    llm = FakeLLMService({"memory_ids": ["mem-1"]})
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallConfig(),
+    )
+
+    payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is not None
+    count = temp_db.fetchone("SELECT count(*) AS n FROM recall_injection_outcomes")
+    assert count is not None and count["n"] == 0

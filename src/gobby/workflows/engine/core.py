@@ -7,6 +7,7 @@ rewrite_input, load_skill.
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -92,6 +93,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         runner: Any | None = None,
         completion_registry: Any | None = None,
         task_manager: Any | None = None,
+        injection_outcome_recorder: Callable[[list[dict[str, Any]]], None] | None = None,
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
@@ -103,6 +105,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._injection_outcome_recorder = injection_outcome_recorder
         self._agent_def_cache_revision = get_workflow_definitions_revision()
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
 

@@ -10,6 +10,7 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.identity import entity_key
 from gobby.memory.manager import MemoryManager
+from gobby.memory.services.knowledge_graph.reader import RelatedMemoryTraversal
 
 pytestmark = pytest.mark.unit
 
@@ -175,7 +176,9 @@ class TestSearchGraphForMemories:
                 },
             ]
         )
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-4"])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal(memory_ids=["mem-4"])
+        )
 
         result = await manager._search_graph_for_memories(
             query_embedding=[0.1, 0.2],
@@ -212,7 +215,9 @@ class TestSearchGraphForMemories:
             for i in range(10)
         ]
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=entity_results)
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-related"])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal(memory_ids=["mem-related"])
+        )
 
         result = await manager._search_graph_for_memories(
             query_embedding=[0.1],
@@ -290,7 +295,9 @@ class TestSearchGraphForMemories:
             ]
         )
         # Traversal returns overlapping ID
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-1", "mem-2"])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal(memory_ids=["mem-1", "mem-2"])
+        )
 
         result = await manager._search_graph_for_memories(
             query_embedding=[0.1],
@@ -357,7 +364,9 @@ class TestSearchMemoriesGraphIntegration:
                 },
             ]
         )
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
 
         # Mock storage
         manager.storage.get_memory = MagicMock(
@@ -475,7 +484,9 @@ class TestSearchMemoriesGraphIntegration:
         # Both memories appear in Qdrant, but mem-2 is user-sourced
         vs.search = AsyncMock(return_value=[("mem-1", 0.9), ("mem-2", 0.85)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
 
         user_mem = _mock_memory("mem-2", "user content")
         user_mem.source_type = "user"
@@ -520,7 +531,9 @@ class TestGraphSearchProjectIdScoping:
                 },
             ]
         )
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
 
         await manager._search_graph_for_memories(
             query_embedding=[0.1],
@@ -554,7 +567,9 @@ class TestGraphSearchProjectIdScoping:
         # Qdrant returns both memories (simulating a leak)
         vs.search = AsyncMock(return_value=[("mem-1", 0.9), ("mem-2", 0.8)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
 
         # mem-1 belongs to proj-A, mem-2 belongs to proj-B
         mem_a = _mock_memory("mem-1", "content A")
@@ -602,7 +617,9 @@ class TestGraphSearchProjectIdScoping:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.9), ("mem-2", 0.8)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
 
         mem_a = _mock_memory("mem-1", "content A")
         mem_a.project_id = "proj-A"
@@ -687,7 +704,9 @@ class TestTemporalDecayIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.675)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
         manager._search_service._keyword_ranked = AsyncMock(return_value=[])
 
         mem = _mock_memory("mem-1", "content")
@@ -726,7 +745,9 @@ class TestTemporalDecayIntegration:
         # Both memories rank equally in Qdrant (same position)
         vs.search = AsyncMock(return_value=[("mem-recent", 0.9), ("mem-old", 0.9)])
         manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
-        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(
+            return_value=RelatedMemoryTraversal()
+        )
 
         mem_recent = _mock_memory("mem-recent", "recent content", updated_at=recent.isoformat())
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())

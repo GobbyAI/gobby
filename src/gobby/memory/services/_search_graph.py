@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from gobby.memory.services._search_constants import (
@@ -18,6 +19,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class GraphScoredResult:
+    """Graph search hits plus edge-component breakdown for traversal entrants.
+
+    ``component_map`` (contract §3.2) covers only memory ids that entered the
+    result set via weighted graph traversal; direct entity-match hits carry no
+    components.
+    """
+
+    scored: list[tuple[str, float]] = field(default_factory=list)
+    component_map: dict[str, dict[str, float | None]] = field(default_factory=dict)
+
+
 async def search_graph_scored(
     *,
     kg_service: KnowledgeGraphService,
@@ -26,7 +40,7 @@ async def search_graph_scored(
     min_score: float = 0.5,
     project_id: str | None = None,
     include_global: bool = True,
-) -> list[tuple[str, float]]:
+) -> GraphScoredResult:
     """Search FalkorDB graph for memory IDs, each scored by entity-match confidence."""
     entity_results = await kg_service.search_entities_by_vector(
         query_embedding=query_embedding,
@@ -37,7 +51,7 @@ async def search_graph_scored(
     )
 
     if not entity_results:
-        return []
+        return GraphScoredResult()
 
     confidence: dict[str, float] = {}
     direct_memory_ids: list[str] = []
@@ -62,9 +76,10 @@ async def search_graph_scored(
                 confidence[memory_id] = entity_score
 
     traversed_memory_ids: list[str] = []
+    traversal_component_map: dict[str, dict[str, float | None]] = {}
     if entity_keys:
         try:
-            traversed_memory_ids = await asyncio.wait_for(
+            traversal = await asyncio.wait_for(
                 kg_service.find_related_memory_ids(
                     entity_keys=entity_keys,
                     max_hops=1,
@@ -74,6 +89,8 @@ async def search_graph_scored(
                 ),
                 timeout=_GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS,
             )
+            traversed_memory_ids = traversal.memory_ids
+            traversal_component_map = traversal.component_map
         except TimeoutError:
             logger.warning(
                 "Graph related-memory expansion timed out after %.1fs; returning direct graph hits",
@@ -85,14 +102,26 @@ async def search_graph_scored(
     traversed_confidence = seed_max_score * _GRAPH_TRAVERSAL_CONFIDENCE_FACTOR
     seen = set(direct_memory_ids)
     merged = list(direct_memory_ids)
+    component_map: dict[str, dict[str, float | None]] = {}
     for memory_id in traversed_memory_ids:
         if memory_id not in seen:
             seen.add(memory_id)
             merged.append(memory_id)
+            components = traversal_component_map.get(memory_id)
+            if components:
+                component_map[memory_id] = components
         if traversed_confidence > confidence.get(memory_id, 0.0):
             confidence[memory_id] = traversed_confidence
 
-    return [(memory_id, confidence.get(memory_id, 0.0)) for memory_id in merged[:limit]]
+    returned = merged[:limit]
+    returned_set = set(returned)
+    component_map = {
+        memory_id: comps for memory_id, comps in component_map.items() if memory_id in returned_set
+    }
+    return GraphScoredResult(
+        scored=[(memory_id, confidence.get(memory_id, 0.0)) for memory_id in returned],
+        component_map=component_map,
+    )
 
 
 async def search_graph_for_memories(
@@ -104,11 +133,11 @@ async def search_graph_for_memories(
     project_id: str | None = None,
 ) -> list[str]:
     """Search FalkorDB graph for ranked memory IDs via entity vector similarity."""
-    scored = await search_graph_scored(
+    result = await search_graph_scored(
         kg_service=kg_service,
         query_embedding=query_embedding,
         limit=limit,
         min_score=min_score,
         project_id=project_id,
     )
-    return [memory_id for memory_id, _ in scored]
+    return [memory_id for memory_id, _ in result.scored]

@@ -646,6 +646,7 @@ class HookManager:
                 "producer": MEMORY_RECALL_PRODUCER,
                 "origin_turn_seq": result.origin_turn_seq,
                 "recall_request_id": result.recall_request_id,
+                "project_id": event.project_id,
                 "memories": result.memories,
             }
             payload_json = json.dumps(payload)

@@ -36,6 +36,10 @@ class SearchDebugSnapshot:
     recall_request_id: str | None = None
     caller: str = "memory.search"
     graph_score_map: dict[str, float] = field(default_factory=dict)
+    # Edge-weight component breakdown per memory_id (contract §3.2):
+    # edge_cosine, edge_support_norm, edge_weight_blend, edge_decay_factor.
+    # Only populated for hits admitted through weighted graph traversal.
+    graph_component_map: dict[str, dict[str, float | None]] = field(default_factory=dict)
     returned_hits: list[SearchDebugHit] = field(default_factory=list)
     graph_synthetic_similarity_discount: float = _GRAPH_SYNTHETIC_SIM_DISCOUNT
 
@@ -57,4 +61,5 @@ class _Candidates:
     rrf_applied: bool
     graph_ranked: list[str] = field(default_factory=list)
     graph_score_map: dict[str, float] | None = None
+    graph_component_map: dict[str, dict[str, float | None]] | None = None
     exhausted: bool = True

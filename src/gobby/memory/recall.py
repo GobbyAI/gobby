@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.memory.recall_signal_log import make_injection_outcome_recorder
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.prompts.loader import PromptLoader
 from gobby.utils.datetime import datetime_to_required_iso
@@ -164,6 +165,14 @@ class MemoryRecallRunner:
         self.llm_service = llm_service
         self.config = config
         self.logger = log or logger
+        # Durable selection-stage outcome writer (contract §5); returned-but-not-
+        # selected candidates never reach delivery, so their rows are written here.
+        memory_config = getattr(memory_manager, "config", None)
+        self._outcome_recorder = (
+            make_injection_outcome_recorder(memory_config, db)
+            if memory_config is not None
+            else None
+        )
 
     async def run(
         self,
@@ -220,8 +229,19 @@ class MemoryRecallRunner:
             candidate_count=len(candidates),
             event=event,
         )
-        candidate_dicts = self._filter_candidates(candidates, session_id)
+        candidate_dicts, selection_drops = self._filter_candidates(candidates, session_id)
+
+        def _record_drops() -> None:
+            self._record_selection_outcomes(
+                session_id=session_id,
+                recall_request_id=recall_request_id,
+                project_id=event.project_id,
+                turn_seq=origin_turn_seq,
+                drops=selection_drops,
+            )
+
         if not candidate_dicts:
+            _record_drops()
             self._log_recall_diagnostic(
                 "Memory recall skipped",
                 decision=decision,
@@ -257,6 +277,10 @@ class MemoryRecallRunner:
             event=event,
         )
         if not selected_ids:
+            selection_drops.extend(
+                (memory["id"], "other", "selector_not_selected") for memory in candidate_dicts
+            )
+            _record_drops()
             self._log_recall_diagnostic(
                 "Memory recall skipped",
                 decision=decision,
@@ -284,7 +308,15 @@ class MemoryRecallRunner:
             if len(selected) >= self.config.selected_limit:
                 break
 
+        selected_id_set = {memory["id"] for memory in selected}
+        selection_drops.extend(
+            (memory["id"], "other", "selector_not_selected")
+            for memory in candidate_dicts
+            if memory["id"] not in selected_id_set
+        )
+
         if not selected:
+            _record_drops()
             self._log_recall_diagnostic(
                 "Memory recall skipped",
                 decision=decision,
@@ -298,6 +330,10 @@ class MemoryRecallRunner:
             )
             return None
         if require_same_turn and not self._is_fresh(session_id, origin_turn_seq):
+            # Selected memories never reach delivery on a stale turn, so their
+            # filtered rows are written here rather than at the delivery chain.
+            selection_drops.extend((memory["id"], "other", "stale_turn") for memory in selected)
+            _record_drops()
             self._log_recall_diagnostic(
                 "Dropping stale memory_recall",
                 decision=decision,
@@ -312,6 +348,7 @@ class MemoryRecallRunner:
             )
             return None
 
+        _record_drops()
         self.logger.info(
             "Memory recall selected %d memories: recall_request_id=%s session=%s "
             "origin_turn_seq=%s",
@@ -409,36 +446,75 @@ class MemoryRecallRunner:
             self.logger.warning("Memory recall candidate search failed: %s", exc)
             return []
 
+    def _record_selection_outcomes(
+        self,
+        *,
+        session_id: str,
+        recall_request_id: str,
+        project_id: str | None,
+        turn_seq: int | None,
+        drops: list[tuple[str, str, str | None]],
+    ) -> None:
+        """Persist filtered selection-stage outcome rows (contract §5), failing open."""
+        if self._outcome_recorder is None or not drops:
+            return
+        rows = [
+            {
+                "session_id": session_id,
+                "recall_request_id": recall_request_id,
+                "memory_id": memory_id,
+                "project_id": project_id,
+                "outcome": "filtered",
+                "drop_reason": drop_reason,
+                "drop_detail": drop_detail,
+                "turn_seq": turn_seq,
+                "caller": "memory.recall",
+            }
+            for memory_id, drop_reason, drop_detail in drops
+        ]
+        try:
+            self._outcome_recorder(rows)
+        except Exception:  # noqa: BLE001 - outcome capture must fail open
+            self.logger.debug("Failed to record selection outcomes", exc_info=True)
+
     def _filter_candidates(
         self,
         candidates: list[Memory],
         session_id: str,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str, str | None]]]:
+        """Filter candidates; also return (memory_id, drop_reason, drop_detail) drops."""
         injected = self._injected_memory_ids(session_id)
         seen: set[str] = set()
         filtered: list[dict[str, Any]] = []
+        drops: list[tuple[str, str, str | None]] = []
         for memory in candidates:
+            memory_id = getattr(memory, "id", None)
+            if not isinstance(memory_id, str) or not memory_id:
+                continue
+            if memory_id in seen:
+                continue
+            seen.add(memory_id)
             # Keyword/RRF-ranked hits legitimately carry similarity=None; only hits
             # with a numeric similarity are score-gated. Requiring a numeric score
             # here silently zeroed delivery once the hook path went semantic (#17772).
             similarity = getattr(memory, "similarity", None)
             if similarity is not None:
                 if not isinstance(similarity, int | float) or isinstance(similarity, bool):
+                    drops.append((memory_id, "other", "invalid_similarity"))
                     continue
                 score = float(similarity)
                 if not math.isfinite(score) or score < self.config.min_score:
+                    drops.append((memory_id, "other", "below_min_score"))
                     continue
 
-            memory_id = getattr(memory, "id", None)
-            if not isinstance(memory_id, str) or not memory_id:
-                continue
             if _has_review_lesson_tag(getattr(memory, "tags", None)):
+                drops.append((memory_id, "review_lesson", None))
                 continue
-            if memory_id in seen or memory_id in injected:
+            if memory_id in injected:
+                drops.append((memory_id, "already_injected", None))
                 continue
-            seen.add(memory_id)
             filtered.append(_memory_to_payload(memory))
-        return filtered
+        return filtered, drops
 
     async def _select_candidate_ids(
         self,

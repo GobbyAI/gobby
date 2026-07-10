@@ -28,7 +28,7 @@ def _is_empty_inject_payload(result: Any) -> bool:
         return result is None or not result
     if result.get("count") == 0:
         return True
-    bookkeeping = {"success", "count", "response_time_ms"}
+    bookkeeping = {"success", "count", "response_time_ms", "recall_request_id", "project_id"}
     content_keys = {key for key in result if key not in bookkeeping}
     if content_keys == {"messages"} and not result.get("messages"):
         return True
@@ -54,6 +54,8 @@ class EffectsMixin:
     db: Any
     _skill_manager: Any
     _mcp_dispatcher: Any
+    # Durable injection-outcome writer (contract §5); None when recall_signal_hub is off.
+    _injection_outcome_recorder: Callable[[list[dict[str, Any]]], None] | None
 
     if TYPE_CHECKING:
         # Provided by TemplatingMixin at runtime via RuleEngine MRO
@@ -420,9 +422,17 @@ class EffectsMixin:
 
         origin_turn_seq = payload.get("origin_turn_seq")
         parent_turn_seq = variables.get("parent_turn_seq")
+        valid_origin_seq = isinstance(origin_turn_seq, int) and not isinstance(
+            origin_turn_seq, bool
+        )
+        recall_context = {
+            "recall_request_id": recall_request_id,
+            "caller": "memory.recall",
+            "project_id": payload.get("project_id"),
+            "turn_seq": origin_turn_seq if valid_origin_seq else None,
+        }
         if (
-            not isinstance(origin_turn_seq, int)
-            or isinstance(origin_turn_seq, bool)
+            not valid_origin_seq
             or not isinstance(parent_turn_seq, int)
             or isinstance(parent_turn_seq, bool)
         ):
@@ -433,6 +443,9 @@ class EffectsMixin:
                 origin_turn_seq,
                 parent_turn_seq,
             )
+            self._record_payload_drop(
+                payload, platform_session_id, recall_context, "invalid_turn_seq"
+            )
             return None
         if origin_turn_seq != parent_turn_seq - 1:
             logger.info(
@@ -441,6 +454,9 @@ class EffectsMixin:
                 recall_request_id,
                 origin_turn_seq,
                 parent_turn_seq,
+            )
+            self._record_payload_drop(
+                payload, platform_session_id, recall_context, "stale_delivery"
             )
             return None
 
@@ -455,6 +471,7 @@ class EffectsMixin:
             {"memories": memories},
             platform_session_id,
             variables,
+            recall_context=recall_context,
         )
         if formatted is None:
             logger.info(
@@ -478,24 +495,98 @@ class EffectsMixin:
         result: dict[str, Any],
         platform_session_id: str | None,
         variables: dict[str, Any],
+        *,
+        recall_context: dict[str, Any] | None = None,
     ) -> str | None:
-        """Inline pipeline for search_memories results."""
+        """Inline pipeline for search_memories results.
+
+        When the outcome recorder is wired and the payload is joinable
+        (recall_request_id + platform session), every memory's final
+        injected-vs-filtered decision is persisted (contract §5).
+        """
         del variables
-        from gobby.hooks.dispatchers.mcp import format_discovery_result
+        from gobby.hooks.dispatchers.mcp import format_project_memories_with_outcome
 
         if _is_empty_inject_payload(result):
             return None
 
         memories = result.get("memories") or []
-        memories = [memory for memory in memories if not _is_review_lesson_memory(memory)]
-        if not memories:
+        recall_ctx = recall_context or {
+            "recall_request_id": result.get("recall_request_id"),
+            "caller": "mcp_proxy.memory.search_memories",
+            "project_id": result.get("project_id"),
+            "turn_seq": None,
+        }
+        rows: list[dict[str, Any]] = []
+        group_by_id: dict[str, str | None] = {}
+        kept: list[Any] = []
+        for memory in memories:
+            if isinstance(memory, dict):
+                memory_id = memory.get("id")
+                if isinstance(memory_id, str) and memory_id:
+                    memory_type = memory.get("type")
+                    group_by_id[memory_id] = memory_type if isinstance(memory_type, str) else None
+            if _is_review_lesson_memory(memory):
+                self._append_outcome_row(
+                    rows,
+                    memory,
+                    platform_session_id,
+                    recall_ctx,
+                    outcome="filtered",
+                    drop_reason="review_lesson",
+                )
+                continue
+            kept.append(memory)
+        if not kept:
+            self._record_injection_outcomes(rows)
             return None
-        new_memories = self._filter_and_track_new_memories(memories, platform_session_id)
+
+        new_memories, dedup_dropped = self._filter_new_memories(kept, platform_session_id)
+        for memory in dedup_dropped:
+            self._append_outcome_row(
+                rows,
+                memory,
+                platform_session_id,
+                recall_ctx,
+                outcome="filtered",
+                drop_reason="already_injected",
+            )
         if not new_memories:
+            self._record_injection_outcomes(rows)
             return None
-        return format_discovery_result(
-            {"tool": "search_memories", "result": {"memories": new_memories}}
-        )
+
+        text, render_outcome = format_project_memories_with_outcome(new_memories)
+        for memory_id in render_outcome.empty_content_ids:
+            self._append_outcome_row(
+                rows,
+                memory_id,
+                platform_session_id,
+                recall_ctx,
+                outcome="filtered",
+                drop_reason="empty_content",
+            )
+        for memory_id in render_outcome.omitted_ids:
+            self._append_outcome_row(
+                rows,
+                memory_id,
+                platform_session_id,
+                recall_ctx,
+                outcome="filtered",
+                drop_reason="budget",
+            )
+        for position, memory_id in enumerate(render_outcome.rendered_ids):
+            self._append_outcome_row(
+                rows,
+                memory_id,
+                platform_session_id,
+                recall_ctx,
+                outcome="injected",
+                injection_position=position,
+                injection_group=group_by_id.get(memory_id),
+            )
+        self._track_injected_ids(render_outcome.rendered_ids, platform_session_id)
+        self._record_injection_outcomes(rows)
+        return text or None
 
     def _format_review_lessons_result(
         self,
@@ -523,24 +614,28 @@ class EffectsMixin:
             }
         )
 
-    def _filter_and_track_new_memories(
+    def _filter_new_memories(
         self,
         memories: list[Any],
         platform_session_id: str | None,
-        *,
-        max_memories: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Filter already-injected memory ids and append newly-rendered ids atomically."""
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split memories into not-yet-injected and dedup-dropped lists.
+
+        Read-only against the ``injected_memory_ids`` session variable;
+        rendered ids are appended separately via ``_track_injected_ids`` so
+        only memories that actually reach the rendered block count as injected.
+        """
         from gobby.workflows.state_manager import SessionVariableManager
 
         new_memories: list[dict[str, Any]] = []
+        dedup_dropped: list[dict[str, Any]] = []
         if not memories:
-            return new_memories
+            return new_memories, dedup_dropped
 
-        sv_mgr = SessionVariableManager(self.db) if platform_session_id else None
         already: set[str] = set()
-        if sv_mgr is not None and platform_session_id:
+        if platform_session_id:
             try:
+                sv_mgr = SessionVariableManager(self.db)
                 existing_vars = sv_mgr.get_variables(platform_session_id)
                 already = set(existing_vars.get("injected_memory_ids", []) or [])
             except Exception as exc:  # noqa: BLE001
@@ -553,27 +648,102 @@ class EffectsMixin:
             memory_id = memory.get("id")
             if not isinstance(memory_id, str) or not memory_id:
                 continue
-            if memory_id in seen or memory_id in already:
+            if memory_id in seen:
                 continue
             seen.add(memory_id)
+            if memory_id in already:
+                dedup_dropped.append(memory)
+                continue
             new_memories.append(memory)
 
-        if max_memories is not None and len(new_memories) > max_memories:
-            logger.debug(
-                "Capping recall memories from %d to %d",
-                len(new_memories),
-                max_memories,
+        return new_memories, dedup_dropped
+
+    def _track_injected_ids(
+        self,
+        memory_ids: list[str],
+        platform_session_id: str | None,
+    ) -> None:
+        """Append rendered memory ids to the ``injected_memory_ids`` session variable."""
+        if not memory_ids or not platform_session_id:
+            return
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        try:
+            sv_mgr = SessionVariableManager(self.db)
+            sv_mgr.append_to_set_variable(platform_session_id, "injected_memory_ids", memory_ids)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to append injected_memory_ids: %s", exc)
+
+    def _append_outcome_row(
+        self,
+        rows: list[dict[str, Any]],
+        memory: Any,
+        platform_session_id: str | None,
+        recall_context: dict[str, Any],
+        *,
+        outcome: str,
+        drop_reason: str | None = None,
+        drop_detail: str | None = None,
+        injection_position: int | None = None,
+        injection_group: str | None = None,
+    ) -> None:
+        """Append one contract-§5 outcome row when the payload is joinable."""
+        if getattr(self, "_injection_outcome_recorder", None) is None:
+            return
+        if not platform_session_id or not recall_context.get("recall_request_id"):
+            return
+        memory_id = memory.get("id") if isinstance(memory, dict) else memory
+        if not isinstance(memory_id, str) or not memory_id:
+            return
+        rows.append(
+            {
+                "session_id": platform_session_id,
+                "recall_request_id": recall_context["recall_request_id"],
+                "memory_id": memory_id,
+                "project_id": recall_context.get("project_id"),
+                "outcome": outcome,
+                "drop_reason": drop_reason,
+                "drop_detail": drop_detail,
+                "injection_position": injection_position,
+                "injection_group": injection_group,
+                "turn_seq": recall_context.get("turn_seq"),
+                "caller": recall_context.get("caller") or "memory.recall",
+            }
+        )
+
+    def _record_injection_outcomes(self, rows: list[dict[str, Any]]) -> None:
+        """Persist collected outcome rows through the fail-open recorder."""
+        recorder = getattr(self, "_injection_outcome_recorder", None)
+        if recorder is None or not rows:
+            return
+        try:
+            recorder(rows)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to record injection outcomes", exc_info=True)
+
+    def _record_payload_drop(
+        self,
+        payload: dict[str, Any],
+        platform_session_id: str | None,
+        recall_context: dict[str, Any],
+        drop_detail: str,
+    ) -> None:
+        """Record a whole-payload delivery drop as filtered rows for each memory."""
+        memories = payload.get("memories")
+        if not isinstance(memories, list):
+            return
+        rows: list[dict[str, Any]] = []
+        for memory in memories:
+            self._append_outcome_row(
+                rows,
+                memory,
+                platform_session_id,
+                recall_context,
+                outcome="filtered",
+                drop_reason="other",
+                drop_detail=drop_detail,
             )
-            new_memories = new_memories[:max_memories]
-
-        new_ids = [memory["id"] for memory in new_memories if memory.get("id")]
-        if new_ids and sv_mgr is not None and platform_session_id:
-            try:
-                sv_mgr.append_to_set_variable(platform_session_id, "injected_memory_ids", new_ids)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Failed to append injected_memory_ids: %s", exc)
-
-        return new_memories
+        self._record_injection_outcomes(rows)
 
     def _filter_and_track_new_review_lessons(
         self,

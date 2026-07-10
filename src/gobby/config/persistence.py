@@ -530,6 +530,15 @@ class MemoryConfig(BaseModel):
             "~/.gobby/logs/recall_signal.jsonl. '~' is expanded."
         ),
     )
+    recall_signal_hub: bool = Field(
+        default=False,
+        description=(
+            "Mirror recall-signal events into the Postgres hub tables "
+            "(recall_signal_requests/recall_signal_hits) and record durable "
+            "injection outcomes (recall_injection_outcomes) at delivery time. "
+            "Purely observational; independent of recall_signal_logging (#17196)."
+        ),
+    )
 
     @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
     @classmethod
