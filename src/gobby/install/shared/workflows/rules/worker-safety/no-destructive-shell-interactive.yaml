@@ -82,7 +82,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bnpm\\s+publish\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*npm\\s+publish\\b"
         reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-twine-upload-interactive:
@@ -94,11 +94,11 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\btwine\\s+upload\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*twine\\s+upload\\b"
         reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."
 
   no-cargo-publish-interactive:
-    description: "Block cargo publish with escape hatch for interactive sessions."
+    description: "Block cargo publish invoked as a command (including --dry-run), with escape hatch for interactive sessions."
     event: before_tool
     enabled: true
     priority: 55
@@ -106,8 +106,8 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bcargo\\s+publish\\b"
-        reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*cargo\\s+(?:\\+\\S+\\s+)?publish\\b"
+        reason: "Package publishing is not allowed; cargo publish --dry-run is also blocked (fail closed). Ask the user for permission to disable this rule if you need to proceed."
 
   no-gem-push-interactive:
     description: "Block gem push with escape hatch for interactive sessions."
@@ -118,5 +118,5 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\bgem\\s+push\\b"
+        command_pattern: "(^|(?<=[;&|\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b"
         reason: "Package publishing is not allowed. Ask the user for permission to disable this rule if you need to proceed."

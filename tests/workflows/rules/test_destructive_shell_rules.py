@@ -195,6 +195,12 @@ class TestAutonomousShellPatterns:
             "npm publish --access public",
             "twine upload dist/*",
             "cargo publish",
+            "cargo publish --dry-run -p gobby-core",
+            "cargo +nightly publish",
+            "CARGO_REGISTRY_TOKEN=tok cargo publish",
+            "git tag gcode-v1.5.0 && cargo publish -p gobby-code",
+            "cd crates/gcore; cargo publish",
+            "echo start\ncargo publish",
             "gem push foo-1.0.gem",
         ],
     )
@@ -216,6 +222,11 @@ class TestAutonomousShellPatterns:
             "cargo build",
             "gem install bundler",
             "curl -o file.tar.gz https://example.com/file.tar.gz",
+            'git commit -m "docs: explain why cargo publish is blocked"',
+            'git add f.py && git commit -m "release prep before cargo publish delegation"',
+            "git commit -m 'note: npm publish moved to CI'",
+            'echo "twine upload happens in CI only"',
+            'git commit -m "chore: gem push retired from release flow"',
         ],
     )
     def test_allows_safe_commands(self, command) -> None:
@@ -265,10 +276,21 @@ class TestInteractiveShellPatterns:
             "chmod -R 777 /tmp",
             "dd if=/dev/zero of=/dev/sda",
             "npm publish",
+            "cargo publish --dry-run -p gobby-core",
         ],
     )
     def test_blocks_same_commands(self, command) -> None:
         assert _any_rule_matches(self.rules, command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'git commit -m "docs: explain why cargo publish is blocked"',
+            'git add f.py && git commit -m "release prep before cargo publish delegation"',
+        ],
+    )
+    def test_allows_commit_messages_mentioning_publish(self, command) -> None:
+        assert not _any_rule_matches(self.rules, command)
 
     def test_higher_priority_than_autonomous(self, db, manager) -> None:
         for auto_name in AUTONOMOUS_SHELL_RULES:
