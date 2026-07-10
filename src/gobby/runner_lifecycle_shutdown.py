@@ -320,6 +320,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_expired_isolation_task",
         "_vector_rebuild_task",
         "_memory_reconcile_task",
+        "_recall_drift_task",
         "_tmux_window_repair_task",
         "_wiki_watcher_task",
     ):

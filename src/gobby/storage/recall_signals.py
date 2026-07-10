@@ -376,6 +376,7 @@ class RecallSignalStore:
         label_source: str,
         project_id: str | None = None,
         limit: int = 5000,
+        since: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Return ALL injected hits with an optional label from one source.
 
@@ -388,12 +389,18 @@ class RecallSignalStore:
         label streams (digest vs llm_judge) in a fit. When a pair carries
         several append-only label rows under that source, the newest
         ``labeled_at`` wins. ``judge_useful`` is NULL for unlabeled rows.
+
+        ``since`` bounds the window by request ``created_at`` — the drift
+        monitor (#17201) replays only the recent live window.
         """
         conditions = ["o.outcome = 'injected'"]
         params: list[Any] = [label_source]
         if project_id is not None:
             conditions.append("r.project_id = %s")
             params.append(project_id)
+        if since is not None:
+            conditions.append("r.created_at >= %s")
+            params.append(since)
         params.append(limit)
 
         cursor = self.db.execute(

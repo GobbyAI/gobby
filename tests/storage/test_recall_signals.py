@@ -8,6 +8,7 @@ fit-eligible join on (recall_request_id, memory_id).
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -411,6 +412,16 @@ class TestReplayRowJoin:
         assert len(labeled) == 1
         assert labeled[0]["judge_useful"] is False
         assert labeled[0]["judge_protocol_version"] == "17195-digest-v2"
+
+    def test_since_bounds_the_replay_window(self, store: RecallSignalStore) -> None:
+        # The #17201 drift monitor replays only the recent live window.
+        self._seed(store)
+
+        before_seed = datetime(2026, 7, 1, tzinfo=UTC)
+        after_seed = datetime(2026, 7, 10, tzinfo=UTC)
+
+        assert len(store.fetch_replay_rows(label_source="digest", since=before_seed)) == 2
+        assert store.fetch_replay_rows(label_source="digest", since=after_seed) == []
 
     def test_excludes_filtered_outcomes_and_scopes_by_project(
         self, store: RecallSignalStore

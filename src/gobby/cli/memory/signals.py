@@ -1,7 +1,8 @@
-"""Recall-signal hub backfill commands (#17196, contract §5–§6)."""
+"""Recall-signal hub backfill and drift-check commands (#17196, #17201)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -49,3 +50,69 @@ def backfill_labels(path_: Path) -> None:
     db = open_runtime_hub_database(apply_migrations=False)
     inserted = RecallSignalStore(db).backfill_usefulness_labels_jsonl(path_)
     click.echo(f"Inserted {inserted} usefulness-label rows from {path_}")
+
+
+@recall_signals.command("drift")
+@click.option("--label-source", default="digest", show_default=True, help="Label stream to replay.")
+@click.option("--project", "project_id", default=None, help="Scope the window to one project id.")
+@click.option(
+    "--window-days",
+    type=float,
+    default=None,
+    help="Live window size in days (defaults to memory.recall_drift_window_days).",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=None,
+    help="Alarm accuracy-drop threshold (defaults to memory.recall_drift_accuracy_drop).",
+)
+@click.option(
+    "--min-pairs",
+    type=int,
+    default=None,
+    help="Pair floor for both the live window and the recorded holdout baseline.",
+)
+@click.pass_context
+def drift(
+    ctx: click.Context,
+    label_source: str,
+    project_id: str | None,
+    window_days: float | None,
+    threshold: float | None,
+    min_pairs: int | None,
+) -> None:
+    """Check live recall quality against the recorded holdout baseline (#17201).
+
+    Prints the drift report as JSON and exits 1 when the regression alarm
+    fires. The alarm's response path is the #17200 one-flag rollback:
+    ``memory.use_fitted_recall_constants=false``.
+    """
+    from gobby.config.app import DaemonConfig
+    from gobby.memory.recall_drift import DriftThresholds, run_drift_check_from_store
+
+    config = ctx.obj.get("config") if isinstance(ctx.obj, dict) else None
+    if not isinstance(config, DaemonConfig):
+        raise click.ClickException("Daemon config is unavailable in CLI context")
+    memory_config = config.memory
+
+    thresholds = None
+    if threshold is not None or min_pairs is not None:
+        defaults = DriftThresholds(accuracy_drop=memory_config.recall_drift_accuracy_drop)
+        thresholds = DriftThresholds(
+            accuracy_drop=threshold if threshold is not None else defaults.accuracy_drop,
+            min_pairs=min_pairs if min_pairs is not None else defaults.min_pairs,
+        )
+
+    db = open_runtime_hub_database(apply_migrations=False)
+    report = run_drift_check_from_store(
+        RecallSignalStore(db),
+        memory_config,
+        label_source=label_source,
+        project_id=project_id,
+        window_days=window_days,
+        thresholds=thresholds,
+    )
+    click.echo(json.dumps(report.to_record(), indent=2))
+    if report.alarm:
+        raise SystemExit(1)

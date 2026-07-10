@@ -636,6 +636,41 @@ async def metric_snapshot_loop(
             break
 
 
+async def recall_drift_monitor_loop(
+    db: Any,
+    memory_config: Any,
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: float | None = None,
+) -> None:
+    """Background recall-quality drift monitor (#17201).
+
+    Each tick replays the recent labeled recall-signal window under the
+    effective constants and compares live pairwise accuracy against the
+    recorded holdout baseline; ``run_drift_check_from_store`` logs a WARNING
+    alarm with the rollback response path when quality regresses beyond the
+    configured threshold.
+    """
+    from gobby.memory.recall_drift import run_drift_check_from_store
+    from gobby.storage.recall_signals import RecallSignalStore
+
+    store = RecallSignalStore(db)
+    if interval_seconds is None:
+        interval_hours = getattr(memory_config, "recall_drift_interval_hours", 24.0)
+        interval_seconds = float(interval_hours) * 3600.0
+
+    while not is_shutdown_requested():
+        try:
+            run_drift_check_from_store(store, memory_config)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in recall drift monitor loop: {e}")
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
+
+
 async def cleanup_expired_isolation_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],

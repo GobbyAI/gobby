@@ -567,6 +567,49 @@ class MemoryConfig(BaseModel):
             "resolves to ~/.gobby/recall_refit_decision.json. '~' is expanded."
         ),
     )
+    recall_drift_monitor_enabled: bool = Field(
+        default=True,
+        description=(
+            "Run the periodic recall-quality drift monitor (#17201). It replays "
+            "recent labeled recall signals under the effective constants and "
+            "alarms when live pairwise accuracy regresses beyond "
+            "recall_drift_accuracy_drop below the recorded holdout baseline."
+        ),
+    )
+    recall_drift_interval_hours: float = Field(
+        default=24.0,
+        description="Hours between recall-drift monitor checks in the daemon.",
+    )
+    recall_drift_accuracy_drop: float = Field(
+        default=0.05,
+        description=(
+            "Alarm threshold: live pairwise accuracy this far below the recorded "
+            "holdout baseline accuracy raises the drift alarm."
+        ),
+    )
+    recall_drift_window_days: float = Field(
+        default=14.0,
+        description="Rolling live window (days) of recall signals the drift check replays.",
+    )
+
+    @field_validator(
+        "recall_drift_interval_hours",
+        "recall_drift_window_days",
+    )
+    @classmethod
+    def validate_drift_positive(cls, v: float) -> float:
+        """Validate drift monitor cadence/window values are positive."""
+        if v <= 0:
+            raise ValueError("Value must be > 0")
+        return v
+
+    @field_validator("recall_drift_accuracy_drop")
+    @classmethod
+    def validate_drift_accuracy_drop(cls, v: float) -> float:
+        """Validate the drift alarm threshold is a meaningful accuracy delta."""
+        if not (0.0 < v < 1.0):
+            raise ValueError("recall_drift_accuracy_drop must be in (0.0, 1.0)")
+        return v
 
     @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
     @classmethod

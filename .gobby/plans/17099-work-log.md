@@ -2,6 +2,72 @@
 
 Adaptive tuning of memory recall parameters from feedback.
 
+## 2026-07-10 — #17201: Recall-quality drift detection + regression alarm
+
+**Status:** closed completed (session #8113)
+
+**Plan.** Phase 3b guardrail against silent degradation. Recompute the SAME
+IPS-weighted pairwise ordering accuracy the #17198 ship gate scored its
+holdout with, over a rolling window of recent live labeled recall signals,
+replayed under the currently-effective constants (#17200 resolver). Compare
+against the holdout accuracy recorded in the gate decision record for the
+active regime (fitted → `fitted_eval.accuracy` of a shipped record; static →
+`static_eval.accuracy`) and alarm when live falls more than a configured
+threshold below the baseline. Two pair floors keep the alarm honest: a
+starved live window and a starved recorded holdout each refuse to compare
+instead of alarming on noise — today's data-starved reject record therefore
+reports `no_baseline`, which is correct.
+
+**What shipped:**
+
+1. `src/gobby/memory/recall_drift.py` (new): `DriftThresholds`
+   (`accuracy_drop` default 0.05, `min_pairs` default `MIN_EVAL_PAIRS`),
+   `DriftReport` (+`to_record()`), `replay_params_from_constants`,
+   `evaluate_recall_drift` (pure: propensities from the window, live eval
+   via `evaluate_pairwise`, baseline keyed by `constants.source`), and
+   `run_drift_check_from_store` (resolves constants + record, fetches the
+   window, logs the WARNING alarm with the response path). Statuses:
+   `ok | regressed | insufficient_live_data | no_baseline`; only
+   `regressed` alarms.
+2. `RecallSignalStore.fetch_replay_rows(..., since=)` bounds the replay
+   window by request `created_at` (index on `(project_id, created_at)`
+   already existed).
+3. Four `MemoryConfig` fields: `recall_drift_monitor_enabled` (default on),
+   `recall_drift_interval_hours` (24), `recall_drift_accuracy_drop` (0.05,
+   validated in (0,1)), `recall_drift_window_days` (14, validated > 0).
+4. Daemon monitor: `recall_drift_monitor_loop` in `runner_maintenance.py`,
+   registered in `_default_loops()` and started by `start_periodic_tasks`
+   gated on `memory_manager` + the enabled flag; task attr
+   `_recall_drift_task` declared on `GobbyRunner` and cancelled in
+   `runner_lifecycle_shutdown.py`.
+5. CLI: `gobby memory recall-signals drift` prints the JSON report and
+   exits 1 on alarm (`--label-source/--project/--window-days/--threshold/
+   --min-pairs`).
+
+**Response path (wired + documented).** Every report and alarm log line
+carries it: fitted regime → set `memory.use_fitted_recall_constants=false`
+(the #17200 one-flag rollback), re-enable only after rerunning
+`run_ship_gate_from_store`; static regime → no flag to flip, static IS the
+floor — investigate the signal pipeline and rerun the ship gate to
+re-baseline.
+
+**Validation.** `tests/memory/test_recall_drift.py` (18 tests) injects a
+regression (useful rows sorting below not-useful under effective constants)
+and asserts the alarm fires with the rollback response, plus floors,
+baseline selection per regime, report shape, store-runner wiring
+(config-driven window/threshold, alarm WARNING log), and the monitor loop;
+`tests/test_runner_recall_drift.py` (3 tests) covers periodic-task gating.
+Store `since` filter tested in `tests/storage/test_recall_signals.py`.
+Suites: tests/memory/ 906 passed 2 skipped; config + recall + runner-wiring
+663 passed; watcher/CLI/config 127 passed; ruff format/check clean; mypy
+clean on 8 touched source files; test-quality audit 0 issues; CLI --help
+smoke-tested.
+
+**Epic impact.** Phase 3b closes the guardrail loop: promotion (#17200) has
+a monitor watching it. Remaining: [DEFERRED] #17202/#17203/#17204 resolve by
+outcome at epic close (no fit shipped → wont_fix/obsolete with re-trigger
+pointer), then close epic #17099.
+
 ## 2026-07-10 — #17200: Promote fitted recall defaults to MemoryConfig with one-flag rollback
 
 **Status:** closed completed (session #8113)
