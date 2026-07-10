@@ -52,3 +52,9 @@ Entry format:
   0 issues, 0 new vs baseline.
 - Deferred: none. NOTE: binary NOT reinstalled (bakeoff freeze); deploys with
   the post-arm-G rebuild.
+- Follow-up fix in same close (553a70bc2): #17752 had added the gwiki `pages`
+  command to the contract without extending gcode's `resolve_gwiki_handler`
+  map, breaking the feature-catalog handler test at HEAD. Mapped
+  `pages -> crates/gwiki/src/commands/pages.rs :: commands::pages::execute`.
+  Final validation: `cargo test -p gobby-code` fully green — 998 lib tests +
+  all integration suites, 0 failed; clippy + fmt clean.
