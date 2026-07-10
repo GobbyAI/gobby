@@ -12,6 +12,7 @@ from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.wiki_vault import existing_vault_dir, is_vault, resolve_vault_dir
 
 COMPILE_KINDS = frozenset({"source", "concept", "topic"})
+PAGE_WRITE_MODES = frozenset({"upsert", "create"})
 
 # Gateway command names (the ``command_name`` passed to ``_run_json``) whose
 # subprocesses mutate the wiki vault. Every gateway in this process — watcher
@@ -31,6 +32,8 @@ SERIALIZED_WRITE_COMMANDS = frozenset(
         "upkeep",
         "librarian",
         "recap",
+        "write_page",
+        "delete_page",
     }
 )
 
@@ -70,6 +73,14 @@ def normalize_kind(value: str | None) -> str | None:
         allowed = ", ".join(sorted(COMPILE_KINDS))
         raise ValueError(f"kind must be one of {allowed}")
     return kind
+
+
+def normalize_page_write_mode(value: str) -> str:
+    mode = value.strip().lower()
+    if mode not in PAGE_WRITE_MODES:
+        allowed = ", ".join(sorted(PAGE_WRITE_MODES))
+        raise ValueError(f"mode must be one of {allowed}")
+    return mode
 
 
 def resolve_ask_timeout(llm: bool, ai: str | None) -> float:
@@ -212,6 +223,25 @@ class GwikiGateway:
     async def backlinks(self, target: str) -> dict[str, Any]:
         return await self._run_json("backlinks", ["backlinks", target])
 
+    async def write_page(
+        self,
+        *,
+        path: str,
+        content: str,
+        mode: str = "upsert",
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
+        mode_value = normalize_page_write_mode(mode)
+        args = ["page", "write", "--path", path, "--mode", mode_value]
+        if expected_hash is not None:
+            # The precondition is never droppable at this boundary: whenever a
+            # caller supplies expected_hash it must reach the gwiki argv.
+            args.extend(["--expected-hash", expected_hash])
+        return await self._run_json("write_page", args, stdin_data=content.encode())
+
+    async def delete_page(self, *, path: str) -> dict[str, Any]:
+        return await self._run_json("delete_page", ["page", "delete", "--path", path])
+
     async def ingest_file(self, path: str | Path) -> dict[str, Any]:
         return await self._run_json("ingest_file", ["ingest-file", str(path)])
 
@@ -330,15 +360,16 @@ class GwikiGateway:
         args: Sequence[str],
         *,
         include_scope: bool = True,
+        stdin_data: bytes | None = None,
     ) -> dict[str, Any]:
         binary = await self._resolve_binary()
         scope_args = self._scope_args() if include_scope else []
         argv = [binary, *args, *scope_args, "--format", "json"]
         if command_name in SERIALIZED_WRITE_COMMANDS:
             async with _vault_write_lock(await self._vault_lock_key()):
-                outcome = await self._run_command(command_name, argv)
+                outcome = await self._run_command(command_name, argv, stdin_data=stdin_data)
         else:
-            outcome = await self._run_command(command_name, argv)
+            outcome = await self._run_command(command_name, argv, stdin_data=stdin_data)
         if isinstance(outcome, dict):
             return outcome
 
@@ -409,18 +440,25 @@ class GwikiGateway:
         self,
         command_name: str,
         argv: Sequence[str],
+        *,
+        stdin_data: bytes | None = None,
     ) -> tuple[bytes, str] | dict[str, Any]:
         proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
+                stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_pipe = getattr(proc, "stdout", None)
             stderr_pipe = getattr(proc, "stderr", None)
+            # stdin-fed runs must use communicate() so the input is written and
+            # the pipe closed without deadlocking against full output buffers;
+            # they trade away partial-output collection on timeout.
             if (
-                stdout_pipe is not None
+                stdin_data is None
+                and stdout_pipe is not None
                 and stderr_pipe is not None
                 and hasattr(stdout_pipe, "read")
                 and hasattr(stderr_pipe, "read")
@@ -447,7 +485,7 @@ class GwikiGateway:
                 stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
             else:
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
+                    proc.communicate(input=stdin_data),
                     timeout=self._timeout_seconds,
                 )
         except FileNotFoundError as exc:

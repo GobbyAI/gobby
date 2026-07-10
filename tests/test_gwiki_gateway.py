@@ -41,8 +41,10 @@ class FakeProcess:
         self.terminated = False
         self.killed = False
         self.waited = False
+        self.communicate_input: bytes | None = None
 
-    async def communicate(self) -> tuple[bytes, bytes]:
+    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+        self.communicate_input = input
         if self.timeout:
             raise TimeoutError
         return self.stdout_payload, self.stderr_payload
@@ -106,6 +108,8 @@ async def test_gateway_exposes_expected_methods() -> None:
         "remove_source",
         "refresh",
         "sync_sessions",
+        "write_page",
+        "delete_page",
     ):
         assert callable(getattr(gateway, method_name))
     assert not hasattr(gateway, "research")
@@ -170,6 +174,89 @@ async def test_pages_passes_optional_prefix(monkeypatch: pytest.MonkeyPatch) -> 
             "--format",
             "json",
         ),
+    ]
+
+
+async def test_write_page_builds_argv_and_threads_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "command": "page-write",
+        "path": "knowledge/notes/demo.md",
+        "created": True,
+        "bytes": 12,
+        "content_hash": "abc123",
+        "changed_paths": ["knowledge/notes/demo.md"],
+    }
+    process = FakeProcess(stdout=_json_bytes(payload))
+    argv_calls: list[tuple[str, ...]] = []
+    kwargs_calls: list[dict[str, Any]] = []
+
+    async def fake_create_subprocess_exec(*args: str, **kwargs: Any) -> FakeProcess:
+        argv_calls.append(args)
+        kwargs_calls.append(kwargs)
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await _gateway().write_page(
+        path="knowledge/notes/demo.md",
+        content="# Demo\nBody\n",
+        expected_hash="deadbeef",
+    )
+
+    assert result["payload"] == payload
+    assert argv_calls == [
+        (
+            "/bin/gwiki",
+            "page",
+            "write",
+            "--path",
+            "knowledge/notes/demo.md",
+            "--mode",
+            "upsert",
+            "--expected-hash",
+            "deadbeef",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
+    assert kwargs_calls[0]["stdin"] == asyncio.subprocess.PIPE
+    assert process.communicate_input == b"# Demo\nBody\n"
+
+
+async def test_write_page_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="mode must be one of create, upsert"):
+        await _gateway().write_page(path="knowledge/a.md", content="x", mode="replace")
+
+
+async def test_delete_page_builds_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "command": "page-delete",
+        "path": "knowledge/notes/demo.md",
+        "changed_paths": ["knowledge/notes/demo.md"],
+    }
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().delete_page(path="knowledge/notes/demo.md")
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "page",
+            "delete",
+            "--path",
+            "knowledge/notes/demo.md",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
     ]
 
 
@@ -874,7 +961,12 @@ async def test_index_serializes_watcher_and_cron_gateways_on_same_vault(
         label: str,
         gate: asyncio.Event | None,
     ) -> Any:
-        async def run_command(command_name: str, argv: Any) -> tuple[bytes, str]:
+        async def run_command(
+            command_name: str,
+            argv: Any,
+            *,
+            stdin_data: bytes | None = None,
+        ) -> tuple[bytes, str]:
             entered.append(label)
             if gate is not None:
                 first_entered.set()
@@ -920,7 +1012,12 @@ async def test_index_runs_concurrently_across_different_vaults(
     b_entered = asyncio.Event()
 
     def stub_run_command(entered_event: asyncio.Event, other_event: asyncio.Event) -> Any:
-        async def run_command(command_name: str, argv: Any) -> tuple[bytes, str]:
+        async def run_command(
+            command_name: str,
+            argv: Any,
+            *,
+            stdin_data: bytes | None = None,
+        ) -> tuple[bytes, str]:
             entered_event.set()
             # Both stubs must be inside their subprocess call at once; a
             # wrongly shared lock would leave one of these waits unsatisfied.

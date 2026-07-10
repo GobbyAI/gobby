@@ -14,6 +14,7 @@ from gobby.gwiki_gateway import (
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
     GwikiCommandError,
+    GwikiGateway,
 )
 from gobby.servers.routes import wiki as wiki_routes
 from gobby.servers.routes.wiki import _stage_upload, create_wiki_router
@@ -108,6 +109,41 @@ class FakeGateway:
     async def backlinks(self, target: str) -> dict[str, Any]:
         self.calls.append(("backlinks", target))
         return self._result("backlinks", payload={"target": target, "links": []})
+
+    async def write_page(
+        self,
+        *,
+        path: str,
+        content: str,
+        mode: str = "upsert",
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "write_page",
+                {"path": path, "content": content, "mode": mode, "expected_hash": expected_hash},
+            )
+        )
+        if FakeGateway.next_error is not None:
+            error, FakeGateway.next_error = FakeGateway.next_error, None
+            raise error
+        return self._result(
+            "page-write",
+            payload={
+                "path": path,
+                "created": True,
+                "bytes": len(content.encode()),
+                "content_hash": "hash-1",
+                "changed_paths": [path],
+            },
+        )
+
+    async def delete_page(self, *, path: str) -> dict[str, Any]:
+        self.calls.append(("delete_page", {"path": path}))
+        if FakeGateway.next_error is not None:
+            error, FakeGateway.next_error = FakeGateway.next_error, None
+            raise error
+        return self._result("page-delete", payload={"path": path, "changed_paths": [path]})
 
     async def ingest_file(self, path: str | Path) -> dict[str, Any]:
         staged = Path(path)
@@ -568,6 +604,122 @@ def test_write_routes_trigger_index(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json()["index_handoff"]["status"] == "indexed"
     assert FakeGateway.instances[-1].index_calls == 1
+
+
+def test_write_awaits_reindex(client: TestClient) -> None:
+    response = client.post(
+        "/api/wiki/write",
+        json={"path": "knowledge/notes/demo.md", "content": "# Demo\n\nBody\n"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payload"]["path"] == "knowledge/notes/demo.md"
+    assert body["index_handoff"]["status"] == "indexed"
+    assert body["index_handoff"]["changed_paths"] == ["knowledge/notes/demo.md"]
+    gateway = FakeGateway.instances[-1]
+    assert gateway.calls == [
+        (
+            "write_page",
+            {
+                "path": "knowledge/notes/demo.md",
+                "content": "# Demo\n\nBody\n",
+                "mode": "upsert",
+                "expected_hash": None,
+            },
+        ),
+        ("index", None),
+    ]
+
+    deleted = client.post("/api/wiki/delete", json={"path": "knowledge/notes/demo.md"})
+
+    assert deleted.status_code == 200
+    assert deleted.json()["index_handoff"]["status"] == "indexed"
+    assert FakeGateway.instances[-1].calls == [
+        ("delete_page", {"path": "knowledge/notes/demo.md"}),
+        ("index", None),
+    ]
+
+
+def test_write_delete_error_mapping(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_path = client.post("/api/wiki/write", json={"content": "x"})
+    assert missing_path.status_code == 400
+    non_string_content = client.post("/api/wiki/write", json={"path": "knowledge/a.md"})
+    assert non_string_content.status_code == 400
+    bad_mode = client.post(
+        "/api/wiki/write",
+        json={"path": "knowledge/a.md", "content": "x", "mode": "replace"},
+    )
+    assert bad_mode.status_code == 400
+
+    FakeGateway.next_error = GwikiCommandError(
+        command="write_page",
+        argv=("gwiki", "page", "write", "--path", "knowledge/a.md", "--mode", "create"),
+        returncode=2,
+        stderr="wiki page `knowledge/a.md` already exists (already_exists)",
+        payload={"code": "already_exists", "message": "wiki page `knowledge/a.md` already exists"},
+    )
+    conflict = client.post(
+        "/api/wiki/write",
+        json={"path": "knowledge/a.md", "content": "x", "mode": "create"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["payload"]["code"] == "already_exists"
+
+    FakeGateway.next_error = GwikiCommandError(
+        command="delete_page",
+        argv=("gwiki", "page", "delete", "--path", "knowledge/missing.md"),
+        returncode=2,
+        stderr="wiki page `knowledge/missing.md` not found (not_found)",
+        payload={"code": "not_found", "message": "wiki page `knowledge/missing.md` not found"},
+    )
+    missing = client.post("/api/wiki/delete", json={"path": "knowledge/missing.md"})
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["payload"]["code"] == "not_found"
+
+    # Stale expected hash runs a real gateway subclass so the assertion proves
+    # the hash reaches the gwiki argv through the reindex-backed write path.
+    recorded_argv: list[tuple[str, ...]] = []
+
+    class RecordingGateway(GwikiGateway):
+        async def _resolve_binary(self) -> str:
+            return "/bin/gwiki"
+
+        async def _run_command(
+            self,
+            command_name: str,
+            argv: Any,
+            *,
+            stdin_data: bytes | None = None,
+        ) -> tuple[bytes, str] | dict[str, Any]:
+            recorded_argv.append(tuple(argv))
+            raise GwikiCommandError(
+                command=command_name,
+                argv=argv,
+                returncode=2,
+                stderr=(
+                    "expected content hash deadbeef, found cafef00d for wiki page "
+                    "`knowledge/a.md` (precondition_failed)"
+                ),
+                payload={"code": "precondition_failed", "message": "content hash mismatch"},
+            )
+
+    monkeypatch.setattr(wiki_routes, "GwikiGateway", RecordingGateway)
+    stale = client.post(
+        "/api/wiki/write",
+        json={"path": "knowledge/a.md", "content": "new body", "expected_hash": "deadbeef"},
+    )
+
+    assert stale.status_code == 412
+    assert stale.json()["detail"]["payload"]["code"] == "precondition_failed"
+    assert len(recorded_argv) == 1
+    argv = recorded_argv[0]
+    assert argv[1:3] == ("page", "write")
+    hash_flag = argv.index("--expected-hash")
+    assert argv[hash_flag + 1] == "deadbeef"
 
 
 def test_research_route_is_removed(client: TestClient) -> None:

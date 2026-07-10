@@ -35,6 +35,8 @@ EXPLICIT_WRITE_COMMANDS = frozenset(
         "refresh",
         "upkeep",
         "recap",
+        "page-write",
+        "page-delete",
     }
 )
 CLI_INDEXED_BATCH_COMMANDS = frozenset({"ingest-url", "refresh"})

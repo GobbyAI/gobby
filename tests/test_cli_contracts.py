@@ -78,13 +78,17 @@ class RecordingGwikiGateway(GwikiGateway):
             timeout_seconds=30.0,
         )
         self.argv_by_command: dict[str, list[str]] = {}
+        self.stdin_by_command: dict[str, bytes | None] = {}
 
     async def _run_command(
         self,
         command_name: str,
         argv: Sequence[str],
+        *,
+        stdin_data: bytes | None = None,
     ) -> tuple[bytes, str] | dict[str, Any]:
         self.argv_by_command[command_name] = list(argv)
+        self.stdin_by_command[command_name] = stdin_data
         payload = {"command": command_name, "scope": {"kind": "project", "id": "demo"}}
         if command_name == "health":
             payload = {"command": "health", "root": "/tmp/project", "text_path": "health.md"}
@@ -136,6 +140,21 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         ("graph", "graph", lambda: gateway.graph(include="knowledge")),
         ("pages", "pages", lambda: gateway.pages(prefix="code/")),
         ("backlinks", "backlinks", lambda: gateway.backlinks("Home")),
+        (
+            "write_page",
+            "page write",
+            lambda: gateway.write_page(
+                path="knowledge/notes/demo.md",
+                content="# Demo\n",
+                mode="create",
+                expected_hash="deadbeef",
+            ),
+        ),
+        (
+            "delete_page",
+            "page delete",
+            lambda: gateway.delete_page(path="knowledge/notes/demo.md"),
+        ),
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
         ("ingest_url", "ingest-url", lambda: gateway.ingest_url(["https://example.com"])),
         ("collect", "collect", lambda: gateway.collect("inbox")),
@@ -187,7 +206,8 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         assert command_contract["daemon_consumed"] is True
         argv = gateway.argv_by_command[command_name]
         assert argv[0] == "gwiki"
-        assert argv[1] == cli_name
+        expected_parts = cli_name.split()
+        assert argv[1 : 1 + len(expected_parts)] == expected_parts
         assert "--scope" not in argv
         assert _observed_flags(argv) <= _allowed_gateway_flags(contract, cli_name)
         assert "--format" in argv
@@ -195,6 +215,11 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             assert "--token-budget" in _observed_flags(argv)
         if cli_name == "ask":
             assert {"--llm", "--ai", "--require-ai", "--token-budget"} <= _observed_flags(argv)
+        if cli_name == "page write":
+            assert {"--path", "--mode", "--expected-hash"} <= _observed_flags(argv)
+            assert gateway.stdin_by_command["write_page"] == b"# Demo\n"
+        if cli_name == "page delete":
+            assert "--path" in _observed_flags(argv)
         if cli_name == "compile":
             assert {
                 "--kind",
@@ -313,6 +338,8 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
         "wiki_list_sources": "sources",
         "wiki_remove_source": "remove-source",
         "wiki_sync_sessions": "sync-sessions",
+        "wiki_write_page": "page write",
+        "wiki_delete_page": "page delete",
     }
 
     registry = create_wiki_registry(db=None)

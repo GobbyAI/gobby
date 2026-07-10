@@ -127,6 +127,39 @@ class FakeGateway:
             {"command": "ingest-file", "changed_paths": [str(path)]},
         )
 
+    async def write_page(
+        self,
+        *,
+        path: str,
+        content: str,
+        mode: str = "upsert",
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "write_page",
+                {"path": path, "content": content, "mode": mode, "expected_hash": expected_hash},
+            )
+        )
+        return self._result(
+            "write_page",
+            {
+                "command": "page-write",
+                "path": path,
+                "created": True,
+                "bytes": len(content.encode()),
+                "content_hash": "hash-1",
+                "changed_paths": [path],
+            },
+        )
+
+    async def delete_page(self, *, path: str) -> dict[str, Any]:
+        self.calls.append(("delete_page", {"path": path}))
+        return self._result(
+            "delete_page",
+            {"command": "page-delete", "path": path, "changed_paths": [path]},
+        )
+
     async def ingest_url(self, urls: list[str]) -> dict[str, Any]:
         self.calls.append(("ingest_url", list(urls)))
         payload = FakeGateway.next_result or {
@@ -599,6 +632,92 @@ async def test_write_tools_delegate_to_coordinator() -> None:
         "remove_source",
     ]
     assert all(gateway.index_calls == 0 for gateway in FakeGateway.instances)
+
+
+@pytest.mark.asyncio
+async def test_wiki_write_and_delete_page_tools() -> None:
+    registry = _registry()
+    tool_names = {tool["name"] for tool in registry.list_tools()}
+    assert {"wiki_write_page", "wiki_delete_page"} <= tool_names
+    assert "wiki_graph" not in tool_names
+
+    written = await registry.call(
+        "wiki_write_page",
+        {
+            "path": "knowledge/notes/demo.md",
+            "content": "# Demo\n",
+            "mode": "create",
+            "expected_hash": "deadbeef",
+        },
+    )
+
+    assert written["success"] is True
+    assert written["index_handoff"] == {"status": "handled"}
+    assert written["paths"]["changed_paths"] == ["knowledge/notes/demo.md"]
+    assert FakeGateway.instances[-1].calls == [
+        (
+            "write_page",
+            {
+                "path": "knowledge/notes/demo.md",
+                "content": "# Demo\n",
+                "mode": "create",
+                "expected_hash": "deadbeef",
+            },
+        )
+    ]
+    assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+
+    deleted = await registry.call(
+        "wiki_delete_page",
+        {"path": "knowledge/notes/demo.md"},
+    )
+
+    assert deleted["success"] is True
+    assert deleted["index_handoff"] == {"status": "handled"}
+    assert FakeGateway.instances[-1].calls == [("delete_page", {"path": "knowledge/notes/demo.md"})]
+
+    bad_mode = await registry.call(
+        "wiki_write_page",
+        {"path": "knowledge/notes/demo.md", "content": "x", "mode": "replace"},
+    )
+    assert bad_mode["success"] is False
+    assert "mode must be one of create, upsert" in bad_mode["error"]
+
+
+@pytest.mark.asyncio
+async def test_wiki_write_page_surfaces_confinement_errors() -> None:
+    class ConfinementRejectingGateway(FakeGateway):
+        async def write_page(
+            self,
+            *,
+            path: str,
+            content: str,
+            mode: str = "upsert",
+            expected_hash: str | None = None,
+        ) -> dict[str, Any]:
+            raise GwikiCommandError(
+                command="write_page",
+                argv=("gwiki", "page", "write", "--path", path),
+                returncode=2,
+                stderr="Page paths must live under knowledge/ (invalid_input)",
+                payload={"code": "invalid_input", "message": "page path escapes the wiki vault"},
+            )
+
+    registry = create_wiki_registry(
+        db=None,
+        gateway_cls=ConfinementRejectingGateway,
+        update_coordinator_cls=RecordingCoordinator,
+    )
+
+    result = await registry.call(
+        "wiki_write_page",
+        {"path": "../escape.md", "content": "x", "topic": "docs"},
+    )
+
+    assert result["success"] is False
+    assert result["payload"]["code"] == "invalid_input"
+    assert "knowledge/" in result["stderr"]
+    assert RecordingCoordinator.instances == []
 
 
 @pytest.mark.asyncio

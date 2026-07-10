@@ -487,3 +487,101 @@ c92e52613 (#17532) added `--max-workers` to the pinned
 `tests/contracts/gcode.contract.json`. Synced the vendored copy (pinned
 file is source of truth); session #7921 notified via P2P so they don't
 double-fix. All 9 `tests/test_cli_contracts.py` cases pass.
+
+## #17755 — Python write surfaces and MCP parity (plan §1.5)
+
+### Plan
+
+Consume the gwiki v13 `page write|delete` surface (#17753) from the Python
+daemon: gateway argv builders with stdin threading, HTTP routes with
+precise error mapping, coordinator reindex wiring, and MCP parity tools.
+
+1. **Gateway** (`src/gobby/gwiki_gateway.py`):
+   - `_run_json`/`_run_command` gain `stdin_data: bytes | None = None`.
+     When set, the subprocess is created with `stdin=PIPE` and output is
+     collected via `proc.communicate(input=stdin_data)` under the existing
+     `wait_for` timeout (partial-stream collection is skipped for stdin
+     runs; timeout returns the streamless timeout envelope, same as the
+     existing non-readable-pipe branch).
+   - `write_page(*, path, content, mode="upsert", expected_hash=None)` →
+     argv `page write --path <p> --mode <m> [--expected-hash <h>]`,
+     content via stdin. `expected_hash` is appended verbatim whenever set —
+     the precondition is not droppable at this boundary. Mode validated
+     in-gateway (`upsert|create`) so callers get 400/validation errors
+     instead of a clap parse failure surfacing as 502.
+   - `delete_page(*, path)` → argv `page delete --path <p>`.
+   - Both command names join `SERIALIZED_WRITE_COMMANDS` (vault mutations
+     serialize per vault like every other write).
+2. **Coordinator** (`src/gobby/wiki/update_coordinator.py`): add
+   `"page-write"`, `"page-delete"` (gwiki payload command values) to
+   `EXPLICIT_WRITE_COMMANDS` so `handle_write_result` triggers reindex off
+   their `changed_paths`.
+3. **Routes** (`src/gobby/servers/routes/wiki.py`):
+   - `POST /api/wiki/write` body `{path, content, mode?="upsert",
+     expected_hash?}`; `POST /api/wiki/delete` body `{path}`; both via the
+     existing `_write_call` helper (response carries `index_handoff`,
+     returns only after reindex).
+   - `_map_gateway_errors`/`_write_call` gain an optional `command_status`
+     resolver; page routes map gwiki error payload codes
+     `already_exists→409`, `not_found→404`, `precondition_failed→412`,
+     everything else keeps 502/503.
+4. **MCP** (`src/gobby/mcp_proxy/tools/wiki.py`): `wiki_write_page`,
+   `wiki_delete_page` via the existing `write_call` helper, interactive
+   timeout; registry description updated; `create_wiki_registry` docstring
+   records the deliberate absence of a `wiki_graph` tool (multi-MB graph
+   payloads poison agent context; agents use `gwiki graph` artifacts and
+   graph-context packs).
+
+TDD (required): red tests first in `tests/test_gwiki_gateway.py` (argv +
+stdin threading for both commands), `tests/servers/routes/test_wiki_routes.py`
+(`test_write_awaits_reindex`, `test_write_delete_error_mapping` — the 412
+case runs a real `GwikiGateway` subclass with `_run_command` stubbed to
+capture argv, proving the stale hash reaches the gwiki argv through the
+reindex-backed route path), and `tests/mcp_proxy/tools/test_wiki.py`
+(tools registered, coordinator delegation, error envelope surfaced).
+
+### Implementation notes (#17755)
+
+- Gateway: `write_page`/`delete_page` on `GwikiGateway`; `_run_json` and
+  `_run_command` thread `stdin_data`; stdin-fed runs use
+  `proc.communicate(input=...)` (no partial-output timeout collection —
+  same envelope as the existing non-readable-pipe branch). New module
+  helpers `PAGE_WRITE_MODES` + `normalize_page_write_mode` mirror
+  `normalize_kind`. Both commands joined `SERIALIZED_WRITE_COMMANDS`.
+- Coordinator: `page-write`/`page-delete` in `EXPLICIT_WRITE_COMMANDS`;
+  reindex fires off their `changed_paths` (delete included — the
+  `IndexEvent::Deleted` path prunes rows).
+- Routes: `POST /api/wiki/write` + `POST /api/wiki/delete` through
+  `_write_call`; `_map_gateway_errors` gained an optional `command_status`
+  resolver; `_page_mutation_status` maps `already_exists→409`,
+  `not_found→404`, `precondition_failed→412`, everything else stays
+  502/503. Mode validated at the route (400 instead of a clap parse 502).
+- MCP: `wiki_write_page`/`wiki_delete_page` (interactive timeout);
+  mode normalized at the tool boundary; `create_wiki_registry` docstring
+  records the deliberate no-`wiki_graph` rationale. Behavior fix folded
+  in: `write_call` now skips the update coordinator when the gateway
+  result is not ok — failed writes changed nothing, mirroring the HTTP
+  path which raises before its coordinator step.
+- Contract conformance: `test_gwiki_gateway_argv_conforms_to_vendored_contract`
+  extended with both page commands (space-separated contract names now
+  split like the gcode variant); `wiki_write_page→page write`,
+  `wiki_delete_page→page delete` added to the MCP↔contract mapping.
+
+### TDD evidence (#17755)
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest <8 new tests>` → 8 failed
+  (`AttributeError: no attribute 'write_page'`, routes 404, MCP
+  `Tool 'wiki_write_page' not found`).
+- Green (minimal): same command → 8 passed.
+- Final green (post-refactor/format):
+  `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_gwiki_gateway.py
+  tests/servers/routes/test_wiki_routes.py tests/mcp_proxy/tools/test_wiki.py
+  tests/wiki/ tests/test_cli_contracts.py` → **180 passed**.
+- Audit: `uv run gobby test-quality audit <4 test paths> --baseline
+  .gobby/test-quality-baseline.json --fail-on-new --min-severity high` →
+  0 issues, 0 new.
+- `ruff format`/`ruff check` clean; `mypy` clean on all 4 touched src files.
+- Live E2E against installed gwiki v13 (scratch vault): write persists
+  stdin content verbatim (unicode), create→already_exists, stale
+  hash→precondition_failed with file untouched, matching-hash upsert,
+  delete prunes + second delete→not_found.

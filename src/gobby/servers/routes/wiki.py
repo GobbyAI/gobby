@@ -15,6 +15,7 @@ from gobby.gwiki_gateway import (
     GwikiGateway,
     GwikiGatewayError,
     normalize_kind,
+    normalize_page_write_mode,
     resolve_ask_timeout,
 )
 from gobby.wiki import WikiUpdateCoordinator
@@ -204,6 +205,51 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             result = await _ingest_many(gateway, paths)
         return await _write(gateway, result)
 
+    @router.post("/write")
+    async def write_page(
+        body: dict[str, Any] | None = Body(default=None),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        request = body or {}
+        path = _required_string(request.get("path"), "path is required")
+        content = request.get("content")
+        if not isinstance(content, str):
+            raise HTTPException(status_code=400, detail="content must be a string")
+        expected_hash = _optional_string(request.get("expected_hash"))
+        try:
+            mode = normalize_page_write_mode(_optional_string(request.get("mode")) or "upsert")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return await _write_call(
+            server,
+            project,
+            topic,
+            lambda gateway: gateway.write_page(
+                path=path,
+                content=content,
+                mode=mode,
+                expected_hash=expected_hash,
+            ),
+            command_status=_page_mutation_status,
+        )
+
+    @router.post("/delete")
+    async def delete_page(
+        body: dict[str, Any] | None = Body(default=None),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        request = body or {}
+        path = _required_string(request.get("path"), "path is required")
+        return await _write_call(
+            server,
+            project,
+            topic,
+            lambda gateway: gateway.delete_page(path=path),
+            command_status=_page_mutation_status,
+        )
+
     @router.post("/collect")
     async def collect(
         body: dict[str, Any] | None = Body(default=None),
@@ -299,9 +345,10 @@ async def _write_call(
     topic: str | None,
     call: GatewayCall,
     timeout_seconds: float = INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
+    command_status: Callable[[GwikiCommandError], int] | None = None,
 ) -> dict[str, Any]:
     gateway = await _gateway(server, project, topic, timeout_seconds=timeout_seconds)
-    result = await _map_gateway_errors(lambda: call(gateway))
+    result = await _map_gateway_errors(lambda: call(gateway), command_status=command_status)
     return await _write(gateway, result)
 
 
@@ -360,13 +407,35 @@ def _runner(server: HTTPServer) -> object | None:
     return runner
 
 
-async def _map_gateway_errors(call: Callable[[], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
+async def _map_gateway_errors(
+    call: Callable[[], Awaitable[dict[str, Any]]],
+    *,
+    command_status: Callable[[GwikiCommandError], int] | None = None,
+) -> dict[str, Any]:
     try:
         return await call()
     except GwikiCommandError as exc:
-        raise HTTPException(status_code=502, detail=exc.to_envelope()) from exc
+        status = command_status(exc) if command_status is not None else 502
+        raise HTTPException(status_code=status, detail=exc.to_envelope()) from exc
     except GwikiGatewayError as exc:
         raise HTTPException(status_code=503, detail=_gateway_error_envelope(exc)) from exc
+
+
+# gwiki page-mutation error codes with a precise HTTP status; anything else
+# stays a 502 upstream-command failure.
+_PAGE_MUTATION_STATUS = {
+    "already_exists": 409,
+    "not_found": 404,
+    "precondition_failed": 412,
+}
+
+
+def _page_mutation_status(exc: GwikiCommandError) -> int:
+    payload = exc.payload or {}
+    code = payload.get("code")
+    if isinstance(code, str):
+        return _PAGE_MUTATION_STATUS.get(code, 502)
+    return 502
 
 
 def _gateway_error_envelope(exc: GwikiGatewayError) -> dict[str, Any]:

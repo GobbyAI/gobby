@@ -12,6 +12,7 @@ from gobby.gwiki_gateway import (
     GwikiGateway,
     GwikiGatewayError,
     normalize_kind,
+    normalize_page_write_mode,
     resolve_ask_timeout,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -50,12 +51,19 @@ def create_wiki_registry(
     gateway_cls: GwikiGatewayFactory = GwikiGateway,
     update_coordinator_cls: WikiUpdateCoordinatorFactory = WikiUpdateCoordinator,
 ) -> InternalToolRegistry:
+    """Build the gobby-wiki MCP tool registry.
+
+    Deliberately no ``wiki_graph`` tool: the full graph export is a multi-MB
+    payload that would poison agent context as a tool result. Agents that need
+    graph topology use ``gwiki graph`` artifacts and graph-context packs
+    instead.
+    """
     registry = InternalToolRegistry(
         name="gobby-wiki",
         description=(
             "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
-            "wiki_compile, wiki_audit, wiki_trust, wiki_health, "
-            "wiki_list_sources, wiki_remove_source, wiki_sync_sessions"
+            "wiki_write_page, wiki_delete_page, wiki_compile, wiki_audit, wiki_trust, "
+            "wiki_health, wiki_list_sources, wiki_remove_source, wiki_sync_sessions"
         ),
     )
 
@@ -96,6 +104,11 @@ def create_wiki_registry(
     ) -> dict[str, Any]:
         gwiki, scope = await gateway(project, topic, timeout_seconds=timeout_seconds)
         result = await _map_gateway_errors(lambda: call(gwiki))
+        if not result.get("ok", False):
+            # Failed writes changed nothing; surface the error envelope without
+            # a follow-up index decision (mirrors the HTTP route, which raises
+            # before its coordinator step).
+            return _structured_result(result, scope=scope)
         handled = await update_coordinator_cls(gwiki).handle_write_result(result)
         return _structured_result(handled, scope=scope)
 
@@ -211,6 +224,51 @@ def create_wiki_registry(
             )
         return await _guard(
             lambda: write_call(project, topic, lambda gwiki: _ingest_many(gwiki, file_paths))
+        )
+
+    @registry.tool(
+        name="wiki_write_page",
+        description=(
+            "Write a wiki page under knowledge/ with content persisted verbatim. "
+            "mode is upsert or create (create conflicts when the page already "
+            "exists); expected_hash guards concurrent edits and fails with "
+            "precondition_failed on mismatch."
+        ),
+    )
+    async def wiki_write_page(
+        path: str,
+        content: str,
+        mode: str = "upsert",
+        expected_hash: str | None = None,
+        project: str | None = None,
+        topic: str | None = None,
+    ) -> dict[str, Any]:
+        async def run() -> dict[str, Any]:
+            mode_value = normalize_page_write_mode(mode)
+            return await write_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.write_page(
+                    path=path,
+                    content=content,
+                    mode=mode_value,
+                    expected_hash=expected_hash,
+                ),
+            )
+
+        return await _guard(run)
+
+    @registry.tool(
+        name="wiki_delete_page",
+        description="Delete a wiki page under knowledge/ and prune it from the index.",
+    )
+    async def wiki_delete_page(
+        path: str,
+        project: str | None = None,
+        topic: str | None = None,
+    ) -> dict[str, Any]:
+        return await _guard(
+            lambda: write_call(project, topic, lambda gwiki: gwiki.delete_page(path=path))
         )
 
     @registry.tool(
