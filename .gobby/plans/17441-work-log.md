@@ -418,7 +418,77 @@ Test gaps: none for shared token reading/formatting, gcore AI headers, ghook
 token-present/token-missing/stale-header behavior, graph lifecycle auth,
 diagnostics, broker deletion, standalone DSN fallback, or installed binaries.
 
-Commit attribution: the code-bearing paths landed in shared commit `8f12ad86c`
-when a concurrent agent committed the shared index. That SHA is explicitly linked
-to #17794; the task-specific follow-up commit records this attribution without
-rewriting shared history.
+Commit attribution: code commit `1a8c23a4f` contains the 13 Rust client and
+resolver paths. Documentation commit `358511ea0` records this work-log entry.
+The transient mixed commit `8f12ad86c` was replaced by its owner and explicitly
+unlinked from #17794.
+
+## 2026-07-10 — #17795 Implement AuthService and construct it in HTTPServer
+
+Session: #8117
+
+Plan:
+
+1. Inspect AuthStore, ConfigStore, HTTPServer construction/call sites, and plan
+   section 3.1 with gcode; verify source-size constraints.
+2. Add the smallest storage-backed acceptance tests and capture an exact red
+   failure before implementation.
+3. Implement the shared AuthService, phase-default HTTPServer ownership, and
+   dead `run_server` deletion; capture minimal green.
+4. Refine rotation revocation, run focused regressions, lint, typing, and test
+   quality; commit and close.
+
+Implemented:
+
+- Added a typed `AuthService` that reads `auth.api_token_hash`, `auth.username`,
+  and `auth.password_hash` directly through ConfigStore and reads the daemon's
+  plaintext token file on the same lock-guarded refresh path.
+- Debounced refreshes at 5 seconds and re-verifies bearer hashes with
+  `hmac.compare_digest`. Periodic pre-verification refresh revokes a rotated old
+  token within the same bound even when only a stale client connects.
+- Enforced request credential precedence: Bearer header, local-token alias,
+  then session cookie. Added AuthStore session delegation and the async
+  WebSocket callback shape.
+- Added scrypt password-hash verification with fixed `n=16384`, `r=8`, `p=1`,
+  `dklen=32` parameters and timing-safe username/digest comparisons.
+- Made HTTPServer own AuthService through a new `auth_mode` kwarg. This phase
+  resolves only explicit kwarg or `_PHASE_DEFAULT_AUTH_MODE = "disabled"` and
+  never consults the config snapshot or `test_mode`.
+- Removed dead production `run_server` and its obsolete unit-test class.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/test_auth_service.py::test_verify_bearer_rotation_refresh -q`
+  failed during collection with `ModuleNotFoundError: No module named
+  'gobby.servers.auth_service'` before implementation existed.
+- Minimal green: the same exact command passed 1 test after the shared service
+  and mechanical HTTPServer ownership were added.
+- Rotation hardening red: after strengthening the same test to require stale
+  token revocation at the debounce boundary, the exact command failed because
+  `verify_bearer("old-token")` still returned true.
+- Rotation hardening green: the same exact command passed 1 test after bearer
+  verification performed its debounced refresh before comparing.
+- Refactor/final green: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/test_auth_service.py tests/servers/test_http_init.py
+  tests/servers/test_http_middleware.py tests/servers/routes/test_auth_routes.py
+  -q` passed all 39 tests.
+
+Additional validation:
+
+- `uv run ruff format --check src/gobby/servers/auth_service.py
+  src/gobby/servers/http.py tests/servers/test_auth_service.py
+  tests/servers/test_http_init.py` passed with all four files formatted.
+- `uv run ruff check` on the same four paths passed.
+- `uv run mypy src/gobby/servers/auth_service.py
+  src/gobby/servers/http.py` passed with no issues.
+- `uv run gobby test-quality audit tests/servers/test_auth_service.py
+  tests/servers/test_http_init.py --baseline
+  .gobby/test-quality-baseline.json --fail-on-new --min-severity high` scanned
+  25 tests and reported zero issues.
+- `gcode grep -w "run_server" src/gobby -m 50` returned no occurrences.
+- `src/gobby/servers/auth_service.py` and `src/gobby/servers/http.py` remain
+  below 1,000 lines, so no refactor task was required.
+
+Test gaps: none for the six named 3.1 acceptance items or the retained HTTP/auth
+route behavior covered by the focused regression files.

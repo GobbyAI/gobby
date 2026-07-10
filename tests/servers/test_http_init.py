@@ -3,13 +3,13 @@
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 
 from gobby.app_context import ServiceContainer
-from gobby.servers.http import HTTPServer, create_server, run_server
+from gobby.servers.http import HTTPServer, create_server
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -315,96 +315,3 @@ class TestCreateServer:
         assert server.mcp_manager is mock_mcp_manager
         assert server.config is mock_config
         assert server.session_manager is session_storage
-
-
-class TestRunServer:
-    """Tests for run_server function."""
-
-    @pytest.mark.asyncio
-    async def test_run_server_creates_uvicorn_config(self) -> None:
-        """Test run_server creates proper uvicorn config."""
-        services = ServiceContainer(
-            config=None,
-            database=MagicMock(),
-            session_manager=MagicMock(),
-            task_manager=MagicMock(),
-        )
-        server = HTTPServer(services=services, port=8000, test_mode=True)
-
-        mock_config_class = MagicMock()
-        mock_server_class = MagicMock()
-        mock_server_instance = AsyncMock()
-        mock_server_class.return_value = mock_server_instance
-        mock_server_instance.serve = AsyncMock(return_value=None)
-
-        with (
-            patch("uvicorn.Config", mock_config_class),
-            patch("uvicorn.Server", mock_server_class),
-        ):
-            await run_server(
-                server,
-                host="127.0.0.1",
-                workers=2,
-                limit_concurrency=500,
-                timeout_keep_alive=10,
-            )
-
-            mock_config_class.assert_called_once()
-            config_kwargs = mock_config_class.call_args.kwargs
-            assert config_kwargs["host"] == "127.0.0.1"
-            assert config_kwargs["port"] == 8000
-            assert config_kwargs["workers"] == 2
-            assert config_kwargs["limit_concurrency"] == 500
-            assert config_kwargs["timeout_keep_alive"] == 10
-
-    @pytest.mark.asyncio
-    async def test_run_server_handles_keyboard_interrupt(self) -> None:
-        """Test run_server handles KeyboardInterrupt gracefully."""
-        services = ServiceContainer(
-            config=None,
-            database=MagicMock(),
-            session_manager=MagicMock(),
-            task_manager=MagicMock(),
-        )
-        server = HTTPServer(services=services, port=8000, test_mode=True)
-
-        mock_server_class = MagicMock()
-        mock_server_instance = AsyncMock()
-        mock_server_class.return_value = mock_server_instance
-        mock_server_instance.serve = AsyncMock(side_effect=KeyboardInterrupt())
-
-        with (
-            patch("uvicorn.Config", MagicMock()),
-            patch("uvicorn.Server", mock_server_class),
-        ):
-            result = await run_server(server)
-        assert result is None
-        mock_server_instance.serve.assert_awaited_once()
-        assert mock_server_instance.serve.await_count == 1
-        assert mock_server_instance.serve.await_args is not None
-
-    @pytest.mark.asyncio
-    async def test_run_server_handles_system_exit(self) -> None:
-        """Test run_server handles SystemExit gracefully."""
-        services = ServiceContainer(
-            config=None,
-            database=MagicMock(),
-            session_manager=MagicMock(),
-            task_manager=MagicMock(),
-        )
-        server = HTTPServer(services=services, port=8000, test_mode=True)
-
-        mock_server_class = MagicMock()
-        mock_server_instance = AsyncMock()
-        mock_server_class.return_value = mock_server_instance
-        mock_server_instance.serve = AsyncMock(side_effect=SystemExit())
-
-        with (
-            patch("uvicorn.Config", MagicMock()),
-            patch("uvicorn.Server", mock_server_class),
-        ):
-            result = await run_server(server)
-        assert result is None
-        mock_server_instance.serve.assert_awaited_once()
-        assert mock_server_instance.serve.await_count == 1
-        assert mock_server_instance.serve.await_args is not None

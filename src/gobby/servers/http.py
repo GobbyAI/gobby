@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.ai import (
     build_daemon_text_generation_service,
@@ -28,6 +28,7 @@ from gobby.mcp_proxy.semantic_search import (
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.mcp_proxy.tools import memory_dream as memory_dream_tools
+from gobby.servers.auth_service import AuthMode, AuthService
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -47,6 +48,8 @@ PENDING_INTERACTION_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 _STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS = 2.0
 
+_PHASE_DEFAULT_AUTH_MODE: AuthMode = "disabled"
+
 
 class HTTPServer:
     """
@@ -62,6 +65,7 @@ class HTTPServer:
         port: int = 8000,
         test_mode: bool = False,
         codex_client: Any | None = None,
+        auth_mode: str | None = None,
     ) -> None:
         """
         Initialize HTTP server.
@@ -71,11 +75,19 @@ class HTTPServer:
             port: Server port
             test_mode: Run in test mode (disable features that conflict with testing)
             codex_client: CodexAppServerClient instance for Codex integration
+            auth_mode: Explicit authentication mode for this server phase
         """
         self.services = services
         self.port = port
         self.test_mode = test_mode
         self.codex_client = codex_client
+        effective_auth_mode = auth_mode if auth_mode is not None else _PHASE_DEFAULT_AUTH_MODE
+        if effective_auth_mode not in ("required", "disabled"):
+            raise ValueError(f"Unsupported authentication mode: {effective_auth_mode}")
+        self.auth_service = AuthService(
+            lambda: self.services.database,
+            mode=cast(AuthMode, effective_auth_mode),
+        )
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None
@@ -638,63 +650,3 @@ async def create_server(
         port=port,
         test_mode=test_mode,
     )
-
-
-async def run_server(
-    server: HTTPServer,
-    host: str = "0.0.0.0",  # nosec B104 # local daemon needs network access
-    workers: int = 1,
-    limit_concurrency: int | None = 1000,
-    limit_max_requests: int | None = None,
-    timeout_keep_alive: int = 5,
-    timeout_graceful_shutdown: int = 30,
-) -> None:
-    """
-    Run HTTP server with production-ready Uvicorn configuration.
-
-    Args:
-        server: HTTPServer instance
-        host: Host to bind to (default: 0.0.0.0 for all interfaces)
-        workers: Number of worker processes (default: 1 for async)
-        limit_concurrency: Max concurrent connections (default: 1000)
-        limit_max_requests: Max requests before worker restart (None = unlimited)
-        timeout_keep_alive: Keep-alive timeout in seconds (default: 5)
-        timeout_graceful_shutdown: Graceful shutdown timeout in seconds (default: 30)
-    """
-    import uvicorn
-
-    config = uvicorn.Config(
-        server.app,
-        host=host,
-        port=server.port,
-        log_level="info",
-        access_log=True,
-        log_config=None,
-        limit_concurrency=limit_concurrency,
-        limit_max_requests=limit_max_requests,
-        timeout_keep_alive=timeout_keep_alive,
-        timeout_graceful_shutdown=timeout_graceful_shutdown,
-        backlog=2048,
-        workers=workers,
-        loop="auto",
-        h11_max_incomplete_event_size=16384,
-    )
-
-    uvicorn_server = uvicorn.Server(config)
-
-    async def shutdown_handler() -> None:
-        """Handle graceful shutdown of HTTP server."""
-        logger.debug("Initiating HTTP server shutdown...")
-        if hasattr(server, "_daemon") and server._daemon is not None:
-            try:
-                server._daemon.graceful_shutdown(timeout=timeout_graceful_shutdown)
-            except Exception as e:
-                logger.warning(f"Error during daemon shutdown: {e}")
-
-    try:
-        await uvicorn_server.serve()
-    except (KeyboardInterrupt, SystemExit):
-        logger.debug("Received shutdown signal")
-        await shutdown_handler()
-    finally:
-        logger.debug("HTTP server stopped")
