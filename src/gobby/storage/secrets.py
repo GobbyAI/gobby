@@ -197,10 +197,11 @@ def _derive_scrypt_fernet_key(
     return base64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
 
 
-def _write_private_file(path: Path, data: bytes) -> None:
+def write_private_file(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
+        os.fchmod(fd, 0o600)
         os.write(fd, data)
     finally:
         os.close(fd)
@@ -222,7 +223,7 @@ def _get_or_create_kek_file_key() -> bytes:
         return key
 
     key = Fernet.generate_key()
-    _write_private_file(KEK_FILE, key)
+    write_private_file(KEK_FILE, key)
     logger.info("Generated new secret KEK file")
     return key
 

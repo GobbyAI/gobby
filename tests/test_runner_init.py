@@ -46,8 +46,12 @@ class TestGobbyRunnerInit:
 
         with ExitStack() as stack:
             mocks = [stack.enter_context(p) for p in patches]
-            mock_http_cls = mocks[-4]
-            mock_ws_cls = mocks[-1]
+            mocks_by_attribute = {
+                patch_context.attribute: entered_mock
+                for patch_context, entered_mock in zip(patches, mocks, strict=True)
+            }
+            mock_http_cls = mocks_by_attribute["HTTPServer"]
+            mock_ws_cls = mocks_by_attribute["WebSocketServer"]
 
             runner = GobbyRunner(config_path=config_file, verbose=True)
 
@@ -84,6 +88,33 @@ class TestGobbyRunnerInit:
         assert "$secret:API_KEY" in secret_inputs
         assert "$secret:DB_URL" in secret_inputs
         mock_store.ensure_ready.assert_called_once_with(required_secret_names={"api_key", "db_url"})
+
+    def test_init_provisions_local_api_token_after_secret_envelope_setup(
+        self,
+        mock_config_with_websocket: DaemonConfig,
+    ) -> None:
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+
+        with ExitStack() as stack:
+            entered = [stack.enter_context(patch_context) for patch_context in patches]
+            mocks = {
+                patch_context.attribute: entered_mock
+                for patch_context, entered_mock in zip(patches, entered, strict=True)
+            }
+            secret_store = mocks["SecretStore"].return_value
+            config_store = mocks["ConfigStore"].return_value
+            ensure_token = mocks["ensure_local_api_token"]
+            ordering = MagicMock()
+            ordering.attach_mock(secret_store.ensure_ready, "ensure_ready")
+            ordering.attach_mock(ensure_token, "ensure_local_api_token")
+
+            GobbyRunner()
+
+        assert [call[0] for call in ordering.mock_calls[:2]] == [
+            "ensure_ready",
+            "ensure_local_api_token",
+        ]
+        ensure_token.assert_called_once_with(config_store)
 
     def test_memory_stack_uses_embedding_secret_when_runtime_config_has_no_key(self) -> None:
         from gobby.runner_init import services

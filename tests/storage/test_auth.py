@@ -1,12 +1,22 @@
-"""Tests for AuthStore session management and secret key detection."""
+"""Tests for authentication storage and local API token provisioning."""
 
 import hashlib
+import logging
+import stat
+from pathlib import Path
 
 import pytest
 
-from gobby.storage.auth import AuthStore
-from gobby.storage.config_store import is_secret_key_name
+from gobby.storage.auth import (
+    LOCAL_API_TOKEN_HASH_KEY,
+    AuthStore,
+    ensure_local_api_token,
+    hash_token,
+    rotate_local_api_token,
+)
+from gobby.storage.config_store import ConfigStore, is_secret_key_name
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.local_token import daemon_auth_headers, local_token_path, read_local_api_token
 
 pytestmark = pytest.mark.unit
 
@@ -20,6 +30,111 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def auth_store(db) -> AuthStore:
     return AuthStore(db)
+
+
+@pytest.fixture
+def config_store(db: HubDatabase) -> ConfigStore:
+    return ConfigStore(db)
+
+
+@pytest.fixture
+def local_token_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+
+def test_local_token_helpers_return_bearer_header(local_token_home: None) -> None:
+    assert read_local_api_token() is None
+    assert daemon_auth_headers() == {}
+
+    local_token_path().write_text("  local-token\n")
+
+    assert read_local_api_token() == "local-token"
+    assert daemon_auth_headers() == {"Authorization": "Bearer local-token"}
+
+
+def test_ensure_local_api_token_generates(
+    config_store: ConfigStore,
+    local_token_home: None,
+) -> None:
+    token = ensure_local_api_token(config_store)
+
+    assert token is not None
+    assert read_local_api_token() == token
+    assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) == hash_token(token)
+    assert stat.S_IMODE(local_token_path().stat().st_mode) == 0o600
+
+
+def test_ensure_local_api_token_adopts_existing_file(
+    config_store: ConfigStore,
+    local_token_home: None,
+) -> None:
+    local_token_path().write_text("existing-token\n")
+
+    assert ensure_local_api_token(config_store) == "existing-token"
+    assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) == hash_token("existing-token")
+
+
+def test_ensure_local_api_token_matching_file_and_hash_is_noop(
+    config_store: ConfigStore,
+    local_token_home: None,
+) -> None:
+    local_token_path().write_text("matching-token")
+    config_store.set(
+        LOCAL_API_TOKEN_HASH_KEY,
+        hash_token("matching-token"),
+        source="system",
+    )
+
+    assert ensure_local_api_token(config_store) == "matching-token"
+    assert read_local_api_token() == "matching-token"
+
+
+def test_ensure_local_api_token_hash_only_warns(
+    config_store: ConfigStore,
+    local_token_home: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_store.set(LOCAL_API_TOKEN_HASH_KEY, hash_token("hub-token"), source="system")
+
+    with caplog.at_level(logging.WARNING):
+        token = ensure_local_api_token(config_store)
+
+    assert token is None
+    assert not local_token_path().exists()
+    assert "copy ~/.gobby/local_cli_token from the hub machine" in caplog.text
+    assert "gobby auth token --rotate" in caplog.text
+
+
+def test_ensure_local_api_token_mismatch_warns_and_db_wins(
+    config_store: ConfigStore,
+    local_token_home: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    local_token_path().write_text("stale-token")
+    expected_hash = hash_token("hub-token")
+    config_store.set(LOCAL_API_TOKEN_HASH_KEY, expected_hash, source="system")
+
+    with caplog.at_level(logging.WARNING):
+        token = ensure_local_api_token(config_store)
+
+    assert token is None
+    assert read_local_api_token() == "stale-token"
+    assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) == expected_hash
+    assert "copy ~/.gobby/local_cli_token from the hub machine" in caplog.text
+
+
+def test_rotate_local_api_token_replaces_file_and_hash(
+    config_store: ConfigStore,
+    local_token_home: None,
+) -> None:
+    old_token = ensure_local_api_token(config_store)
+
+    new_token = rotate_local_api_token(config_store)
+
+    assert old_token is not None
+    assert new_token != old_token
+    assert read_local_api_token() == new_token
+    assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) == hash_token(new_token)
 
 
 class TestAuthStoreCreateSession:

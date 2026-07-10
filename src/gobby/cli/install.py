@@ -5,6 +5,7 @@ Installation commands for hooks.
 import logging
 import os
 import platform
+import secrets
 import shutil
 import socket
 import subprocess  # nosec B404 # fixed install preflight/start commands
@@ -20,13 +21,17 @@ from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_WEBSOCKET_PORT,
 )
+from gobby.storage.auth import ensure_local_api_token
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
     SECRET_KEK_PASSPHRASE_ENV,
     SecretStore,
+    write_private_file,
 )
+from gobby.utils.local_token import local_token_path, read_local_api_token
 
 from ._detectors import (
     _is_agy_cli_installed,
@@ -254,6 +259,17 @@ def _configure_secret_kek_posture(
         )
     secret_store.set_kek_posture(storage_posture, passphrase=passphrase)
     click.echo("Secret KEK posture: passphrase")
+
+
+def _provision_local_api_token(config_store: ConfigStore | None) -> None:
+    """Provision the local token with or without a reachable hub database."""
+    if config_store is not None:
+        ensure_local_api_token(config_store)
+        return
+    if read_local_api_token() is not None:
+        return
+    token = secrets.token_urlsafe(32)
+    write_private_file(local_token_path(), token.encode("utf-8"))
 
 
 @click.command("install")
@@ -575,6 +591,7 @@ def install(
     results: dict[str, dict[str, Any]] = {}
     db: HubDatabase | None = None
     secret_store: SecretStore | None = None
+    config_store: ConfigStore | None = None
 
     try:
         from gobby.storage.hub.runtime import open_runtime_hub_database
@@ -582,6 +599,7 @@ def install(
         load_full_config_from_db()
         db = open_runtime_hub_database()
         secret_store = SecretStore(db)
+        config_store = ConfigStore(db)
     except (FileNotFoundError, PermissionError, OSError, RuntimeError, ValueError) as exc:
         # Missing config file, unavailable hub, malformed config values.
         # The orchestration proceeds with db/secret_store=None — downstream
@@ -597,6 +615,7 @@ def install(
         secret_kek_posture,
         no_interactive=no_interactive_flag,
     )
+    _provision_local_api_token(config_store)
 
     try:
         # Standard CLIs (claude, grok, agy, qwen, codex, droid)

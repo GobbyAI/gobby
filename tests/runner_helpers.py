@@ -124,6 +124,7 @@ def create_base_patches(
         patch("gobby.runner_init.servers.HTTPServer", return_value=mock_http),
         patch("gobby.storage.secrets.SecretStore"),
         patch("gobby.storage.config_store.ConfigStore"),
+        patch("gobby.runner_init.storage.ensure_local_api_token"),
         patch(
             "gobby.runner_init.orchestration.AgentLifecycleMonitor", return_value=mock_agent_monitor
         ),

@@ -15,6 +15,7 @@ from gobby.runner_init.helpers import (
     init_hub_database,
 )
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.storage.auth import ensure_local_api_token
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -95,6 +96,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         [*runner.config_store.get_all().values(), *bootstrap_config_values]
     )
     secret_migration = runner.secret_store.ensure_ready(required_secret_names=required_secret_names)
+    ensure_local_api_token(runner.config_store)
     if secret_migration.migrated:
         logger.info(
             "Migrated %s legacy machine-bound secrets to envelope encryption",
