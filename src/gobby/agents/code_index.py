@@ -20,6 +20,7 @@ from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
 )
 from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
+from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,7 @@ def _prepend_path(path: Path) -> str:
 
 
 def _link_runtime_assets(source_home: Path, runtime_home: Path) -> None:
-    for name in ("machine_id", ".secret_salt", "models", "services"):
+    for name in ("machine_id", *SECRET_MATERIAL_FILENAMES, "models", "services"):
         source = source_home / name
         target = runtime_home / name
         if target.exists() or target.is_symlink() or not source.exists():

@@ -26,6 +26,7 @@ from gobby.cli.postgres_backup import (
     restore_postgres_backup,
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
+from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 
 # Directories to include in pack (relative to ~/.gobby/)
 PACK_DIRS = [
@@ -41,7 +42,7 @@ PACK_DIRS = [
 PACK_FILES = [
     "bootstrap.yaml",
     "machine_id",
-    ".secret_salt",
+    *SECRET_MATERIAL_FILENAMES,
 ]
 
 # Docker volumes to export

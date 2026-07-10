@@ -154,6 +154,48 @@ class TestEnsureIsolationCodeIndex:
         assert status.stdout == ""
 
     @pytest.mark.asyncio
+    async def test_runtime_home_links_secret_material_assets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = self._proc()
+        runtime_root = tmp_path / "runtime"
+        workspace = tmp_path / "workspace"
+        source_home = tmp_path / "home"
+        monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        workspace.mkdir()
+        subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
+        source_home.mkdir()
+        (source_home / "machine_id").write_text("machine-id\n")
+        (source_home / ".secret_salt").write_bytes(b"salt")
+        kek = source_home / ".secret_kek"
+        kek.write_text("kek-key\n")
+        kek.chmod(0o600)
+        (source_home / "models").mkdir()
+        (source_home / "services").mkdir()
+
+        with (
+            patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
+            patch(
+                "gobby.agents.code_index.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=proc),
+            ),
+        ):
+            result = await ensure_isolation_code_index(
+                str(workspace),
+                database_url="postgresql://gobby:secret@localhost/gobby",
+                daemon_bind_host="127.0.0.1",
+                daemon_port=61234,
+                runtime_root=runtime_root,
+            )
+
+        assert result.runtime_home is not None
+        runtime_home = Path(result.runtime_home)
+        for name in ("machine_id", ".secret_salt", ".secret_kek", "models", "services"):
+            linked = runtime_home / name
+            assert linked.is_symlink(), f"{name} not linked into runtime home"
+            assert linked.resolve() == (source_home / name).resolve()
+
+    @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
         proc_ok = self._proc()
         proc_fail = self._proc(returncode=2, stderr=b"parse failed")

@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 SECRET_REF_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
 SALT_FILE = Path("~/.gobby/.secret_salt").expanduser()
 KEK_FILE = Path("~/.gobby/.secret_kek").expanduser()
+# Every file holding secret key material under ~/.gobby. Anything that
+# provisions an alternate GOBBY_HOME or snapshots ~/.gobby must carry all of
+# these, or envelope decryption breaks (Rust gcore reads GOBBY_HOME/.secret_kek).
+SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (SALT_FILE.name, KEK_FILE.name)
 
 SECRET_KEY_ID = "default"
 POSTURE_KEY_FILE = "key_file"
