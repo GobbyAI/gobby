@@ -73,3 +73,43 @@ fn export_workflow_assets_writes_outputs_without_mutating_wiki_pages() {
     );
     assert_eq!(fs::read_to_string(&wiki_page).expect("read final"), before);
 }
+
+#[test]
+fn export_pages_writes_json_siblings() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hub = tmp.path().join("hub");
+    let vault = hub.join("topics").join("rust");
+    let wiki_page = vault.join("knowledge/topics/ownership.md");
+    fs::create_dir_all(wiki_page.parent().expect("wiki parent")).expect("create wiki dir");
+    fs::write(
+        &wiki_page,
+        "---\ntitle: Ownership\n---\n# Ownership\n\nSee [[Borrowing]].\n",
+    )
+    .expect("write wiki page");
+
+    let output = common::gwiki_command()
+        .args(["--topic", "rust", "export", "pages"])
+        .env("GOBBY_WIKI_HUB", &hub)
+        .current_dir(tmp.path())
+        .output()
+        .expect("gwiki binary runs");
+
+    assert!(
+        output.status.success(),
+        "export pages failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let sibling = vault.join("outputs/pages/knowledge/topics/ownership.json");
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&sibling).expect("read sibling"))
+            .expect("valid sibling json");
+    assert_eq!(json["path"], "knowledge/topics/ownership.md");
+    assert_eq!(json["frontmatter"]["title"], "Ownership");
+    assert_eq!(json["outbound_links"], serde_json::json!(["Borrowing"]));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"command\": \"export\""), "{stdout}");
+    assert!(stdout.contains("ownership.json"), "{stdout}");
+}

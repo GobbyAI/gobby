@@ -1,10 +1,12 @@
 //! Deterministic catalog regeneration for the vault indexes.
 //!
-//! [`regenerate`] rebuilds `_index.md`, `knowledge/INDEX.md`, and
-//! `code/INDEX.md` from on-disk vault state with no LLM involvement:
-//! rerunning it over an unchanged vault produces byte-identical files.
+//! [`regenerate`] rebuilds `_index.md`, `knowledge/INDEX.md`,
+//! `code/INDEX.md`, and per-folder `_context.md` files from on-disk vault
+//! state with no LLM involvement: rerunning it over an unchanged vault
+//! produces byte-identical files. It also restores the static `ai-readme.md`
+//! when missing (#17730).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
@@ -32,11 +34,21 @@ const CODE_SECTIONS: &[(&str, &str)] = &[
     ("Files", "code/files"),
 ];
 
+/// Per-folder agent navigation file (#17730).
+const CONTEXT_FILE: &str = "_context.md";
+/// Content roots that receive `_context.md` folder files.
+const CONTEXT_ROOTS: &[&str] = &[
+    crate::vault::KNOWLEDGE_ROOT,
+    crate::vault::CODE_ROOT,
+    crate::recap::RECAPS_DIRECTORY,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CatalogReport {
     pub(crate) index_path: PathBuf,
     pub(crate) knowledge_index_path: PathBuf,
     pub(crate) code_index_path: PathBuf,
+    pub(crate) context_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,10 +93,14 @@ pub(crate) fn regenerate(
     let top_concepts = top_concepts(vault_root, &concepts)?;
     let recaps = scan_pages(vault_root, crate::recap::RECAPS_DIRECTORY)?;
 
+    let context_paths = write_folder_contexts(vault_root)?;
+    ensure_ai_readme(vault_root)?;
+
     let report = CatalogReport {
         index_path: vault_root.join("_index.md"),
         knowledge_index_path: vault_root.join("knowledge/INDEX.md"),
         code_index_path: vault_root.join("code/INDEX.md"),
+        context_paths,
     };
     let code_page_total: usize = code_sections.iter().map(|(_, pages)| pages.len()).sum();
     write_if_changed(
@@ -328,12 +344,155 @@ fn scan_pages(vault_root: &Path, directory: &str) -> Result<Vec<PageSummary>, Wi
         let Some(text) = read_page(&path)? else {
             continue;
         };
-        if let Some(summary) = summarize_page(vault_root, &path, &text) {
+        if let Some(summary) = summarize_page(vault_root, &path, &text, true) {
             pages.push(summary);
         }
     }
     pages.sort_by(|left, right| left.relative.cmp(&right.relative));
     Ok(pages)
+}
+
+/// Rebuild every per-folder `_context.md` under the content roots: a
+/// deterministic listing of the folder's pages and context-bearing
+/// subfolders for agent traversal (#17730). Unlike the INDEX surfaces,
+/// `_context.md` is an agent surface, so quarantined candidates and archived
+/// pages are both excluded. Stale context files whose folder no longer holds
+/// pages are removed.
+fn write_folder_contexts(vault_root: &Path) -> Result<Vec<PathBuf>, WikiError> {
+    let mut pages_by_dir: BTreeMap<String, Vec<PageSummary>> = BTreeMap::new();
+    for root in CONTEXT_ROOTS {
+        for path in walk_markdown_pages(vault_root, root)? {
+            let Some(text) = read_page(&path)? else {
+                continue;
+            };
+            let Some(summary) = summarize_page(vault_root, &path, &text, false) else {
+                continue;
+            };
+            let Some((directory, _)) = summary.relative.rsplit_once('/') else {
+                continue;
+            };
+            pages_by_dir
+                .entry(directory.to_string())
+                .or_default()
+                .push(summary);
+        }
+    }
+
+    // Intermediate folders without direct pages still get a context file so
+    // agents can descend level by level; collect each folder's
+    // context-bearing children while propagating upward to the walk roots.
+    let mut context_dirs: BTreeSet<String> = pages_by_dir.keys().cloned().collect();
+    let mut subfolders: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut pending: Vec<String> = context_dirs.iter().cloned().collect();
+    while let Some(directory) = pending.pop() {
+        let Some((parent, _)) = directory.rsplit_once('/') else {
+            continue;
+        };
+        subfolders
+            .entry(parent.to_string())
+            .or_default()
+            .insert(directory.clone());
+        if context_dirs.insert(parent.to_string()) {
+            pending.push(parent.to_string());
+        }
+    }
+
+    let mut written = Vec::with_capacity(context_dirs.len());
+    for directory in &context_dirs {
+        let mut pages = pages_by_dir.remove(directory).unwrap_or_default();
+        pages.sort_by(|left, right| left.relative.cmp(&right.relative));
+        let children = subfolders.remove(directory).unwrap_or_default();
+        let path = vault_root.join(directory).join(CONTEXT_FILE);
+        write_if_changed(
+            &path,
+            &render_folder_context(vault_root, directory, &pages, &children),
+        )?;
+        written.push(path);
+    }
+    prune_stale_contexts(vault_root, &written)?;
+    Ok(written)
+}
+
+fn render_folder_context(
+    vault_root: &Path,
+    directory: &str,
+    pages: &[PageSummary],
+    subfolders: &BTreeSet<String>,
+) -> String {
+    let mut markdown = format!(
+        "---\ntitle: \"{directory} — folder context\"\n---\n\n# {directory} — folder context\n\nDeterministic folder listing for AI agents; regenerated by gwiki catalog runs. Do not edit by hand.\n"
+    );
+    if !pages.is_empty() {
+        markdown.push_str(&format!("\n## Pages ({})\n\n", pages.len()));
+        for page in pages {
+            match &page.one_liner {
+                Some(one_liner) => markdown.push_str(&format!(
+                    "- {} — {one_liner}\n",
+                    page_link(vault_root, page)
+                )),
+                None => markdown.push_str(&format!("- {}\n", page_link(vault_root, page))),
+            }
+        }
+    }
+    if !subfolders.is_empty() {
+        markdown.push_str("\n## Subfolders\n\n");
+        for subfolder in subfolders {
+            let name = subfolder.rsplit('/').next().unwrap_or(subfolder);
+            markdown.push_str(&format!("- [[{subfolder}/_context|{name}/]]\n"));
+        }
+    }
+    markdown
+}
+
+/// Remove `_context.md` files whose folder no longer carries pages.
+fn prune_stale_contexts(vault_root: &Path, written: &[PathBuf]) -> Result<(), WikiError> {
+    let written: BTreeSet<&Path> = written.iter().map(PathBuf::as_path).collect();
+    for root in CONTEXT_ROOTS {
+        let mut pending = vec![vault_root.join(root)];
+        while let Some(directory) = pending.pop() {
+            let entries = match fs::read_dir(&directory) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(WikiError::Io {
+                        action: "list wiki context directory",
+                        path: Some(directory),
+                        source: error,
+                    });
+                }
+            };
+            for entry in entries {
+                let entry = entry.map_err(|error| WikiError::Io {
+                    action: "list wiki context directory",
+                    path: Some(directory.clone()),
+                    source: error,
+                })?;
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if entry.file_name().to_string_lossy() == CONTEXT_FILE
+                    && !written.contains(path.as_path())
+                {
+                    fs::remove_file(&path).map_err(|error| WikiError::Io {
+                        action: "remove stale wiki context file",
+                        path: Some(path.clone()),
+                        source: error,
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Restore the static agent readme only when missing: the init-written copy
+/// and any user edits are never overwritten.
+fn ensure_ai_readme(vault_root: &Path) -> Result<(), WikiError> {
+    crate::vault::ensure_file(
+        vault_root.join(crate::vault::AI_README_FILE).as_path(),
+        crate::vault::AI_README_TEMPLATE,
+    )
+    .map(|_| ())
 }
 
 fn scan_code_sections(
@@ -376,7 +535,11 @@ fn walk_markdown_pages(vault_root: &Path, directory: &str) -> Result<Vec<PathBuf
             }
             if path.is_dir() {
                 pending.push(path);
-            } else if name.ends_with(".md") && name != "INDEX.md" && name != "_index.md" {
+            } else if name.ends_with(".md")
+                && name != "INDEX.md"
+                && name != "_index.md"
+                && name != CONTEXT_FILE
+            {
                 pages.push(path);
             }
         }
@@ -398,15 +561,21 @@ fn read_page(path: &Path) -> Result<Option<String>, WikiError> {
     }
 }
 
-/// `None` when the page is excluded from catalog indexes (archived lifecycle).
-fn summarize_page(vault_root: &Path, path: &Path, text: &str) -> Option<PageSummary> {
+/// `None` when the page is excluded from the requesting surface. Catalog
+/// indexes are the maintainer/review surface (`include_candidates`):
+/// quarantined candidates stay listed so the librarian can find them
+/// (#17727); only archived pages drop out. Agent surfaces such as
+/// `_context.md` pass `false` to exclude candidates as well (#17730).
+fn summarize_page(
+    vault_root: &Path,
+    path: &Path,
+    text: &str,
+    include_candidates: bool,
+) -> Option<PageSummary> {
     let relative = relative_path(vault_root, path);
     let (title, body) = match parse_frontmatter(text) {
         Ok(parsed) => {
-            // Catalog indexes are the maintainer/review surface: quarantined
-            // candidates stay listed so the librarian can find them (#17727);
-            // only archived pages drop out.
-            if crate::lifecycle::excluded_from_surfaces(&parsed.metadata, true) {
+            if crate::lifecycle::excluded_from_surfaces(&parsed.metadata, include_candidates) {
                 return None;
             }
             (parsed.metadata.title.clone(), parsed.body.to_string())
@@ -946,5 +1115,158 @@ mod tests {
         );
         assert!(code.contains("[[code/modules/search|Search]]"), "{code}");
         assert!(code.contains("[[code/files/src/lib.rs|lib.rs]]"), "{code}");
+    }
+
+    #[test]
+    fn regenerate_writes_folder_context_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/concepts/gcode.md",
+            &page("Gcode", "Code index CLI. Second sentence."),
+        );
+        write_page(
+            root,
+            "code/modules/search/query.md",
+            &page("Query", "Query planning."),
+        );
+
+        let report = regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate");
+
+        let concepts_context = fs::read_to_string(root.join("knowledge/concepts/_context.md"))
+            .expect("concepts context");
+        assert!(
+            concepts_context.contains("## Pages (1)"),
+            "{concepts_context}"
+        );
+        assert!(
+            concepts_context.contains("[[knowledge/concepts/gcode|Gcode]] — Code index CLI."),
+            "{concepts_context}"
+        );
+
+        // Intermediate folders without direct pages still link downward.
+        let knowledge_context =
+            fs::read_to_string(root.join("knowledge/_context.md")).expect("knowledge context");
+        assert!(
+            knowledge_context.contains("## Subfolders"),
+            "{knowledge_context}"
+        );
+        assert!(
+            knowledge_context.contains("- [[knowledge/concepts/_context|concepts/]]"),
+            "{knowledge_context}"
+        );
+        assert!(
+            root.join("code/modules/search/_context.md").exists(),
+            "nested code folder gets a context file"
+        );
+        assert!(
+            report
+                .context_paths
+                .contains(&root.join("knowledge/concepts/_context.md")),
+            "{:?}",
+            report.context_paths
+        );
+
+        let first = fs::read_to_string(root.join("knowledge/_context.md")).expect("first");
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("second regenerate");
+        assert_eq!(
+            fs::read_to_string(root.join("knowledge/_context.md")).expect("second"),
+            first,
+            "context files are byte-identical on rerun"
+        );
+    }
+
+    #[test]
+    fn folder_context_excludes_candidates_and_archived_unlike_indexes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/concepts/kept.md",
+            &page("Kept", "Promoted page."),
+        );
+        write_page(
+            root,
+            "knowledge/concepts/pending.md",
+            "---\ntitle: \"Pending\"\ncandidate: true\n---\n\nQuarantined candidate.\n",
+        );
+        write_page(
+            root,
+            "knowledge/concepts/retired.md",
+            "---\ntitle: \"Retired\"\nlifecycle: archived\n---\n\nArchived page.\n",
+        );
+
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate");
+
+        let context = fs::read_to_string(root.join("knowledge/concepts/_context.md"))
+            .expect("concepts context");
+        assert!(
+            context.contains("[[knowledge/concepts/kept|Kept]]"),
+            "{context}"
+        );
+        assert!(
+            !context.contains("Pending") && !context.contains("Retired"),
+            "agent context excludes candidates and archived pages: {context}"
+        );
+
+        // The INDEX stays the maintainer surface: candidates listed, archived out.
+        let index = fs::read_to_string(root.join("knowledge/INDEX.md")).expect("knowledge index");
+        assert!(index.contains("Pending"), "{index}");
+        assert!(!index.contains("Retired"), "{index}");
+    }
+
+    #[test]
+    fn stale_folder_context_is_removed_when_folder_empties() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/concepts/only.md",
+            &page("Only", "Sole page."),
+        );
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("first regenerate");
+        assert!(root.join("knowledge/concepts/_context.md").exists());
+
+        fs::remove_file(root.join("knowledge/concepts/only.md")).expect("page removed");
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("second regenerate");
+
+        assert!(
+            !root.join("knowledge/concepts/_context.md").exists(),
+            "emptied folder loses its context file"
+        );
+    }
+
+    #[test]
+    fn regenerate_restores_ai_readme_only_when_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/concepts/gcode.md",
+            &page("Gcode", "Code index CLI."),
+        );
+
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate creates");
+        let readme_path = root.join(crate::vault::AI_README_FILE);
+        assert_eq!(
+            fs::read_to_string(&readme_path).expect("readme"),
+            crate::vault::AI_README_TEMPLATE
+        );
+
+        fs::write(&readme_path, "# Customized\n").expect("customized");
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate preserves");
+        assert_eq!(
+            fs::read_to_string(&readme_path).expect("customized readme"),
+            "# Customized\n",
+            "user edits are never overwritten"
+        );
+
+        fs::remove_file(&readme_path).expect("readme removed");
+        regenerate(root, &ScopeIdentity::project("/repo")).expect("regenerate restores");
+        assert_eq!(
+            fs::read_to_string(&readme_path).expect("restored readme"),
+            crate::vault::AI_README_TEMPLATE
+        );
     }
 }

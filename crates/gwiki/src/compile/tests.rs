@@ -6,6 +6,19 @@ use crate::provenance::ProvenanceGraph;
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 
+/// Content pages in `directory`, sorted, ignoring the `_context.md`
+/// navigation file that catalog regeneration adds alongside them (#17730).
+fn content_page_names(directory: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(directory)
+        .expect("directory listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "_context.md")
+        .collect();
+    names.sort();
+    names
+}
+
 fn session_with_note(scope: &ResearchScope, title: &str, relative_path: &str) -> ResearchSession {
     ResearchSession {
         session_id: "research-compile-test".to_string(),
@@ -394,11 +407,7 @@ fn compile_reuses_existing_source_digest_pages() {
     .expect("wiki articles compiled");
 
     // The digest is the only page under knowledge/sources/ — no duplicate stub.
-    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/sources"))
-        .expect("sources dir listed")
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+    let entries = content_page_names(&scope.root().join("knowledge/sources"));
     assert_eq!(entries, vec![format!("{}.md", record.id)]);
     assert!(outcome.source_paths.is_empty());
     let article = std::fs::read_to_string(&outcome.article_path).expect("article written");
@@ -437,11 +446,7 @@ fn recompile_updates_source_stub_pages_in_place() {
 
     // The recompile resolves the stub written by the first compile and
     // updates it in place — no slug-suffixed sibling pages (#17596).
-    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/sources"))
-        .expect("sources dir listed")
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+    let entries = content_page_names(&scope.root().join("knowledge/sources"));
     assert_eq!(entries, vec!["compile-behavior.md".to_string()]);
     assert_eq!(
         outcome.source_paths,
@@ -493,11 +498,7 @@ fn recompile_overwrites_source_stub_without_write_intent() {
     )
     .expect("second compile overwrites shared stub without write intent");
 
-    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/sources"))
-        .expect("sources dir listed")
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+    let entries = content_page_names(&scope.root().join("knowledge/sources"));
     assert_eq!(entries, vec!["shared-source.md".to_string()]);
     assert_eq!(
         outcome.source_paths,
@@ -532,11 +533,7 @@ fn recompile_without_target_page_updates_article_in_place() {
     // The recompile resolves the article written by the first compile and
     // updates it in place — no -2 suffixed sibling article (#17635).
     assert_eq!(outcome.article_path, first.article_path);
-    let entries: Vec<String> = std::fs::read_dir(scope.root().join("knowledge/topics"))
-        .expect("topics dir listed")
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+    let entries = content_page_names(&scope.root().join("knowledge/topics"));
     assert_eq!(entries, vec!["durable-compile.md".to_string()]);
     // Resolving the existing page also feeds its body into the synthesis
     // prompt as update-over-create context.
@@ -625,11 +622,7 @@ fn compile_after_recapture_emits_single_digest_without_suffix() {
     )
     .expect("compile succeeded");
 
-    let digests: Vec<String> = std::fs::read_dir(vault_root.join("knowledge/sources"))
-        .expect("sources dir listed")
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
+    let digests = content_page_names(&vault_root.join("knowledge/sources"));
     assert_eq!(
         digests.len(),
         1,
@@ -673,10 +666,8 @@ fn recompile_of_machine_page_overwrites_without_write_intent() {
     assert_eq!(second.article_path, first.article_path);
 
     let articles: Vec<String> =
-        std::fs::read_dir(first.article_path.parent().expect("article parent"))
-            .expect("article dir listed")
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        content_page_names(first.article_path.parent().expect("article parent"))
+            .into_iter()
             .filter(|name| name.ends_with(".md"))
             .collect();
     assert_eq!(articles.len(), 1, "no slug-suffixed sibling: {articles:?}");

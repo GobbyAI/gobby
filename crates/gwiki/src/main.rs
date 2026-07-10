@@ -501,6 +501,8 @@ struct ReviewReportArgs {
 
 #[derive(Debug, Subcommand)]
 enum ExportSubcommand {
+    /// Export per-page .json metadata siblings under outputs/pages/.
+    Pages,
     /// Export bundled workflow prompts and skill assets.
     WorkflowAssets {
         #[arg(long, default_value = "workflow-assets.md", value_name = "FILE")]
@@ -861,6 +863,7 @@ impl From<CompileKind> for gobby_wiki::synthesis::ArticleKind {
 impl From<ExportArgs> for gobby_wiki::exports::ExportCommand {
     fn from(args: ExportArgs) -> Self {
         match args.command {
+            ExportSubcommand::Pages => Self::AgentPages,
             ExportSubcommand::WorkflowAssets { output } => {
                 Self::WorkflowAssets { filename: output }
             }

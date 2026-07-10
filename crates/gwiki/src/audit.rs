@@ -155,6 +155,33 @@ pub fn run_with_options(
         .into_iter()
         .filter(|page| scope_includes_page(&scope, &page.relative_path))
         .collect::<Vec<_>>();
+    let classifications = classify_pages(vault_root, &pages, &options)?;
+
+    Ok(AuditReport {
+        command: "audit",
+        scope,
+        root: vault_root.to_path_buf(),
+        claims: classifications.claims,
+        unsupported_claims: classifications.unsupported,
+        source_context: classifications.source_context,
+    })
+}
+
+/// Vault-wide claim classification produced by [`classify_pages`].
+pub(crate) struct PageClassifications {
+    pub(crate) claims: Vec<ClassifiedClaim>,
+    pub(crate) unsupported: Vec<UnsupportedClaim>,
+    pub(crate) source_context: Arc<Vec<AuditSourceContext>>,
+}
+
+/// Classify every claim line on `pages` against the vault's source manifest
+/// and provenance graph. Shared by the audit report and the per-page agent
+/// export (#17730).
+pub(crate) fn classify_pages(
+    vault_root: &Path,
+    pages: &[crate::lint::WikiPage],
+    options: &AuditOptions,
+) -> Result<PageClassifications, WikiError> {
     let manifest = SourceManifest::read(vault_root)?;
     let manifest_hashes = manifest
         .entries
@@ -165,24 +192,20 @@ pub fn run_with_options(
     let provenance = load_provenance(vault_root)?;
     let mut classified_claims = Vec::new();
     let mut unsupported_claims = Vec::new();
-    for page in &pages {
+    for page in pages {
         let analysis = claims::analyze_claims(
             page,
             &provenance,
             &source_context,
             &manifest_hashes,
-            &options,
+            options,
         );
         classified_claims.extend(analysis.classified);
         unsupported_claims.extend(analysis.unsupported);
     }
-
-    Ok(AuditReport {
-        command: "audit",
-        scope,
-        root: vault_root.to_path_buf(),
+    Ok(PageClassifications {
         claims: classified_claims,
-        unsupported_claims,
+        unsupported: unsupported_claims,
         source_context,
     })
 }

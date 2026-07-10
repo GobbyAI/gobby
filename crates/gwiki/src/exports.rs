@@ -4,6 +4,7 @@ use crate::{ScopeIdentity, WikiError};
 
 mod assets;
 mod graph;
+mod pages;
 mod write;
 
 pub use assets::{
@@ -11,6 +12,7 @@ pub use assets::{
     export_workflow_assets,
 };
 pub use graph::{export_agent_artifacts, export_graph_artifacts};
+pub use pages::export_agent_pages;
 pub use write::write_export;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -18,6 +20,7 @@ pub use write::write_export;
 pub enum ExportKind {
     Bundle,
     Graph,
+    Page,
     Report,
 }
 
@@ -36,6 +39,8 @@ pub struct ExportArtifact {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportCommand {
+    /// Per-page `.json` metadata siblings under `outputs/pages/` (#17730).
+    AgentPages,
     WorkflowAssets {
         filename: String,
     },
@@ -64,6 +69,7 @@ impl ExportOutput {
 
 pub fn run(root: &Path, command: ExportCommand) -> Result<Vec<ExportArtifact>, WikiError> {
     match command {
+        ExportCommand::AgentPages => export_agent_pages(root),
         ExportCommand::WorkflowAssets { filename } => {
             export_workflow_assets(root, filename).map(|artifact| vec![artifact])
         }

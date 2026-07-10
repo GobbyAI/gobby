@@ -189,15 +189,16 @@ fn report_from_pages_for_health(
 }
 
 /// Compose derived confidence for knowledge synthesis pages (concepts and
-/// topics): cited-source credibility resolved through the citation needle
-/// index, half-life freshness from the page file's age, and backlinks counted
-/// from every other vault page's resolved links.
-fn page_confidence_summary(
+/// topics), keyed by relative path: cited-source credibility resolved through
+/// the citation needle index, half-life freshness from the page file's age,
+/// and backlinks counted from every other vault page's resolved links. Shared
+/// by the health summary and the agent page export (#17730).
+pub(crate) fn page_confidence_by_path(
     pages: &[WikiPage],
     sources: &[SourceRecord],
     provenance: &ProvenanceGraph,
     needle_index: &SourceNeedleIndex,
-) -> PageConfidenceSummary {
+) -> BTreeMap<PathBuf, u8> {
     let source_scores: BTreeMap<&str, u8> = sources
         .iter()
         .map(|source| {
@@ -217,7 +218,7 @@ fn page_confidence_summary(
         .map(|(index, page)| (index, page_match_keys(page)))
         .collect();
     if scored_pages.is_empty() {
-        return PageConfidenceSummary::default();
+        return BTreeMap::new();
     }
 
     let mut key_to_slot: BTreeMap<&str, usize> = BTreeMap::new();
@@ -240,8 +241,7 @@ fn page_confidence_summary(
         }
     }
 
-    let mut scores = Vec::with_capacity(scored_pages.len());
-    let mut low_confidence = Vec::new();
+    let mut scores = BTreeMap::new();
     for (slot, (page_index, _)) in scored_pages.iter().enumerate() {
         let page = &pages[*page_index];
         let cited_scores: Vec<u8> = page_cited_source_ids(page, needle_index)
@@ -254,17 +254,34 @@ fn page_confidence_summary(
             half_life_days: half_life_days_for_content(&page.relative_path),
             backlink_count: referrers[slot].len(),
         });
-        if confidence.score < LOW_CONFIDENCE_THRESHOLD {
-            low_confidence.push(PageConfidenceIssue {
-                path: page.relative_path.clone(),
-                score: confidence.score,
-            });
-        }
-        scores.push(confidence.score);
+        scores.insert(page.relative_path.clone(), confidence.score);
+    }
+    scores
+}
+
+/// Health-report roll-up of [`page_confidence_by_path`]: scored-page count,
+/// average, and the capped low-confidence list.
+fn page_confidence_summary(
+    pages: &[WikiPage],
+    sources: &[SourceRecord],
+    provenance: &ProvenanceGraph,
+    needle_index: &SourceNeedleIndex,
+) -> PageConfidenceSummary {
+    let scores = page_confidence_by_path(pages, sources, provenance, needle_index);
+    if scores.is_empty() {
+        return PageConfidenceSummary::default();
     }
 
-    let total: u32 = scores.iter().map(|score| u32::from(*score)).sum();
+    let total: u32 = scores.values().map(|score| u32::from(*score)).sum();
     let average_score = Some((total as f64 / scores.len() as f64).round() as u8);
+    let mut low_confidence: Vec<PageConfidenceIssue> = scores
+        .iter()
+        .filter(|(_, score)| **score < LOW_CONFIDENCE_THRESHOLD)
+        .map(|(path, score)| PageConfidenceIssue {
+            path: path.clone(),
+            score: *score,
+        })
+        .collect();
     low_confidence.sort_by(|left, right| {
         left.score
             .cmp(&right.score)
@@ -471,7 +488,7 @@ fn approximate_current_year_at(now: DateTime<Utc>) -> u64 {
     1970 + u64::try_from(now.timestamp()).unwrap_or(0) / AVERAGE_GREGORIAN_YEAR_SECONDS
 }
 
-fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
+pub(crate) fn load_provenance(vault_root: &Path) -> Result<ProvenanceGraph, WikiError> {
     let path = vault_root.join("meta").join("provenance.json");
     if path.exists() {
         ProvenanceGraph::load_from_vault(vault_root)
@@ -505,7 +522,7 @@ impl SourceCitationIndex {
     }
 }
 
-struct SourceNeedleIndex {
+pub(crate) struct SourceNeedleIndex {
     text_patterns: Vec<String>,
     text_source_ids: Vec<BTreeSet<String>>,
     link_source_ids_by_target: BTreeMap<String, BTreeSet<String>>,
@@ -550,7 +567,7 @@ fn build_citation_index(
     SourceCitationIndex { cited_source_ids }
 }
 
-fn build_source_needle_index(sources: &[SourceRecord]) -> SourceNeedleIndex {
+pub(crate) fn build_source_needle_index(sources: &[SourceRecord]) -> SourceNeedleIndex {
     let mut text_source_ids_by_needle = BTreeMap::<String, BTreeSet<String>>::new();
     let mut link_source_ids_by_target = BTreeMap::<String, BTreeSet<String>>::new();
     for source in sources {
@@ -1083,7 +1100,7 @@ mod tests {
             root,
             SourceDraft::url(
                 "https://example.com/dispatch",
-                &Utc::now().to_rfc3339(),
+                Utc::now().to_rfc3339(),
                 "dispatch source",
             )
             .with_citation("Dispatch Design Notes"),

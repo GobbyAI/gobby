@@ -15,7 +15,7 @@ fn assert_vault_shape(root: &std::path::Path) {
         assert!(root.join(dir).is_dir(), "missing directory {dir}");
     }
 
-    for file in ["raw/INDEX.md", "_index.md", "log.md"] {
+    for file in ["raw/INDEX.md", "_index.md", "log.md", "ai-readme.md"] {
         assert!(root.join(file).is_file(), "missing file {file}");
     }
 }

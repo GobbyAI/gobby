@@ -577,3 +577,145 @@ fn agent_exports_do_not_follow_document_symlink_outside_vault() {
     assert!(!full.contains("classified outside vault"));
     assert!(full.contains("_(content unavailable)_"));
 }
+
+fn write_vault_page(root: &std::path::Path, relative: &str, contents: &str) {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().expect("page parent")).expect("page dir");
+    fs::write(&path, contents).expect("page written");
+}
+
+fn agent_pages_vault() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_vault_page(
+        root,
+        "knowledge/concepts/alpha.md",
+        "---\ntitle: Alpha\nlifecycle: reviewed\n---\n# Alpha\n\nSee [[Beta]].\n\n## Conflicting claims\n\n- Source A says alpha is eager; source B says lazy.\n",
+    );
+    write_vault_page(
+        root,
+        "knowledge/concepts/beta.md",
+        "---\ntitle: Beta\n---\n# Beta\n\nSee [[Alpha]].\n",
+    );
+    write_vault_page(
+        root,
+        "knowledge/concepts/quarantined.md",
+        "---\ntitle: Quarantined\ncandidate: true\n---\n# Quarantined\n\nUnpromoted candidate.\n",
+    );
+    write_vault_page(
+        root,
+        "knowledge/topics/archived.md",
+        "---\ntitle: Archived\nlifecycle: archived\n---\n# Archived\n\nRetired page.\n",
+    );
+    temp
+}
+
+#[test]
+fn agent_pages_export_writes_json_siblings_with_metadata() {
+    let temp = agent_pages_vault();
+    let root = temp.path();
+
+    let artifacts = export_agent_pages(root).expect("agent pages exported");
+
+    assert_eq!(
+        artifacts
+            .iter()
+            .map(|artifact| artifact.path.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            root.join("outputs/pages/knowledge/concepts/alpha.json"),
+            root.join("outputs/pages/knowledge/concepts/beta.json"),
+        ]
+    );
+    assert!(
+        artifacts
+            .iter()
+            .all(|artifact| artifact.kind == ExportKind::Page)
+    );
+
+    let alpha: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("outputs/pages/knowledge/concepts/alpha.json"))
+            .expect("alpha json"),
+    )
+    .expect("valid alpha json");
+    assert_eq!(alpha["path"], "knowledge/concepts/alpha.md");
+    assert_eq!(alpha["frontmatter"]["title"], "Alpha");
+    assert_eq!(alpha["lifecycle"], "reviewed");
+    assert_eq!(alpha["outbound_links"], serde_json::json!(["Beta"]));
+    // Base 50, no cited sources (-10), fresh file (+15), one backlink (0).
+    assert_eq!(alpha["confidence"], 55);
+    let claims = alpha["audit_claims"]["claims"]
+        .as_array()
+        .expect("claims array");
+    assert!(
+        alpha["audit_claims"]["ambiguous"].as_u64().expect("count") >= 1,
+        "conflict-section claim classifies ambiguous: {alpha}"
+    );
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim["heading"] == "Conflicting claims"
+                && claim["classification"] == "AMBIGUOUS"),
+        "conflict claim carries its classification: {claims:?}"
+    );
+
+    let beta: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("outputs/pages/knowledge/concepts/beta.json"))
+            .expect("beta json"),
+    )
+    .expect("valid beta json");
+    assert_eq!(beta["lifecycle"], serde_json::Value::Null);
+    assert_eq!(beta["confidence"], 55);
+}
+
+#[test]
+fn agent_pages_export_is_byte_identical_on_rerun() {
+    let temp = agent_pages_vault();
+    let root = temp.path();
+
+    export_agent_pages(root).expect("first export");
+    let alpha_path = root.join("outputs/pages/knowledge/concepts/alpha.json");
+    let first = fs::read_to_string(&alpha_path).expect("first alpha json");
+    export_agent_pages(root).expect("second export");
+    assert_eq!(
+        fs::read_to_string(&alpha_path).expect("second alpha json"),
+        first
+    );
+}
+
+#[test]
+fn agent_pages_export_excludes_candidates_and_archived_and_prunes_stale() {
+    let temp = agent_pages_vault();
+    let root = temp.path();
+    // Stale siblings from earlier runs: a removed page, a newly quarantined
+    // page, and an emptied directory. A non-json bystander must survive.
+    write_vault_page(root, "outputs/pages/knowledge/concepts/removed.json", "{}");
+    write_vault_page(
+        root,
+        "outputs/pages/knowledge/concepts/quarantined.json",
+        "{}",
+    );
+    write_vault_page(root, "outputs/pages/stale-dir/nested.json", "{}");
+    write_vault_page(root, "outputs/pages/keep.txt", "bystander");
+
+    export_agent_pages(root).expect("agent pages exported");
+
+    assert!(
+        !root
+            .join("outputs/pages/knowledge/concepts/removed.json")
+            .exists()
+    );
+    assert!(
+        !root
+            .join("outputs/pages/knowledge/concepts/quarantined.json")
+            .exists()
+    );
+    assert!(!root.join("outputs/pages/stale-dir").exists());
+    assert!(root.join("outputs/pages/keep.txt").exists());
+    assert!(
+        !root
+            .join("outputs/pages/knowledge/topics/archived.json")
+            .exists(),
+        "archived pages get no sibling"
+    );
+}

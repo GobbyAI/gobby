@@ -28,7 +28,15 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
     } else {
         GraphExportOptions::degraded(degraded_sources)
     };
-    let artifacts = exports::export_graph_artifacts(resolved.scope.root(), &facts, options)?;
+    let mut artifacts =
+        exports::export_graph_artifacts(resolved.scope.root(), &facts, options.clone())?;
+    // Agent-facing artifacts (graph.jsonld, llms.txt, llms-full.txt) ship from
+    // the same facts so one `gwiki graph` run refreshes every graph surface.
+    artifacts.extend(exports::export_agent_artifacts(
+        resolved.scope.root(),
+        &facts,
+        options,
+    )?);
     let paths = artifacts
         .iter()
         .map(|artifact| artifact.path.display().to_string())

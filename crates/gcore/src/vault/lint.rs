@@ -431,7 +431,7 @@ fn is_orphan_exempt(path: &Path) -> bool {
         .is_some_and(|stem| {
             matches!(
                 stem.to_ascii_lowercase().as_str(),
-                "_index" | "index" | "home" | "readme"
+                "_index" | "index" | "home" | "readme" | "_context"
             )
         })
 }
@@ -441,8 +441,16 @@ fn is_orphan_exempt(path: &Path) -> bool {
 /// pages by design, so links *originating* from them never count as missing
 /// backlinks. Matched by relative path only (any `.md` extension stripped),
 /// never by display title — a content page that merely happens to be named
-/// `index` is not exempt (#853D).
+/// `index` is not exempt (#853D). Per-folder `_context.md` navigation files
+/// are the same fan-out-by-design shape and are exempt by file stem.
 fn is_backlink_source_exempt(path: &Path) -> bool {
+    if path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("_context"))
+    {
+        return true;
+    }
     let relative = path.to_string_lossy().replace('\\', "/");
     let relative = relative.strip_suffix(".md").unwrap_or(&relative);
     matches!(
@@ -1033,5 +1041,39 @@ mod tests {
             &lint_pages,
         );
         assert!(clean.is_empty(), "{clean:?}");
+    }
+
+    #[test]
+    fn folder_context_files_are_navigation_exempt() {
+        // Per-folder `_context.md` navigation files (#17730) fan out to every
+        // page in their folder by design: nothing links to them and their
+        // targets never link back.
+        let pages = vec![
+            owned_page(
+                "knowledge/concepts/_context.md",
+                "---\ntitle: knowledge/concepts — folder context\n---\n# Context\n- [[knowledge/concepts/gcode|Gcode]]\n",
+                &[],
+            ),
+            owned_page(
+                "knowledge/concepts/gcode.md",
+                "---\ntitle: Gcode\n---\n# Gcode\nBody without links.\n",
+                &[],
+            ),
+        ];
+
+        let outcome = run_checks(&lint_pages(&pages), None);
+
+        assert!(
+            !outcome
+                .orphan_pages
+                .contains(&PathBuf::from("knowledge/concepts/_context.md")),
+            "context files are orphan-exempt: {:?}",
+            outcome.orphan_pages
+        );
+        assert!(
+            outcome.missing_backlinks.is_empty(),
+            "context fan-out links never demand backlinks: {:?}",
+            outcome.missing_backlinks
+        );
     }
 }

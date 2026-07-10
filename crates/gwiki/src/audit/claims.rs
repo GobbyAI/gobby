@@ -153,6 +153,10 @@ const CATALOG_PAGES: &[&str] = &["_index.md", "knowledge/INDEX.md", "code/INDEX.
 fn is_catalog_page(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
     CATALOG_PAGES.contains(&page_path.as_str())
+        || page
+            .relative_path
+            .file_name()
+            .is_some_and(|name| name == "_context.md")
 }
 
 /// Daily recap pages under `recaps/` (marked by `recap_date` frontmatter) are

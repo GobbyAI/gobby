@@ -54,7 +54,35 @@ pub const DEFAULT_FILES: &[(&str, &str)] = &[
     ("code/INDEX.md", "# Code\n\n"),
     ("_index.md", "# Wiki Index\n\n"),
     ("log.md", "# Log\n\n"),
+    (AI_README_FILE, AI_README_TEMPLATE),
 ];
+
+/// Static agent-navigation readme at the vault root. Written once by
+/// `gwiki init`/`setup` scaffolding and restored by catalog regeneration only
+/// when missing (#17730) — user edits are preserved.
+pub const AI_README_FILE: &str = "ai-readme.md";
+pub const AI_README_TEMPLATE: &str = "# AI Agent Guide\n\n\
+Navigation guide for AI agents working this vault. Written by `gwiki init`; \
+restored by catalog regeneration only when missing, so local edits are \
+preserved.\n\n\
+## Layout\n\n\
+- `_index.md` — vault overview: totals, top concepts, recent work.\n\
+- `knowledge/` — synthesized knowledge (`concepts/`, `topics/`, `sources/` digests); `knowledge/INDEX.md` lists everything.\n\
+- `code/` — generated code documentation; `code/INDEX.md` groups handbook, concepts, modules, and files.\n\
+- `recaps/` — daily session recap pages.\n\
+- `raw/` — captured source material backing `knowledge/sources/`.\n\
+- Content folders carry a `_context.md` with a deterministic listing of their pages and subfolders.\n\n\
+## Machine-readable exports (`outputs/`)\n\n\
+- `outputs/pages/<page>.json` — per-page metadata sibling: frontmatter, outbound links, lifecycle, confidence, audit claim classification (`gwiki export pages`).\n\
+- `outputs/graph.jsonld`, `outputs/llms.txt`, `outputs/llms-full.txt` — schema.org document graph and llms.txt indexes (`gwiki graph`).\n\n\
+## Trust signals\n\n\
+- Frontmatter `lifecycle`: `draft | reviewed | verified | stale | archived`. Archived pages and quarantined candidates (`candidate: true`) are excluded from agent surfaces.\n\
+- Page confidence (0-100, derived): cited-source credibility, freshness half-life, and backlinks; surfaced by `gwiki health`, `gwiki trust`, and per-page JSON.\n\
+- Claim classification: `EXTRACTED` (directly cited), `INFERRED` (page-level grounding), `AMBIGUOUS` (flagged uncertainty).\n\n\
+## Query\n\n\
+- `gwiki search \"<term>\"` / `gwiki ask \"<question>\"` — retrieval over the vault.\n\
+- `gwiki read <page>` — read a page with metadata.\n\
+- `gwiki trust` — trust status of the search, graph, freshness, and audit surfaces.\n";
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub fn required_paths() -> VaultPaths {
@@ -155,7 +183,7 @@ fn create_dir(path: &Path) -> Result<(), WikiError> {
     })
 }
 
-fn ensure_file(path: &Path, contents: &str) -> Result<bool, WikiError> {
+pub(crate) fn ensure_file(path: &Path, contents: &str) -> Result<bool, WikiError> {
     if let Some(parent) = path.parent() {
         create_dir(parent)?;
     }

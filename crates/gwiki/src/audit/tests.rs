@@ -31,7 +31,12 @@ fn catalog_surfaces_are_exempt_from_claim_scanning() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();
     let body = "# Code\n\n## Handbook\n\n(none yet)\n";
-    for relative in ["_index.md", "knowledge/INDEX.md", "code/INDEX.md"] {
+    for relative in [
+        "_index.md",
+        "knowledge/INDEX.md",
+        "code/INDEX.md",
+        "knowledge/concepts/_context.md",
+    ] {
         let page = root.join(relative);
         std::fs::create_dir_all(page.parent().expect("page parent")).expect("create wiki dir");
         std::fs::write(&page, body).expect("write catalog page");
