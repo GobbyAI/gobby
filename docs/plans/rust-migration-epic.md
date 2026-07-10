@@ -19,12 +19,23 @@ a live Python daemon:
 
 ## Current State
 
+Refreshed 2026-07-10 after the monorepo merge and 0.5.0 branch work.
+
 - `~/Projects/gobby` is the product repo and current source of truth
 - `~/Projects/gobby/crates` is the long-lived Rust workspace and contains
   `gcode`, `ghook`, `gwiki`, and `gobby-core`
-- `~/Projects/gobby-cli` is historical after the Rust workspace merge and
-  remains available only as a temporary release-history fallback until
-  explicitly retired
+- The `gobby-cli` repo merge and post-merge hygiene are complete (epics
+  #17469 and #17470 are closed); the old repo is retired
+- Phase 2 foundation extraction is essentially complete: `crates/gcore/src/`
+  already provides `bootstrap.rs`, `daemon_url.rs`, `postgres.rs` (TLS/sslmode
+  handling plus `read_config_value`), `falkor.rs`, `qdrant/`, `secrets.rs`,
+  `machine.rs`, `local_token.rs`, `config/`, and `ai/` (daemon HTTP client).
+  Remaining Phase 2 work is a closing audit, not new extraction
+- Daemon auth is landing on the 0.5.0 branch
+  (`.gobby/plans/daemon-auth-0-5-0.md`): `/api/config/*` and `/api/tasks`
+  require `Authorization: Bearer` with the install-scoped token from
+  `~/.gobby/local_cli_token`, while `/api/admin/health` stays public. Auth
+  semantics are part of every frozen contract
 - Python owns the live daemon, schema policy, fixtures, and rollout control
 - Rust does not yet have a `gobby-daemon` crate
 
@@ -85,15 +96,18 @@ rollback mechanisms, split it.
 
 ## Readiness Gate
 
-Rust implementation work beyond low-risk extraction and prototyping starts only
-after the `0.4.0` hardening pass establishes stable contracts for the first
-migration boundaries. Phase 0 contract-freezing and Phase 2 low-risk extraction
-may proceed in parallel with `0.4.0` hardening.
+Rust implementation work beyond low-risk extraction and prototyping starts
+only after `0.5.0` ships; the pre-ship window is reserved for bug-fix
+hardening. Phase 0 contract-freezing may proceed earlier because it produces
+only contract docs and test artifacts. Phase 2 extraction is already
+essentially complete.
 
 The readiness gate is met when all of the following are true:
 
-- `0.4.0` launch blockers are resolved and remaining Python work is hardening,
-  not major feature churn
+- `0.5.0` has shipped and remaining Python work is hardening, not major
+  feature churn
+- The daemon-auth enforcement flip has landed, so 401 bodies and header
+  semantics are final before fixtures are captured on authenticated routes
 - The first migration surfaces are frozen as exact contracts:
   - `GET /api/admin/health`
   - `GET /api/config/schema`
@@ -137,7 +151,8 @@ The following boundaries are explicitly deferred until later phases:
 
 - Python remains the public daemon on `:60887` and `:60888`
 - Rust runs on alternate internal ports during migration
-- `:60889` is the default first HTTP port for a Rust sidecar daemon
+- `:60890` is the default first HTTP port for a Rust sidecar daemon
+  (`:60889` is already the dev web UI and `:60891` the managed Postgres hub)
 - The first unit of traffic shifting is a route family or hook boundary, not an
   all-or-nothing daemon swap
 
@@ -154,8 +169,9 @@ The following boundaries are explicitly deferred until later phases:
 ### Hook Integration
 
 - Hook migration stays behind the existing hook API contract
-- If a Rust `gobby-hook` binary is introduced, it still targets the public
-  daemon contract first
+- The Rust hook shell already exists: `ghook` owns transport, enqueue-first
+  durability, fail-safe classification, and provider-native response shaping
+  against the public daemon contract
 - Hook cutover is allowed only after HTTP-side parity and degraded behavior are
   proven
 
@@ -163,12 +179,53 @@ The following boundaries are explicitly deferred until later phases:
 
 - Phase 0 freezes contracts and builds the fixture corpus
 - Phase 1 adds Python-side compare and delegation plumbing
-- Phase 2 extracts shared Rust foundations in `crates/`
+- Phase 2 extracts shared Rust foundations in `crates/` (essentially complete)
 - Phase 3 migrates low-risk read-only boundaries
 - Phase 4 migrates the first DB-backed task read boundary
 - Phase 5 migrates reduced session reads
 - Phase 6 handles late complex boundaries
 - Phase 7 covers cutover, fallback, and retirement of migration scaffolding
+
+## First Wave Execution Order (post-0.5.0)
+
+The first wave is one epic: the sidecar framework proven end-to-end, ending at
+the first DB-backed boundary. It sequences the Phase 0–4 atomic items into
+dependency-ordered milestones. Each milestone is one boundary, one rollback
+story, one validation target.
+
+- `M1` Epic doc corrections (this refresh)
+- `M2` Committed config artifacts plus a CI freshness gate:
+  `schemas/daemon-config.schema.json` and `schemas/daemon-config.defaults.json`
+  generated from `DaemonConfig`, with a drift-fails-CI test (R0-18 groundwork)
+- `M3` `rust_migration` config section on `DaemonConfig`: per-route
+  `off | compare | delegate` flags, config-store-backed so rollback is a
+  hot-reloaded config save (R1-01)
+- `M4` Contract docs, fixture corpus, and Python replay harness for the three
+  low-risk routes (R0-01..R0-03, R0-05..R0-07, R0-09..R0-11, R0-13..R0-15,
+  R0-17). Fixtures live in `tests/contracts/http/` following the
+  `tests/contracts/gwiki.contract.json` precedent; one corpus is consumed by
+  both pytest and Rust
+- `M5` Compare/delegation plumbing in Python: a route-scoped `APIRoute`
+  subclass, fire-and-forget compare, delegate-with-fallback, an in-memory
+  mismatch latch, and telemetry counters (R1-02..R1-05)
+- `M6` `crates/gdaemon` scaffold — package `gobby-daemon`, binary `gobbyd`,
+  axum on tokio, bind `127.0.0.1:60890`, bearer-auth extractor, FastAPI-shaped
+  error envelope — plus the health route (R3-01..R3-03)
+- `M7` Rust config routes: `/api/config/schema` served from the committed M2
+  artifact; `/api/config/values` layered from the defaults artifact, bootstrap,
+  and config-store overlay with secret masking, reading Postgres through
+  `gobby-core` (R3-04, R3-05)
+- `M8` Dual-daemon e2e smoke: zero-mismatch compare soak, sidecar-kill
+  fallback proof, delegate flip and rollback (R1-06, R3-06..R3-14)
+- `M9` Reduced `GET /api/tasks` v1: brief-shaped task rows plus build-state
+  and owner-session enrichment; stage filters and hierarchy sort are excluded
+  from v1; the compare wrapper gains a contract-guard predicate so
+  out-of-contract requests skip Rust entirely (R4-01..R4-06)
+
+Sidecar supervision is deferred to the delegation-by-default phase. Compare
+mode must treat sidecar absence as a first-class state anyway, so development
+runs `gobbyd` manually or via `cargo install --root ~/.gobby`, matching the
+`gcode` install pattern.
 
 ## Phase 0: Contract Freeze and Fixture Corpus
 
@@ -178,6 +235,14 @@ owned by Python.
 ### Scope
 
 - Freeze exact contracts for the first four migration surfaces
+- Contracts include auth semantics: the bearer requirement, the exact 401
+  body, and the `X-Gobby-Local-Token` header alias; `/api/admin/health` stays
+  public
+- Contracts state the global exception-handler quirk explicitly: uncaught
+  errors return HTTP 200 with
+  `{"status":"error","message":"Internal error occurred but request acknowledged","error_logged":true}`
+  (`src/gobby/servers/exception_handlers.py`). Rust mirrors it, or the
+  contract scopes it out per route
 - Record success, error, and degraded-daemon fixtures
 - Build a Python-baseline replay harness
 
@@ -247,6 +312,11 @@ families to a Rust sidecar without surrendering authority.
 - Route-scoped rollback is immediate and tested
 
 ## Phase 2: `crates/` Foundation Extraction
+
+**Status (2026-07-10):** essentially complete. R2-01 through R2-09 landed
+organically in `gobby-core` (see Current State). The remaining work is
+R2-10-style verification that `gcode`, `ghook`, and `gwiki` stay green on the
+extracted helpers — a closing audit, not new extraction.
 
 **Goal:** Turn the existing Rust utilities into a reusable foundation for the
 daemon migration without destabilizing them.
@@ -470,6 +540,60 @@ migrated surface while preserving a real fallback window.
 - No production traffic depends on temporary migration scaffolding after final
   cleanup
 
+## Boundary Inventory Beyond the First Wave
+
+Verified against the daemon architecture on 2026-07-10.
+
+### Second wave: external-MCP transport multiplexer
+
+The external-MCP transport half of the proxy (`MCPClientManager`,
+`mcp_proxy/transports/`, `mcp_proxy/client_manager/`, `mcp_proxy/lazy.py`) is
+the cleanest high-value seam after the first wave. It is a pure protocol
+boundary — connection pooling, schema caching, health monitoring, circuit
+breaking — whose only daemon dependencies are Postgres-backed config and
+metrics, both already covered by `gobby-core`.
+
+It migrates as a delegated backend behind Python's front door: Python keeps
+`ToolProxyService` enforcement (the rule engine and session resolution are
+Python-entangled) and delegates external-server fan-out to the sidecar. The
+routing seam already exists as the `is_internal()` branch in
+`src/gobby/mcp_proxy/services/tool_execution.py`.
+
+### Ordering rule: multiplexer before internal MCP servers
+
+Internal `gobby-*` MCP servers are in-process Python closures over daemon
+managers; they never touch the transport machinery. A ported internal server
+needs a Rust proxy to register into, and porting one earlier would require
+throwaway per-server transport plumbing. Internal MCP servers migrate only as
+their underlying managers move — the tool surface re-fronts logic that already
+migrated. The MCP front-door and enforcement flip happens last, gated on rules
+and sessions.
+
+### Candidate data-plane boundary: memory and skill search
+
+A memory/skill search port would reuse existing `gobby-core` primitives
+(`search.rs` `rrf_merge`, `qdrant/`, `falkor.rs`); `gcode` already ported the
+code-index searcher to `crates/gcode/src/search/rrf.rs`. Listed as a candidate
+boundary, not scheduled work.
+
+### Second migration pattern: versioned CLI contract plus Python gateway
+
+Alongside the sidecar pattern, the gwiki panel work proved a second pattern: a
+Rust CLI emitting versioned JSON envelopes
+(`crates/gwiki/contract/gwiki.contract.json`) consumed through a thin Python
+gateway (`src/gobby/gwiki_gateway.py`). The CLI-contract pattern fits
+compute-shaped subsystems; the sidecar pattern fits route families.
+
+### Phase 6 deferrals, confirmed with evidence
+
+- The hook path's latency-sensitive shell is already Rust: `ghook` owns
+  enqueue-first durability, fail-safe classification, and provider-native
+  response shaping. The remainder (`HookManager` fan-out plus the rule
+  engine) is dominated by Postgres, session-state, and in-process MCP-proxy
+  coupling and stays Python until those subsystems move
+- The WebSocket chat server is the least portable component (Python LLM SDKs,
+  per-provider streaming backends) and migrates last, if at all
+
 ## First-Wave Non-Goals
 
 - No long-lived Rust branch in `gobby`
@@ -502,11 +626,11 @@ At minimum, the migration test corpus must cover:
 
 ## Assumptions
 
-- `0.4.0` is a launch hardening phase, not a new feature wave
+- `0.5.0` pre-ship work is bug-fix hardening, not a new feature wave; Rust
+  implementation starts after it ships
 - `gobby/crates` is the long-lived Rust home for migration work
-- `gobby-cli` is retained only until the repo-retirement checklist confirms no
-  release, index, memory, review-learning, or documentation dependency still
-  points at it
+- `gobby-cli` is retired; the merge and post-merge hygiene epics (#17469,
+  #17470) are closed
 - The old `rust-port` docs remain historical notes, not active plans
 - Shared Rust extraction should be driven by current code in `gcode` and
   the helper crates, not by stale estimates

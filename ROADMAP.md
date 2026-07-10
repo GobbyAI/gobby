@@ -4,7 +4,7 @@ Gobby is a local-first control plane for AI coding tools: persistent sessions,
 task graphs, workflows, hooks, MCP proxying, agents, memory, and deterministic
 automation around the tools developers already use.
 
-Last refreshed: May 24, 2026.
+Last refreshed: July 10, 2026.
 
 The data migration is complete. PostgreSQL is the runtime hub, FalkorDB is the
 graph backend, and `.gobby/tasks.jsonl` remains the git-native task projection.
@@ -36,8 +36,10 @@ Rust port.
 - Finish logging cleanup before enforcing logging-format rules: config reset,
   runtime-vs-app log separation, normalized handlers, automation logs for cron
   and dispatch, and quieter routine logging.
-- Prepare the Rust port by freezing route contracts, adding compare/delegation
-  plumbing, and extracting shared primitives under `crates/`.
+- Prepare the Rust port by freezing route contracts (safe to start pre-ship;
+  they are contract docs and test artifacts). Compare/delegation plumbing and
+  sidecar implementation start after 0.5.0 ships. Shared-primitive extraction
+  under `crates/` is already essentially complete in `gobby-core`.
 
 ## 0.6.0 - Rust Port Release
 
@@ -46,12 +48,19 @@ rewrite.
 
 - Python remains the public daemon and behavioral reference until each boundary
   passes parity, observability, and rollback gates.
-- Rust sidecars run on internal ports, with Python delegating selected route
-  families behind explicit flags.
+- The `gobby-daemon` sidecar (`gobbyd`) runs on internal port `:60890`, with
+  Python delegating selected route families behind explicit flags.
 - Compare mode calls both implementations and returns the Python response until
   parity is proven.
-- The bridgehead lives under `crates/`: `gcode`, `ghook`, and
+- First wave: contract fixtures, compare/delegation plumbing, the sidecar
+  shell with health/config reads, then reduced `GET /api/tasks` as the first
+  DB-backed boundary.
+- Second wave: the external-MCP transport multiplexer as a delegated backend
+  behind Python's front door; internal MCP servers migrate only after it
+  exists.
+- The bridgehead lives under `crates/`: `gcode`, `ghook`, `gwiki`, and
   `gobby-core` shared primitives.
+- Execution order and milestones live in `docs/plans/rust-migration-epic.md`.
 
 ## 0.6.0+ - Gobby Pro Sync
 
