@@ -354,3 +354,136 @@ regression tests in
 (5 stripped shapes incl. both observed #17754 messages verbatim-shaped, plus
 2 preserved genuine admissions). 87 guard tests + 248 task-tools tests +
 155 validation tests pass; ruff/mypy clean; audit 0 new.
+
+## #17753 — Add `gwiki page write|delete` with vault confinement (P1, plan §1.3)
+
+### Plan
+
+Rust feature in `crates/gwiki` (skills loaded: rust, test-driven-development,
+code-index). Vault mutation lands in the CLI where scope-root resolution and
+path normalization already live; CLI/MCP/HTTP mirroring is deferred to #17755.
+
+Files:
+- `crates/gwiki/src/commands/paths.rs` (new): hoisted
+  `normalize_requested_path` returning `Result<PathBuf, PathViolation>`
+  (`Absolute | Escape | Empty`); callers format their own messages so the
+  read command's existing strings stay byte-identical.
+- `crates/gwiki/src/commands/read.rs`: consume the shared helper, map
+  `PathViolation` → `ReadDegradation::invalid_request` with today's messages.
+- `crates/gwiki/src/commands/page.rs` (new): `execute_write` /
+  `execute_delete` thin wrappers (scope resolve + stdin read) over pure
+  `write_page` / `delete_page` cores that unit tests target directly with
+  temp vault roots. Confinement: shared normalization; `.md` extension
+  required; first component must be `knowledge` with a nested tail;
+  file-symlink targets rejected; canonicalized deepest-existing ancestor must
+  resolve under canonical root AND still under `knowledge/` before parent
+  dirs are created (then re-verified) — closes both symlink-out-of-vault and
+  knowledge→elsewhere-inside-vault redirects. Preconditions: `--mode create`
+  errors `already_exists` when the file exists and rejects `--expected-hash`
+  as `invalid_input` (its precondition is nonexistence per the plan);
+  `--mode upsert` with `--expected-hash` compares lowercase-hex SHA-256 of
+  on-disk bytes (`gobby_core::indexing::file_content_hash`, same hash as the
+  read revision baseline) and returns `precondition_failed` leaving the file
+  untouched — including when the page does not exist. Content is written
+  verbatim from stdin (UTF-8; frontmatter round-trips untouched). Payloads:
+  `{"command":"page-write",scope,path,created,bytes,content_hash,
+  changed_paths}` and `{"command":"page-delete",scope,path,changed_paths}`
+  via `scoped_outcome`. Delete of a missing page → `not_found` envelope; DB
+  row pruning stays with the incremental indexer's `IndexEvent::Deleted`
+  path (`crates/gwiki/src/indexer.rs:116`), which `changed_paths` triggers.
+- `crates/gwiki/src/api.rs`: `Command::PageWrite { scope, path, mode,
+  expected_hash }`, `Command::PageDelete { scope, path }`,
+  `pub enum PageWriteMode { Upsert, Create }` (stdin is read at execute time,
+  not parse time, so parse tests never block).
+- `crates/gwiki/src/commands/mod.rs`: `mod page; mod paths;` + dispatch arms.
+- `crates/gwiki/src/main.rs`: `Page(PageArgs)` with nested
+  `PageSubcommand::{Write,Delete}`; `--path` required, `--mode` ValueEnum
+  (upsert default), `--expected-hash`; error plumbing for the two new
+  variants.
+- `crates/gwiki/src/error.rs`: `AlreadyExists` (`already_exists`) and
+  `PreconditionFailed` (`precondition_failed`) variants; exit code 2.
+- Contract v12→v13 (4-place update): `contract.rs` (version, two new
+  entries named `page write` / `page delete` — space-separated names denote
+  nested subcommands — plus the two error codes), pinned
+  `crates/gwiki/contract/gwiki.contract.json`, vendored
+  `tests/contracts/gwiki.contract.json`, version asserts in
+  `crates/gwiki/tests/cli_contract.rs` and `tests/test_cli_contracts.py`;
+  `docs/contracts/gwiki-cli.md` v13 note.
+- `crates/gwiki/tests/cli_parse.rs`: dedicated round-trip test spawning the
+  binary with piped stdin: write then delete in a temp topic scope.
+
+Acceptance mapping: 1.3.1 write-upsert+changed_paths (page.rs +
+`write_upserts_knowledge_page_from_stdin_content`); 1.3.2
+`write_rejects_confinement_violations`; 1.3.3
+`create_mode_conflicts_on_existing`; 1.3.4
+`delete_removes_page_and_emits_changed_paths_for_reindex_prune`; 1.3.5
+`write_precondition_hash_mismatch`.
+
+Shared-tree note: another session holds uncommitted changes incl. a 215-line
+deletion in `crates/gwiki/src/support/env.rs` (compiles as a whole with its
+gcore counterpart). Tests run in the shared tree; the release binary is
+built and reinstalled from an isolated worktree at my commit so the
+installed gwiki reflects committed state only.
+
+Validation: targeted `cargo test -p gobby-wiki`, `cargo clippy -p
+gobby-wiki`, `cargo fmt -p gobby-wiki -- --check`, focused pytest for the
+vendored-contract test, release build + reinstall + `gwiki contract` v13
+sanity, test-quality audit (Rust paths → expect unsupported-language warning
+paired with the targeted cargo test runs).
+
+### #17753 Implementation notes and evidence
+
+TDD evidence:
+- Red: `cargo test -p gobby-wiki --lib commands::page` — 6 failed (all new
+  page tests panicking on `todo!()` stubs: upsert, confinement, symlink
+  escapes, create-conflict, precondition-hash, delete/changed_paths),
+  5 passed (pre-existing `commands::pages` tests in the filter).
+- Green (minimal impl): same command — 11 passed / 0 failed.
+- Refactor/final green: `cargo test -p gobby-wiki` — 821 lib + all
+  integration suites 0 failed, including `--test cli_parse`
+  (`page_write_and_delete_round_trip_via_stdin` spawning the real binary
+  with piped stdin) and `--test cli_contract` (builder ↔ pinned JSON parity
+  at v13). `cargo clippy -p gobby-wiki` clean, `cargo fmt -p gobby-wiki --
+  --check` clean. `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/test_cli_contracts.py -q` → 9 passed.
+- Test-quality audit (page.rs, paths.rs, compile/tests.rs, cli_parse.rs):
+  37 tests scanned, 0 issues, 0 new ≥ high.
+
+Notes:
+- `AlreadyExists` carries `resource`/`id` mirroring `NotFound` (not the
+  planned bare `path`) so the Display arm reads uniformly.
+- gcode's feature-catalog handler map (`resolve_gwiki_handler` in
+  `crates/gcode/src/commands/codewiki/build_parts/features.rs`) hardcodes
+  every gwiki contract command; added `page write`/`page delete` arms
+  (session #7921 flagged this via P2P — same miss as `pages` in #17752).
+  `cargo test -p gobby-code --lib features` → 6 passed.
+- Cross-session coordination: acked #7921 (they leave features.rs alone);
+  they hold uncommitted gcode/gcore changes — none of their paths staged.
+
+### Found during #17753: two pre-existing failures at clean HEAD
+
+**#17809 — upkeep near-duplicate merge broken by #17804 validator.**
+`upkeep::tests::upkeep_near_duplicate_hit_chooses_update_over_create` failed
+("failed" vs "updated") at clean HEAD (verified in a pristine worktree).
+Commit 72c569e added `validate_existing_target_identity` requiring the
+existing target's frontmatter title to equal the compile topic — but
+upkeep's near-duplicate disposition (#17727) deliberately merges a cluster
+into a semantically-matched page with a different title; key-match updates
+with case-variant titles were exposed too (keys canonicalize
+case-insensitively, the validator compared case-sensitively). Fix: new
+`WikiCompileOptions.allow_target_identity_mismatch` (default false) guards
+both validator call sites in `crates/gwiki/src/compile/mod.rs`; upkeep's
+`compile_cluster` sets it whenever it resolved an Update disposition —
+upkeep's disposition resolution is the identity decision; interactive
+`gwiki compile --target` keeps full #17804 protection. New regression test
+`allow_target_identity_mismatch_permits_upkeep_merge_into_existing_page`
+plus the previously-failing upkeep test now green; #17804's protection
+tests untouched and green.
+
+**#17810 — vendored gcode contract drift.**
+`test_vendored_cli_contract_matches_real_cli[gcode]` failed at HEAD: commit
+c92e52613 (#17532) added `--max-workers` to the pinned
+`crates/gcode/contract/gcode.contract.json` without syncing the vendored
+`tests/contracts/gcode.contract.json`. Synced the vendored copy (pinned
+file is source of truth); session #7921 notified via P2P so they don't
+double-fix. All 9 `tests/test_cli_contracts.py` cases pass.

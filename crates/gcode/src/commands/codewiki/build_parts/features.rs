@@ -253,6 +253,14 @@ fn resolve_gwiki_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gwiki/src/commands/pages.rs",
             "commands::pages::execute",
         ),
+        "page write" => (
+            "crates/gwiki/src/commands/page.rs",
+            "commands::page::execute_write",
+        ),
+        "page delete" => (
+            "crates/gwiki/src/commands/page.rs",
+            "commands::page::execute_delete",
+        ),
         "refresh" => (
             "crates/gwiki/src/commands/refresh/mod.rs",
             "commands::refresh::execute",

@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
+use super::paths::PathViolation;
 use crate::markdown::parse_atx_heading;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{CommandOutcome, ReadTarget, ScopeIdentity, ScopeSelection, WikiError};
@@ -180,32 +181,17 @@ fn markdown_prefix(
 }
 
 fn normalize_requested_path(path: &Path) -> Result<PathBuf, ReadDegradation> {
-    if path.is_absolute() {
-        return Err(ReadDegradation::invalid_request(
-            "Read paths must be vault-relative, not absolute.",
-        ));
-    }
-
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(value) => normalized.push(value),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ReadDegradation::invalid_request(
-                    "Read paths must stay inside the selected wiki scope.",
-                ));
-            }
+    super::paths::normalize_requested_path(path).map_err(|violation| match violation {
+        PathViolation::Absolute => {
+            ReadDegradation::invalid_request("Read paths must be vault-relative, not absolute.")
         }
-    }
-
-    if normalized.as_os_str().is_empty() {
-        return Err(ReadDegradation::invalid_request(
-            "Read path must identify a wiki document.",
-        ));
-    }
-
-    Ok(normalized)
+        PathViolation::Escape => {
+            ReadDegradation::invalid_request("Read paths must stay inside the selected wiki scope.")
+        }
+        PathViolation::Empty => {
+            ReadDegradation::invalid_request("Read path must identify a wiki document.")
+        }
+    })
 }
 
 fn readable_path_degradation(path: &Path) -> Option<ReadDegradation> {

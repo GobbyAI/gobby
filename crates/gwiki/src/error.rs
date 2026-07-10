@@ -48,6 +48,13 @@ pub enum WikiError {
         resource: &'static str,
         id: String,
     },
+    AlreadyExists {
+        resource: &'static str,
+        id: String,
+    },
+    PreconditionFailed {
+        detail: String,
+    },
     Timeout {
         action: &'static str,
         path: Option<PathBuf>,
@@ -81,6 +88,8 @@ impl WikiError {
             Self::Daemon { .. } => "daemon_error",
             Self::InvalidInput { .. } => "invalid_input",
             Self::NotFound { .. } => "not_found",
+            Self::AlreadyExists { .. } => "already_exists",
+            Self::PreconditionFailed { .. } => "precondition_failed",
             Self::Timeout { .. } => "timeout",
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
@@ -138,6 +147,12 @@ impl fmt::Display for WikiError {
             }
             Self::NotFound { resource, id } => {
                 write!(f, "{resource} `{id}` was not found ({})", self.code())
+            }
+            Self::AlreadyExists { resource, id } => {
+                write!(f, "{resource} `{id}` already exists ({})", self.code())
+            }
+            Self::PreconditionFailed { detail } => {
+                write!(f, "{detail} ({})", self.code())
             }
             Self::Timeout {
                 action,

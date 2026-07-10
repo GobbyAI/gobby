@@ -5,7 +5,23 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 12
+`contract_version`: 13
+
+Version 13 adds the vault mutation surface: `gwiki page write --path
+<knowledge/….md> [--mode upsert|create] [--expected-hash <sha256>]` (content
+read verbatim from stdin) and `gwiki page delete --path <knowledge/….md>`.
+Contract command names with spaces (`page write`, `page delete`) denote
+nested subcommands; the payload `command` keys are `page-write` and
+`page-delete`. Writes and deletes are confined to `knowledge/**`: paths must
+be vault-relative normalized markdown files, and symlink escapes (including a
+redirected `knowledge/` itself) are rejected by canonicalizing the resolved
+parent against the vault root. `--mode create` fails with the new
+`already_exists` error code when the page exists and rejects
+`--expected-hash`; `--expected-hash` on upsert compares the current on-disk
+SHA-256 (the `gwiki read` revision baseline) and fails with the new
+`precondition_failed` error code, leaving the file untouched. Both new error
+codes exit 2. Payloads carry `changed_paths` so reindex prunes or refreshes
+derived rows via the incremental indexer.
 
 Version 10 covers the daemon-consumed surface:
 

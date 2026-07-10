@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 12,
+        contract_version: 13,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -148,6 +148,38 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new(
                     "pages",
                     "List indexed wiki pages and unindexed outputs reports.",
+                )
+            },
+            // Space-separated names denote nested subcommands: `gwiki page write`.
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--path", "PATH").required(),
+                    FlagContract::value("--mode", "upsert|create")
+                        .allowed(vec!["upsert", "create"]),
+                    FlagContract::value("--expected-hash", "SHA256"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "path",
+                    "created",
+                    "bytes",
+                    "content_hash",
+                    "changed_paths",
+                ]),
+                ..CommandContract::new(
+                    "page write",
+                    "Write a knowledge/ wiki page verbatim from stdin content.",
+                )
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--path", "PATH").required()],
+                json_output_keys: scoped_keys(vec!["path", "changed_paths"]),
+                ..CommandContract::new(
+                    "page delete",
+                    "Delete a knowledge/ wiki page so reindex prunes derived rows.",
                 )
             },
             CommandContract {
@@ -612,6 +644,8 @@ pub fn contract() -> CliContract {
             "daemon",
             "invalid_input",
             "not_found",
+            "already_exists",
+            "precondition_failed",
             "index",
             "search",
             "setup",

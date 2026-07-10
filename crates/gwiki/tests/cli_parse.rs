@@ -27,6 +27,58 @@ fn gwiki(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn page_write_and_delete_round_trip_via_stdin() {
+    let fixture = common::GwikiFixture::new();
+    common::write_gcode_json(fixture.project());
+    let mut init = fixture.command_in_project();
+    init.args(["init", "--topic", "rust"]);
+    common::assert_success(&init.output().expect("gwiki topic init runs"), "topic init");
+
+    let mut write = fixture.command_in_project();
+    write
+        .args([
+            "page",
+            "write",
+            "--topic",
+            "rust",
+            "--path",
+            "knowledge/topics/parse-fixture.md",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = write.spawn().expect("spawn page write");
+    {
+        use std::io::Write as _;
+        child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(b"# Parse fixture page\n")
+            .expect("write page content to stdin");
+    }
+    let output = child.wait_with_output().expect("page write runs");
+    common::assert_success(&output, "page write");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"page-write\""), "stdout:\n{stdout}");
+    assert!(stdout.contains("\"created\": true"), "stdout:\n{stdout}");
+
+    let mut delete = fixture.command_in_project();
+    delete.args([
+        "page",
+        "delete",
+        "--topic",
+        "rust",
+        "--path",
+        "knowledge/topics/parse-fixture.md",
+    ]);
+    let output = delete.output().expect("page delete runs");
+    common::assert_success(&output, "page delete");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"page-delete\""), "stdout:\n{stdout}");
+}
+
+#[test]
 fn core_commands_parse_scope_flags() {
     let cases = [
         vec!["init", "--topic", "rust"],

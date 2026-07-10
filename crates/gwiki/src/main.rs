@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
 use gobby_wiki::{
-    BenchmarkOptions, Command, GraphCommandOptions, GraphInclude, IngestFileOptions, ReadTarget,
-    ScopeSelection, SyncSessionsOptions, UpkeepOptions, WikiError, output,
+    BenchmarkOptions, Command, GraphCommandOptions, GraphInclude, IngestFileOptions, PageWriteMode,
+    ReadTarget, ScopeSelection, SyncSessionsOptions, UpkeepOptions, WikiError, output,
 };
 use serde_json::json;
 
@@ -27,6 +27,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "ask",
     "read",
     "pages",
+    "page",
     "backlinks",
     "link-suggest",
     "benchmark",
@@ -127,6 +128,8 @@ enum CliCommand {
     Read(ReadArgs),
     /// List indexed wiki pages and unindexed outputs reports.
     Pages(PagesArgs),
+    /// Write or delete knowledge/ wiki pages in the selected scope.
+    Page(PageArgs),
     /// Show backlinks for a wiki page.
     Backlinks(BacklinksArgs),
     /// Suggest unresolved wiki links in the selected scope.
@@ -402,6 +405,53 @@ struct PagesArgs {
     /// Only list pages whose wiki path starts with this prefix (e.g. code/).
     #[arg(long, value_name = "PREFIX")]
     prefix: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PageArgs {
+    #[command(subcommand)]
+    command: PageSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PageSubcommand {
+    /// Write a knowledge/ page from stdin content.
+    Write(PageWriteArgs),
+    /// Delete a knowledge/ page.
+    Delete(PageDeleteArgs),
+}
+
+#[derive(Debug, Args)]
+struct PageWriteArgs {
+    /// Vault-relative markdown path under knowledge/ (e.g. knowledge/topics/x.md).
+    #[arg(long, value_name = "PATH")]
+    path: String,
+
+    /// upsert overwrites or creates; create fails if the page exists.
+    #[arg(
+        long,
+        value_enum,
+        default_value = "upsert",
+        value_name = "upsert|create"
+    )]
+    mode: PageMode,
+
+    /// Require this SHA-256 content hash on disk before writing (upsert only).
+    #[arg(long, value_name = "SHA256")]
+    expected_hash: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum PageMode {
+    Upsert,
+    Create,
+}
+
+#[derive(Debug, Args)]
+struct PageDeleteArgs {
+    /// Vault-relative markdown path under knowledge/ (e.g. knowledge/topics/x.md).
+    #[arg(long, value_name = "PATH")]
+    path: String,
 }
 
 #[derive(Debug, Args)]
@@ -811,6 +861,21 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             prefix: args.prefix,
         }),
+        CliCommand::Page(args) => Ok(match args.command {
+            PageSubcommand::Write(write) => Command::PageWrite {
+                scope,
+                path: write.path,
+                mode: match write.mode {
+                    PageMode::Upsert => PageWriteMode::Upsert,
+                    PageMode::Create => PageWriteMode::Create,
+                },
+                expected_hash: write.expected_hash,
+            },
+            PageSubcommand::Delete(delete) => Command::PageDelete {
+                scope,
+                path: delete.path,
+            },
+        }),
         CliCommand::Backlinks(args) => Ok(Command::Backlinks {
             page: args.page,
             scope,
@@ -935,7 +1000,9 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Index { .. }
         | WikiError::Search { .. }
         | WikiError::InvalidScope { .. }
-        | WikiError::NotFound { .. } => ExitCode::from(2),
+        | WikiError::NotFound { .. }
+        | WikiError::AlreadyExists { .. }
+        | WikiError::PreconditionFailed { .. } => ExitCode::from(2),
         WikiError::Config { .. }
         | WikiError::Io { .. }
         | WikiError::Json { .. }

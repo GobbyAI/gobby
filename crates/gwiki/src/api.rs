@@ -82,6 +82,19 @@ pub enum Command {
         /// Restrict the listing to wiki paths starting with this prefix.
         prefix: Option<String>,
     },
+    PageWrite {
+        scope: ScopeSelection,
+        /// Vault-relative markdown path under `knowledge/**`.
+        path: String,
+        mode: PageWriteMode,
+        /// SHA-256 hex precondition against the current on-disk bytes.
+        expected_hash: Option<String>,
+    },
+    PageDelete {
+        scope: ScopeSelection,
+        /// Vault-relative markdown path under `knowledge/**`.
+        path: String,
+    },
     Backlinks {
         page: String,
         scope: ScopeSelection,
@@ -199,6 +212,15 @@ pub struct RecapOptions {
 pub enum ReadTarget {
     Path(PathBuf),
     Title(String),
+}
+
+/// Write mode for `gwiki page write`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageWriteMode {
+    /// Create the page or overwrite the existing revision.
+    Upsert,
+    /// Fail with a distinct error if the page already exists.
+    Create,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

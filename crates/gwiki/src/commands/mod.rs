@@ -15,7 +15,9 @@ pub(crate) mod lanes;
 pub(crate) mod librarian;
 pub(crate) mod lint;
 pub(crate) mod normalize;
+pub(crate) mod page;
 pub(crate) mod pages;
+pub(crate) mod paths;
 pub(crate) mod purge;
 pub(crate) mod read;
 pub(crate) mod recap;
@@ -99,6 +101,13 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
         ),
         Command::Read { target, scope } => read::execute(target, scope),
         Command::Pages { scope, prefix } => pages::execute(scope, prefix),
+        Command::PageWrite {
+            scope,
+            path,
+            mode,
+            expected_hash,
+        } => page::execute_write(scope, path, mode, expected_hash),
+        Command::PageDelete { scope, path } => page::execute_delete(scope, path),
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),
         Command::Benchmark { scope, options } => benchmark::execute(scope, options),

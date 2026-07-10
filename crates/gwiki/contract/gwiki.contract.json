@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 12,
+  "contract_version": 13,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -298,6 +298,72 @@
         "updated_at",
         "size",
         "modified"
+      ]
+    },
+    {
+      "name": "page write",
+      "summary": "Write a knowledge/ wiki page verbatim from stdin content.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--path",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "--mode",
+          "takes_value": true,
+          "value_name": "upsert|create",
+          "allowed_values": [
+            "upsert",
+            "create"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--expected-hash",
+          "takes_value": true,
+          "value_name": "SHA256",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "path",
+        "created",
+        "bytes",
+        "content_hash",
+        "changed_paths"
+      ]
+    },
+    {
+      "name": "page delete",
+      "summary": "Delete a knowledge/ wiki page so reindex prunes derived rows.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--path",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "path",
+        "changed_paths"
       ]
     },
     {
@@ -1218,6 +1284,8 @@
     "daemon",
     "invalid_input",
     "not_found",
+    "already_exists",
+    "precondition_failed",
     "index",
     "search",
     "setup"

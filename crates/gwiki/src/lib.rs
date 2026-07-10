@@ -60,8 +60,8 @@ pub(crate) mod vision;
 
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, GraphCommandOptions,
-    IngestFileOptions, ReadTarget, RecapOptions, ReviewReportOptions, RunOptions, ScopeIdentity,
-    ScopeKind, ScopeSelection, SetupOptions, SyncSessionsOptions, UpkeepOptions,
+    IngestFileOptions, PageWriteMode, ReadTarget, RecapOptions, ReviewReportOptions, RunOptions,
+    ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions, SyncSessionsOptions, UpkeepOptions,
 };
 pub use error::WikiError;
 pub use graph::GraphInclude;
