@@ -752,3 +752,50 @@ Tests (TDD):
 - Final: `cargo test -p gobby-wiki` → all suites ok (825 lib + integration incl. repinned `cli_contract`); `cargo clippy -p gobby-wiki` clean; `cargo fmt -p gobby-wiki -- --check` clean; `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_cli_contracts.py -q` → 9 passed (vendored == workspace == installed binary at v14); `uv run ruff check`/`format --check` clean on `tests/test_cli_contracts.py`.
 - `uv run gobby test-quality audit tests/test_cli_contracts.py crates/gwiki/src/indexer.rs --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 22 tests scanned, 0 issues, exit 0.
 - Live check: rebuilt release `gwiki`, installed to `~/.gobby/bin/gwiki`, ran `gwiki index --force` on the project vault (3623 documents, 4m40s, no degradations); `gwiki pages` now lists `tags: ["gwiki","compiled","entity"]` for `knowledge/concepts/gobby.md` (previously `[]` everywhere).
+
+## #17758 — Wiki data layer + model rewrite (plan section 2.1)
+
+### Plan
+
+**Investigation summary**
+- Backend contracts (all live in `src/gobby/servers/routes/wiki.py`): every wiki route wraps `gwiki` CLI JSON in `{ok, command, payload, stderr}` (`GwikiGateway._success_envelope`); command failures map to `{ok:false, status:"failed", payload, stderr, error:{type,returncode,message}}` with HTTP 409/404/412 for `already_exists`/`not_found`/`precondition_failed` on write/delete (`_PAGE_MUTATION_STATUS`), 502 otherwise.
+- Live payload shapes captured from `~/.gobby/bin/gwiki --format json` (HTTP is auth-gated; gateway shells out to the same binary):
+  - `pages`: `{command, scope, pages:[{path,title,tags,content_hash,updated_at}], outputs:[{path,size,modified}]}` — 3623 pages, roots `code/` (3232), `knowledge/` (390), `raw/` (1). recaps/_index/log not listed today; tree builder stays data-driven.
+  - `graph` (also `wiki/outputs/graph.json`, 1846 nodes): `{command, degraded, degraded_sources, nodes:[{id,kind,scope_kind,scope_id,path,title}], edges:{links|imports|calls|callers|trust|audit → [{source,target,kind,raw_target?}]}, analytics:{bridges,centrality,communities,god_nodes,hotspots,unexpected_links}}`. Node kinds: wiki_page 328, source 337, citation 337, unresolved_target 835, code 8, document 1.
+  - `read`: `{command, scope, status, requested, wiki_path, absolute_path, title, content, content_format, content_hash, byte_len, truncated, candidates, degradations}` — content includes raw frontmatter block.
+  - `backlinks`: `{command, scope, page, backlinks:[{source_path,target_path,raw_target}]}` (shape from `crates/gwiki/src/commands/backlinks.rs`).
+  - `ask`: `{command, scope, query, status, degraded, degraded_sources, hits, sources, code_citations:[{file,line?,symbol?}], evidence, prompt_token_budget, prompt_tokens_estimated, truncated, truncated_components, warnings, hint?, ai?, synthesis?}`; synthesis `{answer, model, citation_check:{status, checked_claims, unsupported_claims}}`, ai `{requested, requested_mode, route, status, model, error}` (from `crates/gwiki/tests/cli_contract.rs` representative outputs + live capture).
+  - `status`: `{command, scope, status, runtime, daemon_url, services:{embeddings,falkordb,postgres,qdrant → {configured,...}}}`; `health`: `{command, scope, broken_links, duplicate_*, stale_*, uncited_sources, uncompiled_sources, page_confidence, ...}`.
+- `POST /api/pipelines/run` body is `{name, inputs, project_id?, background}` (`PipelineRunRequest`); 202 on detached start.
+- Frontend conventions: `useWiki.ts` exports `WikiEnvelope`/`WikiJson`/`WikiSourceRecord` and keeps status/health/sources + action helpers — 2.1 reuses its envelope types and its `scopeQuery` idiom. Tests: vitest (jsdom, globals) via `npm test` from `web/`; fixtures-as-TS established (`activity/__tests__/fixtures`). `js-yaml` + types already deps. Graph token mapping precedent: `KnowledgeGraph.tsx` `ENTITY_TYPE_COLOR_VARS` + `resolveCssVar`; deutan-safe state palette per `.impeccable.md` (info 250, warning 75, destructive 350, success = lightness-only 125; never hue-only).
+
+**Changes**
+1. `web/src/components/activity/wiki/WikiTabModel.ts` (new): `WikiMode`, `WikiPageMeta`, `WikiOutputMeta`, `WikiGraphNode/Edge/Payload`, `PageTreeNode`; `pageKindFromPath`, `breadcrumbSegments`, `codePathToSourcePath`; `buildPageTree(pages, outputs, rootFilter?)` grouping by path segments (folders-first, alphabetical); `buildNodeIndex(pages)` (path→meta + normalized title/alias→path) and `resolveWikilinkTarget(index, target)`; graph display tables `wikiNodeColorVar(kind)` (deutan-safe token vars) and `wikiNodeVal(degree)` = `2 + 3*sqrt(degree)` clamped.
+2. `web/src/components/activity/wiki/WikiTabData.ts` (new): scope/query helpers + defensive `asRecord`/`fieldText`/`fieldNumber`/`fieldStringList` helpers; fetchers `fetchGraph`, `fetchPages`, `fetchPage`, `fetchBacklinks`, `fetchSearch`, `fetchAsk` (AbortSignal), `savePage` (412 → typed conflict result), `createPage`, `deletePage`, `launchResearch`; normalizers `normalizeGraph` (edges object → flat typed list), `normalizePages`, `normalizePage` (js-yaml frontmatter split), `normalizeAskAnswer` (answer, wikilink citations `{target,title,resolvedPath|null}`, grounding warnings), `normalizeBacklinks`, `summarizeWikiStatus` (successor to deleted `buildWikiSummary`; feeds 2.2 degraded banner).
+3. `web/src/components/activity/wiki/__tests__/fixtures.ts` (new): envelope fixtures shaped from the live captures above + graph fixture subset carrying all six node kinds and links/trust/audit edges with `raw_target`.
+4. `web/src/components/activity/wiki/__tests__/WikiTabModel.test.ts` (new): tree building (roots, nesting, outputs, rootFilter, sort), node-index + wikilink target resolution (path, path-sans-.md, title, alias, miss), path helpers (incl. `codePathToSourcePath` round-trips), color/val tables.
+5. `web/src/components/activity/wiki/__tests__/WikiTabData.test.ts` (new): normalizers pinned by fixtures (graph flatten, pages split, frontmatter split, ask normalization incl. citations + grounding warnings, backlinks, status summary incl. degraded/unavailable), savePage 412 conflict normalization, launchResearch body, fetch URL/scope composition (mocked fetch).
+
+**Test commands**
+- Red/green/final: `cd web && npm test -- src/components/activity/wiki`
+- Final validation: `cd web && npm run type-check && npx eslint src/components/activity/wiki --report-unused-disable-directives --max-warnings 0`
+- Test-quality audit: `uv run gobby test-quality audit web/src/components/activity/wiki/__tests__ --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` (TS may be unsupported → pair with the focused vitest run above per TDD skill).
+
+**Notes**
+- Data layer is UI-less (no visual output), but `.impeccable.md` read and honored for the graph token tables (deutan-safe, never hue-only).
+- Tree/citation resolution built on the lightweight `pages` listing; graph payload stays lazy (fetched only by graph view / unresolved-mentions consumers).
+- 1,000-line source cap respected (model ~350, data ~430).
+
+### Implementation notes (#17758)
+
+- `WikiTabModel.ts` (250 lines): pure models + helpers exactly as planned. Tree builder is fully data-driven (no hardcoded vault roots) since the live `pages` payload currently omits `recaps/`, `_index.md`, and `log.md` — fixtures include them so the tree handles their return. Node index resolves exact path → path+`.md` → normalized title/alias. Graph tokens: wiki_page `--accent`, code `--color-info`, document `--color-success-foreground`, source `--color-warning-foreground`, citation `--color-review`, unresolved_target/fallback `--text-muted` (matches KnowledgeGraph precedent; never hue-only). `wikiNodeVal` = 2+3·√degree clamped to [2,20].
+- `WikiTabData.ts` (622 lines): `asRecord`/`fieldText`/`fieldNumber`/`fieldStringList` defensive helpers; envelope transport mirrors `useWiki` (`detail.error.message`/`detail.stderr` extraction); `normalizeGraph` flattens the kind-keyed edges object; `normalizePage` splits frontmatter with js-yaml, malformed block degrades to `{}`; `normalizeAskAnswer` extracts deduped wikilink citations from the synthesis answer with optional resolver + grounding warnings from `citation_check.unsupported_claims`/`ai.error`/payload warnings; `summarizeWikiStatus` maps unconfigured services → degraded, gateway error → unavailable, plus health counts. `savePage` normalizes 412/409 (code from `detail.payload.code`) to a typed conflict; `launchResearch` posts `{name:'wiki-research', inputs, project_id, background:true}`.
+- Both source files well under the 1,000-line cap.
+
+### TDD evidence (#17758)
+
+- **Red**: `cd web && npm test -- src/components/activity/wiki` → `Test Files 2 failed (2)` — `Failed to resolve import "../WikiTabModel"` (implementation absent).
+- **Green**: same command after implementation → `Test Files 2 passed (2), Tests 53 passed (53)`.
+- **Refactor/final green**: replaced two `.at(-1)` uses flagged by `tsc` (lib target); final `npm run type-check` clean, `npm test -- src/components/activity/wiki` → 53 passed, `npx eslint src/components/activity/wiki --max-warnings 0` clean.
+- **Test-quality audit**: `uv run gobby test-quality audit web/src/components/activity/wiki/__tests__ --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 3 files, 44 tests, 0 issues, 0 new ≥ high.
+- Fixtures shaped from live `gwiki pages/read/backlinks/ask/status/health --format json` captures (2026-07-10) and a `wiki/outputs/graph.json` subset carrying all six node kinds; synthesis ask fixture shaped from the representative output pinned in `crates/gwiki/tests/cli_contract.rs`.
