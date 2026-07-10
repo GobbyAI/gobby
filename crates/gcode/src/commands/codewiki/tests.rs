@@ -24,6 +24,7 @@ mod modules;
 mod onboarding;
 mod progress;
 mod provenance;
+mod publication;
 mod purge;
 mod repair;
 mod reuse;

@@ -27,7 +27,7 @@ from gobby.storage.cron_models import CronJob
 logger = logging.getLogger(__name__)
 
 CODEWIKI_NIGHTLY_CRON_EXPR = "0 3 * * *"
-CODEWIKI_NIGHTLY_AI = "auto"
+CODEWIKI_NIGHTLY_AI = "daemon"
 
 # The first full run LLM-summarizes every core file (thousands of pages on a
 # large repo); steady-state incremental runs finish in minutes via hash reuse.

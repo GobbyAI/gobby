@@ -42,6 +42,10 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000000"
 PROJECT_NAME = "gobby"
 
 
+def test_nightly_codewiki_requires_daemon_ai() -> None:
+    assert CODEWIKI_NIGHTLY_AI == "daemon"
+
+
 class FakeCronExecutor:
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}

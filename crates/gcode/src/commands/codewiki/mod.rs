@@ -145,6 +145,7 @@ mod ownership;
 mod paths;
 mod progress;
 mod prompts;
+mod publication;
 mod purge;
 mod relationship_facts;
 mod render;
@@ -169,6 +170,7 @@ pub(crate) use build::{
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
 };
+pub(crate) use publication::{CodewikiPublication, PublicationFingerprint};
 pub(crate) use reuse_guard::{
     file_module_link_key, module_child_links_key, restamp_file_module_link,
     reused_module_child_links_current,

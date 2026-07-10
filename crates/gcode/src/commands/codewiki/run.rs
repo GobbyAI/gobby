@@ -13,12 +13,13 @@ use crate::visibility;
 
 use super::{
     AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput,
-    CodewikiProgress, CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk,
-    MAX_EDGE_LIMIT, ReusePlan, build_audit_context, build_codewiki_changes_doc,
-    build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
-    build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
-    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
-    resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
+    CodewikiProgress, CodewikiPublication, CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope,
+    DocSink, LeadingChunk, MAX_EDGE_LIMIT, PublicationFingerprint, ReusePlan, build_audit_context,
+    build_codewiki_changes_doc, build_codewiki_index_snapshot, build_feature_catalog_doc,
+    build_system_model, build_truth_digest, direct_route_candidate_error,
+    fetch_codewiki_graph_edges, generation, in_scope, io, is_core_file, read_ownership_meta,
+    resolve_text_generator, resolve_text_verifier, resolve_tool_loop_generator,
+    write_ownership_meta, write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -175,21 +176,8 @@ pub fn run(
     } else {
         progress.emit("reading metadata for scoped write");
     }
-    let previous_meta = if doc_scope.is_unscoped() {
-        Some(io::read_codewiki_meta(out_path)?)
-    } else {
-        None
-    };
-    let index_snapshot = if doc_scope.is_unscoped() {
-        Some(build_codewiki_index_snapshot(&ctx.project_root, &input)?)
-    } else {
-        None
-    };
-    let mut ownership_meta = if doc_scope.is_unscoped() {
-        Some(read_ownership_meta(out_path)?)
-    } else {
-        None
-    };
+    let staging_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
+    let index_snapshot = doc_scope.is_unscoped().then(|| staging_snapshot.clone());
     // The requested generation settings are part of the reuse comparison
     // (#17530): flags like `--ai-aggregate-candidate` change what a page would
     // say without changing any source hash. With AI off they shape nothing, so
@@ -199,16 +187,39 @@ pub fn run(
     } else {
         AiGenerationSettings::from_options(&ai)
     };
+    let fingerprint = PublicationFingerprint::from_run(
+        &ctx.project_root,
+        &input.files,
+        ai_mode,
+        &ai_settings,
+        ai_outcome,
+        aggregate_ai_outcome,
+        &scopes,
+        since_changed.as_ref(),
+        &staging_snapshot,
+    )?;
+    let publication = CodewikiPublication::prepare(out_path, &fingerprint)?;
+    let stage_path = publication.stage_out().to_path_buf();
+    let previous_meta = if doc_scope.is_unscoped() {
+        Some(io::read_codewiki_meta(&stage_path)?)
+    } else {
+        None
+    };
+    let mut ownership_meta = if doc_scope.is_unscoped() {
+        Some(read_ownership_meta(&stage_path)?)
+    } else {
+        None
+    };
     let mut reuse_plan = ReusePlan::load_with_since_and_ai_outcome(
         &ctx.project_root,
-        out_path,
+        &stage_path,
         ai_mode,
         since_changed.clone(),
         ai_outcome,
     )?
     .with_ai_settings(ai_settings.clone());
     let mut sink =
-        DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?
+        DocSink::open_with_prune_scope(&ctx.project_root, &stage_path, ai_mode, doc_scope.clone())?
             .with_ai_outcome(ai_outcome)
             .with_ai_settings(ai_settings)
             .with_since(since_changed);
@@ -263,7 +274,7 @@ pub fn run(
         ))?;
     }
     if let Some(ownership_meta) = ownership_meta.as_ref() {
-        write_ownership_meta(out_path, ownership_meta)?;
+        write_ownership_meta(&stage_path, ownership_meta)?;
     }
     let symbol_count = input
         .symbols
@@ -287,13 +298,15 @@ pub fn run(
             degraded_pages.join(", ")
         );
     }
-    let changed_paths = sink.finish(index_snapshot)?;
-    let skipped = generated_pages.saturating_sub(changed_paths.len());
+    sink.finish(index_snapshot)?;
     if doc_scope.is_unscoped() {
         let truth_digest =
             build_truth_digest(&system_model, &ctx.project_id, file_count, module_count);
-        write_truth_digest(out_path, &doc_scope, &truth_digest)?;
+        write_truth_digest(&stage_path, &doc_scope, &truth_digest)?;
     }
+    progress.emit("publishing completed codewiki stage");
+    let changed_paths = publication.publish()?;
+    let skipped = generated_pages.saturating_sub(changed_paths.len());
 
     let summary = CodewikiRunSummary {
         command: "codewiki",
