@@ -76,7 +76,11 @@ enum CliCommand {
     /// Create gwiki-owned derived storage.
     Setup(SetupArgs),
     /// Index markdown and source notes in the selected scope.
-    Index,
+    Index {
+        /// Re-index documents even when content hashes are unchanged.
+        #[arg(long)]
+        force: bool,
+    },
     /// Collect recognized inbox drops into raw storage.
     Collect,
     /// Capture a local source file into the wiki inbox.
@@ -760,7 +764,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             options: args.into(),
         }),
-        CliCommand::Index => Ok(Command::Index { scope }),
+        CliCommand::Index { force } => Ok(Command::Index { scope, force }),
         CliCommand::Collect => Ok(Command::Collect { scope }),
         CliCommand::IngestFile {
             path,

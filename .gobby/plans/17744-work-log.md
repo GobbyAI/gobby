@@ -714,3 +714,41 @@ Tests (TDD):
 - Final: `GOBBY_TEST_PROTECT=1 uv run pytest tests/code_index/ tests/servers/routes/test_code_index_routes.py` → 251 passed (includes the 2 repaired phase7 contract tests).
 - `uv run ruff format`/`check` clean on all 5 touched files; `uv run mypy src/gobby/code_index/codewiki_trigger.py src/gobby/servers/routes/code_index.py` → no issues.
 - `uv run gobby test-quality audit tests/code_index/test_codewiki_trigger.py tests/servers/routes/test_code_index_routes.py tests/code_index/test_gcode_phase7_contract.py --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 51 tests scanned, 0 issues, exit 0.
+
+## #17805 — Populate gwiki_documents.frontmatter at index time so `gwiki pages` tags work
+
+### Plan (2026-07-10, session #8116)
+
+**Investigation.** `PostgresWikiStore::upsert_document` (`crates/gwiki/src/store/postgres.rs:127`) hardcodes `frontmatter = json!({})`, so the JSONB column never carries page frontmatter and `gwiki pages` always shows `tags: []`. `parse_wiki_document` (`crates/gwiki/src/indexer.rs:291`) builds `WikiDocument { path, kind, title, content_hash, body }` without touching the existing frontmatter parser (`crates/gwiki/src/frontmatter.rs::parse_frontmatter`, which returns `WikiFrontmatter` with `as_json()` producing exactly the JSONB shape needed, unknown keys preserved). The incremental indexer (`index_vault`) skips `Unchanged` files by content hash, so already-indexed rows keep `{}` forever without a backfill path. `gwiki index` CLI surface is pinned three ways: `crates/gwiki/src/contract.rs` (contract_version 13), `crates/gwiki/contract/gwiki.contract.json` (pinned by `crates/gwiki/tests/cli_contract.rs`), and `tests/contracts/gwiki.contract.json` (Python `tests/test_cli_contracts.py` compares vendored vs workspace vs installed binary) — all three plus the installed `~/.gobby/bin/gwiki` must move together (same trap as the phase7 contract memory).
+
+**Changes.**
+1. `crates/gwiki/src/store/types.rs` — `WikiDocument` gains `pub frontmatter: serde_json::Value` (serde_json::Value is Eq, derives keep working).
+2. `crates/gwiki/src/indexer.rs` — `parse_wiki_document` parses frontmatter from the body via `parse_frontmatter`, storing `metadata.as_json()`; malformed/unterminated frontmatter degrades to `json!({})` so one bad page cannot fail a vault index. `IndexOptions` gains `pub force: bool` (default false). `index_vault`'s `Unchanged` arm re-runs `index_file` (recording the truthful `Unchanged` ingestion event) when `force` is set — this is the backfill path.
+3. `crates/gwiki/src/store/postgres.rs` — `upsert_document` writes `document.frontmatter` instead of the hardcoded `json!({})`.
+4. `crates/gwiki/src/support/config.rs` — `index_options_from_config` sets `force: false` (config never forces; it is per-invocation).
+5. CLI plumbing for `gwiki index --force`: `main.rs` `CliCommand::Index { force }`, `api.rs` `Command::Index { scope, force }`, `commands/mod.rs` dispatch, `commands/index.rs` `execute`/`index_resolved_scope_report` apply the flag; `index_resolved_scope` (refresh/sources callers) stays force=false.
+6. Contract sync: `contract.rs` index command gains `FlagContract::switch("--force")`, contract_version 13→14; regenerate `crates/gwiki/contract/gwiki.contract.json`; copy to `tests/contracts/gwiki.contract.json`; rebuild + reinstall `~/.gobby/bin/gwiki`.
+7. Test fixtures gaining the new field: `indexer.rs::seed_derived_rows`, `support/graph.rs` two `WikiDocument` literals, `indexer.rs:575` `IndexOptions` literal.
+
+**Tests (TDD, in `crates/gwiki/src/indexer.rs` tests).**
+- `indexed_documents_carry_parsed_frontmatter` — YAML tags land in `store.documents[..].frontmatter`.
+- `documents_without_frontmatter_store_empty_object`.
+- `malformed_frontmatter_falls_back_to_empty_object` — unterminated block still indexes.
+- `force_reindexes_unchanged_documents` — second run without force skips (document_upserts unchanged); with force re-upserts and repopulates a blanked frontmatter.
+- Red is a compile error (E0609/E0063 missing field) for the field tests plus the new-flag contract drift; documented as expected.
+
+**Commands.** `cargo test -p gobby-wiki`, `cargo clippy -p gobby-wiki`, `cargo fmt -p gobby-wiki`, Python-side `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_cli_contracts.py -v`, `cargo build --release -p gobby-wiki` + install to `~/.gobby/bin/gwiki`. Test-quality audit: Rust is unsupported by the audit CLI — evidence is the focused repo-native `cargo test -p gobby-wiki` run per the TDD skill's unsupported-language clause; the Python contract JSON change carries no new tests.
+
+### Implementation notes (#17805)
+
+- `WikiDocument` carries `frontmatter: serde_json::Value`; `parse_wiki_document` fills it via `parse_frontmatter(&body).map(|p| p.metadata.as_json())` with `{}` fallback for malformed blocks. `upsert_document` writes `document.frontmatter` to the JSONB param (the `json!({})` hardcode is gone). Memory store flows the field through unchanged.
+- Backfill: `IndexOptions.force` re-runs `index_file` for `Unchanged` events while recording the truthful `Unchanged` ingestion event; exposed as `gwiki index --force` (clap → `Command::Index { scope, force }` → `execute(scope, run_options, force)`); `index_resolved_scope` (refresh/sources callers) stays non-forced; config resolution never forces.
+- Contract sync (contract_version 13→14, index gains `--force` switch) needed FIVE synchronized surfaces: `contract.rs`, `crates/gwiki/tests/cli_contract.rs` (pins version), `crates/gwiki/contract/gwiki.contract.json`, `tests/contracts/gwiki.contract.json` (both regenerated from the built binary), `tests/test_cli_contracts.py::test_gwiki_contract_documents_daemon_parsed_keys` (pins version), plus reinstalling `~/.gobby/bin/gwiki` so the installed-binary contract source matches.
+
+### TDD evidence (#17805)
+
+- Red: `cargo test -p gobby-wiki indexer` → 7 compile errors, E0560 `IndexOptions` has no field `force` + E0609 no field `frontmatter` on `WikiDocument` (expected red for struct-field TDD).
+- Green: `cargo test -p gobby-wiki --lib indexer` → 14 passed (4 new: `indexed_documents_carry_parsed_frontmatter`, `documents_without_frontmatter_store_empty_object`, `malformed_frontmatter_falls_back_to_empty_object`, `force_reindexes_unchanged_documents`).
+- Final: `cargo test -p gobby-wiki` → all suites ok (825 lib + integration incl. repinned `cli_contract`); `cargo clippy -p gobby-wiki` clean; `cargo fmt -p gobby-wiki -- --check` clean; `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_cli_contracts.py -q` → 9 passed (vendored == workspace == installed binary at v14); `uv run ruff check`/`format --check` clean on `tests/test_cli_contracts.py`.
+- `uv run gobby test-quality audit tests/test_cli_contracts.py crates/gwiki/src/indexer.rs --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 22 tests scanned, 0 issues, exit 0.
+- Live check: rebuilt release `gwiki`, installed to `~/.gobby/bin/gwiki`, ran `gwiki index --force` on the project vault (3623 documents, 4m40s, no degradations); `gwiki pages` now lists `tags: ["gwiki","compiled","entity"]` for `knowledge/concepts/gobby.md` (previously `[]` everywhere).

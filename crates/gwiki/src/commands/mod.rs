@@ -43,7 +43,7 @@ pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOu
     match command {
         Command::Init { scope } => init::execute(scope),
         Command::Setup { scope, options } => setup::execute(scope, options),
-        Command::Index { scope } => index::execute(scope, run_options),
+        Command::Index { scope, force } => index::execute(scope, run_options, force),
         Command::Collect { scope } => collect::execute(scope),
         Command::IngestFile {
             path,

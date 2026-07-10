@@ -18,6 +18,7 @@ pub enum Command {
     },
     Index {
         scope: ScopeSelection,
+        force: bool,
     },
     Collect {
         scope: ScopeSelection,

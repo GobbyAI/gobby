@@ -19,6 +19,9 @@ pub struct WikiDocument {
     pub kind: WikiDocumentKind,
     pub title: Option<String>,
     pub content_hash: String,
+    /// Parsed page frontmatter as a JSON object; `{}` when the page has none
+    /// or the block is malformed.
+    pub frontmatter: serde_json::Value,
     pub body: String,
 }
 

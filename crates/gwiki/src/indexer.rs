@@ -16,12 +16,17 @@ use crate::store::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IndexOptions {
     pub respect_gitignore: bool,
+    /// Re-index files whose content hash is unchanged. Backfills derived rows
+    /// (e.g. `gwiki_documents.frontmatter`) for documents indexed before the
+    /// current schema population rules existed.
+    pub force: bool,
 }
 
 impl Default for IndexOptions {
     fn default() -> Self {
         Self {
             respect_gitignore: true,
+            force: false,
         }
     }
 }
@@ -122,15 +127,25 @@ pub fn index_vault(
                 })?;
             }
             IndexEvent::Unchanged(path) => {
-                let content_hash = current_hashes
-                    .get(&path)
-                    .or_else(|| previous_hashes.get(&path))
-                    .cloned();
-                store.record_ingestion(WikiIngestion {
-                    path,
-                    event: WikiIngestionEvent::Unchanged,
-                    content_hash,
-                })?;
+                if options.force {
+                    index_file(
+                        vault_root,
+                        store,
+                        path,
+                        WikiIngestionEvent::Unchanged,
+                        &current_hashes,
+                    )?;
+                } else {
+                    let content_hash = current_hashes
+                        .get(&path)
+                        .or_else(|| previous_hashes.get(&path))
+                        .cloned();
+                    store.record_ingestion(WikiIngestion {
+                        path,
+                        event: WikiIngestionEvent::Unchanged,
+                        content_hash,
+                    })?;
+                }
             }
             IndexEvent::Skipped { path, .. } => {
                 store.record_ingestion(WikiIngestion {
@@ -312,6 +327,11 @@ fn parse_wiki_document(
         })
         .collect();
     let links = extract_links(path, &body);
+    // A malformed (e.g. unterminated) block degrades to `{}` so one bad page
+    // cannot fail a whole vault index.
+    let frontmatter = crate::frontmatter::parse_frontmatter(&body)
+        .map(|parsed| parsed.metadata.as_json())
+        .unwrap_or_else(|_| serde_json::json!({}));
 
     ParsedWikiDocument {
         document: WikiDocument {
@@ -319,6 +339,7 @@ fn parse_wiki_document(
             kind,
             title,
             content_hash: content_hash.clone(),
+            frontmatter,
             body,
         },
         chunks,
@@ -461,6 +482,7 @@ mod tests {
                 kind: WikiDocumentKind::Topic,
                 title: Some("Stale".to_string()),
                 content_hash: "old".to_string(),
+                frontmatter: serde_json::json!({}),
                 body: "stale".to_string(),
             },
         );
@@ -574,6 +596,7 @@ mod tests {
             &mut disabled_store,
             IndexOptions {
                 respect_gitignore: false,
+                ..IndexOptions::default()
             },
             &mut crate::progress::ProgressOptions::default(),
         )
@@ -776,5 +799,96 @@ mod tests {
                 .expect_err("limit rejects vault");
 
         assert!(matches!(error, IndexError::MemoryIndexTooLarge { .. }));
+    }
+
+    #[test]
+    fn indexed_documents_carry_parsed_frontmatter() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let body = "---\ntitle: Rust\ntags:\n  - systems\n  - language\n---\n# Rust\n\nBody.\n";
+        write_file(tempdir.path(), "knowledge/topics/rust.md", body);
+        let mut store = MemoryWikiStore::default();
+
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
+
+        let document = &store.documents[&PathBuf::from("knowledge/topics/rust.md")];
+        assert_eq!(
+            document.frontmatter,
+            serde_json::json!({"title": "Rust", "tags": ["systems", "language"]})
+        );
+        assert_eq!(document.body, body);
+    }
+
+    #[test]
+    fn documents_without_frontmatter_store_empty_object() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_file(tempdir.path(), "knowledge/topics/plain.md", "# Plain\n");
+        let mut store = MemoryWikiStore::default();
+
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
+
+        let document = &store.documents[&PathBuf::from("knowledge/topics/plain.md")];
+        assert_eq!(document.frontmatter, serde_json::json!({}));
+    }
+
+    #[test]
+    fn malformed_frontmatter_falls_back_to_empty_object() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let body = "---\ntitle: Broken\n\n# Broken\n\nNo closing delimiter.\n";
+        write_file(tempdir.path(), "knowledge/topics/broken.md", body);
+        let mut store = MemoryWikiStore::default();
+
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
+
+        let document = &store.documents[&PathBuf::from("knowledge/topics/broken.md")];
+        assert_eq!(document.frontmatter, serde_json::json!({}));
+        assert_eq!(document.body, body);
+    }
+
+    #[test]
+    fn force_reindexes_unchanged_documents() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let body = "---\ntags:\n  - keep\n---\n# Stable\n";
+        write_file(tempdir.path(), "knowledge/concepts/stable.md", body);
+        let mut store = MemoryWikiStore::default();
+
+        index_vault_for_test(tempdir.path(), &mut store).expect("first index");
+        let path = PathBuf::from("knowledge/concepts/stable.md");
+        let upserts_after_first = store.document_upserts;
+
+        // Simulate a row indexed before frontmatter persistence existed.
+        store
+            .documents
+            .get_mut(&path)
+            .expect("indexed document")
+            .frontmatter = serde_json::json!({});
+
+        index_vault_for_test(tempdir.path(), &mut store).expect("second index");
+        assert_eq!(store.document_upserts, upserts_after_first);
+        assert_eq!(store.documents[&path].frontmatter, serde_json::json!({}));
+
+        index_vault(
+            tempdir.path(),
+            &mut store,
+            IndexOptions {
+                force: true,
+                ..IndexOptions::default()
+            },
+            &mut crate::progress::ProgressOptions::default(),
+        )
+        .expect("forced index");
+
+        assert_eq!(store.document_upserts, upserts_after_first + 1);
+        assert_eq!(
+            store.documents[&path].frontmatter,
+            serde_json::json!({"tags": ["keep"]})
+        );
+        assert_eq!(
+            store
+                .ingestions
+                .last()
+                .expect("forced ingestion recorded")
+                .event,
+            WikiIngestionEvent::Unchanged
+        );
     }
 }

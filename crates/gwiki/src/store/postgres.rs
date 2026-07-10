@@ -124,7 +124,6 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         // serde_json::Value params map natively to JSONB; string params would fail
         // ToSql type checks against jsonb columns (parameter serialization error).
         let provenance = json!({ "source_path": path });
-        let frontmatter = json!({});
         let (scope_kind, scope_id, project_id, topic_name) = self.scope_params()?;
 
         self.conn.execute(
@@ -159,7 +158,7 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
                 &document.title,
                 &source_kind,
                 &document.content_hash,
-                &frontmatter,
+                &document.frontmatter,
                 &provenance,
                 &document.body,
             ],

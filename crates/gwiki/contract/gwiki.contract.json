@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 13,
+  "contract_version": 14,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -82,7 +82,16 @@
       "summary": "Index markdown and source notes in the selected scope.",
       "daemon_consumed": true,
       "positionals": [],
-      "flags": [],
+      "flags": [
+        {
+          "name": "--force",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
       "json_output_keys": [
         "command",
         "scope",

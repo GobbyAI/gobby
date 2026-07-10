@@ -85,13 +85,14 @@ fn phase_label(phase: ProgressPhase) -> &'static str {
 pub(crate) fn execute(
     selection: ScopeSelection,
     run_options: RunOptions,
+    force: bool,
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
     ensure_scope_root(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let mut progress = StderrWikiProgress::new(run_options.quiet);
     let mut progress_options = ProgressOptions::with_sink(&mut progress);
-    let report = index_resolved_scope_report(&scope, &mut progress_options)?;
+    let report = index_resolved_scope_report(&scope, &mut progress_options, force)?;
     // Keep the deterministic catalog (`code/INDEX.md`, `knowledge/INDEX.md`,
     // `_index.md`) in sync with on-disk vault state after indexing. Previously
     // only `compile`/`recap` regenerated it, so the codewiki nightly flow
@@ -105,17 +106,19 @@ pub(crate) fn execute(
 pub(crate) fn index_resolved_scope(
     scope: &crate::scope::ResolvedScope,
 ) -> Result<IndexCounts, WikiError> {
-    Ok(index_resolved_scope_report(scope, &mut ProgressOptions::default())?.counts)
+    Ok(index_resolved_scope_report(scope, &mut ProgressOptions::default(), false)?.counts)
 }
 
 fn index_resolved_scope_report(
     scope: &crate::scope::ResolvedScope,
     progress: &mut ProgressOptions<'_>,
+    force: bool,
 ) -> Result<IndexReport, WikiError> {
     if let Some(database_url) = database_url_for("gwiki index")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki index")?;
         let search_scope = search_scope_for_resolved(scope);
-        let index_options = index_options_from_conn(&mut conn)?;
+        let mut index_options = index_options_from_conn(&mut conn)?;
+        index_options.force = force;
         {
             let mut store = postgres_store_for_search(&mut conn, &search_scope);
             indexer::index_vault(scope.root(), &mut store, index_options, progress)?;
@@ -138,7 +141,8 @@ fn index_resolved_scope_report(
         });
     }
 
-    let index_options = local_index_options()?;
+    let mut index_options = local_index_options()?;
+    index_options.force = force;
     let mut store = store::MemoryWikiStore::default();
     indexer::index_vault(scope.root(), &mut store, index_options, progress)?;
     Ok(IndexReport {

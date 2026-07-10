@@ -138,6 +138,8 @@ fn resolve_index_options(
 fn index_options_from_config(config: gobby_core::config::IndexingConfig) -> indexer::IndexOptions {
     indexer::IndexOptions {
         respect_gitignore: config.respect_gitignore,
+        // Forcing is a per-invocation decision (CLI flag), never configuration.
+        force: false,
     }
 }
 

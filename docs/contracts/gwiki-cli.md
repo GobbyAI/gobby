@@ -5,7 +5,14 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 13
+`contract_version`: 14
+
+Version 14 adds the `--force` switch to `gwiki index`: re-index documents
+whose content hashes are unchanged. This backfills derived rows (such as
+`gwiki_documents.frontmatter`, populated at index time since this version)
+for documents indexed before the current schema population rules existed.
+Forced re-indexes of unchanged files still record `unchanged` ingestion
+events.
 
 Version 13 adds the vault mutation surface: `gwiki page write --path
 <knowledge/….md> [--mode upsert|create] [--expected-hash <sha256>]` (content

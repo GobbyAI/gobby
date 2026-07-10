@@ -185,6 +185,7 @@ mod tests {
                 kind: WikiDocumentKind::Topic,
                 title: Some("Rust".to_string()),
                 content_hash: "hash".to_string(),
+                frontmatter: serde_json::json!({}),
                 body: "# Rust".to_string(),
             },
         );
@@ -226,6 +227,7 @@ mod tests {
                 kind: WikiDocumentKind::Topic,
                 title: title.map(str::to_string),
                 content_hash: "hash".to_string(),
+                frontmatter: serde_json::json!({}),
                 body: body.to_string(),
             },
         );
