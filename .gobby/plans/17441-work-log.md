@@ -336,3 +336,89 @@ Additional validation:
 
 Test gaps: none for token-present, token-missing, jq, fallback, generated-template,
 or marker-installed behavior.
+
+## 2026-07-10 — #17794 Send token from Rust clients and remove dead broker paths
+
+Session: #8117
+
+Plan:
+
+1. Inspect the shared AI transport, ghook delivery/diagnostics, graph lifecycle,
+   and standalone database resolver paths with gcode.
+2. Add focused loopback HTTP tests before each client implementation and capture
+   the missing-bearer failures.
+3. Centralize token reading and bearer formatting in gcore, authenticate Rust
+   daemon requests, and extend ghook diagnostics.
+4. Remove both dead database-broker clients and their loopback guards/fixtures,
+   run focused crate validation, build release binaries, reinstall, commit, and
+   close.
+
+Implemented:
+
+- Added public `gobby_core::local_token` with the canonical token filename,
+  Authorization header name, trimmed token reader, and `authorization_bearer`.
+- Delegated the gcore AI daemon transport to the shared helper and migrated its
+  HTTP requests from `X-Gobby-Local-Token` to `Authorization: Bearer`.
+- Made ghook read the token best-effort, strip persisted Authorization headers,
+  attach the fresh bearer when available, and send a truly bare request when the
+  token file is missing.
+- Extended ghook diagnose JSON/schema with token-file presence and actionable
+  401 remediation guidance.
+- Added the bearer to gcode graph clear/rebuild lifecycle POSTs.
+- Removed `/api/local/runtime/database-url`, broker timeouts/token readers,
+  loopback-only URL guards, validation helpers, and broker fixtures from gcode
+  and gwiki. Standalone resolution now uses direct environment/bootstrap/gcore
+  DSN sources.
+- Rebuilt and reinstalled release `ghook`, `gcode`, and `gwiki` binaries under
+  `~/.gobby/bin`.
+
+TDD evidence:
+
+- Red: `cargo test -p gobby-hooks post_includes_bearer_when_token_present --
+  --nocapture` failed because the loopback server received no
+  `Authorization: Bearer ghook-test-token` header.
+- Minimal green: the same exact command passed 1 test after the shared helper and
+  ghook bearer attachment were added.
+- Second red: `cargo test -p gobby-code lifecycle_post_includes_bearer --
+  --nocapture` failed because the graph lifecycle POST lacked
+  `Authorization: Bearer gcode-test-token`.
+- Second green: the same exact command passed 1 test after the lifecycle request
+  used the shared helper.
+- Refactor/final green: the exact ghook command passed after the test was
+  strengthened with a stale persisted Authorization header. The companion
+  `cargo test -p gobby-hooks post_omits_authorization_when_token_missing --
+  --nocapture` also passed, proving the disabled-mode fallback stays bare.
+
+Additional validation:
+
+- `cargo test -p gobby-hooks` passed 105 unit, 18 contract, and 3 inbox-fallback
+  tests.
+- `cargo test -p gobby-core --features ai ai::daemon::tests -- --nocapture`
+  passed 14 tests; the focused daemon-agentic header test passed separately.
+- `cargo test -p gobby-code db::resolution::tests -- --nocapture` passed 12
+  resolver tests; `cargo test -p gobby-code lifecycle_post_includes_bearer --
+  --nocapture` passed 1 focused lifecycle test.
+- `cargo test -p gobby-wiki support::env::tests -- --nocapture` passed 2
+  standalone resolver tests.
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy -p gobby-core -p gobby-hooks -p gobby-code -p gobby-wiki
+  --features gobby-core/ai --all-targets -- -D warnings` passed. The gate also
+  exposed concurrent codewiki/gwiki compile drift; those shared work paths were
+  reconciled and left outside this leaf's staged diff.
+- `uv run gobby test-quality audit` on all six touched Rust test-bearing files
+  with the repository baseline scanned 60 tests and reported zero issues.
+- `gcode grep` returned no dead broker route, no loopback guard, and no legacy
+  Rust `X-Gobby-Local-Token` occurrence in the affected clients.
+- `cargo build --release -p gobby-hooks -p gobby-code -p gobby-wiki --bins`
+  passed. `cmp` confirmed each installed binary byte-matches its release artifact;
+  versions report `ghook 0.7.1`, `gcode 1.5.0`, and `gwiki 0.8.0`.
+- `git diff --check` passed on all leaf paths.
+
+Test gaps: none for shared token reading/formatting, gcore AI headers, ghook
+token-present/token-missing/stale-header behavior, graph lifecycle auth,
+diagnostics, broker deletion, standalone DSN fallback, or installed binaries.
+
+Commit attribution: the code-bearing paths landed in shared commit `8f12ad86c`
+when a concurrent agent committed the shared index. That SHA is explicitly linked
+to #17794; the task-specific follow-up commit records this attribution without
+rewriting shared history.
