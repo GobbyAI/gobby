@@ -35,7 +35,7 @@ fn codewiki_hotspots_page_surfaces_analytics_rankings() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let hotspots = docs
         .iter()
         .find(|(path, _)| path == "code/_hotspots.md")
@@ -74,7 +74,7 @@ fn codewiki_hotspots_page_does_not_degrade_when_analytics_unavailable() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let hotspots = docs
         .iter()
         .find(|(path, _)| path == "code/_hotspots.md")

@@ -32,11 +32,14 @@ fn codewiki_verbose_progress_captures_generation_order() {
         }
     };
 
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &input,
-        Some(&mut generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     let changed = write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -88,7 +91,7 @@ fn codewiki_verbose_progress_silent_sink_emits_no_lines() {
 
     assert!(progress.into_lines().is_empty());
 
-    let docs = generate_hierarchical_docs(&progress_input(), None);
+    let docs = collect_doc_pairs(&progress_input(), GenerateDocsOptions::default());
     assert!(
         docs.iter()
             .all(|(_, content)| !content.contains("codewiki:"))
@@ -124,11 +127,14 @@ fn codewiki_verbose_progress_not_serialized_in_summary_json() {
 fn codewiki_verbose_progress_reflects_ai_depth_gating() {
     let mut progress = CodewikiProgress::capture();
     let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &progress_input(),
-        Some(&mut generator),
-        AiDepth::Sections,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Sections,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!docs.is_empty());
     let lines = progress.into_lines();
@@ -151,11 +157,14 @@ fn codewiki_verbose_progress_reflects_ai_depth_gating() {
 
     let mut progress = CodewikiProgress::capture();
     let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &progress_input(),
-        Some(&mut generator),
-        AiDepth::Files,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Files,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!docs.is_empty());
     let lines = progress.into_lines();

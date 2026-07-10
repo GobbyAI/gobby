@@ -73,7 +73,7 @@ fn clusters_modules_from_graph() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
 
     // The container module lists its children; the cross-root call edge did
@@ -318,7 +318,7 @@ fn clusters_without_falkordb() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
 
     assert!(docs_by_path.contains_key("code/modules/src/api.md"));
@@ -407,7 +407,7 @@ fn module_pages_no_longer_emit_mermaid_diagrams() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let rendered = docs_by_path
         .get("code/modules/src/api.md")
@@ -438,7 +438,7 @@ fn module_page_does_not_degrade_without_falkordb() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let module = docs_by_path
         .get("code/modules/src/api.md")
@@ -480,7 +480,7 @@ fn empty_available_graph_does_not_emit_degradation_marker() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let module = docs_by_path
         .get("code/modules/src/api.md")
@@ -520,7 +520,7 @@ fn truncated_graph_does_not_degrade_module_or_emit_diagram() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let module = docs_by_path
         .get("code/modules/src/api.md")

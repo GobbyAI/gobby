@@ -32,11 +32,14 @@ fn generation_systems_at_depth(ai_depth: AiDepth) -> Vec<String> {
         None
     };
     let mut progress = CodewikiProgress::silent();
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &input,
-        Some(&mut generator),
-        ai_depth,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ai_depth,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!docs.is_empty());
     systems
@@ -101,7 +104,13 @@ fn non_code_files_get_content_derived_purpose_from_leading_chunk() {
             None
         }
     };
-    let docs = generate_hierarchical_docs(&input, Some(&mut generator));
+    let docs = collect_doc_pairs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let readme = docs_by_path
         .get("code/files/README.md.md")
@@ -138,7 +147,7 @@ fn repo_front_page_drops_no_symbol_filler_for_root_files() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let repo = docs_by_path.get("code/repo.md").expect("repo doc");
 
@@ -159,11 +168,14 @@ fn aggregate_docs_use_heavier_prompt_tier_than_symbol_docs() {
         None
     };
     let mut progress = CodewikiProgress::silent();
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &input,
-        Some(&mut generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!docs.is_empty());
 
@@ -223,7 +235,7 @@ fn ai_mode_change_invalidates_unchanged_docs() {
             "pub struct Client;",
         )],
     };
-    let docs = generate_hierarchical_docs(&input, None)
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .map(|(path, content)| BuiltDoc::healthy(path, content))
         .collect::<Vec<_>>();
@@ -281,11 +293,14 @@ fn generation_failure_records_degradation_in_frontmatter_and_meta() {
 
     let mut failing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let mut progress = CodewikiProgress::silent();
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &depth_probe_input(),
-        Some(&mut failing_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut failing_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     for path in ["code/repo.md", "code/modules/src.md"] {
@@ -332,11 +347,13 @@ fn generation_failure_records_degradation_in_frontmatter_and_meta() {
 #[test]
 fn ast_only_generation_records_no_degradation() {
     let mut progress = CodewikiProgress::silent();
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &depth_probe_input(),
-        None,
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     for built in &docs {
@@ -382,11 +399,14 @@ fn transient_generation_failure_retries_to_healthy_doc() {
     };
 
     let mut progress = CodewikiProgress::silent();
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &depth_probe_input(),
-        Some(&mut generator),
-        AiDepth::Sections,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ai_depth: AiDepth::Sections,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     let repo = doc(&docs, "code/repo.md");
@@ -734,11 +754,13 @@ fn ai_frontmatter_schema_is_present_on_representative_page_kinds() {
     .expect("write api");
     let out_dir = project.path().join("codewiki");
     let mut progress = CodewikiProgress::silent();
-    let docs = generate_hierarchical_docs_with_progress(
+    let docs = collect_docs(
         &depth_probe_input(),
-        None,
-        AiDepth::Files,
-        &mut progress,
+        GenerateDocsOptions {
+            ai_depth: AiDepth::Files,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     let mut sink = DocSink::open(project.path(), &out_dir, "files")

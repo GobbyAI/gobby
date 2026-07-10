@@ -46,11 +46,14 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -68,14 +71,17 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
         Some("Second-run prose.".to_string())
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut counting_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut counting_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert_eq!(calls, 0, "unchanged sources must make zero LLM calls");
 
@@ -125,11 +131,14 @@ fn stale_render_version_disables_reuse() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -174,14 +183,17 @@ fn stale_render_version_disables_reuse() {
         }
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     assert!(calls > 0, "stale render metadata must not reuse old pages");
@@ -209,11 +221,14 @@ fn per_category_render_version_isolates_invalidation() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -259,14 +274,17 @@ fn per_category_render_version_isolates_invalidation() {
         }
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     // Collect paths whose content changed (regenerated, not reused).
@@ -322,11 +340,14 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Sections,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Sections,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -352,14 +373,17 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
         Some("Regenerated prose.".to_string())
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "sections").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Sections,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Sections,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!second.is_empty());
 
@@ -395,11 +419,14 @@ fn degraded_docs_are_never_reused() {
 
     let mut failing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
     let mut progress = CodewikiProgress::silent();
-    let degraded = generate_hierarchical_docs_with_progress(
+    let degraded = collect_docs(
         &input,
-        Some(&mut failing_generator),
-        AiDepth::Sections,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut failing_generator),
+            ai_depth: AiDepth::Sections,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -417,14 +444,17 @@ fn degraded_docs_are_never_reused() {
         Some("Repaired prose.".to_string())
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "sections").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let repaired = generate_hierarchical_docs_with_reuse(
+    let repaired = collect_docs(
         &input,
-        Some(&mut repairing_generator),
-        AiDepth::Sections,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut repairing_generator),
+            ai_depth: AiDepth::Sections,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(calls > 0, "degraded docs must regenerate, not reuse");
 
@@ -459,29 +489,17 @@ fn reusable_pages_are_rewritten_after_strict_normalization_without_regeneration(
             Some("Generated prose.".to_string())
         }
     };
-    let mut generate = Some::<&mut TextGenerator<'_>>(&mut first_generator);
-    let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
-    let doc_scope = DocPruneScope::unscoped();
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         sink.persist(&doc)?;
         Ok(())
     };
-    generate_hierarchical_docs_core(
+    generate_hierarchical_docs(
         &input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut None,
-        &mut progress,
-        &doc_scope,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ..Default::default()
+        },
         &mut emit,
     )
     .expect("first run");
@@ -497,31 +515,19 @@ fn reusable_pages_are_rewritten_after_strict_normalization_without_regeneration(
         systems.push(system.to_string());
         Some("Unexpected fresh generation.".to_string())
     };
-    let mut generate = Some::<&mut TextGenerator<'_>>(&mut second_generator);
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
-    let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink reopens");
-    let doc_scope = DocPruneScope::unscoped();
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         sink.persist(&doc)?;
         Ok(())
     };
-    generate_hierarchical_docs_core(
+    generate_hierarchical_docs(
         &input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut reuse,
-        &mut progress,
-        &doc_scope,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            reuse: Some(&mut plan),
+            ..Default::default()
+        },
         &mut emit,
     )
     .expect("second run");
@@ -559,10 +565,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
             Some("Generated prose.".to_string())
         }
     };
-    let mut generate = Some::<&mut TextGenerator<'_>>(&mut first_generator);
-    let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
-    let doc_scope = DocPruneScope::unscoped();
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         if doc.path.starts_with("code/modules/") {
             anyhow::bail!("simulated kill before module docs");
@@ -570,21 +573,12 @@ fn interrupted_run_resumes_from_persisted_docs() {
         sink.persist(&doc)?;
         Ok(())
     };
-    let interrupted = generate_hierarchical_docs_core(
+    let interrupted = generate_hierarchical_docs(
         &input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut None,
-        &mut progress,
-        &doc_scope,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ..Default::default()
+        },
         &mut emit,
     );
     assert!(interrupted.is_err(), "simulated kill propagates");
@@ -608,31 +602,19 @@ fn interrupted_run_resumes_from_persisted_docs() {
         systems.push(system.to_string());
         Some("Recovered prose.".to_string())
     };
-    let mut generate = Some::<&mut TextGenerator<'_>>(&mut second_generator);
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
-    let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink reopens");
-    let doc_scope = DocPruneScope::unscoped();
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         sink.persist(&doc)?;
         Ok(())
     };
-    generate_hierarchical_docs_core(
+    generate_hierarchical_docs(
         &input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut reuse,
-        &mut progress,
-        &doc_scope,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            reuse: Some(&mut plan),
+            ..Default::default()
+        },
         &mut emit,
     )
     .expect("resumed run");
@@ -669,11 +651,14 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let mut first = generate_hierarchical_docs_with_progress(
+    let mut first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Sections,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Sections,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     for doc in &mut first {
         doc.summary = None;
@@ -702,14 +687,17 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
         }
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "sections").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Sections,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Sections,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(calls > 0, "missing summaries cannot be reused");
     let changed = write_incremental_doc_set_with_snapshot(
@@ -732,14 +720,17 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
     };
     let mut plan =
         ReusePlan::load(project.path(), &out_dir, "sections").expect("reuse plan reloads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let third = generate_hierarchical_docs_with_reuse(
+    let third = collect_docs(
         &input,
-        Some(&mut third_generator),
-        AiDepth::Sections,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut third_generator),
+            ai_depth: AiDepth::Sections,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!third.is_empty());
     assert_eq!(third_calls, 0, "backfilled metas are fully reusable");
@@ -762,11 +753,14 @@ fn missing_page_on_disk_regenerates_that_doc() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Sections,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Sections,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -788,14 +782,17 @@ fn missing_page_on_disk_regenerates_that_doc() {
         Some("Restored prose.".to_string())
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "sections").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Sections,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Sections,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert_eq!(
         module_prompts.len(),
@@ -931,11 +928,14 @@ fn aggregate_profile_change_regenerates_only_aggregate_pages() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_docs_with_ai_settings(
         project.path(),
@@ -970,14 +970,17 @@ fn aggregate_profile_change_regenerates_only_aggregate_pages() {
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
         .expect("reuse plan loads")
         .with_ai_settings(repinned.clone());
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!second.is_empty());
     assert!(
@@ -1018,11 +1021,14 @@ fn aggregate_candidate_change_regenerates_only_aggregate_pages() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_docs_with_ai_settings(
         project.path(),
@@ -1057,14 +1063,17 @@ fn aggregate_candidate_change_regenerates_only_aggregate_pages() {
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
         .expect("reuse plan loads")
         .with_ai_settings(repinned.clone());
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut second_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!second.is_empty());
     assert!(
@@ -1105,11 +1114,14 @@ fn prose_depth_and_register_changes_regenerate_every_ai_page() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     // Default-settings write: the meta records no depth/register, exactly like
     // meta written before settings were recorded.
@@ -1145,14 +1157,17 @@ fn prose_depth_and_register_changes_regenerate_every_ai_page() {
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
         .expect("reuse plan loads")
         .with_ai_settings(deep.clone());
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let deepened = generate_hierarchical_docs_with_reuse(
+    let deepened = collect_docs(
         &input,
-        Some(&mut deep_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut deep_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(deep_calls > 0, "a prose-depth change must regenerate");
     let changed =
@@ -1183,14 +1198,17 @@ fn prose_depth_and_register_changes_regenerate_every_ai_page() {
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
         .expect("reuse plan reloads")
         .with_ai_settings(deep_newcomer.clone());
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let revoiced = generate_hierarchical_docs_with_reuse(
+    let revoiced = collect_docs(
         &input,
-        Some(&mut register_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut register_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(register_calls > 0, "a register change must regenerate");
     let changed = write_docs_with_ai_settings(
@@ -1222,11 +1240,14 @@ fn unchanged_generation_settings_still_reuse_without_llm_calls() {
         }
     };
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     let pinned = AiGenerationSettings {
         prose_depth: "deep".to_string(),
@@ -1244,14 +1265,17 @@ fn unchanged_generation_settings_still_reuse_without_llm_calls() {
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols")
         .expect("reuse plan loads")
         .with_ai_settings(pinned);
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &input,
-        Some(&mut counting_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut counting_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(!second.is_empty());
     assert_eq!(calls, 0, "unchanged settings must make zero LLM calls");
@@ -1396,11 +1420,14 @@ fn cluster_dissolve_restamps_module_links_on_reused_file_pages() {
     let mut first_generator =
         |_prompt: &str, _system: &str, _tier: PromptTier| Some("First prose.".to_string());
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     assert!(
         first
@@ -1438,14 +1465,17 @@ fn cluster_dissolve_restamps_module_links_on_reused_file_pages() {
     let mut second_generator =
         |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &second_input,
-        Some(&mut second_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     // Reuse held (byte-identical page except the re-stamped, equal-length
@@ -1490,11 +1520,14 @@ fn child_cluster_rename_regenerates_parent_module_page() {
     let mut first_generator =
         |_prompt: &str, _system: &str, _tier: PromptTier| Some("First prose.".to_string());
     let mut progress = CodewikiProgress::silent();
-    let first = generate_hierarchical_docs_with_progress(
+    let first = collect_docs(
         &input,
-        Some(&mut first_generator),
-        AiDepth::Symbols,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut first_generator),
+            ai_depth: AiDepth::Symbols,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
     write_incremental_doc_set_with_snapshot(
         project.path(),
@@ -1519,14 +1552,17 @@ fn child_cluster_rename_regenerates_parent_module_page() {
     let mut second_generator =
         |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
-    let mut reuse = Some(&mut plan);
+    let reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
-    let second = generate_hierarchical_docs_with_reuse(
+    let second = collect_docs(
         &second_input,
-        Some(&mut second_generator),
-        AiDepth::Symbols,
-        &mut reuse,
-        &mut progress,
+        GenerateDocsOptions {
+            generate: Some(&mut second_generator),
+            ai_depth: AiDepth::Symbols,
+            reuse,
+            progress: Some(&mut progress),
+            ..Default::default()
+        },
     );
 
     let src_doc = second

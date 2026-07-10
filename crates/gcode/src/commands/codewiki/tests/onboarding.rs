@@ -52,7 +52,7 @@ fn codewiki_onboarding_ranks_modules_from_graph_analytics() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None)
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .collect::<BTreeMap<_, _>>();
     let onboarding = docs
@@ -92,7 +92,7 @@ fn codewiki_onboarding_keeps_entry_points_without_degrading_when_graph_analytics
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None)
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .collect::<BTreeMap<_, _>>();
     let onboarding = docs
@@ -127,7 +127,7 @@ fn codewiki_onboarding_available_empty_reading_order_is_not_unavailable() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None)
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .collect::<BTreeMap<_, _>>();
     let onboarding = docs

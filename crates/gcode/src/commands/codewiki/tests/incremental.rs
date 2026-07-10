@@ -3,23 +3,12 @@ use super::*;
 
 fn generate_docs_for_scope(input: &CodewikiInput, doc_scope: &DocPruneScope) -> Vec<BuiltDoc> {
     let mut docs = Vec::new();
-    let mut generate = None::<&mut TextGenerator<'_>>;
-    let mut progress = CodewikiProgress::silent();
-    generate_hierarchical_docs_core(
+    generate_hierarchical_docs(
         input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut None,
-        &mut progress,
-        doc_scope,
+        GenerateDocsOptions {
+            doc_scope: Some(doc_scope),
+            ..Default::default()
+        },
         &mut |doc| {
             docs.push(doc);
             Ok(())
@@ -84,7 +73,15 @@ fn degraded_doc_is_rewritten_once_generation_succeeds() {
     let file_doc = "code/files/src/lib.rs.md".to_string();
     let build = |generator: Option<&mut TextGenerator<'_>>| {
         let mut progress = CodewikiProgress::silent();
-        generate_hierarchical_docs_with_progress(&input, generator, AiDepth::Symbols, &mut progress)
+        collect_docs(
+            &input,
+            GenerateDocsOptions {
+                generate: generator,
+                ai_depth: AiDepth::Symbols,
+                progress: Some(&mut progress),
+                ..Default::default()
+            },
+        )
     };
 
     // Run 1: every generation fails, so the docs land degraded.
@@ -178,7 +175,7 @@ fn incremental_regenerates_only_changed() {
         ],
     };
 
-    let first_docs = generate_hierarchical_docs(&input, None);
+    let first_docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let first_written =
         write_incremental_doc_set(project.path(), &out_dir, &first_docs).expect("first write");
     assert!(first_written.contains(&"code/repo.md".to_string()));
@@ -197,7 +194,7 @@ fn incremental_regenerates_only_changed() {
         "pub struct Client;\npub fn connect() {}\n",
     )
     .expect("modify lib");
-    let changed_docs = generate_hierarchical_docs(&input, None);
+    let changed_docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let changed_written = write_incremental_doc_set(project.path(), &out_dir, &changed_docs)
         .expect("incremental write");
     let unchanged_after =
@@ -269,7 +266,7 @@ fn incremental_regenerates_only_changed() {
             "pub struct Client;",
         )],
     };
-    let reduced_docs = generate_hierarchical_docs(&reduced_input, None);
+    let reduced_docs = collect_doc_pairs(&reduced_input, GenerateDocsOptions::default());
     write_incremental_doc_set(project.path(), &out_dir, &reduced_docs).expect("stale docs removed");
 
     assert!(!unchanged_file_doc.exists());
@@ -325,7 +322,7 @@ fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
             ),
         ],
     };
-    let mut first_docs = generate_hierarchical_docs(&input, None)
+    let mut first_docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .map(|(path, content)| BuiltDoc::healthy(path, content))
         .collect::<Vec<_>>();
@@ -455,7 +452,7 @@ fn scoped_incremental_write_preserves_partial_ancestor_module() {
             test_symbol("src/nested/leaf.rs", "leaf", "function", 1, "pub fn leaf()"),
         ],
     };
-    let first_docs = generate_hierarchical_docs(&input, None)
+    let first_docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .map(|(path, content)| BuiltDoc::healthy(path, content))
         .collect::<Vec<_>>();
@@ -709,7 +706,7 @@ fn full_run_replaces_stubs_and_scoped_runs_never_replace_real_pages() {
             test_symbol("src/nested/leaf.rs", "leaf", "function", 1, "pub fn leaf()"),
         ],
     };
-    let full_docs = generate_hierarchical_docs(&input, None)
+    let full_docs = collect_doc_pairs(&input, GenerateDocsOptions::default())
         .into_iter()
         .map(|(path, content)| BuiltDoc::healthy(path, content))
         .collect::<Vec<_>>();

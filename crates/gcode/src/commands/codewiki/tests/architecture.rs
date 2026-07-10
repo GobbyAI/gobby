@@ -61,7 +61,13 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     // A generator that attempts and fails marks model degradation; a missing
     // generator (AI off) is structural by intent and records nothing.
     let mut failing_generator = |_prompt: &str, _system: &str, _tier: PromptTier| None;
-    let docs = generate_hierarchical_docs(&input, Some(&mut failing_generator));
+    let docs = collect_doc_pairs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut failing_generator),
+            ..Default::default()
+        },
+    );
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let rendered = docs_by_path
         .get("code/_architecture.md")
@@ -129,7 +135,13 @@ fn architecture_prompt_formats_component_labels_with_raw_ids() {
             Some("Generated summary [src/api/handler.rs:1].".to_string())
         };
 
-        let _docs = generate_hierarchical_docs(&input, Some(&mut generator));
+        let _docs = collect_doc_pairs(
+            &input,
+            GenerateDocsOptions {
+                generate: Some(&mut generator),
+                ..Default::default()
+            },
+        );
     }
 
     let prompt = architecture_prompts
@@ -212,7 +224,13 @@ fn architecture_page_renders_layered_narrative_and_child_module_levels() {
             None
         }
     };
-    let docs = generate_hierarchical_docs(&input, Some(&mut generator));
+    let docs = collect_doc_pairs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let rendered = docs_by_path
         .get("code/_architecture.md")
@@ -274,7 +292,7 @@ fn architecture_page_has_no_diagram_and_range_free_frontmatter_without_graph_edg
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
     let rendered = docs_by_path
         .get("code/_architecture.md")
@@ -402,31 +420,21 @@ fn diagram_model() -> SystemModel {
     }
 }
 
-/// Drive the core generator with an explicit system model and an optional
+/// Drive the generator with an explicit system model and an optional
 /// generator, returning the architecture page's BuiltDoc.
 fn build_architecture_page_with(
     model: Option<&SystemModel>,
-    generate: &mut Option<&mut TextGenerator<'_>>,
+    generate: Option<&mut TextGenerator<'_>>,
 ) -> BuiltDoc {
     let input = diagram_input();
-    let mut progress = CodewikiProgress::silent();
-    let doc_scope = DocPruneScope::unscoped();
     let mut docs = Vec::new();
-    generate_hierarchical_docs_core(
+    generate_hierarchical_docs(
         &input,
-        None,
-        model,
-        None,
-        None,
-        generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut None,
-        &mut progress,
-        &doc_scope,
+        GenerateDocsOptions {
+            system_model: model,
+            generate,
+            ..Default::default()
+        },
         &mut |doc| {
             docs.push(doc);
             Ok(())
@@ -440,8 +448,7 @@ fn build_architecture_page_with(
 
 /// AI-off variant: no generator at all.
 fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
-    let mut generate = None::<&mut TextGenerator<'_>>;
-    build_architecture_page_with(model, &mut generate)
+    build_architecture_page_with(model, None)
 }
 
 #[test]
@@ -461,8 +468,7 @@ fn architecture_page_composes_evidence_verified_diagrams() {
             None
         }
     };
-    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
-    let page = build_architecture_page_with(Some(&model), &mut generate);
+    let page = build_architecture_page_with(Some(&model), Some(&mut generator));
 
     // The diagram section is present, LLM-composed, and caption-marked.
     assert!(

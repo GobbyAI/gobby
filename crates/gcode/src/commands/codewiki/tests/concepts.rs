@@ -109,7 +109,13 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
         }
     };
 
-    let docs = generate_hierarchical_docs(&concept_input(), Some(&mut generator));
+    let docs = collect_doc_pairs(
+        &concept_input(),
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
     // The structure pass still runs exactly once; the per-page content passes
     // use the concept/narrative systems and are not counted here.
     assert_eq!(curated_calls, 1);
@@ -205,7 +211,13 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
         }
     };
 
-    let docs = generate_hierarchical_docs(&concept_input(), Some(&mut generator));
+    let docs = collect_doc_pairs(
+        &concept_input(),
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
     assert_eq!(
         curated_calls, 2,
         "the unparseable first emission should trigger exactly one retry"
@@ -227,7 +239,7 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
 
 #[test]
 fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
-    let docs = generate_hierarchical_docs(&concept_input(), None);
+    let docs = collect_doc_pairs(&concept_input(), GenerateDocsOptions::default());
     let repo = rendered_doc(&docs, "code/repo.md");
     let index = rendered_doc(&docs, "code/concepts/index.md");
     let introduction = rendered_doc(&docs, "code/narrative/01-overview.md");
@@ -249,7 +261,7 @@ fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
 
 #[test]
 fn repo_leads_with_start_here_and_demotes_reference_appendix() {
-    let docs = generate_hierarchical_docs(&concept_input(), None);
+    let docs = collect_doc_pairs(&concept_input(), GenerateDocsOptions::default());
     let repo = rendered_doc(&docs, "code/repo.md");
 
     let start_here = repo.find("## Start here").expect("start-here section");
@@ -286,7 +298,7 @@ fn repo_leads_with_start_here_and_demotes_reference_appendix() {
 
 #[test]
 fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
-    let docs = generate_hierarchical_docs(&concept_input(), None);
+    let docs = collect_doc_pairs(&concept_input(), GenerateDocsOptions::default());
 
     // Front page and concept index both lead with the numbered guided tour,
     // the new-to-this-codebase callout, and the ask/search pointer.
@@ -404,11 +416,14 @@ fn verify_pass_records_notes_without_stripping_curated_page() {
         Some("[]".to_string())
     };
 
-    let docs = generate_hierarchical_docs_with_verify(
+    let docs = collect_docs(
         &concept_input(),
-        Some(&mut generator),
-        Some(&mut verifier),
-        AiDepth::Files,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            verify: Some(&mut verifier),
+            ai_depth: AiDepth::Files,
+            ..Default::default()
+        },
     );
 
     let concept = docs

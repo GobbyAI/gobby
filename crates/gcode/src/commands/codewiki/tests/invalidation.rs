@@ -80,29 +80,20 @@ fn run_generate_with_audit(
     let mut reuse_plan =
         ReusePlan::load_with_since(project_root, out_dir, "symbols", since.clone())
             .expect("reuse plan loads");
-    let mut reuse = Some(&mut reuse_plan);
-    let mut generate = None::<&mut TextGenerator<'_>>;
-    let mut progress = CodewikiProgress::silent();
     let doc_scope = DocPruneScope::unscoped();
     let mut sink =
         DocSink::open_with_prune_scope(project_root, out_dir, "symbols", doc_scope.clone())
             .expect("sink opens")
             .with_since(since);
-    generate_hierarchical_docs_core(
+    generate_hierarchical_docs(
         input,
-        None,
-        model,
-        None,
-        audit,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut reuse,
-        &mut progress,
-        &doc_scope,
+        GenerateDocsOptions {
+            system_model: model,
+            audit,
+            reuse: Some(&mut reuse_plan),
+            doc_scope: Some(&doc_scope),
+            ..Default::default()
+        },
         &mut |doc| sink.persist(&doc).map(|_| ()),
     )
     .expect("generate docs");

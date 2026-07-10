@@ -19,192 +19,66 @@ use super::{
     render_infrastructure_doc, render_module_doc, render_onboarding_doc, span_files,
 };
 
-pub fn generate_hierarchical_docs(
-    input: &CodewikiInput,
-    generate: Option<&mut TextGenerator<'_>>,
-) -> Vec<(String, String)> {
-    generate_hierarchical_docs_with_graph_availability(input, generate)
-        .into_iter()
-        .map(|doc| (doc.path, doc.content))
-        .collect()
+/// Options for [`generate_hierarchical_docs`], collapsing the former
+/// `generate_hierarchical_docs_with_*` wrapper chain (#17534). Field defaults
+/// mirror the AI-off/test path: no deterministic inputs, no generators,
+/// symbol-depth AI, full verify scope, silent progress, unscoped pruning.
+pub(crate) struct GenerateDocsOptions<'g, 'r> {
+    pub ownership: Option<(&'r Path, &'r mut OwnershipMeta)>,
+    /// Deterministic workspace system model (#891, #17521). Supplies the
+    /// evidence graph the architecture page's LLM-composed diagram is verified
+    /// against. The CLI runtime passes the real model built from the project
+    /// root; test/AI-off callers leave `None` to omit the diagram section.
+    pub system_model: Option<&'r SystemModel>,
+    /// Deterministic feature catalog (#888), built from the pinned CLI contract
+    /// JSONs + dispatch resolver. The CLI runtime passes the real catalog;
+    /// test/AI-off callers leave `None` to omit the catalog page, exactly like
+    /// `system_model`.
+    pub feature_catalog: Option<&'r FeatureCatalogDoc>,
+    /// Deterministic audit context (#889): the deprecation index (stamped into
+    /// each file doc's symbols for the badge + the `code/deprecations.md` page)
+    /// and the test-gated symbol index (for the file page's test-count
+    /// collapse). The CLI runtime passes the real context; test/AI-off callers
+    /// leave `None` to omit the deprecations page, exactly like `system_model`.
+    pub audit: Option<&'r AuditContext>,
+    pub generate: Option<&'r mut TextGenerator<'g>>,
+    /// Lane B aggregate generator (#978). When present, the aggregate-tier
+    /// pages (repo overview, architecture, curated navigation/concept/
+    /// narrative) are produced by the gcode tool loop and hard-fail on a
+    /// Lane B failure; leaf pages always use the Lane A `generate` one-shot.
+    /// `None` (tests / AI off) falls the aggregates back to the Lane A path.
+    pub tool_loop: Option<&'r mut ToolLoopGenerator<'g>>,
+    pub verify: Option<&'r mut TextVerifier<'g>>,
+    pub ai_depth: AiDepth,
+    /// Per-file-leaf verification is skipped unless the scope verifies leaves;
+    /// aggregate/curated pages verify regardless (gobby-cli #1001).
+    pub verify_scope: VerifyScope,
+    pub aggregate_ai_outcome: CodewikiAiOutcome,
+    pub reuse: Option<&'r mut ReusePlan>,
+    /// `None` runs silently ([`CodewikiProgress::silent`]).
+    pub progress: Option<&'r mut CodewikiProgress>,
+    /// `None` generates the full unscoped doc set ([`DocPruneScope::unscoped`]).
+    pub doc_scope: Option<&'r DocPruneScope>,
 }
 
-fn generate_hierarchical_docs_with_graph_availability(
-    input: &CodewikiInput,
-    mut generate: Option<&mut TextGenerator<'_>>,
-) -> Vec<BuiltDoc> {
-    let mut progress = CodewikiProgress::silent();
-    let doc_scope = DocPruneScope::unscoped();
-    let mut docs = Vec::new();
-    if let Err(error) = generate_hierarchical_docs_core(
-        input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        AiDepth::Symbols,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        &mut None,
-        &mut progress,
-        &doc_scope,
-        &mut |doc| {
-            docs.push(doc);
-            Ok(())
-        },
-    ) {
-        log::warn!("codewiki generation failed without ownership metadata: {error}");
-        return Vec::new();
+impl Default for GenerateDocsOptions<'_, '_> {
+    fn default() -> Self {
+        Self {
+            ownership: None,
+            system_model: None,
+            feature_catalog: None,
+            audit: None,
+            generate: None,
+            tool_loop: None,
+            verify: None,
+            ai_depth: AiDepth::Symbols,
+            verify_scope: VerifyScope::All,
+            aggregate_ai_outcome: CodewikiAiOutcome::default(),
+            reuse: None,
+            progress: None,
+            doc_scope: None,
+        }
     }
-    docs
-}
-
-#[expect(clippy::too_many_arguments)]
-pub(crate) fn generate_hierarchical_docs_with_ownership(
-    input: &CodewikiInput,
-    ownership: Option<(&Path, &mut OwnershipMeta)>,
-    system_model: Option<&SystemModel>,
-    feature_catalog: Option<&FeatureCatalogDoc>,
-    audit: Option<&AuditContext>,
-    mut generate: Option<&mut TextGenerator<'_>>,
-    mut tool_loop: Option<&mut ToolLoopGenerator<'_>>,
-    mut verify: Option<&mut TextVerifier<'_>>,
-    ai_depth: AiDepth,
-    verify_scope: VerifyScope,
-    aggregate_ai_outcome: CodewikiAiOutcome,
-    reuse: &mut Option<&mut ReusePlan>,
-    progress: &mut CodewikiProgress,
-    doc_scope: &DocPruneScope,
-    emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    generate_hierarchical_docs_core(
-        input,
-        ownership,
-        system_model,
-        feature_catalog,
-        audit,
-        &mut generate,
-        &mut tool_loop,
-        &mut verify,
-        ai_depth,
-        verify_scope,
-        aggregate_ai_outcome,
-        reuse,
-        progress,
-        doc_scope,
-        emit,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn generate_hierarchical_docs_with_progress(
-    input: &CodewikiInput,
-    generate: Option<&mut TextGenerator<'_>>,
-    ai_depth: AiDepth,
-    progress: &mut CodewikiProgress,
-) -> Vec<BuiltDoc> {
-    generate_hierarchical_docs_with_reuse(input, generate, ai_depth, &mut None, progress)
-}
-
-/// Test entry point that exercises the reuse path without the CLI runtime.
-#[cfg(test)]
-pub(crate) fn generate_hierarchical_docs_with_reuse(
-    input: &CodewikiInput,
-    mut generate: Option<&mut TextGenerator<'_>>,
-    ai_depth: AiDepth,
-    reuse: &mut Option<&mut ReusePlan>,
-    progress: &mut CodewikiProgress,
-) -> Vec<BuiltDoc> {
-    let doc_scope = DocPruneScope::unscoped();
-    let mut docs = Vec::new();
-    if let Err(error) = generate_hierarchical_docs_core(
-        input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut None,
-        ai_depth,
-        VerifyScope::All,
-        CodewikiAiOutcome::default(),
-        reuse,
-        progress,
-        &doc_scope,
-        &mut |doc| {
-            docs.push(doc);
-            Ok(())
-        },
-    ) {
-        log::warn!("codewiki generation failed without ownership metadata: {error}");
-        return Vec::new();
-    }
-    docs
-}
-
-/// Test entry point that threads a verifier alongside the generator, so the
-/// grounded verification pass can be exercised end-to-end through the curated
-/// page pipeline without the CLI runtime.
-#[cfg(test)]
-pub(crate) fn generate_hierarchical_docs_with_verify(
-    input: &CodewikiInput,
-    generate: Option<&mut TextGenerator<'_>>,
-    verify: Option<&mut TextVerifier<'_>>,
-    ai_depth: AiDepth,
-) -> Vec<BuiltDoc> {
-    generate_hierarchical_docs_with_verify_scope(
-        input,
-        generate,
-        verify,
-        ai_depth,
-        VerifyScope::All,
-    )
-}
-
-/// Like [`generate_hierarchical_docs_with_verify`] but pins the
-/// [`VerifyScope`], so a test can assert the default `Aggregates` scope skips
-/// per-file-leaf verification while `All` restores it (gobby-cli #1001).
-#[cfg(test)]
-pub(crate) fn generate_hierarchical_docs_with_verify_scope(
-    input: &CodewikiInput,
-    generate: Option<&mut TextGenerator<'_>>,
-    verify: Option<&mut TextVerifier<'_>>,
-    ai_depth: AiDepth,
-    verify_scope: VerifyScope,
-) -> Vec<BuiltDoc> {
-    let mut generate = generate;
-    let mut verify = verify;
-    let mut progress = CodewikiProgress::silent();
-    let doc_scope = DocPruneScope::unscoped();
-    let mut docs = Vec::new();
-    if let Err(error) = generate_hierarchical_docs_core(
-        input,
-        None,
-        None,
-        None,
-        None,
-        &mut generate,
-        &mut None,
-        &mut verify,
-        ai_depth,
-        verify_scope,
-        CodewikiAiOutcome::default(),
-        &mut None,
-        &mut progress,
-        &doc_scope,
-        &mut |doc| {
-            docs.push(doc);
-            Ok(())
-        },
-    ) {
-        log::warn!("codewiki generation failed without ownership metadata: {error}");
-        return Vec::new();
-    }
-    docs
 }
 
 /// Reference-appendix links for the deterministic analysis/catalog pages,
@@ -229,45 +103,50 @@ fn repo_audit_links(
     links
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "core generation threads mutable generator, verifier, reuse, progress, scope, and emit state"
-)]
-pub(crate) fn generate_hierarchical_docs_core(
+/// Single generation entry point: builds and emits the hierarchical codewiki
+/// doc set for `input`, configured by [`GenerateDocsOptions`].
+pub(crate) fn generate_hierarchical_docs(
     input: &CodewikiInput,
-    ownership: Option<(&Path, &mut OwnershipMeta)>,
-    // Deterministic workspace system model (#891, #17521). Supplies the
-    // evidence graph the architecture page's LLM-composed diagram is verified
-    // against. The CLI runtime passes the real model built from the project
-    // root; test/AI-off entry points pass `None` to omit the diagram section.
-    system_model: Option<&SystemModel>,
-    // Deterministic feature catalog (#888), built from the pinned CLI contract
-    // JSONs + dispatch resolver. The CLI runtime passes the real catalog; the
-    // test/AI-off entry points pass `None` to omit the catalog page, exactly
-    // like `system_model`.
-    feature_catalog: Option<&FeatureCatalogDoc>,
-    // Deterministic audit context (#889): the deprecation index (stamped into
-    // each file doc's symbols for the badge + the `code/deprecations.md` page)
-    // and the test-gated symbol index (for the file page's test-count collapse).
-    // The CLI runtime passes the real context; test/AI-off entry points pass
-    // `None` to omit the deprecations page, exactly like `system_model`.
-    audit: Option<&AuditContext>,
-    generate: &mut Option<&mut TextGenerator<'_>>,
-    // Lane B aggregate generator (#978). When present, the aggregate-tier pages
-    // (repo overview, architecture, curated navigation/concept/narrative) are
-    // produced by the gcode tool loop and hard-fail on a Lane B failure; leaf
-    // pages always use the Lane A `generate` one-shot. `None` (tests / AI off)
-    // falls the aggregates back to the Lane A path.
-    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
-    verify: &mut Option<&mut TextVerifier<'_>>,
-    ai_depth: AiDepth,
-    verify_scope: VerifyScope,
-    aggregate_ai_outcome: CodewikiAiOutcome,
-    reuse: &mut Option<&mut ReusePlan>,
-    progress: &mut CodewikiProgress,
-    doc_scope: &DocPruneScope,
+    options: GenerateDocsOptions<'_, '_>,
     emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    let GenerateDocsOptions {
+        ownership,
+        system_model,
+        feature_catalog,
+        audit,
+        mut generate,
+        mut tool_loop,
+        mut verify,
+        ai_depth,
+        verify_scope,
+        aggregate_ai_outcome,
+        mut reuse,
+        progress,
+        doc_scope,
+    } = options;
+    // The generation body threads these as `&mut Option<&mut T>` so builders
+    // can reborrow the generator/verifier/reuse plan per page.
+    let generate = &mut generate;
+    let tool_loop = &mut tool_loop;
+    let verify = &mut verify;
+    let reuse = &mut reuse;
+    let mut silent_progress;
+    let progress = match progress {
+        Some(progress) => progress,
+        None => {
+            silent_progress = CodewikiProgress::silent();
+            &mut silent_progress
+        }
+    };
+    let unscoped_doc_scope;
+    let doc_scope = match doc_scope {
+        Some(doc_scope) => doc_scope,
+        None => {
+            unscoped_doc_scope = DocPruneScope::unscoped();
+            &unscoped_doc_scope
+        }
+    };
     let emit = &mut |doc: BuiltDoc| emit(doc.with_normalized_markdown());
     // Per-file-leaf verification dominates verify cost on large repos.
     // `VerifyScope::Aggregates` (the default) skips it; the aggregate/curated

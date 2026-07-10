@@ -29,6 +29,36 @@ mod repair;
 mod reuse;
 mod truth_digest;
 
+/// Collect the generated doc set through the single options entry point,
+/// mirroring the retired test wrappers (#17534): warn and return an empty set
+/// on a hard generation error.
+pub(crate) fn collect_docs(
+    input: &CodewikiInput,
+    options: GenerateDocsOptions<'_, '_>,
+) -> Vec<BuiltDoc> {
+    let mut docs = Vec::new();
+    if let Err(error) = generate_hierarchical_docs(input, options, &mut |doc| {
+        docs.push(doc);
+        Ok(())
+    }) {
+        log::warn!("codewiki generation failed without ownership metadata: {error}");
+        return Vec::new();
+    }
+    docs
+}
+
+/// [`collect_docs`] projected to `(path, content)` pairs — the shape of the
+/// retired tuple-returning public entry point.
+pub(crate) fn collect_doc_pairs(
+    input: &CodewikiInput,
+    options: GenerateDocsOptions<'_, '_>,
+) -> Vec<(String, String)> {
+    collect_docs(input, options)
+        .into_iter()
+        .map(|doc| (doc.path, doc.content))
+        .collect()
+}
+
 #[test]
 fn documents_code_and_config_excludes_content_only_by_default() {
     // Code and structured config (json/yaml) are documented.
@@ -76,7 +106,13 @@ fn generated_codewiki_docs_have_no_md012_outside_fences() {
         }
     };
 
-    let docs = generate_hierarchical_docs(&input, Some(&mut generator));
+    let docs = collect_doc_pairs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
 
     assert!(!docs.is_empty());
     for (path, content) in docs {

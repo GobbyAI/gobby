@@ -209,7 +209,13 @@ fn citations_validated_against_spans() {
         }
     };
 
-    let docs = generate_hierarchical_docs(&input, Some(&mut generator));
+    let docs = collect_doc_pairs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
     let file_doc = docs
         .iter()
         .find(|(path, _)| path == "code/files/src/lib.rs.md")

@@ -22,7 +22,7 @@ fn generates_hierarchical_docs() {
         ],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     write_doc_set(out_dir.path(), &docs).expect("writes docs");
 
     let repo = std::fs::read_to_string(out_dir.path().join("code/repo.md")).expect("repo doc");
@@ -57,7 +57,7 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let paths = docs
         .iter()
         .map(|(path, _)| path.as_str())
@@ -119,7 +119,7 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
 
 #[test]
 fn repo_frontmatter_lists_source_files_without_range_blocks() {
-    let docs = generate_hierarchical_docs(&repo_marker_input(), None);
+    let docs = collect_doc_pairs(&repo_marker_input(), GenerateDocsOptions::default());
     let repo = rendered_doc(&docs, "code/repo.md");
     let yaml = repo
         .strip_prefix("---\n")
@@ -139,7 +139,7 @@ fn repo_frontmatter_lists_source_files_without_range_blocks() {
 
 #[test]
 fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded() {
-    let fallback_docs = generate_hierarchical_docs(&repo_marker_input(), None);
+    let fallback_docs = collect_doc_pairs(&repo_marker_input(), GenerateDocsOptions::default());
     let fallback_repo = rendered_doc(&fallback_docs, "code/repo.md");
     let fallback_overview = markdown_section(fallback_repo, "## Overview");
 
@@ -153,7 +153,13 @@ fn repo_structural_fallback_omits_marker_wall_but_generated_text_stays_grounded(
             None
         }
     };
-    let generated_docs = generate_hierarchical_docs(&repo_marker_input(), Some(&mut generator));
+    let generated_docs = collect_doc_pairs(
+        &repo_marker_input(),
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
     let generated_repo = rendered_doc(&generated_docs, "code/repo.md");
     let generated_overview = markdown_section(generated_repo, "## Overview");
 
@@ -223,7 +229,7 @@ fn file_doc_purpose_neutralizes_summary_link_tokens() {
         symbols: vec![symbol],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
 
     assert!(file.contains("- Symbol: `wiki_link`"));
@@ -248,7 +254,7 @@ fn file_page_structural_fallback_is_multi_section_without_symbol_dump() {
         )],
     };
 
-    let docs = generate_hierarchical_docs(&input, None);
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
     let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
 
     // Overview + How it fits (body) + Reference (rendered) = three sections,
@@ -308,11 +314,14 @@ fn file_page_verify_records_unsupported_block_notes() {
         ))
     };
 
-    let docs = generate_hierarchical_docs_with_verify(
+    let docs = collect_docs(
         &input,
-        Some(&mut generator),
-        Some(&mut verifier),
-        AiDepth::Files,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            verify: Some(&mut verifier),
+            ai_depth: AiDepth::Files,
+            ..Default::default()
+        },
     );
     let file = docs
         .iter()
@@ -384,11 +393,14 @@ fn file_page_verify_uses_symbol_table_as_evidence() {
             )
         };
 
-        generate_hierarchical_docs_with_verify(
+        collect_docs(
             &input,
-            Some(&mut generator),
-            Some(&mut verifier),
-            AiDepth::Files,
+            GenerateDocsOptions {
+                generate: Some(&mut generator),
+                verify: Some(&mut verifier),
+                ai_depth: AiDepth::Files,
+                ..Default::default()
+            },
         )
     };
     let file = docs
@@ -502,12 +514,15 @@ fn file_leaf_verify_skipped_when_scope_is_aggregates() {
         None
     };
 
-    let docs = generate_hierarchical_docs_with_verify_scope(
+    let docs = collect_docs(
         &input,
-        Some(&mut generator),
-        Some(&mut verifier),
-        AiDepth::Files,
-        VerifyScope::Aggregates,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            verify: Some(&mut verifier),
+            ai_depth: AiDepth::Files,
+            verify_scope: VerifyScope::Aggregates,
+            ..Default::default()
+        },
     );
     let file = docs
         .iter()

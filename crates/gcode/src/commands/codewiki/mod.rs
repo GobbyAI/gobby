@@ -182,13 +182,8 @@ pub(crate) use cluster::{
 #[cfg(test)]
 pub(crate) use cluster::{common_module_for_files, find_file_root};
 // Optional FalkorDB graph queries.
-pub use generation::generate_hierarchical_docs;
 #[cfg(test)]
-pub(crate) use generation::{
-    generate_hierarchical_docs_core, generate_hierarchical_docs_with_progress,
-    generate_hierarchical_docs_with_reuse, generate_hierarchical_docs_with_verify,
-    generate_hierarchical_docs_with_verify_scope,
-};
+pub(crate) use generation::{GenerateDocsOptions, generate_hierarchical_docs};
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
 pub(crate) use graph::{

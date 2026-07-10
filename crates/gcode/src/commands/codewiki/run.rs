@@ -207,7 +207,6 @@ pub fn run(
         ai_outcome,
     )?
     .with_ai_settings(ai_settings.clone());
-    let mut reuse = Some(&mut reuse_plan);
     let mut sink =
         DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?
             .with_ai_outcome(ai_outcome)
@@ -230,23 +229,25 @@ pub fn run(
         sink.persist_with_ai_outcome(&doc, write_outcome)?;
         Ok(())
     };
-    generation::generate_hierarchical_docs_with_ownership(
+    generation::generate_hierarchical_docs(
         &input,
-        ownership_meta
-            .as_mut()
-            .map(|meta| (ctx.project_root.as_path(), meta)),
-        Some(&system_model),
-        feature_catalog.as_ref(),
-        Some(&audit_context),
-        generator.as_deref_mut(),
-        tool_loop_generator.as_deref_mut(),
-        verifier.as_deref_mut(),
-        ai_depth,
-        verify_scope,
-        aggregate_ai_outcome,
-        &mut reuse,
-        &mut progress,
-        &doc_scope,
+        generation::GenerateDocsOptions {
+            ownership: ownership_meta
+                .as_mut()
+                .map(|meta| (ctx.project_root.as_path(), meta)),
+            system_model: Some(&system_model),
+            feature_catalog: feature_catalog.as_ref(),
+            audit: Some(&audit_context),
+            generate: generator.as_deref_mut(),
+            tool_loop: tool_loop_generator.as_deref_mut(),
+            verify: verifier.as_deref_mut(),
+            ai_depth,
+            verify_scope,
+            aggregate_ai_outcome,
+            reuse: Some(&mut reuse_plan),
+            progress: Some(&mut progress),
+            doc_scope: Some(&doc_scope),
+        },
         &mut emit,
     )?;
     if let Some(index_snapshot) = index_snapshot.as_ref() {
