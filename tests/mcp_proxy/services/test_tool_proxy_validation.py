@@ -57,6 +57,41 @@ def tool_proxy_no_validation(mock_mcp_manager, mock_internal_manager):
     )
 
 
+@pytest.mark.asyncio
+async def test_bool_for_string_returns_invalid_arguments_with_schema_before_external_dispatch(
+    tool_proxy,
+    mock_mcp_manager,
+):
+    """Prove a type failure returns schema guidance without reaching the target server."""
+    input_schema = {
+        "type": "object",
+        "properties": {"supports": {"type": "string"}},
+        "required": ["supports"],
+    }
+    tool_proxy.get_tool_schema = AsyncMock(
+        return_value={
+            "success": True,
+            "tool": {"name": "record_evidence", "inputSchema": input_schema},
+        }
+    )
+
+    result = await tool_proxy.call_tool(
+        server_name="test-server",
+        tool_name="record_evidence",
+        arguments={"supports": True},
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_arguments"
+    assert result["validation_errors"] == [
+        "Invalid type for parameter 'supports': expected string, got boolean"
+    ]
+    assert result["schema"] == input_schema
+    assert result["server_name"] == "test-server"
+    assert result["tool_name"] == "record_evidence"
+    mock_mcp_manager.call_tool.assert_not_called()
+
+
 class TestCheckArguments:
     """Tests for the _check_arguments validation method."""
 
@@ -371,40 +406,6 @@ class TestCallToolPreValidation:
         assert "hint" in result
         assert result["server_name"] == "test-server"
         assert result["tool_name"] == "test_tool"
-
-    @pytest.mark.asyncio
-    async def test_type_error_returns_schema_before_external_dispatch(
-        self,
-        tool_proxy,
-        mock_mcp_manager,
-    ):
-        input_schema = {
-            "type": "object",
-            "properties": {"supports": {"type": "string"}},
-            "required": ["supports"],
-        }
-        tool_proxy.get_tool_schema = AsyncMock(
-            return_value={
-                "success": True,
-                "tool": {"name": "record_evidence", "inputSchema": input_schema},
-            }
-        )
-
-        result = await tool_proxy.call_tool(
-            server_name="test-server",
-            tool_name="record_evidence",
-            arguments={"supports": True},
-        )
-
-        assert result["success"] is False
-        assert result["error_code"] == "invalid_arguments"
-        assert result["validation_errors"] == [
-            "Invalid type for parameter 'supports': expected string, got boolean"
-        ]
-        assert result["schema"] == input_schema
-        assert result["server_name"] == "test-server"
-        assert result["tool_name"] == "record_evidence"
-        mock_mcp_manager.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_error_with_schema_for_missing_required(
