@@ -165,6 +165,9 @@ impl TrustReport {
             broken_link_count: health.broken_links.len(),
             duplicate_concept_count: health.duplicate_concepts.len(),
             duplicate_source_count: health.duplicate_sources.len(),
+            scored_page_count: health.page_confidence.scored_pages,
+            average_page_confidence: health.page_confidence.average_score,
+            low_confidence_page_count: health.page_confidence.low_confidence_count,
         };
         let graph_metrics = GraphMetrics {
             wiki_link_count: index_counts.links,
@@ -271,6 +274,11 @@ struct HealthSummary {
     broken_link_count: usize,
     duplicate_concept_count: usize,
     duplicate_source_count: usize,
+    // Derived page confidence (#17728) is informational: it does not feed
+    // degradation labels or trust status.
+    scored_page_count: usize,
+    average_page_confidence: Option<u8>,
+    low_confidence_page_count: usize,
 }
 
 fn degradation_labels(
@@ -420,6 +428,9 @@ mod tests {
             broken_link_count: 0,
             duplicate_concept_count: 0,
             duplicate_source_count: 0,
+            scored_page_count: 0,
+            average_page_confidence: None,
+            low_confidence_page_count: 0,
         };
 
         assert_eq!(
@@ -448,6 +459,9 @@ mod tests {
             broken_link_count: 148,
             duplicate_concept_count: 0,
             duplicate_source_count: 0,
+            scored_page_count: 0,
+            average_page_confidence: None,
+            low_confidence_page_count: 0,
         };
 
         // Red links only inside knowledge/sources/ digests: enumerable wiki
@@ -521,6 +535,7 @@ mod tests {
             duplicate_concepts: Vec::new(),
             duplicate_sources: Vec::new(),
             uncompiled_sources: Vec::new(),
+            page_confidence: health::PageConfidenceSummary::default(),
             json_path: "meta/health/latest.json".into(),
             text_path: "meta/health/latest.md".into(),
         };
@@ -589,6 +604,9 @@ mod tests {
             broken_link_count: 0,
             duplicate_concept_count: 0,
             duplicate_source_count: 0,
+            scored_page_count: 0,
+            average_page_confidence: None,
+            low_confidence_page_count: 0,
         };
         let services = json!({
             "postgres": {"configured": true},
@@ -639,5 +657,11 @@ mod tests {
         assert_eq!(value["freshness"]["fresh"], true);
         assert_eq!(value["audit_summary"]["unsupported_claim_count"], 0);
         assert_eq!(value["graph_metrics"]["falkordb_configured"], true);
+        assert_eq!(value["health_summary"]["scored_page_count"], 0);
+        assert_eq!(
+            value["health_summary"]["average_page_confidence"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["health_summary"]["low_confidence_page_count"], 0);
     }
 }

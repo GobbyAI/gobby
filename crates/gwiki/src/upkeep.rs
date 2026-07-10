@@ -26,6 +26,7 @@ use serde::Serialize;
 use crate::compile::{CompileRequest, WikiCompileOptions, compile_to_wiki_with_options, select};
 use crate::explainer::ExplainerGenerator;
 use crate::links::{LinkKind, canonical_target_key, extract_links, is_entity_key};
+use crate::lint::page_match_keys;
 use crate::search::SearchScope;
 use crate::search::semantic::{SemanticSearchBackend, SemanticSearchRequest};
 use crate::session::{ResearchScope, ResearchSession};
@@ -1056,31 +1057,6 @@ fn resolve_page_disposition(
             note: None,
         },
     }
-}
-
-/// Case-folded lookup keys under which an existing page counts as the cluster
-/// target: relative path (sans extension), file stem, frontmatter title, and
-/// every frontmatter alias.
-fn page_match_keys(page: &lint::WikiPage) -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
-    if let Some(relative) = page.relative_path.with_extension("").to_str() {
-        keys.insert(canonical_target_key(relative));
-    }
-    if let Some(stem) = page
-        .relative_path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-    {
-        keys.insert(canonical_target_key(stem));
-    }
-    if let Some(title) = &page.parsed.frontmatter.title {
-        keys.insert(canonical_target_key(title));
-    }
-    for alias in &page.parsed.frontmatter.aliases {
-        keys.insert(canonical_target_key(alias));
-    }
-    keys.remove("");
-    keys
 }
 
 /// Corroborating backlinks from other knowledge (concept/topic) pages

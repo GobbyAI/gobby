@@ -1,18 +1,16 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use gobby_core::ai::effective_route;
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 use serde::{Deserialize, Serialize};
 
-use crate::credibility::{CredibilityInput, CredibilityScore, CredibilitySourceType};
+use crate::credibility::{CredibilityScore, credibility_input_for_source};
 use crate::health;
 use crate::lint::collect_pages;
 use crate::provenance::ProvenanceGraph;
-use crate::sources::{SourceKind, SourceManifest, SourceRecord};
+use crate::sources::{SourceManifest, SourceRecord};
 use crate::support::scope::{resolve_selection_context, scope_includes_page};
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
@@ -236,13 +234,8 @@ fn credibility_section(
     let scored = sources
         .iter()
         .map(|source| {
-            let score = CredibilityScore::evaluate(CredibilityInput {
-                source_type: credibility_source_type(&source.kind),
-                age_days: source_age_days(source),
-                author: None,
-                publisher: source.title.clone().or_else(|| source.citation.clone()),
-                corroborating_source_ids: corroborating_sources(source, provenance),
-            });
+            let score =
+                CredibilityScore::evaluate(credibility_input_for_source(source, provenance));
             SourceCredibility {
                 source_id: source.id.clone(),
                 location: source.location.clone(),
@@ -261,44 +254,6 @@ fn credibility_section(
         note: None,
         sources: scored,
     }
-}
-
-fn credibility_source_type(kind: &SourceKind) -> CredibilitySourceType {
-    match kind {
-        SourceKind::ResearchNote => CredibilitySourceType::Academic,
-        SourceKind::MediaWiki | SourceKind::Markdown => CredibilitySourceType::Community,
-        SourceKind::Url | SourceKind::Html => CredibilitySourceType::News,
-        SourceKind::Pdf | SourceKind::Office | SourceKind::GitRepository => {
-            CredibilitySourceType::Official
-        }
-        _ => CredibilitySourceType::Unknown,
-    }
-}
-
-fn source_age_days(source: &SourceRecord) -> Option<u16> {
-    let fetched_at = DateTime::parse_from_rfc3339(&source.fetched_at).ok()?;
-    let days = Utc::now()
-        .signed_duration_since(fetched_at.with_timezone(&Utc))
-        .num_days()
-        .max(0);
-    Some(days.min(i64::from(u16::MAX)) as u16)
-}
-
-fn corroborating_sources(source: &SourceRecord, provenance: &ProvenanceGraph) -> Vec<String> {
-    let section_ids = provenance
-        .links_for_source(&source.id)
-        .into_iter()
-        .map(|link| link.section.section_id.clone())
-        .collect::<BTreeSet<_>>();
-    provenance
-        .links()
-        .iter()
-        .filter(|link| link.source.source_id != source.id)
-        .filter(|link| section_ids.contains(&link.section.section_id))
-        .map(|link| link.source.source_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 fn coverage_gap_section(

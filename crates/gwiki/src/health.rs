@@ -8,7 +8,11 @@ use gobby_core::vault::links::{LinkKind, canonical_target_key, normalize_wiki_pa
 use gobby_core::vault::lint::link_lookup_keys;
 use serde::Serialize;
 
-use crate::lint::{WikiPage, collect_pages, report_from_pages, title_for_page};
+use crate::credibility::{
+    CredibilityScore, PageConfidence, PageConfidenceInput, credibility_input_for_source,
+    half_life_days_for_content,
+};
+use crate::lint::{WikiPage, collect_pages, page_match_keys, report_from_pages, title_for_page};
 use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start};
 use crate::provenance::ProvenanceGraph;
 use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
@@ -16,6 +20,11 @@ use crate::{ScopeIdentity, WikiError};
 
 const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
 const STALE_CITATION_YEARS_ENV: &str = "GWIKI_STALE_CITATION_YEARS";
+/// Composed page confidence below this is surfaced as low-confidence.
+const LOW_CONFIDENCE_THRESHOLD: u8 = 40;
+/// Cap on low-confidence entries listed in the report; the summary always
+/// carries the full count.
+const LOW_CONFIDENCE_LIST_CAP: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HealthReport {
@@ -29,8 +38,28 @@ pub struct HealthReport {
     pub duplicate_concepts: Vec<DuplicateConcept>,
     pub duplicate_sources: Vec<DuplicateSource>,
     pub uncompiled_sources: Vec<HealthSourceIssue>,
+    pub page_confidence: PageConfidenceSummary,
     pub json_path: PathBuf,
     pub text_path: PathBuf,
+}
+
+/// Derived page-level confidence over knowledge synthesis pages (concepts and
+/// topics). Recomputed from the vault on every health run — never persisted
+/// as authoritative page state.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct PageConfidenceSummary {
+    pub scored_pages: usize,
+    pub average_score: Option<u8>,
+    pub low_confidence_count: usize,
+    /// Lowest-scoring pages below [`LOW_CONFIDENCE_THRESHOLD`], capped at
+    /// [`LOW_CONFIDENCE_LIST_CAP`]; `low_confidence_count` is the full count.
+    pub low_confidence: Vec<PageConfidenceIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PageConfidenceIssue {
+    pub path: PathBuf,
+    pub score: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -116,7 +145,10 @@ fn report_from_pages_for_health(
     let lint_report = report_from_pages(vault_root, scope.clone(), pages);
     let manifest = SourceManifest::read(vault_root)?;
     let provenance = load_provenance(vault_root)?;
-    let citation_index = build_citation_index(&manifest.entries, pages, &provenance);
+    let needle_index = build_source_needle_index(&manifest.entries);
+    let citation_index = build_citation_index(&manifest.entries, pages, &provenance, &needle_index);
+    let page_confidence =
+        page_confidence_summary(pages, &manifest.entries, &provenance, &needle_index);
     let stale_pages = stale_pages(pages);
     let stale_citations = manifest
         .entries
@@ -149,10 +181,112 @@ fn report_from_pages_for_health(
         duplicate_concepts,
         duplicate_sources,
         uncompiled_sources,
+        page_confidence,
         json_path: PathBuf::from("meta/health/latest.json"),
         text_path: PathBuf::from("meta/health/latest.md"),
     };
     Ok(report)
+}
+
+/// Compose derived confidence for knowledge synthesis pages (concepts and
+/// topics): cited-source credibility resolved through the citation needle
+/// index, half-life freshness from the page file's age, and backlinks counted
+/// from every other vault page's resolved links.
+fn page_confidence_summary(
+    pages: &[WikiPage],
+    sources: &[SourceRecord],
+    provenance: &ProvenanceGraph,
+    needle_index: &SourceNeedleIndex,
+) -> PageConfidenceSummary {
+    let source_scores: BTreeMap<&str, u8> = sources
+        .iter()
+        .map(|source| {
+            let score =
+                CredibilityScore::evaluate(credibility_input_for_source(source, provenance));
+            (source.id.as_str(), score.score)
+        })
+        .collect();
+
+    let scored_pages: Vec<(usize, BTreeSet<String>)> = pages
+        .iter()
+        .enumerate()
+        .filter(|(_, page)| {
+            page.relative_path.starts_with("knowledge/concepts")
+                || page.relative_path.starts_with("knowledge/topics")
+        })
+        .map(|(index, page)| (index, page_match_keys(page)))
+        .collect();
+    if scored_pages.is_empty() {
+        return PageConfidenceSummary::default();
+    }
+
+    let mut key_to_slot: BTreeMap<&str, usize> = BTreeMap::new();
+    for (slot, (_, keys)) in scored_pages.iter().enumerate() {
+        for key in keys {
+            key_to_slot.entry(key.as_str()).or_insert(slot);
+        }
+    }
+    let mut referrers: Vec<BTreeSet<&Path>> = vec![BTreeSet::new(); scored_pages.len()];
+    for (page_index, page) in pages.iter().enumerate() {
+        for link in &page.parsed.links {
+            let key = canonical_target_key(&link.target);
+            let Some(&slot) = key_to_slot.get(key.as_str()) else {
+                continue;
+            };
+            if scored_pages[slot].0 == page_index {
+                continue;
+            }
+            referrers[slot].insert(page.relative_path.as_path());
+        }
+    }
+
+    let mut scores = Vec::with_capacity(scored_pages.len());
+    let mut low_confidence = Vec::new();
+    for (slot, (page_index, _)) in scored_pages.iter().enumerate() {
+        let page = &pages[*page_index];
+        let cited_scores: Vec<u8> = page_cited_source_ids(page, needle_index)
+            .iter()
+            .filter_map(|source_id| source_scores.get(source_id.as_str()).copied())
+            .collect();
+        let confidence = PageConfidence::compose(PageConfidenceInput {
+            source_scores: cited_scores,
+            age_days: page_age_days(&page.path),
+            half_life_days: half_life_days_for_content(&page.relative_path),
+            backlink_count: referrers[slot].len(),
+        });
+        if confidence.score < LOW_CONFIDENCE_THRESHOLD {
+            low_confidence.push(PageConfidenceIssue {
+                path: page.relative_path.clone(),
+                score: confidence.score,
+            });
+        }
+        scores.push(confidence.score);
+    }
+
+    let total: u32 = scores.iter().map(|score| u32::from(*score)).sum();
+    let average_score = Some((total as f64 / scores.len() as f64).round() as u8);
+    low_confidence.sort_by(|left, right| {
+        left.score
+            .cmp(&right.score)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let low_confidence_count = low_confidence.len();
+    low_confidence.truncate(LOW_CONFIDENCE_LIST_CAP);
+
+    PageConfidenceSummary {
+        scored_pages: scores.len(),
+        average_score,
+        low_confidence_count,
+        low_confidence,
+    }
+}
+
+/// Page age in days from the file's last modification time.
+fn page_age_days(path: &Path) -> Option<u16> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    let elapsed = modified.elapsed().ok()?;
+    let days = elapsed.as_secs() / 86_400;
+    Some(days.min(u64::from(u16::MAX)) as u16)
 }
 
 pub fn render_text(report: &HealthReport) -> String {
@@ -164,7 +298,30 @@ pub fn render_text(report: &HealthReport) -> String {
     render_duplicate_concepts(&mut text, &report.duplicate_concepts);
     render_duplicate_sources(&mut text, &report.duplicate_sources);
     render_sources(&mut text, "Uncompiled sources", &report.uncompiled_sources);
+    render_page_confidence(&mut text, &report.page_confidence);
     text
+}
+
+fn render_page_confidence(text: &mut String, summary: &PageConfidenceSummary) {
+    text.push_str("\nPage confidence:\n");
+    text.push_str(&format!("- scored pages: {}\n", summary.scored_pages));
+    match summary.average_score {
+        Some(average) => text.push_str(&format!("- average score: {average}\n")),
+        None => text.push_str("- average score: none\n"),
+    }
+    text.push_str(&format!(
+        "- low-confidence pages (score < {LOW_CONFIDENCE_THRESHOLD}): {}\n",
+        summary.low_confidence_count
+    ));
+    for issue in &summary.low_confidence {
+        text.push_str(&format!("  - {} ({})\n", issue.path.display(), issue.score));
+    }
+    if summary.low_confidence_count > summary.low_confidence.len() {
+        text.push_str(&format!(
+            "  - … and {} more\n",
+            summary.low_confidence_count - summary.low_confidence.len()
+        ));
+    }
 }
 
 fn persist_report(vault_root: &Path, report: &HealthReport) -> Result<(), WikiError> {
@@ -358,15 +515,15 @@ fn build_citation_index(
     sources: &[SourceRecord],
     pages: &[crate::lint::WikiPage],
     provenance: &ProvenanceGraph,
+    needle_index: &SourceNeedleIndex,
 ) -> SourceCitationIndex {
     let mut cited_source_ids = sources
         .iter()
         .filter(|source| !provenance.links_for_source(&source.id).is_empty())
         .map(|source| source.id.clone())
         .collect::<BTreeSet<_>>();
-    let needle_index = build_source_needle_index(sources);
     for page in pages {
-        cite_page_links(&mut cited_source_ids, page, &needle_index);
+        cited_source_ids.extend(page_cited_source_ids(page, needle_index));
     }
     if needle_index.text_patterns.is_empty() {
         return SourceCitationIndex { cited_source_ids };
@@ -477,18 +634,21 @@ fn insert_link_key(
         .insert(source_id.to_string());
 }
 
-fn cite_page_links(
-    cited_source_ids: &mut BTreeSet<String>,
+/// Registered source ids this page's links resolve to. Shared by the vault
+/// citation index and per-page confidence composition.
+fn page_cited_source_ids(
     page: &crate::lint::WikiPage,
     needle_index: &SourceNeedleIndex,
-) {
+) -> BTreeSet<String> {
+    let mut cited_source_ids = BTreeSet::new();
     for link in &page.parsed.links {
-        cite_link_key(cited_source_ids, needle_index, &link.target);
-        cite_link_key(cited_source_ids, needle_index, &link.normalized_target);
+        cite_link_key(&mut cited_source_ids, needle_index, &link.target);
+        cite_link_key(&mut cited_source_ids, needle_index, &link.normalized_target);
         for key in link_lookup_keys(&page.relative_path, link.kind, &link.normalized_target) {
-            cite_link_key(cited_source_ids, needle_index, &key);
+            cite_link_key(&mut cited_source_ids, needle_index, &key);
         }
     }
+    cited_source_ids
 }
 
 fn cite_link_key(
@@ -913,6 +1073,55 @@ mod tests {
         let markdown =
             std::fs::read_to_string(root.join("meta/health/latest.md")).expect("health markdown");
         assert!(markdown.starts_with("# Wiki health report\n\nScope: topic:ops\n"));
+    }
+
+    #[test]
+    fn health_composes_page_confidence_for_knowledge_pages() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let source = SourceManifest::register(
+            root,
+            SourceDraft::url(
+                "https://example.com/dispatch",
+                &Utc::now().to_rfc3339(),
+                "dispatch source",
+            )
+            .with_citation("Dispatch Design Notes"),
+        )
+        .expect("source registered");
+        write_page(
+            root,
+            "knowledge/concepts/dispatch.md",
+            &format!(
+                "---\ntitle: Dispatch\n---\n# Dispatch\nGrounded in [[knowledge/sources/{}]].\n",
+                source.id
+            ),
+        );
+        write_page(
+            root,
+            "knowledge/topics/automation.md",
+            "---\ntitle: Automation\n---\n# Automation\nBuilt on [[Dispatch]].\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("health runs");
+
+        // Both knowledge synthesis pages are scored; freshly written pages
+        // with a cited source and a backlink stay above the base score, so
+        // nothing lands in the low-confidence list.
+        let summary = &report.page_confidence;
+        assert_eq!(summary.scored_pages, 2, "{summary:?}");
+        let average = summary.average_score.expect("average confidence");
+        assert!(
+            average > 50,
+            "fresh cited pages must average above the base score: {average}"
+        );
+        assert_eq!(summary.low_confidence_count, 0, "{summary:?}");
+        assert!(summary.low_confidence.is_empty(), "{summary:?}");
+
+        let markdown =
+            std::fs::read_to_string(root.join("meta/health/latest.md")).expect("health markdown");
+        assert!(markdown.contains("Page confidence:"), "{markdown}");
+        assert!(markdown.contains("- scored pages: 2"), "{markdown}");
     }
 
     #[test]

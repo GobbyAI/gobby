@@ -103,6 +103,33 @@ pub(crate) struct WikiPage {
     pub has_frontmatter: bool,
 }
 
+/// Every canonical key a wikilink could use to reach this page: its
+/// extensionless relative path, file stem, title, and aliases. Shared by
+/// upkeep candidate governance and health backlink counting.
+pub(crate) fn page_match_keys(page: &WikiPage) -> BTreeSet<String> {
+    use crate::links::canonical_target_key;
+
+    let mut keys = BTreeSet::new();
+    if let Some(relative) = page.relative_path.with_extension("").to_str() {
+        keys.insert(canonical_target_key(relative));
+    }
+    if let Some(stem) = page
+        .relative_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+    {
+        keys.insert(canonical_target_key(stem));
+    }
+    if let Some(title) = &page.parsed.frontmatter.title {
+        keys.insert(canonical_target_key(title));
+    }
+    for alias in &page.parsed.frontmatter.aliases {
+        keys.insert(canonical_target_key(alias));
+    }
+    keys.remove("");
+    keys
+}
+
 pub(crate) fn collect_pages(vault_root: &Path) -> Result<Vec<WikiPage>, WikiError> {
     let mut raw_pages = Vec::new();
     // `recaps/` pages are first-class vault pages: their digest links must
