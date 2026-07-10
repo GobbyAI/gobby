@@ -34,6 +34,42 @@ from gobby.storage.secrets import (
 pytestmark = pytest.mark.unit
 
 
+def test_install_auth_mode_flag(tmp_path: Path) -> None:
+    codex_result = {
+        "success": True,
+        "hooks_installed": [],
+        "files_installed": [],
+        "workflows_installed": [],
+        "commands_installed": [],
+        "plugins_installed": [],
+        "config_updated": True,
+        "mcp_configured": True,
+    }
+
+    with (
+        patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+        patch(
+            "gobby.cli.install._ensure_daemon_config",
+            return_value={"created": False, "path": tmp_path / "bootstrap.yaml"},
+        ),
+        patch("gobby.cli.install.update_bootstrap_yaml") as update_bootstrap,
+        patch("gobby.cli.install.load_full_config_from_db", side_effect=FileNotFoundError),
+        patch("gobby.cli.install.install_codex", return_value=codex_result),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["install", "--codex", "--no-interactive", "--auth-mode", "disabled"],
+        )
+
+    assert result.exit_code == 0
+    update_bootstrap.assert_called_once()
+    path, updater = update_bootstrap.call_args.args
+    bootstrap: dict[str, str] = {}
+    updater(bootstrap)
+    assert path == tmp_path / "bootstrap.yaml"
+    assert bootstrap["auth_mode"] == "disabled"
+
+
 class _SecretKekStore:
     def __init__(self, posture: str = POSTURE_KEY_FILE) -> None:
         self.calls: list[tuple[str, str | None]] = []

@@ -21,6 +21,7 @@ from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_WEBSOCKET_PORT,
 )
+from gobby.config.bootstrap_io import update_bootstrap_yaml
 from gobby.storage.auth import ensure_local_api_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -272,6 +273,13 @@ def _provision_local_api_token(config_store: ConfigStore | None) -> None:
     write_private_file(local_token_path(), token.encode("utf-8"))
 
 
+def _set_bootstrap_auth_mode(path: Path, auth_mode: str) -> None:
+    def apply_auth_mode(bootstrap: dict[str, Any]) -> None:
+        bootstrap["auth_mode"] = auth_mode
+
+    update_bootstrap_yaml(path, apply_auth_mode)
+
+
 @click.command("install")
 @click.option(
     "--claude",
@@ -411,6 +419,12 @@ def _provision_local_api_token(config_store: ConfigStore | None) -> None:
     help="KEK posture for daemon-local secret encryption.",
 )
 @click.option(
+    "--auth-mode",
+    type=click.Choice(["required", "disabled"]),
+    default=None,
+    help="Daemon API authentication mode to persist in bootstrap.yaml.",
+)
+@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
@@ -443,6 +457,7 @@ def install(
     embedding_model: str | None,
     embedding_dim: int | None,
     secret_kek_posture: str,
+    auth_mode: str | None,
     no_interactive_flag: bool,
     working_dir: Path | None,
 ) -> None:
@@ -576,6 +591,9 @@ def install(
     config_result = _ensure_daemon_config()
     if config_result["created"]:
         click.echo(f"Created daemon config: {config_result['path']}")
+    if auth_mode is not None:
+        _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
+        click.echo(f"Daemon API authentication mode: {auth_mode}")
     run_daemon_setup(project_path)
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)

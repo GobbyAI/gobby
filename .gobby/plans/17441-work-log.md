@@ -118,3 +118,73 @@ Additional validation:
 
 Test gaps: none for the specified bootstrap parsing, DaemonConfig flow, template,
 or Rust unknown-key tolerance behavior.
+
+## 2026-07-10 — #17791 Restructure gobby auth CLI into a token-aware group
+
+Session: #8117
+
+Plan:
+
+1. Inspect the existing auth command, install flow, token storage helpers, CLI
+   registration, affected tests, and source-file sizes.
+2. Update focused CLI tests before implementation to require the auth group,
+   token status and rotation, and bootstrap auth-mode persistence.
+3. Move the credential flow under `auth credentials`, add the token command,
+   and persist `install --auth-mode` through `update_bootstrap_yaml`.
+4. Run focused tests, CLI help checks, formatting, lint, strict type checking,
+   test-quality audit, packaging, diff checks, and size checks.
+5. Commit the leaf and close it with the linked commit.
+
+Implemented:
+
+- Converted `gobby auth` into a Click group with `credentials` and `token`
+  subcommands while preserving the existing credential-management behavior.
+- Added token status output for file path, existence, stored hash prefix, and
+  file/database agreement.
+- Added `--show` for explicit plaintext output and `--rotate` for file + hash
+  replacement, including the ~5-second client pickup and remote recopy notices.
+- Added the exact `gobby auth token --rotate` remediation string to token help.
+- Added `gobby install --auth-mode [required|disabled]` and persisted the chosen
+  value to the generated or existing bootstrap file through `update_bootstrap_yaml`.
+- Added coverage proving group registration, status/show behavior, real rotation
+  invalidating the old token, and install bootstrap persistence.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth.py
+  tests/cli/test_cli_install.py::test_install_auth_mode_flag -q` failed 9 tests:
+  the old `auth` command rejected subcommands, `auth.commands` was absent, and
+  the rotation and bootstrap update symbols/options did not exist.
+- Minimal green: the same command passed 9 tests after the smallest group,
+  token-status, rotation, and install option implementation.
+- Refactor red: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/cli/test_auth.py::test_auth_group_has_credentials_and_token_commands
+  tests/cli/test_auth.py::test_auth_token_rotate -q` passed real rotation and
+  failed only because token help lacked the exact remediation command.
+- Refactor/final green: after adding help remediation and extracting bootstrap
+  mutation, `GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth.py
+  tests/cli/test_cli_install.py::test_install_auth_mode_flag -q` passed 9 tests.
+- Broader focused green: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/cli/test_auth.py tests/cli/test_cli_install.py -q` passed 49 tests.
+
+Additional validation:
+
+- `uv run ruff format src/gobby/cli/auth.py src/gobby/cli/install.py
+  tests/cli/test_auth.py tests/cli/test_cli_install.py` left all 4 files unchanged.
+- `uv run ruff check src/gobby/cli/auth.py src/gobby/cli/install.py
+  tests/cli/test_auth.py tests/cli/test_cli_install.py` passed.
+- `uv run mypy --strict src/gobby/cli/auth.py src/gobby/cli/install.py` passed
+  with no issues in 2 source files.
+- `uv run gobby test-quality audit tests/cli/test_auth.py
+  tests/cli/test_cli_install.py --baseline .gobby/test-quality-baseline.json
+  --fail-on-new --min-severity high` scanned 48 tests and reported zero issues.
+- `uv run gobby auth --help`, `uv run gobby auth token --help`, and
+  `uv run gobby install --help` all exited successfully and exposed the expected
+  subcommands, remediation command, and auth-mode option.
+- `uv build` successfully built the 0.5.0 source distribution and wheel.
+- `git diff --check` passed.
+- `src/gobby/cli/auth.py` is 92 lines and `src/gobby/cli/install.py` is 927
+  lines; both remain below 1,000, so no refactor task was required.
+
+Test gaps: none for this leaf's specified CLI grouping, status, rotation, help,
+or bootstrap-persistence behavior.
