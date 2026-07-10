@@ -126,3 +126,28 @@ Entry format:
   gobby-cli #1001; `tool_loop` is not forwarded to `curated_page_body`), so
   it is covered by unit tests; the nav-plan dump fires on real Lane A parse
   exhaustion and is covered end-to-end.
+
+## 2026-07-10 19:20 UTC — #17531 bakeoff — arm S end, daemon-auth deploy, freeze superseded
+
+- Arm S (sonnet@xhigh) ran 2026-07-10T00:00:27Z → 18:05:38Z (ARM_S_END
+  auto-stamped by the wrapper). It ended with 23/2882 pages `degraded: true`
+  and a Lane B repo-overview hard-fail (`model-unavailable`, transport
+  errors against `http://localhost:60887/api/llm/generate`), so the
+  aggregates after the abort are missing.
+- Root cause of the tail failures: the daemon-auth workstream deployed
+  mid-window — daemon restarted with auth enabled (up since ~18:17 UTC),
+  `~/.gobby/bin/{gcode,ghook}` reinstalled 18:38 UTC and `gwiki` 18:53 UTC
+  (not by this session). Arm S's transport died in that restart window.
+- Freeze disposition: the gcode binary freeze (no reinstalls until arm G)
+  was violated by that deploy, but is also moot — an unauthenticated
+  pre-auth binary can no longer reach the auth-enabled daemon, so the
+  remaining bakeoff work must run on the current binary. Comparability is
+  verified empirically instead: arm-sonnet backed up to
+  `arm-sonnet.pre-heal-backup/` before healing; arms O/G must show
+  `code/files/**` byte-identical to arm S per the plan's own gate. The
+  binary transition (old binary for arm S's surviving aggregates, current
+  binary for healed + O/G aggregates) will be disclosed in the evidence
+  doc.
+- Action: healing arm S by rerunning the exact arm command (reuse
+  regenerates only the 23 degraded pages + missing aggregates), then arm O
+  → arm G per `/Users/josh/.claude/plans/i-had-the-absolute-modular-pizza.md`.
