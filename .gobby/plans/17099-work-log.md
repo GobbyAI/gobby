@@ -2,6 +2,57 @@
 
 Adaptive tuning of memory recall parameters from feedback.
 
+## 2026-07-10 — #17199: Learned per-edge-type / LTR weights (conditional) — closed as not needed
+
+**Status:** closed not-needed (session #8113, no code change)
+
+**Decision: the escalation condition has not fired; no LTR is built.**
+
+**Rationale:**
+
+The task gate reads "Pursued ONLY if the closed-form re-fit fails to beat
+static by the target margin", and the epic frames Phase 2c as "conditional
+escalation in modeling power; do not lead with it". Both presuppose an
+evaluable closed-form fit that came up short on *capability*. That is not
+what happened:
+
+1. The #17198 gate rejected with `sufficient_data: false` — 0 train pairs
+   and 0 holdout pairs on both label streams
+   (`.gobby/plans/17198-refit-decision.json`). Its `beats_static: false` is
+   vacuous (fitted 0.0 vs static 0.0 on an empty holdout). The closed form
+   was never evaluated, so it cannot have fallen short of any target
+   margin; nothing is yet known about its expressive adequacy.
+2. Escalating modeling power cannot remedy a data shortage — it inverts it.
+   Per-edge-type / learning-to-rank weights carry strictly more parameters
+   than the 19-point closed-form grid and therefore need MORE labeled
+   pairs, not fewer. The only fit-capable stream (digest, #17195) has 2
+   labeled joinable rows; the llm_judge retro stream is structurally
+   fit-incapable through the replay join (synthetic `retro:<session>:<n>`
+   request ids never join `recall_signal_hits`). An LTR model built today
+   would run through the same must-beat-static + judge-independent gate and
+   emit the identical data-floor reject — provably no different outcome,
+   with hundreds of lines of unfittable model machinery left to maintain.
+3. Building it anyway would contradict the task's own "Pursued ONLY if"
+   gate and the epic's "do not lead with it". It would also bake in today's
+   guesses about the feature set; once labels exist, the right feature set
+   (the edge-type taxonomy then in force, the memory_type principle-first
+   candidate from #17591) is knowable rather than guessed.
+
+**Re-trigger condition (durable):** when digest labels cross the #17198
+floors (≥50 train / ≥20 holdout pairs), rerun
+`run_ship_gate_from_store(store, label_source="digest")`
+(`src/gobby/memory/recall_refit.py`). Only a data-sufficient closed-form
+loss to static re-opens the LTR question — at that point file a fresh task
+with the then-current feature candidates. A data-sufficient closed-form WIN
+instead confirms this closure on the task's own terms ("if the closed form
+already wins, this task is closed as not-needed").
+
+**Epic impact:** #17200 (promote fitted defaults + one-flag rollback)
+unblocks. Note for #17200: there is no fitted set to promote — the
+promotion machinery must treat the reject outcome as first-class (static
+constants remain authoritative; the promotion path is exercised only by a
+future shipping `GateDecision`).
+
 ## 2026-07-10 — #17198: Offline closed-form re-fit of recall constants + must-beat-static ship gate
 
 **Status:** done (session #8113)
