@@ -244,7 +244,7 @@ fn index_file(
     Ok(())
 }
 
-fn is_indexable_vault_path(path: &Path) -> bool {
+pub(crate) fn is_indexable_vault_path(path: &Path) -> bool {
     if path == Path::new("raw").join("INDEX.md") {
         return true;
     }

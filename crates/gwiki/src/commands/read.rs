@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
@@ -127,13 +126,16 @@ fn read_existing_path(
 ) -> Result<ReadOutput, WikiError> {
     let absolute_path = root.join(&wiki_path);
     let max_bytes = configured_read_max_bytes();
-    let metadata = std::fs::metadata(&absolute_path).map_err(|error| WikiError::Io {
-        action: "stat wiki document",
+    let bytes = std::fs::read(&absolute_path).map_err(|error| WikiError::Io {
+        action: "read wiki document",
         path: Some(absolute_path.clone()),
         source: error,
     })?;
-    let byte_len = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
-    let (content, truncated) = read_markdown_prefix(&absolute_path, max_bytes)?;
+    let byte_len = bytes.len();
+    // Revision baseline for the conditional-write contract: hash the whole
+    // document with the indexer's hash so it matches the gwiki_documents row.
+    let content_hash = gobby_core::indexing::content_hash(&bytes);
+    let (content, truncated) = markdown_prefix(bytes, max_bytes, &absolute_path)?;
     Ok(ReadOutput::found(
         scope,
         requested,
@@ -144,6 +146,7 @@ fn read_existing_path(
             content,
             byte_len,
             truncated,
+            content_hash,
         },
     ))
 }
@@ -156,21 +159,11 @@ fn configured_read_max_bytes() -> usize {
         .unwrap_or(DEFAULT_READ_MAX_BYTES)
 }
 
-fn read_markdown_prefix(path: &Path, max_bytes: usize) -> Result<(String, bool), WikiError> {
-    let mut file = std::fs::File::open(path).map_err(|error| WikiError::Io {
-        action: "read wiki document",
-        path: Some(path.to_path_buf()),
-        source: error,
-    })?;
-    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024).saturating_add(1));
-    file.by_ref()
-        .take(max_bytes.saturating_add(1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| WikiError::Io {
-            action: "read wiki document",
-            path: Some(path.to_path_buf()),
-            source: error,
-        })?;
+fn markdown_prefix(
+    mut bytes: Vec<u8>,
+    max_bytes: usize,
+    path: &Path,
+) -> Result<(String, bool), WikiError> {
     let truncated = bytes.len() > max_bytes;
     if truncated {
         bytes.truncate(max_bytes);
@@ -226,7 +219,7 @@ fn readable_path_degradation(path: &Path) -> Option<ReadDegradation> {
         None
     } else {
         Some(ReadDegradation::invalid_request(
-            "Read paths must target canonical wiki documents under raw/INDEX.md, _index.md, log.md, knowledge/, or code/.",
+            "Read paths must target canonical wiki documents under raw/INDEX.md, _index.md, log.md, knowledge/, code/, or outputs/.",
         ))
     }
 }
@@ -242,6 +235,7 @@ fn is_readable_wiki_path(path: &Path) -> bool {
             | ["knowledge", "concepts", ..]
             | ["knowledge", "topics", ..]
             | ["code", ..]
+            | ["outputs", ..]
     )
 }
 
@@ -406,6 +400,7 @@ struct ReadOutput {
     title: Option<String>,
     content_format: &'static str,
     content: Option<String>,
+    content_hash: Option<String>,
     byte_len: Option<usize>,
     truncated: bool,
     candidates: Vec<ReadCandidate>,
@@ -417,6 +412,7 @@ struct ReadFoundContent {
     content: String,
     byte_len: usize,
     truncated: bool,
+    content_hash: String,
 }
 
 impl ReadOutput {
@@ -437,6 +433,7 @@ impl ReadOutput {
             title: found.title,
             content_format: "markdown",
             content: Some(found.content),
+            content_hash: Some(found.content_hash),
             byte_len: Some(found.byte_len),
             truncated: found.truncated,
             candidates: Vec::new(),
@@ -513,6 +510,7 @@ impl ReadOutput {
             title: None,
             content_format: "markdown",
             content: None,
+            content_hash: None,
             byte_len: None,
             truncated: false,
             candidates: Vec::new(),
@@ -620,10 +618,44 @@ mod tests {
         assert!(output.truncated);
         assert_eq!(output.byte_len, Some("# Large\n0123456789abcdef".len()));
         assert_eq!(output.content.as_deref(), Some("# Large\n0123"));
+        // The revision baseline hashes the whole document, not the truncated prefix.
+        assert_eq!(
+            output.content_hash.as_deref(),
+            Some(
+                gobby_core::indexing::content_hash("# Large\n0123456789abcdef".as_bytes()).as_str()
+            )
+        );
         // SAFETY: READ_TEST_ENV_LOCK serializes this process-wide env mutation.
         unsafe {
             std::env::remove_var(READ_MAX_BYTES_ENV);
         }
+    }
+
+    #[test]
+    fn outputs_paths_are_readable() {
+        let _guard = READ_TEST_ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("outputs/reports/health.md");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("outputs dir");
+        std::fs::write(&path, "# Health\nAll good.").expect("report markdown");
+
+        let output = read_path(
+            temp.path(),
+            ScopeIdentity::project("proj-1"),
+            PathBuf::from("outputs/reports/health.md"),
+        )
+        .expect("read path");
+
+        assert_eq!(output.status, "found");
+        assert_eq!(output.content.as_deref(), Some("# Health\nAll good."));
+        assert_eq!(
+            output.content_hash.as_deref(),
+            Some(gobby_core::indexing::content_hash("# Health\nAll good.".as_bytes()).as_str())
+        );
+        // outputs/** is readable but stays out of the indexing allowlist.
+        assert!(!crate::indexer::is_indexable_vault_path(Path::new(
+            "outputs/reports/health.md"
+        )));
     }
 
     #[test]

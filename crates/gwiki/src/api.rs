@@ -77,6 +77,11 @@ pub enum Command {
         target: ReadTarget,
         scope: ScopeSelection,
     },
+    Pages {
+        scope: ScopeSelection,
+        /// Restrict the listing to wiki paths starting with this prefix.
+        prefix: Option<String>,
+    },
     Backlinks {
         page: String,
         scope: ScopeSelection,

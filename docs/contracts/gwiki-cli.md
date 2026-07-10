@@ -5,7 +5,7 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 10
+`contract_version`: 12
 
 Version 10 covers the daemon-consumed surface:
 
@@ -35,6 +35,17 @@ Version 10 covers the daemon-consumed surface:
 - `status`
 - `trust`
 - `remove-source`
+
+Version 12 adds the `pages` listing surface and the read revision baseline.
+`gwiki pages [--prefix <p>]` lists indexed pages from `gwiki_documents`
+(`path`, `title`, `tags` from frontmatter JSONB, `content_hash`, `updated_at`)
+without page bodies, plus a separate `outputs` array walked from the vault's
+unindexed `outputs/**` markdown reports (`path`, `size`, `modified`).
+`--prefix` restricts the page listing to wiki paths with that prefix (e.g.
+`code/`). `gwiki read` payloads now carry `content_hash` (SHA-256 of the full
+document bytes, matching the indexer's hash) as the editor's revision baseline
+for the conditional-write contract, and `outputs/**` paths become readable via
+`gwiki read --path` while remaining excluded from indexing and writes.
 
 Version 11 adds on-demand graph fetch flags to `graph`: `gwiki graph
 [--stdout] [--include knowledge|code|all]`. `--stdout` emits the JSON envelope

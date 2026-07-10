@@ -320,6 +320,31 @@ fn graph_cli_maps_to_command_options() {
 }
 
 #[test]
+fn pages_cli_maps_to_command() {
+    use clap::Parser;
+
+    let cli =
+        Cli::try_parse_from(["gwiki", "pages", "--prefix", "code/"]).expect("parse pages command");
+    let CliCommand::Pages(args) = cli.command else {
+        panic!("expected parsed pages command");
+    };
+    assert_eq!(args.prefix.as_deref(), Some("code/"));
+
+    let command = command_from_cli(CliCommand::Pages(args), ScopeSelection::Detect)
+        .expect("map pages command");
+    let Command::Pages { prefix, .. } = command else {
+        panic!("expected pages command");
+    };
+    assert_eq!(prefix.as_deref(), Some("code/"));
+
+    let default_cli = Cli::try_parse_from(["gwiki", "pages"]).expect("parse default pages");
+    let CliCommand::Pages(default_args) = default_cli.command else {
+        panic!("expected parsed pages command");
+    };
+    assert!(default_args.prefix.is_none());
+}
+
+#[test]
 fn graph_context_cli_maps_to_command() {
     let cli = Cli::try_parse_from([
         "gwiki",

@@ -26,6 +26,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "search",
     "ask",
     "read",
+    "pages",
     "backlinks",
     "link-suggest",
     "benchmark",
@@ -124,6 +125,8 @@ enum CliCommand {
     Ask(AskArgs),
     /// Read a wiki page or document in the selected scope.
     Read(ReadArgs),
+    /// List indexed wiki pages and unindexed outputs reports.
+    Pages(PagesArgs),
     /// Show backlinks for a wiki page.
     Backlinks(BacklinksArgs),
     /// Suggest unresolved wiki links in the selected scope.
@@ -392,6 +395,13 @@ struct ReadArgs {
     /// First-heading title to resolve inside the selected scope.
     #[arg(long, value_name = "TITLE")]
     title: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PagesArgs {
+    /// Only list pages whose wiki path starts with this prefix (e.g. code/).
+    #[arg(long, value_name = "PREFIX")]
+    prefix: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -797,6 +807,10 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             };
             Ok(Command::Read { target, scope })
         }
+        CliCommand::Pages(args) => Ok(Command::Pages {
+            scope,
+            prefix: args.prefix,
+        }),
         CliCommand::Backlinks(args) => Ok(Command::Backlinks {
             page: args.page,
             scope,

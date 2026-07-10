@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 11,
+  "contract_version": 12,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -266,8 +266,38 @@
         "path",
         "title",
         "content",
+        "content_hash",
         "frontmatter",
         "citations"
+      ]
+    },
+    {
+      "name": "pages",
+      "summary": "List indexed wiki pages and unindexed outputs reports.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--prefix",
+          "takes_value": true,
+          "value_name": "PREFIX",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "pages",
+        "outputs",
+        "path",
+        "title",
+        "tags",
+        "content_hash",
+        "updated_at",
+        "size",
+        "modified"
       ]
     },
     {

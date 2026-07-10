@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 11,
+        contract_version: 12,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -121,12 +121,33 @@ pub fn contract() -> CliContract {
                     "path",
                     "title",
                     "content",
+                    "content_hash",
                     "frontmatter",
                     "citations",
                 ]),
                 ..CommandContract::new(
                     "read",
                     "Read a wiki page or document in the selected scope.",
+                )
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![FlagContract::value("--prefix", "PREFIX")],
+                json_output_keys: scoped_keys(vec![
+                    "pages",
+                    "outputs",
+                    "path",
+                    "title",
+                    "tags",
+                    "content_hash",
+                    "updated_at",
+                    "size",
+                    "modified",
+                ]),
+                ..CommandContract::new(
+                    "pages",
+                    "List indexed wiki pages and unindexed outputs reports.",
                 )
             },
             CommandContract {
