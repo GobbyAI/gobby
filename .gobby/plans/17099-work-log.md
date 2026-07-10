@@ -2,6 +2,98 @@
 
 Adaptive tuning of memory recall parameters from feedback.
 
+## 2026-07-10 — #17198: Offline closed-form re-fit of recall constants + must-beat-static ship gate
+
+**Status:** done (session #8113)
+
+**Plan (as executed):**
+
+1. New production module `src/gobby/memory/recall_refit.py` on top of the
+   #17197 harness: static-constants anchor, static-anchored refit grid,
+   constructed judge-independent guard battery, three-gate ship decision.
+2. Cluster params (`min_cluster_size`, `min_samples`) swept on the live
+   synthetic arms (extended `_run_arm`), NOT offline — they change candidate
+   sets, which logged-hit replay cannot express (#17197 caveat).
+3. Run the gate live on both label streams; record result + decision as a
+   committed JSON artifact.
+
+**Delivered:**
+
+- `src/gobby/memory/recall_refit.py` (NEW):
+  - `static_replay_params()` — the frozen constants pulled from their
+    production sources (`MemoryConfig` half-life default 30d,
+    `_GRAPH_SYNTHETIC_SIM_DISCOUNT` 0.9, writer `COOCCUR_ALPHA` 0.5 /
+    `COOCCUR_SUPPORT_CAP` 5) so the gate can never drift from what ships.
+  - `refit_grid()` — 19 points: `[logged-baseline, static]` + half-life
+    singles (7/14/60/120) + discount singles (0.8/1.0) + the full
+    alpha × cap product (0.25/0.5/0.75/1.0 × 3/5/8; the two edge-blend
+    params plausibly interact, the rest sweep one axis for
+    interpretability). First-strict-max fitting makes ties regularize to
+    no-change; every non-baseline point is fully concrete — what #17200
+    promotes to config.
+  - `judge_independent_guard_rows()` + `guard_accuracy()` — a 7-pair
+    planted-truth battery (temporal T1–T3, graph-discount G1–G2,
+    edge-blend E1–E2); ground truth is constructed, never judge output, so
+    a fit that reward-hacks judge-label artifacts (arXiv:2210.10760) cannot
+    also satisfy it. Static scores 1.0; the shippable envelope excludes
+    h=7d (violates the stale-relevant prior), alpha=0.25 (support-only
+    blend), alpha=1.0 (cosine-only blend), and degenerate discounts.
+    Axes are separable by construction (temporal pairs semantic-only;
+    graph pairs share decay), verified pointwise in tests.
+  - `run_ship_gate()` / `run_ship_gate_from_store()` → `GateDecision`
+    (+ `to_record()` JSON): three gates, all required — sufficient data
+    (≥50 train / ≥20 holdout pairs), strictly-beats-static on the holdout
+    (static replayed on the identical split with identical train-side
+    propensities; safe exploration, arXiv:2002.00467), and no guard
+    regression vs static. Explicit reasons on every decision.
+- Cluster-param sweep on the live arms: `_run_arm` gained
+  `cluster_min_cluster_size`/`cluster_min_samples` pass-through; the arms
+  test sweeps (3,1)/(5,2)/(8,3) with recluster + cluster expansion and
+  records a beats-static verdict alongside the existing (alpha, cap) sweep.
+- `test_recall_benchmark_labeled_fit` now runs the ship gate end-to-end over
+  the seeded hub tables: planted stream is tiny AND its judge-label optimum
+  (h=7) sits outside the guard envelope, so the gate refuses on both counts
+  while still beating static on the holdout — the reward-hacking guard has
+  observable teeth.
+- Tests: `tests/memory/test_recall_refit.py` (15 unit tests: static anchor,
+  grid shape/order/concreteness, guard envelope verified for every grid
+  point, degenerate failures, ship path fitting h=60 from planted
+  inversions, reject paths for data floor / guard regression /
+  static-already-optimal, holdout identity between arms, JSON round-trip,
+  empty-rows) — all planted datasets arithmetically determined, not
+  asserted by faith.
+
+**Live run (recorded in `.gobby/plans/17198-refit-decision.json`):**
+
+- Offline gate, `digest` stream: 2 joinable rows, 0 pairs → REJECT
+  (insufficient data). The forward-collection stream (#17195) only shipped
+  yesterday; the conservative reject is the designed outcome until labels
+  accrue.
+- Offline gate, `llm_judge` stream: 0 joinable labels — the 297 retro labels
+  use synthetic `retro:<session>:<n>` request ids that never join
+  `recall_signal_hits` (retro protocol labels historical recalls predating
+  hit logging). Structurally fit-incapable through the replay join; digest
+  is the fit stream going forward.
+- Cluster sweep (live arms): static (5,2) recall@5=1.000/MRR=1.000;
+  (3,1) over-fragments (14 clusters, recall 0.827); (8,3) ties without
+  improvement → keep static (5,2).
+- **Decision: no fitted set ships; static constants stay.** The machinery is
+  the deliverable — rerun `run_ship_gate_from_store(store,
+  label_source="digest")` once forward labels accrue.
+
+**Validation:** ruff format/check clean; mypy clean on the new module;
+unit 15/15; labeled benchmark (incl. gate integration) passed vs test
+Postgres hub; live arms (incl. cluster sweep) passed vs FalkorDB;
+`gobby test-quality audit` on both touched test files: 0 issues; decision
+JSON parses.
+
+**Epic impact:** #17199 (conditional LTR) and #17200 (promote fitted
+defaults) unblock. #17200 consumes `GateDecision.to_record()`; nothing ships
+until a digest-stream fit passes all three gates. Caveat for the eventual
+real fit: rows logged before 2026-07-10 under-represent densified
+co-occurrence (see #17492 note) and outcome logging is newer than hit
+logging, so early fits will see few joinable rows.
+
 ## 2026-07-10 — #17197: Extend offline recall benchmark harness to real labeled data
 
 **Status:** done (session #8113)

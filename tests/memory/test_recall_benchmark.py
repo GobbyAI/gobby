@@ -51,7 +51,7 @@ in a uniquely-named graph and clears it per arm, so it never touches gobby_kg.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -63,6 +63,7 @@ from gobby.memory.recall_fit import (
     fit_and_evaluate,
     replay_row_from_signal_row,
 )
+from gobby.memory.recall_refit import run_ship_gate_from_store, static_replay_params
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
 from gobby.storage.recall_signals import RecallSignalStore
@@ -139,6 +140,8 @@ async def _run_arm(
     cluster_recall_expansion: bool = False,
     recluster_entities: bool = False,
     cluster_expansion_per_entity: int = 3,
+    cluster_min_cluster_size: int = 5,
+    cluster_min_samples: int | None = 2,
 ) -> ArmMetrics:
     await client.query("MATCH (n) DETACH DELETE n")
 
@@ -157,6 +160,8 @@ async def _run_arm(
         edge_half_life_days=edge_half_life_days,
         cluster_recall_expansion=cluster_recall_expansion,
         cluster_expansion_per_entity=cluster_expansion_per_entity,
+        cluster_min_cluster_size=cluster_min_cluster_size,
+        cluster_min_samples=cluster_min_samples,
     )
     service._extractor = _StubExtractor(by_content)  # type: ignore[assignment]
 
@@ -357,6 +362,29 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
             recluster_entities=True,
         )
 
+        # Sweep HDBSCAN (min_cluster_size, min_samples) on the live corpus —
+        # clustering changes retrieval candidate sets, which logged-hit replay
+        # cannot express, so #17198 tunes these here (judge-independent planted
+        # ground truth) instead of in the offline gate. (5, 2) is the static
+        # pair and reuses the cluster_expansion arm above.
+        cluster_sweep: dict[tuple[int, int | None], ArmMetrics] = {(5, 2): cluster_expansion}
+        for mcs, ms in ((3, 1), (8, 3)):
+            cluster_sweep[(mcs, ms)] = await _run_arm(
+                client,
+                corpus,
+                graph_edge_weighting=False,
+                materialize_cooccurrence=False,
+                graph_edge_decay=False,
+                cluster_recall_expansion=True,
+                recluster_entities=True,
+                cluster_min_cluster_size=mcs,
+                cluster_min_samples=ms,
+            )
+        best_cluster = max(
+            cluster_sweep,
+            key=lambda pair: (cluster_sweep[pair].recall_at_k, cluster_sweep[pair].mrr),
+        )
+
         # Sweep (alpha, cap) for the weighted arm; freeze winners as module constants.
         sweep: dict[tuple[float, int], ArmMetrics] = {}
         for alpha in (0.5, 0.75, 1.0):
@@ -407,11 +435,24 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         for (alpha, cap), m in sweep.items():
             print(f"  alpha={alpha:<4} cap={cap:<3} recall@{K}={m.recall_at_k:.3f} MRR={m.mrr:.3f}")
 
+        print("--- cluster sweep grid (min_cluster_size, min_samples) — #17198 ---")
+        for (mcs, ms), m in cluster_sweep.items():
+            print(
+                f"  mcs={mcs:<3} ms={ms!s:<4} recall@{K}={m.recall_at_k:.3f} "
+                f"MRR={m.mrr:.3f} clusters={m.cluster_count}/{m.clustered_entities}"
+            )
+
         print("--- decision gate ---")
         print(f"  densify helps:   {cooc_unweighted.recall_at_k > baseline.recall_at_k}")
         print(f"  cluster helps:   {cluster_expansion.recall_at_k > baseline.recall_at_k}")
         print(f"  weighting helps: {cooc_weighted.recall_at_k > cooc_unweighted.recall_at_k}")
         print(f"  decay helps:     {weighted_decay.recall_at_k > cooc_weighted.recall_at_k}")
+        static_cluster = cluster_sweep[(5, 2)]
+        cluster_beats_static = best_cluster != (5, 2) and (
+            cluster_sweep[best_cluster].recall_at_k,
+            cluster_sweep[best_cluster].mrr,
+        ) > (static_cluster.recall_at_k, static_cluster.mrr)
+        print(f"  cluster params beat static (5, 2): {cluster_beats_static} (best={best_cluster})")
 
         # ----------------------------------------------------------------- #
         # Harness assertions (the gate decision is recorded, not asserted)  #
@@ -428,6 +469,12 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         assert cluster_expansion.clustered_entities > 0
         assert cluster_expansion.recall_at_k > baseline.recall_at_k
         assert cooc_weighted.recall_at_k >= cooc_unweighted.recall_at_k
+        # Cluster-param sweep is a harness: every arm must produce sane
+        # metrics; which pair wins is recorded, not asserted.
+        for m in cluster_sweep.values():
+            assert 0.0 <= m.recall_at_k <= 1.0
+            assert 0.0 <= m.mrr <= 1.0
+            assert m.cluster_count > 0
     finally:
         try:
             await client.query("MATCH (n) DETACH DELETE n")
@@ -493,3 +540,19 @@ def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
     ]
     assert all(row.ranking_mode == "semantic_only" for row in fit_rows)
     assert all(row.temporal_decay_factor is not None for row in fit_rows)
+
+    # #17198 ship gate end-to-end over the same store: the planted stream is
+    # tiny AND its judge-label optimum (h=7) sits outside the constructed
+    # judge-independent envelope, so the gate must refuse to ship on BOTH
+    # counts even though the fitted arm crushes static on the holdout.
+    decision = run_ship_gate_from_store(store, label_source="digest")
+    print(f"ship gate: ship={decision.ship} reasons={list(decision.reasons)}")
+    assert decision.report.fitted.pooled == replace(static_replay_params(), half_life_days=7.0)
+    assert decision.beats_static is True
+    assert decision.sufficient_data is False
+    assert decision.guard_fitted < decision.guard_static == 1.0
+    assert decision.guard_ok is False
+    assert decision.ship is False
+    assert any("insufficient labeled data" in reason for reason in decision.reasons)
+    assert any("judge-independent guard regression" in reason for reason in decision.reasons)
+    assert decision.to_record()["gates"]["beats_static"] is True

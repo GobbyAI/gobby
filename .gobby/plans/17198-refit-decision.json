@@ -1,0 +1,139 @@
+{
+  "generated_at": "2026-07-10T17:26:01.226022+00:00",
+  "note": "Live run of the #17198 offline refit ship gate against the hub DB. Cluster params (min_cluster_size, min_samples) are swept on the live synthetic arms in tests/memory/test_recall_benchmark.py (not offline-replayable); see the cluster sweep record below.",
+  "stream_notes": {
+    "digest": "The forward-collection stream (#17195, shipped 2026-07-09) joins hits/outcomes correctly but has only 2 labeled injected rows so far - the gate rejects on the data floor, which is the intended conservative outcome until labels accrue.",
+    "llm_judge": "297 retro labels exist but use synthetic request ids (retro:<session>:<n>) that never join recall_signal_hits - the retro protocol labels historical recalls that predate hit logging. This stream is structurally fit-incapable through the replay join; digest is the fit stream going forward.",
+    "outcome_coverage": "Only 174 injection outcomes exist against 2,891 logged hits (outcome logging is newer than hit logging), so the replay join - which requires an injected outcome - is the binding constraint on rows_total today."
+  },
+  "offline_gate": {
+    "digest": {
+      "task": "#17198",
+      "label_source": "digest",
+      "rows_total": 2,
+      "rows_labeled": 2,
+      "train_requests": 1,
+      "eval_requests": 1,
+      "train_pairs": 0,
+      "fitted_params": {
+        "half_life_days": null,
+        "graph_synthetic_discount": null,
+        "cooccur_alpha": null,
+        "cooccur_support_cap": null
+      },
+      "static_params": {
+        "half_life_days": 30.0,
+        "graph_synthetic_discount": 0.9,
+        "cooccur_alpha": 0.5,
+        "cooccur_support_cap": 5
+      },
+      "fitted_eval": {
+        "pair_count": 0,
+        "weighted_pair_count": 0.0,
+        "accuracy": 0.0,
+        "per_project": {}
+      },
+      "static_eval": {
+        "pair_count": 0,
+        "weighted_pair_count": 0.0,
+        "accuracy": 0.0,
+        "per_project": {}
+      },
+      "logged_baseline_eval": {
+        "pair_count": 0,
+        "weighted_pair_count": 0.0,
+        "accuracy": 0.0,
+        "per_project": {}
+      },
+      "guard_static": 1.0,
+      "guard_fitted": 1.0,
+      "gates": {
+        "sufficient_data": false,
+        "beats_static": false,
+        "guard_ok": true
+      },
+      "ship": false,
+      "reasons": [
+        "insufficient labeled data: 0 train pairs (need 50), 0 holdout pairs (need 20)",
+        "fitted parameters do not beat the static constants on the holdout: fitted 0.0000 vs static 0.0000"
+      ]
+    },
+    "llm_judge": {
+      "task": "#17198",
+      "label_source": "llm_judge",
+      "rows_total": 2,
+      "rows_labeled": 0,
+      "train_requests": 1,
+      "eval_requests": 1,
+      "train_pairs": 0,
+      "fitted_params": {
+        "half_life_days": null,
+        "graph_synthetic_discount": null,
+        "cooccur_alpha": null,
+        "cooccur_support_cap": null
+      },
+      "static_params": {
+        "half_life_days": 30.0,
+        "graph_synthetic_discount": 0.9,
+        "cooccur_alpha": 0.5,
+        "cooccur_support_cap": 5
+      },
+      "fitted_eval": {
+        "pair_count": 0,
+        "weighted_pair_count": 0.0,
+        "accuracy": 0.0,
+        "per_project": {}
+      },
+      "static_eval": {
+        "pair_count": 0,
+        "weighted_pair_count": 0.0,
+        "accuracy": 0.0,
+        "per_project": {}
+      },
+      "logged_baseline_eval": {
+        "pair_count": 0,
+        "weighted_pair_count": 0.0,
+        "accuracy": 0.0,
+        "per_project": {}
+      },
+      "guard_static": 1.0,
+      "guard_fitted": 1.0,
+      "gates": {
+        "sufficient_data": false,
+        "beats_static": false,
+        "guard_ok": true
+      },
+      "ship": false,
+      "reasons": [
+        "insufficient labeled data: 0 train pairs (need 50), 0 holdout pairs (need 20)",
+        "fitted parameters do not beat the static constants on the holdout: fitted 0.0000 vs static 0.0000"
+      ]
+    }
+  },
+  "cluster_sweep": {
+    "harness": "tests/memory/test_recall_benchmark.py::test_recall_benchmark_arms",
+    "static_pair": [
+      5,
+      2
+    ],
+    "arms": {
+      "(5, 2)": {
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "clusters": "7/95"
+      },
+      "(3, 1)": {
+        "recall_at_5": 0.827,
+        "mrr": 1.0,
+        "clusters": "14/91"
+      },
+      "(8, 3)": {
+        "recall_at_5": 1.0,
+        "mrr": 1.0,
+        "clusters": "6/95"
+      }
+    },
+    "beats_static": false,
+    "decision": "keep static (5, 2): (3, 1) over-fragments and regresses recall; (8, 3) ties without improvement"
+  }
+}
