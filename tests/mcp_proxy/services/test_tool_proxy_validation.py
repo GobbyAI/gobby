@@ -76,6 +76,142 @@ class TestCheckArguments:
 
         assert errors == []
 
+    @pytest.mark.parametrize(
+        ("schema_type", "value"),
+        [
+            ("string", "value"),
+            ("number", 1.25),
+            ("integer", 2.0),
+            ("boolean", True),
+            ("object", {"key": "value"}),
+            ("array", [1, 2]),
+            ("null", None),
+        ],
+    )
+    def test_accepts_each_supported_json_type(self, tool_proxy, schema_type, value) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"value": {"type": schema_type}},
+        }
+
+        errors = tool_proxy._check_arguments({"value": value}, schema)
+
+        assert errors == []
+
+    @pytest.mark.parametrize(
+        ("schema_type", "value", "actual_type"),
+        [
+            ("string", True, "boolean"),
+            ("number", True, "boolean"),
+            ("integer", True, "boolean"),
+            ("boolean", "true", "string"),
+            ("object", "value", "string"),
+            ("array", {"key": "value"}, "object"),
+            ("null", 0, "integer"),
+        ],
+    )
+    def test_rejects_mismatches_for_each_supported_json_type(
+        self,
+        tool_proxy,
+        schema_type,
+        value,
+        actual_type,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"value": {"type": schema_type}},
+        }
+
+        errors = tool_proxy._check_arguments({"value": value}, schema)
+
+        assert errors == [
+            f"Invalid type for parameter 'value': expected {schema_type}, got {actual_type}"
+        ]
+
+    @pytest.mark.parametrize("value", ["value", None])
+    def test_list_valued_type_accepts_union_members(self, tool_proxy, value) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"value": {"type": ["string", "null"]}},
+        }
+
+        errors = tool_proxy._check_arguments({"value": value}, schema)
+
+        assert errors == []
+
+    def test_list_valued_type_rejects_non_member(self, tool_proxy) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"value": {"type": ["string", "null"]}},
+        }
+
+        errors = tool_proxy._check_arguments({"value": False}, schema)
+
+        assert errors == [
+            "Invalid type for parameter 'value': expected string or null, got boolean"
+        ]
+
+    @pytest.mark.parametrize("value", ["value", 3, None])
+    def test_recursive_anyof_accepts_union_members(self, tool_proxy, value) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                    ]
+                }
+            },
+        }
+
+        errors = tool_proxy._check_arguments({"value": value}, schema)
+
+        assert errors == []
+
+    def test_recursive_anyof_rejects_non_member(self, tool_proxy) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                    ]
+                }
+            },
+        }
+
+        errors = tool_proxy._check_arguments({"value": False}, schema)
+
+        assert errors == [
+            "Invalid type for parameter 'value': expected string or integer or null, got boolean"
+        ]
+
+    @pytest.mark.parametrize(
+        "property_schema",
+        [
+            {},
+            {"enum": ["value"]},
+            {"type": "unsupported"},
+            {"type": ["string", "unsupported"]},
+            {"anyOf": [{"type": "string"}, {"enum": ["value"]}]},
+        ],
+    )
+    def test_unsupported_or_untyped_branches_are_non_blocking(
+        self,
+        tool_proxy,
+        property_schema,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"value": property_schema},
+        }
+
+        errors = tool_proxy._check_arguments({"value": {"nested": True}}, schema)
+
+        assert errors == []
+
     def test_unknown_parameter_returns_error(self, tool_proxy) -> None:
         """Verify unknown parameter names are flagged."""
         schema = {
@@ -235,6 +371,40 @@ class TestCallToolPreValidation:
         assert "hint" in result
         assert result["server_name"] == "test-server"
         assert result["tool_name"] == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_type_error_returns_schema_before_external_dispatch(
+        self,
+        tool_proxy,
+        mock_mcp_manager,
+    ):
+        input_schema = {
+            "type": "object",
+            "properties": {"supports": {"type": "string"}},
+            "required": ["supports"],
+        }
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {"name": "record_evidence", "inputSchema": input_schema},
+            }
+        )
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="record_evidence",
+            arguments={"supports": True},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "invalid_arguments"
+        assert result["validation_errors"] == [
+            "Invalid type for parameter 'supports': expected string, got boolean"
+        ]
+        assert result["schema"] == input_schema
+        assert result["server_name"] == "test-server"
+        assert result["tool_name"] == "record_evidence"
+        mock_mcp_manager.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_error_with_schema_for_missing_required(
@@ -397,6 +567,43 @@ class TestCallToolInternalServer:
         assert result["success"] is False
         assert "Unknown parameter 'id'" in result["error"]
         assert "task_id" in result["error"]  # Should suggest correct param
+        mock_registry.call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_type_error_prevents_internal_tool_dispatch(
+        self,
+        tool_proxy,
+        mock_internal_manager,
+    ):
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+        input_schema = {
+            "type": "object",
+            "properties": {"payload": {"type": "object"}},
+            "required": ["payload"],
+        }
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {"name": "store_payload", "inputSchema": input_schema},
+            }
+        )
+
+        result = await tool_proxy.call_tool(
+            server_name="gobby-test",
+            tool_name="store_payload",
+            arguments={"payload": "wrong"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "invalid_arguments"
+        assert result["validation_errors"] == [
+            "Invalid type for parameter 'payload': expected object, got string"
+        ]
+        assert result["schema"] == input_schema
+        mock_registry.call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_valid_internal_tool_execution(self, tool_proxy, mock_internal_manager):
@@ -1279,6 +1486,39 @@ class TestStripUnknownParameters:
 
         assert result["success"] is False
         assert "Missing required parameters" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_strip_unknown_still_rejects_type_mismatch(
+        self,
+        tool_proxy,
+        mock_mcp_manager,
+    ):
+        input_schema = {
+            "type": "object",
+            "properties": {"limit": {"type": "integer"}},
+            "required": ["limit"],
+        }
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {"name": "test_tool", "inputSchema": input_schema},
+            }
+        )
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="test_tool",
+            arguments={"limit": True, "prompt_text": "remove me"},
+            strip_unknown=True,
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "invalid_arguments"
+        assert result["validation_errors"] == [
+            "Invalid type for parameter 'limit': expected integer, got boolean"
+        ]
+        assert result["schema"] == input_schema
+        mock_mcp_manager.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_strip_unknown_false_rejects_unknown_params(self, tool_proxy, mock_mcp_manager):

@@ -285,31 +285,23 @@ async def call_tool(
                     unknown_keys = [k for k in arguments if k not in properties]
                     for k in unknown_keys:
                         del arguments[k]
-                    required = input_schema.get("required", [])
-                    missing = [r for r in required if r not in arguments]
-                    if missing:
-                        return build_invalid_arguments_response(
-                            service,
-                            server_name=server_name,
-                            tool_name=tool_name,
-                            validation_errors=[
-                                f"Missing required parameter '{param}'" for param in missing
-                            ],
-                            input_schema=input_schema,
-                            session_id=effective_session_id,
-                            error_message=f"Missing required parameters: {missing}",
-                        )
-                else:
-                    validation_errors = service._check_arguments(arguments, input_schema)
-                    if validation_errors:
-                        return build_invalid_arguments_response(
-                            service,
-                            server_name=server_name,
-                            tool_name=tool_name,
-                            validation_errors=validation_errors,
-                            input_schema=input_schema,
-                            session_id=effective_session_id,
-                        )
+                validation_errors = service._check_arguments(arguments, input_schema)
+                if validation_errors:
+                    error_message = None
+                    if strip_unknown:
+                        required = input_schema.get("required", [])
+                        missing = [r for r in required if r not in arguments]
+                        if missing:
+                            error_message = f"Missing required parameters: {missing}"
+                    return build_invalid_arguments_response(
+                        service,
+                        server_name=server_name,
+                        tool_name=tool_name,
+                        validation_errors=validation_errors,
+                        input_schema=input_schema,
+                        session_id=effective_session_id,
+                        error_message=error_message,
+                    )
 
     return await _execute_tool_dispatch(
         service=service,
