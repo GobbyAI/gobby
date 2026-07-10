@@ -95,6 +95,16 @@ class FakeGateway:
             },
         )
 
+    async def graph(self, *, include: str = "all") -> dict[str, Any]:
+        self.calls.append(("graph", {"include": include}))
+        return self._result(
+            "graph", payload={"include": include, "graph": {"documents": [], "links": []}}
+        )
+
+    async def pages(self, *, prefix: str | None = None) -> dict[str, Any]:
+        self.calls.append(("pages", {"prefix": prefix}))
+        return self._result("pages", payload={"prefix": prefix, "pages": [], "outputs": []})
+
     async def backlinks(self, target: str) -> dict[str, Any]:
         self.calls.append(("backlinks", target))
         return self._result("backlinks", payload={"target": target, "links": []})
@@ -314,6 +324,65 @@ def test_backlinks_health_and_sources_passthrough(client: TestClient) -> None:
     assert client.get("/api/wiki/health").json()["payload"]["status"] == "healthy"
     assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS
     assert client.get("/api/wiki/sources").json()["payload"]["sources"] == [{"id": "src-1"}]
+
+
+def test_graph_route_include_validation(client: TestClient) -> None:
+    filtered = client.get("/api/wiki/graph", params={"include": "knowledge", "topic": "t"})
+    assert filtered.status_code == 200
+    body = filtered.json()
+    assert body["ok"] is True
+    assert body["payload"]["include"] == "knowledge"
+    gateway = FakeGateway.instances[-1]
+    assert gateway.calls == [("graph", {"include": "knowledge"})]
+    assert gateway.topic == "t"
+
+    default = client.get("/api/wiki/graph")
+    assert default.status_code == 200
+    assert FakeGateway.instances[-1].calls == [("graph", {"include": "all"})]
+
+    gateways_before = len(FakeGateway.instances)
+    invalid = client.get("/api/wiki/graph", params={"include": "everything"})
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"] == "include must be one of all, code, knowledge"
+    assert len(FakeGateway.instances) == gateways_before
+
+
+def test_pages_route_passes_prefix_and_scope(client: TestClient) -> None:
+    scoped = client.get("/api/wiki/pages", params={"prefix": "code/", "topic": "t"})
+    assert scoped.status_code == 200
+    body = scoped.json()
+    assert body["ok"] is True
+    assert body["payload"]["prefix"] == "code/"
+    gateway = FakeGateway.instances[-1]
+    assert gateway.calls == [("pages", {"prefix": "code/"})]
+    assert gateway.topic == "t"
+
+    unfiltered = client.get("/api/wiki/pages")
+    assert unfiltered.status_code == 200
+    assert FakeGateway.instances[-1].calls == [("pages", {"prefix": None})]
+
+
+def test_gzip_enabled(temp_db: Any) -> None:
+    server = create_http_server(config=DaemonConfig(), database=temp_db)
+    app_client = TestClient(server.app)
+    query = "x" * 4096
+
+    compressed = app_client.get(
+        "/api/wiki/search",
+        params={"q": query},
+        headers={"Accept-Encoding": "gzip"},
+    )
+    assert compressed.status_code == 200
+    assert compressed.headers.get("content-encoding") == "gzip"
+    assert compressed.json()["payload"]["query"] == query
+
+    identity = app_client.get(
+        "/api/wiki/search",
+        params={"q": query},
+        headers={"Accept-Encoding": "identity"},
+    )
+    assert identity.status_code == 200
+    assert "content-encoding" not in identity.headers
 
 
 def test_gateway_error_mapping_preserves_cli_stderr(

@@ -92,6 +92,8 @@ async def test_gateway_exposes_expected_methods() -> None:
         "search",
         "ask",
         "read",
+        "graph",
+        "pages",
         "backlinks",
         "ingest_file",
         "ingest_url",
@@ -107,6 +109,68 @@ async def test_gateway_exposes_expected_methods() -> None:
     ):
         assert callable(getattr(gateway, method_name))
     assert not hasattr(gateway, "research")
+
+
+async def test_graph_builds_stdout_include_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"command": "graph", "graph": {"documents": [], "links": []}}
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().graph(include="knowledge")
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "graph",
+            "--stdout",
+            "--include",
+            "knowledge",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
+
+
+async def test_pages_passes_optional_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"command": "pages", "pages": [], "outputs": []}
+    calls = _patch_subprocess(
+        monkeypatch,
+        [FakeProcess(stdout=_json_bytes(payload)), FakeProcess(stdout=_json_bytes(payload))],
+    )
+
+    unfiltered = await _gateway().pages()
+    filtered = await _gateway().pages(prefix="code/")
+
+    assert unfiltered["payload"] == payload
+    assert filtered["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "pages",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        ),
+        (
+            "/bin/gwiki",
+            "pages",
+            "--prefix",
+            "code/",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        ),
+    ]
 
 
 async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:

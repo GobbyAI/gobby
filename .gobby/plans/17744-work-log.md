@@ -240,3 +240,97 @@ all `code/`-prefixed. `gwiki read --path outputs/GRAPH_REPORT.md` returns
 `status: found` with `content_hash` equal to the sha256 of the full 616,527-byte
 file. Listing hash == read hash for an unchanged indexed page
 (`knowledge/concepts/action.md`), proving the shared revision baseline.
+
+## #17754 — Python read surfaces for graph and pages routes
+
+**Status:** closed — see commit on task
+**Session:** #8116 (274e513b)
+**Plan section:** `wiki-obsidian-panel` 1.4 (backend, Python)
+
+### Plan
+
+Expose the new `gwiki graph --stdout --include` and `gwiki pages --prefix`
+surfaces (landed in #17751/#17752, installed contract v12 verified) through the
+daemon's gateway and HTTP routes, plus gzip for the large graph payloads.
+
+1. `src/gobby/gwiki_gateway.py` — two read methods following the existing
+   `search`/`read` pattern (both interactive-timeout, scope args appended by
+   `_run_json`):
+   - `async def graph(self, *, include: str = "all")` →
+     `self._run_json("graph", ["graph", "--stdout", "--include", include])`
+   - `async def pages(self, *, prefix: str | None = None)` →
+     `["pages"]` + optional `["--prefix", prefix]` → `self._run_json("pages", …)`
+2. `src/gobby/servers/routes/wiki.py` — two GET routes on the existing
+   `create_wiki_router`, delegating via the existing `_read` helper (which
+   resolves scope and maps gateway errors to 502/503):
+   - `GET /api/wiki/graph?project=&topic=&include=all|knowledge|code` —
+     validate `include` against the enum (mirroring `_normalize_ai`'s
+     `HTTPException(400, "include must be one of all, code, knowledge")`
+     envelope style used by compile's kind/ai validation).
+   - `GET /api/wiki/pages?project=&topic=&prefix=` — pass-through `prefix`.
+3. `src/gobby/servers/app_factory.py` — `app.add_middleware(GZipMiddleware,
+   minimum_size=1024)`. Note: the task targets name `_app_routes.py`, but that
+   module only registers routers; the FastAPI app (and every other middleware)
+   is constructed in `app_factory.py:create_app`, so the middleware goes there.
+4. `tests/servers/routes/test_wiki_routes.py` — extend `FakeGateway` with
+   `graph`/`pages`; add `test_graph_route_include_validation` (valid include →
+   200 envelope + gateway call recorded; invalid → 400 envelope, no gateway
+   constructed), `test_pages_route_passes_prefix_and_scope`, and
+   `test_gzip_enabled` (full `create_http_server(config=DaemonConfig()).app`
+   with the middleware stack; auth is disabled unless credentials are
+   configured, so requests pass; a >1 KiB fake search response with
+   `Accept-Encoding: gzip` must come back `content-encoding: gzip`, and
+   `identity` must not).
+
+### Acceptance mapping
+
+- 1.4.1 gateway `graph()`/`pages()` + scoped routes → symbol
+  `gobby.gwiki_gateway.GwikiGateway.graph`; route tests exercise
+  project/topic scope pass-through.
+- 1.4.2 include filtering + 400 on bad value → test
+  `tests/servers/routes/test_wiki_routes.py::test_graph_route_include_validation`.
+- 1.4.3 gzip when client sends `Accept-Encoding: gzip` → test
+  `tests/servers/routes/test_wiki_routes.py::test_gzip_enabled`.
+
+### TDD evidence
+
+- **Red:** wrote `test_graph_route_include_validation`,
+  `test_pages_route_passes_prefix_and_scope`, `test_gzip_enabled` (plus
+  `FakeGateway.graph`/`pages`) before implementation.
+  `GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_wiki_routes.py
+  -k "graph_route_include or pages_route_passes or gzip_enabled" -v` →
+  3 failed: both new routes 404, and `content-encoding` header absent.
+- **Green:** after gateway methods + routes + `GZipMiddleware`, full file:
+  23 passed.
+- **Refactor/final green:** added gateway argv unit tests
+  (`test_graph_builds_stdout_include_argv`, `test_pages_passes_optional_prefix`
+  in `tests/test_gwiki_gateway.py`), registered `graph`/`pages` in
+  `test_gateway_exposes_expected_methods` and in the contract-conformance call
+  list (`tests/test_cli_contracts.py::test_gwiki_gateway_argv_conforms_to_vendored_contract`).
+  `GOBBY_TEST_PROTECT=1 uv run pytest tests/test_gwiki_gateway.py
+  tests/test_cli_contracts.py tests/servers/routes/test_wiki_routes.py -q` →
+  59 passed. App-factory/auth suites through the full middleware stack
+  (`test_app_factory_ui_modes.py`, `test_app_factory_production_ui.py`,
+  `test_app_factory_vite_proxy.py`, `test_auth_routes.py`) → 20 passed.
+  `ruff format`/`ruff check` clean on all six touched files; `mypy` clean on
+  the three touched source files.
+- **Test-quality audit:** `uv run gobby test-quality audit
+  tests/servers/routes/test_wiki_routes.py tests/test_gwiki_gateway.py
+  tests/test_cli_contracts.py --baseline .gobby/test-quality-baseline.json
+  --fail-on-new --min-severity high` → 0 new issues.
+
+### Implementation notes
+
+- Middleware landed in `app_factory.py:create_app` (the task's stale
+  `_app_routes.py` target only registers routers). Added innermost
+  (`minimum_size=1024`); installed starlette 1.3.1 excludes
+  `text/event-stream` from gzip via `DEFAULT_EXCLUDED_CONTENT_TYPES`, so the
+  MCP streamable-HTTP mount's SSE responses are untouched — verified in the
+  vendored middleware source before adding app-wide.
+- Include validation mirrors `_normalize_ai`: strip/lower then 400 with
+  `include must be one of all, code, knowledge`; the gateway is never
+  constructed on invalid input (asserted in the route test).
+- E2E argv sanity against the installed gwiki v12 binary: both
+  `gwiki pages --prefix code/ --project … --format json` and
+  `gwiki graph --stdout --include knowledge --project … --format json`
+  return well-formed envelopes for the live vault.

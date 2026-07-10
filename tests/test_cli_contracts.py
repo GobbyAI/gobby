@@ -133,6 +133,8 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             ),
         ),
         ("read", "read", lambda: gateway.read(path="docs/wiki.md")),
+        ("graph", "graph", lambda: gateway.graph(include="knowledge")),
+        ("pages", "pages", lambda: gateway.pages(prefix="code/")),
         ("backlinks", "backlinks", lambda: gateway.backlinks("Home")),
         ("ingest_file", "ingest-file", lambda: gateway.ingest_file("notes.md")),
         ("ingest_url", "ingest-url", lambda: gateway.ingest_url(["https://example.com"])),

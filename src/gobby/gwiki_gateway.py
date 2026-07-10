@@ -200,6 +200,15 @@ class GwikiGateway:
         args = ["read", *self._read_selector_args(path=path, title=title)]
         return await self._run_json("read", args)
 
+    async def graph(self, *, include: str = "all") -> dict[str, Any]:
+        return await self._run_json("graph", ["graph", "--stdout", "--include", include])
+
+    async def pages(self, *, prefix: str | None = None) -> dict[str, Any]:
+        args = ["pages"]
+        if prefix is not None:
+            args.extend(["--prefix", prefix])
+        return await self._run_json("pages", args)
+
     async def backlinks(self, target: str) -> dict[str, Any]:
         return await self._run_json("backlinks", ["backlinks", target])
 

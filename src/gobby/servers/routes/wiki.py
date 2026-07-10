@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]
 UPLOAD_CHUNK_SIZE = 64 * 1024
 _AI_VALUES = {"auto", "daemon", "direct", "off"}
+_GRAPH_INCLUDE_VALUES = {"all", "knowledge", "code"}
 
 
 def create_wiki_router(server: HTTPServer) -> APIRouter:
@@ -115,6 +116,28 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
             topic,
             lambda gateway: gateway.read(path=path, title=title),
         )
+
+    @router.get("/graph")
+    async def graph(
+        include: str = Query("all"),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        include_value = _normalize_include(include)
+        return await _read(
+            server,
+            project,
+            topic,
+            lambda gateway: gateway.graph(include=include_value),
+        )
+
+    @router.get("/pages")
+    async def pages(
+        prefix: str | None = Query(None),
+        project: str | None = Query(None),
+        topic: str | None = Query(None),
+    ) -> dict[str, Any]:
+        return await _read(server, project, topic, lambda gateway: gateway.pages(prefix=prefix))
 
     @router.get("/backlinks")
     async def backlinks(
@@ -370,6 +393,14 @@ def _normalize_ai(value: str) -> str:
         allowed = ", ".join(sorted(_AI_VALUES))
         raise HTTPException(status_code=400, detail=f"ai must be one of {allowed}")
     return ai
+
+
+def _normalize_include(value: str) -> str:
+    include = value.strip().lower()
+    if include not in _GRAPH_INCLUDE_VALUES:
+        allowed = ", ".join(sorted(_GRAPH_INCLUDE_VALUES))
+        raise HTTPException(status_code=400, detail=f"include must be one of {allowed}")
+    return include
 
 
 def _normalize_kind(value: str | None) -> str | None:

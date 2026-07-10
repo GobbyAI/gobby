@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import httpx as httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.hook_manager import HookManager
@@ -99,6 +100,11 @@ def create_app(server: "HTTPServer") -> FastAPI:
     origin_regex_parts = [fnmatch.translate(o) for o in cors_origins if "*" in o]
     exact_origins = [o for o in cors_origins if "*" not in o]
     origin_regex = "|".join(origin_regex_parts) if origin_regex_parts else None
+
+    # Innermost middleware: large JSON payloads (wiki graph exports compress
+    # ~10x) are gzipped right after the route; SSE responses are excluded by
+    # starlette via DEFAULT_EXCLUDED_CONTENT_TYPES.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     app.add_middleware(
         CORSMiddleware,
