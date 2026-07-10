@@ -2,6 +2,35 @@
 
 Adaptive tuning of memory recall parameters from feedback.
 
+## 2026-07-10 — EPIC CLOSED
+
+All 15 working leaves closed completed. The three [DEFERRED] leaves resolved
+by outcome as `wont_fix` (condition unfired): the #17198 ship gate rejected
+on data starvation (0 train pairs vs 50 needed, 0 holdout pairs vs 20
+needed), so no fitted constants ever shipped, and each deferred item was
+strictly downstream of a shipped fit:
+
+- **#17202 online adaptive tuning** — online adaptation atop an offline
+  pipeline that has never beaten static would tune noise.
+- **#17203 per-project overrides** — no shipped pooled anchor to shrink
+  toward; `fit_partial_pooled` already returns per-project params to build
+  on when one ships.
+- **#17204 recall-side (false-negative) tuning** — needs a costlier label
+  stream than the precision-side one that is itself still starved.
+
+**What the epic leaves behind.** A complete, dormant-until-data pipeline:
+signal logging → hub promotion (#17196) → digest labels (#17195/#17803) →
+replay/fit harness (#17197) → ship gate (#17198) → one-flag promotion with
+static rollback floor (#17200) → drift monitor guarding it (#17201).
+
+**Re-trigger (documented in each deferred close).** Once digest labels
+accumulate ≥50 train / ≥20 holdout pairs in `recall_usefulness`, rerun
+`run_ship_gate_from_store` (`gobby.memory.recall_refit`). A shipped record
+at `~/.gobby/recall_refit_decision.json` +
+`memory.use_fitted_recall_constants=true` activates fitted constants with
+zero code change; the #17201 drift monitor alarms if live quality regresses,
+and the response is the same one-flag rollback.
+
 ## 2026-07-10 — #17201: Recall-quality drift detection + regression alarm
 
 **Status:** closed completed (session #8113)
