@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use gobby_core::ai::AiNoticeKind;
@@ -14,12 +15,12 @@ use crate::visibility;
 use super::{
     AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput,
     CodewikiProgress, CodewikiPublication, CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope,
-    DocSink, LeadingChunk, MAX_EDGE_LIMIT, PublicationFingerprint, ReusePlan, build_audit_context,
-    build_codewiki_changes_doc, build_codewiki_index_snapshot, build_feature_catalog_doc,
-    build_system_model, build_truth_digest, direct_route_candidate_error,
-    fetch_codewiki_graph_edges, generation, in_scope, io, is_core_file, read_ownership_meta,
-    resolve_text_generator, resolve_text_verifier, resolve_tool_loop_generator,
-    write_ownership_meta, write_truth_digest,
+    DocSink, LeadingChunk, MAX_EDGE_LIMIT, PromptTier, PublicationFingerprint, ReusePlan,
+    TextGenerator, TextVerifier, build_audit_context, build_codewiki_changes_doc,
+    build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
+    build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
+    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
+    resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -33,6 +34,7 @@ pub fn run(
     edge_limit: usize,
     include_docs: bool,
     since: Option<String>,
+    max_workers: usize,
     format: Format,
     verbose: bool,
 ) -> anyhow::Result<()> {
@@ -94,7 +96,10 @@ pub fn run(
     ai_notices.warn_once(ctx, resolved_generator.notice_kind());
     let ai_outcome = resolved_generator.ai_outcome();
     let no_generator_reason = resolved_generator.no_generator_reason;
-    let mut generator = resolved_generator.generator;
+    let shared_generator = resolved_generator.generator;
+    // Declared before `tool_loop_generator` so the serial adapters' borrows
+    // outlive that box's drop.
+    let shared_verifier = resolve_text_verifier(ctx, &ai);
     // Lane B aggregate generator (#978): resolved for the `tool_chat` capability,
     // threaded alongside the Lane A generator. `None` when no tool-chat route
     // resolves (AI off) — aggregates then fall back to the Lane A path. The run's
@@ -121,8 +126,20 @@ pub fn run(
         ai_outcome
     };
     let mut tool_loop_generator = resolved_tool_loop_generator.generator;
-    let mut verifier = resolve_text_verifier(ctx, &ai);
-    let ai_enabled = generator.is_some();
+    // `--max-workers 1` (the default) resolves to `None`: the exact serial
+    // path, byte-identical to the pre-#17532 sequential code.
+    let file_workers = NonZeroUsize::new(max_workers)
+        .filter(|workers| workers.get() > 1)
+        .and_then(|workers| {
+            shared_generator
+                .as_deref()
+                .map(|generate| generation::FileGenerationWorkers {
+                    workers,
+                    generate,
+                    verify: shared_verifier.as_deref(),
+                })
+        });
+    let ai_enabled = shared_generator.is_some();
     let ai_mode = if ai_outcome.route == AiRouting::Off
         && !ai_outcome.fallback
         && no_generator_reason.is_none()
@@ -140,7 +157,7 @@ pub fn run(
     // outage once erased a full vault this way). Explicit `--ai off`
     // (route Off without the auto fallback) keeps the intentional
     // structural-rewrite path.
-    if generator.is_none()
+    if shared_generator.is_none()
         && tool_loop_generator.is_none()
         && ai_outcome.route == AiRouting::Off
         && ai_outcome.fallback
@@ -240,6 +257,15 @@ pub fn run(
         sink.persist_with_ai_outcome(&doc, write_outcome)?;
         Ok(())
     };
+    // Serial `FnMut` adapters over the shared thread-safe callables; the file
+    // worker pool (`file_workers` above) shares the originals across threads
+    // (#17532).
+    let mut sequential_generator = shared_generator.as_deref().map(|generator| {
+        move |prompt: &str, system: &str, tier: PromptTier| generator(prompt, system, tier)
+    });
+    let mut sequential_verifier = shared_verifier
+        .as_deref()
+        .map(|verifier| move |prompt: &str, system: &str| verifier(prompt, system));
     generation::generate_hierarchical_docs(
         &input,
         generation::GenerateDocsOptions {
@@ -249,15 +275,20 @@ pub fn run(
             system_model: Some(&system_model),
             feature_catalog: feature_catalog.as_ref(),
             audit: Some(&audit_context),
-            generate: generator.as_deref_mut(),
+            generate: sequential_generator
+                .as_mut()
+                .map(|generator| generator as &mut TextGenerator<'_>),
             tool_loop: tool_loop_generator.as_deref_mut(),
-            verify: verifier.as_deref_mut(),
+            verify: sequential_verifier
+                .as_mut()
+                .map(|verifier| verifier as &mut TextVerifier<'_>),
             ai_depth,
             verify_scope,
             aggregate_ai_outcome,
             reuse: Some(&mut reuse_plan),
             progress: Some(&mut progress),
             doc_scope: Some(&doc_scope),
+            file_workers,
         },
         &mut emit,
     )?;

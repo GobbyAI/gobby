@@ -564,6 +564,7 @@ fn run() -> anyhow::Result<()> {
             edge_limit,
             include_docs,
             since,
+            max_workers,
             repair_citations,
         } => {
             if purge {
@@ -590,6 +591,7 @@ fn run() -> anyhow::Result<()> {
                 edge_limit,
                 include_docs,
                 since,
+                max_workers,
                 format,
                 cli.verbose,
             )

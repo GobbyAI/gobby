@@ -17,7 +17,8 @@ use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::codewiki::{
     CodewikiAiOptions, CodewikiAiOutcome, CodewikiGraphAvailability, CodewikiToolExecutor,
-    DEFAULT_VERIFY_PROFILE, PromptTier, TextGenerator, TextVerifier, prompts,
+    DEFAULT_VERIFY_PROFILE, PromptTier, SyncTextGenerator, SyncTextVerifier, TextGenerator,
+    prompts,
 };
 use crate::config::{self, Context};
 use crate::{db, secrets};
@@ -64,7 +65,9 @@ fn codewiki_readonly_tool_policy() -> ToolPolicy {
 }
 
 pub(crate) struct ResolvedTextGenerator {
-    pub(crate) generator: Option<Box<TextGenerator<'static>>>,
+    /// Thread-safe so the bounded file-page worker pool (#17532) can share it;
+    /// serial call sites adapt it to the `FnMut` [`TextGenerator`] surface.
+    pub(crate) generator: Option<Box<SyncTextGenerator<'static>>>,
     pub(crate) ai_route: AiRouting,
     pub(crate) ai_fallback: bool,
     pub(crate) no_generator_reason: Option<AiNoticeKind>,
@@ -152,9 +155,10 @@ pub(crate) fn resolve_text_generator(
     }
     let max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
-    let mut warned = false;
+    // Warn-once flag; atomic so concurrent pool workers race to exactly one warning.
+    let warned = std::sync::atomic::AtomicBool::new(false);
     let quiet = ctx.quiet;
-    let generator: Box<TextGenerator<'static>> = Box::new(move |prompt, system, tier| {
+    let generator: Box<SyncTextGenerator<'static>> = Box::new(move |prompt, system, tier| {
         let gen_tier = generation_tier(tier);
         let target = direct_targets
             .as_ref()
@@ -188,12 +192,11 @@ pub(crate) fn resolve_text_generator(
         match result {
             Ok(result) => clean_generated(result.text),
             Err(error) => {
-                if !quiet && !warned {
+                if !quiet && !warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     eprintln!(
                         "text generation failed; affected codewiki docs fall back to AST-only \
                          content and record degraded: true: {error}"
                     );
-                    warned = true;
                 }
                 None
             }
@@ -310,7 +313,7 @@ fn resolve_direct_tier_targets(
 pub(crate) fn resolve_text_verifier(
     ctx: &Context,
     ai: &CodewikiAiOptions,
-) -> Option<Box<TextVerifier<'static>>> {
+) -> Option<Box<SyncTextVerifier<'static>>> {
     let mut ai_context = resolve_ai_context(ctx, ai.routing).ok()?;
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
@@ -343,7 +346,8 @@ pub(crate) fn resolve_text_verifier(
     }
 
     let quiet = ctx.quiet;
-    let mut warned = false;
+    // Warn-once flag; atomic so concurrent pool workers race to exactly one warning.
+    let warned = std::sync::atomic::AtomicBool::new(false);
     Some(Box::new(move |prompt: &str, system: &str| {
         let result = generate_with_bounded_retry(|| match route {
             AiRouting::Daemon => generate_via_daemon_with_max_tokens(
@@ -361,12 +365,11 @@ pub(crate) fn resolve_text_verifier(
         match result {
             Ok(result) => clean_generated(result.text),
             Err(error) => {
-                if !quiet && !warned {
+                if !quiet && !warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     eprintln!(
                         "codewiki verification unavailable; generated narratives ship \
                          unverified (degraded: false): {error}"
                     );
-                    warned = true;
                 }
                 None
             }

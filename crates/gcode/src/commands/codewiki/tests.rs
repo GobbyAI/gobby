@@ -11,6 +11,7 @@ mod architecture;
 mod audit;
 mod changes;
 mod concepts;
+mod concurrency;
 mod contract;
 mod features;
 mod graph;

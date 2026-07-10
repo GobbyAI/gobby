@@ -820,6 +820,13 @@ pub(crate) struct CodewikiSymbolSnapshot {
 
 pub type TextGenerator<'a> = dyn FnMut(&str, &str, PromptTier) -> Option<String> + 'a;
 
+/// Thread-safe generation call shared by the bounded file-page worker pool
+/// (#17532). The resolved production generator is stateless apart from its
+/// warn-once flag, so it is exposed as `Fn + Send + Sync`; serial call sites
+/// adapt it to the [`TextGenerator`] `FnMut` surface with a local closure.
+pub type SyncTextGenerator<'a> =
+    dyn Fn(&str, &str, PromptTier) -> Option<String> + Send + Sync + 'a;
+
 /// Grounded verification call: given a verify prompt and system prompt, returns
 /// the raw model response, or `None` when the verifier is unavailable (routed
 /// off, transport failure, or generation error). Callers treat `None` as "skip
@@ -827,6 +834,11 @@ pub type TextGenerator<'a> = dyn FnMut(&str, &str, PromptTier) -> Option<String>
 /// response parsing, and stripping live in [`super::text`], so the closure is
 /// just the model call — mirroring [`TextGenerator`] but without a prompt tier.
 pub type TextVerifier<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
+
+/// Thread-safe verification call for the bounded file-page worker pool,
+/// mirroring [`SyncTextGenerator`] exactly as [`TextVerifier`] mirrors
+/// [`TextGenerator`].
+pub type SyncTextVerifier<'a> = dyn Fn(&str, &str) -> Option<String> + Send + Sync + 'a;
 
 /// Weight tier of one codewiki generation call (#904). `Aggregate` is the
 /// top-level repo-wide synthesis — repo overview, architecture, and the curated

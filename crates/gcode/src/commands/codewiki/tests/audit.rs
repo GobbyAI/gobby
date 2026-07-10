@@ -95,11 +95,11 @@ pub fn doc_dep() {}
         &RelationshipFacts::default(),
         Some(&audit.deprecations),
         Some(&audit.tests),
-        &mut None,
+        None,
         &mut None,
         &mut None,
         AiDepth::Sections,
-        &mut CodewikiProgress::silent(),
+        &mut |_| {},
         FileDocPosition { index: 1, total: 1 },
     );
     let attr_doc = file_doc

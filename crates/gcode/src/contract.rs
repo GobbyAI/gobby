@@ -324,6 +324,7 @@ pub fn contract() -> CliContract {
                     ai_register_flag(),
                     FlagContract::value("--edge-limit", "N"),
                     FlagContract::switch("--include-docs"),
+                    FlagContract::value("--max-workers", "N"),
                     FlagContract::switch("--repair-citations"),
                 ],
                 // Two JSON shapes: a generation run-summary, or — under

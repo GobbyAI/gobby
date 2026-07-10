@@ -167,6 +167,31 @@ fn parse_codewiki_purge_flag() {
     assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--scope", "src"]).is_err());
     assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--ai", "off"]).is_err());
     assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--repair-citations"]).is_err());
+    assert!(Cli::try_parse_from(["gcode", "codewiki", "--purge", "--max-workers", "4"]).is_err());
+}
+
+#[test]
+fn parse_codewiki_max_workers_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki { max_workers, .. } => {
+            assert_eq!(max_workers, 1, "generation defaults to fully sequential")
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    let cli = Cli::try_parse_from(["gcode", "codewiki", "--max-workers", "4"])
+        .expect("codewiki max workers parses");
+    match cli.command {
+        Command::Codewiki { max_workers, .. } => assert_eq!(max_workers, 4),
+        _ => panic!("expected codewiki command"),
+    }
+
+    let error = match Cli::try_parse_from(["gcode", "codewiki", "--max-workers", "0"]) {
+        Ok(_) => panic!("zero max workers must fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("positive integer"));
 }
 
 #[test]

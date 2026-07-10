@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
+use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::{Mutex, mpsc};
 
 use crate::index::hasher;
 use crate::models::Symbol;
@@ -8,15 +10,17 @@ use crate::models::Symbol;
 use super::{
     AiDepth, AuditContext, BuiltDoc, CodewikiAiOutcome, CodewikiGraphEdge, CodewikiGraphEdgeKind,
     CodewikiInput, CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition,
-    LeadingChunk, ModuleDoc, OwnershipMeta, OwnershipOptions, ReusePlan, SourceSpan, SystemModel,
-    TextGenerator, TextVerifier, ToolLoopGenerator, VerifyScope, build_architecture_doc,
+    LeadingChunk, ModuleDoc, OwnershipMeta, OwnershipOptions, PromptTier, RelationshipFacts,
+    ReusePlan, SourceSpan, SyncTextGenerator, SyncTextVerifier, SystemModel, TextGenerator,
+    TextVerifier, ToolLoopGenerator, VerifyScope, build_architecture_doc,
     build_curated_navigation_docs, build_deprecations_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
     build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
     file_module_link_key, is_ai_generation_failure_code, is_core_file, module_child_links_key,
     module_doc_path, module_for_file, relationship_facts_for_file, render_architecture_doc,
     render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
-    render_infrastructure_doc, render_module_doc, render_onboarding_doc, span_files,
+    render_infrastructure_doc, render_module_doc, render_onboarding_doc, resolve_file_reuse,
+    span_files,
 };
 
 /// Options for [`generate_hierarchical_docs`], collapsing the former
@@ -59,6 +63,26 @@ pub(crate) struct GenerateDocsOptions<'g, 'r> {
     pub progress: Option<&'r mut CodewikiProgress>,
     /// `None` generates the full unscoped doc set ([`DocPruneScope::unscoped`]).
     pub doc_scope: Option<&'r DocPruneScope>,
+    /// Bounded worker pool for Standard-tier (file) page generation
+    /// (`--max-workers`, #17532). `None` — the default, and what `--max-workers 1`
+    /// resolves to — keeps the byte-identical fully sequential path. `Some`
+    /// fans the per-file doc builds (their symbol and file-body LLM calls) out
+    /// to the pool; ReusePlan bookkeeping, page emission, and every module/
+    /// aggregate/curated build stay serial and in deterministic order.
+    pub file_workers: Option<FileGenerationWorkers<'r>>,
+}
+
+/// Worker-pool wiring for [`GenerateDocsOptions::file_workers`]: the pool
+/// width plus the thread-safe generation/verification callables the workers
+/// share. In-flight LLM calls remain additionally capped by the transport's
+/// `ai.max_concurrency` permits ([`gobby_core::ai_context::AiLimiter`]), so a
+/// wide pool cannot exceed the configured provider concurrency.
+#[derive(Clone, Copy)]
+pub(crate) struct FileGenerationWorkers<'r> {
+    pub workers: NonZeroUsize,
+    pub generate: &'r SyncTextGenerator<'r>,
+    /// Consulted only when the run's [`VerifyScope`] verifies leaves.
+    pub verify: Option<&'r SyncTextVerifier<'r>>,
 }
 
 impl Default for GenerateDocsOptions<'_, '_> {
@@ -77,6 +101,7 @@ impl Default for GenerateDocsOptions<'_, '_> {
             reuse: None,
             progress: None,
             doc_scope: None,
+            file_workers: None,
         }
     }
 }
@@ -124,6 +149,7 @@ pub(crate) fn generate_hierarchical_docs(
         mut reuse,
         progress,
         doc_scope,
+        file_workers,
     } = options;
     // The generation body threads these as `&mut Option<&mut T>` so builders
     // can reborrow the generator/verifier/reuse plan per page.
@@ -195,68 +221,77 @@ pub(crate) fn generate_hierarchical_docs(
     progress.emit(format!("{file_verb} file docs for {} files", files.len()));
     let file_total = files.len();
     let mut file_docs = Vec::with_capacity(file_total);
-    for (index, file) in files.iter().enumerate() {
-        let file_symbols = symbols_by_file.remove(file).unwrap_or_default();
-        // Cross-file relationships are derived before the symbols are moved into
-        // the file doc; the id set borrows them only within this block.
-        let relationships = {
-            let file_symbol_ids = file_symbols
-                .iter()
-                .map(|symbol| symbol.id.as_str())
-                .collect::<HashSet<&str>>();
-            relationship_facts_for_file(file, &file_symbol_ids, &symbols_by_id, &input.graph_edges)
-        };
-        // Leaf verification is gated by `verify_scope`; aggregates skip it.
-        let mut leaf_no_verify: Option<&mut TextVerifier<'_>> = None;
-        let leaf_verify = if verify_leaves {
-            &mut *verify
-        } else {
-            &mut leaf_no_verify
-        };
-        let file_doc = build_file_doc(
-            file,
-            file_modules
-                .get(file)
-                .cloned()
-                .unwrap_or_else(|| module_for_file(file)),
-            file_symbols,
-            input.leading_chunks.get(file),
-            &relationships,
-            audit.map(|audit| &audit.deprecations),
-            audit.map(|audit| &audit.tests),
-            generate,
-            leaf_verify,
-            reuse,
-            ai_depth,
-            progress,
-            FileDocPosition {
-                index: index + 1,
-                total: file_total,
-            },
-        );
-        emit(
-            BuiltDoc {
-                path: file_doc_path(&file_doc.path),
-                content: file_doc
-                    .reused_page
-                    .clone()
-                    .unwrap_or_else(|| render_file_doc(&file_doc)),
-                degraded: file_doc.degraded,
-                summary: Some(file_doc.summary.clone()),
-                neighbors: BTreeSet::new(),
-                // The module link is a render input source hashes cannot see:
-                // clustering is global, so an unchanged file can carry a new
-                // module this run (#17731). Keying it makes the persist gate
-                // write the re-stamped page instead of keeping stale disk
-                // content; `requires_sources` keeps the hash checks alongside.
-                invalidation_key: Some(file_module_link_key(&file_doc.module)),
-                invalidation_key_requires_sources: true,
+    match file_workers {
+        None => {
+            for (index, file) in files.iter().enumerate() {
+                let file_symbols = symbols_by_file.remove(file).unwrap_or_default();
+                // Cross-file relationships are derived before the symbols are
+                // moved into the file doc; the id set borrows them only within
+                // this block.
+                let relationships = {
+                    let file_symbol_ids = file_symbols
+                        .iter()
+                        .map(|symbol| symbol.id.as_str())
+                        .collect::<HashSet<&str>>();
+                    relationship_facts_for_file(
+                        file,
+                        &file_symbol_ids,
+                        &symbols_by_id,
+                        &input.graph_edges,
+                    )
+                };
+                let module = file_modules
+                    .get(file)
+                    .cloned()
+                    .unwrap_or_else(|| module_for_file(file));
+                let neighbors = relationships.neighbor_files(file);
+                let reused = resolve_file_reuse(reuse, file, &module, &neighbors);
+                // Leaf verification is gated by `verify_scope`; aggregates skip it.
+                let mut leaf_no_verify: Option<&mut TextVerifier<'_>> = None;
+                let leaf_verify = if verify_leaves {
+                    &mut *verify
+                } else {
+                    &mut leaf_no_verify
+                };
+                let file_doc = build_file_doc(
+                    file,
+                    module,
+                    file_symbols,
+                    input.leading_chunks.get(file),
+                    &relationships,
+                    audit.map(|audit| &audit.deprecations),
+                    audit.map(|audit| &audit.tests),
+                    reused,
+                    generate,
+                    leaf_verify,
+                    ai_depth,
+                    &mut |message| progress.emit(message),
+                    FileDocPosition {
+                        index: index + 1,
+                        total: file_total,
+                    },
+                );
+                emit_file_doc(&file_doc, neighbors, emit)?;
+                file_docs.push(file_doc);
             }
-            // Record the cross-file neighbor set so a caller/import-target edit
-            // invalidates this page on the next run (#885, Leaf H).
-            .with_neighbors(relationships.neighbor_files(file)),
-        )?;
-        file_docs.push(file_doc);
+        }
+        Some(pool) => {
+            generate_file_docs_pooled(
+                pool,
+                &files,
+                &mut symbols_by_file,
+                &file_modules,
+                &symbols_by_id,
+                input,
+                audit,
+                reuse,
+                verify_leaves,
+                ai_depth,
+                progress,
+                emit,
+                &mut file_docs,
+            )?;
+        }
     }
     progress.emit("generating module docs");
     let module_docs = build_module_docs_with_filter(
@@ -508,6 +543,221 @@ pub(crate) fn generate_hierarchical_docs(
         ))?;
     }
     Ok(())
+}
+
+/// Emit one built file page. Shared by the serial and pooled paths so both
+/// write byte-identical pages with the same invalidation inputs.
+fn emit_file_doc(
+    file_doc: &FileDoc,
+    neighbors: BTreeSet<String>,
+    emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    emit(
+        BuiltDoc {
+            path: file_doc_path(&file_doc.path),
+            content: file_doc
+                .reused_page
+                .clone()
+                .unwrap_or_else(|| render_file_doc(file_doc)),
+            degraded: file_doc.degraded,
+            summary: Some(file_doc.summary.clone()),
+            neighbors: BTreeSet::new(),
+            // The module link is a render input source hashes cannot see:
+            // clustering is global, so an unchanged file can carry a new
+            // module this run (#17731). Keying it makes the persist gate
+            // write the re-stamped page instead of keeping stale disk
+            // content; `requires_sources` keeps the hash checks alongside.
+            invalidation_key: Some(file_module_link_key(&file_doc.module)),
+            invalidation_key_requires_sources: true,
+        }
+        // Record the cross-file neighbor set so a caller/import-target edit
+        // invalidates this page on the next run (#885, Leaf H).
+        .with_neighbors(neighbors),
+    )
+}
+
+/// One file's inputs for the bounded worker pool, resolved serially in file
+/// order before any worker runs — including its [`ReusePlan`] decision, so the
+/// plan's `&mut` bookkeeping never crosses a thread.
+struct FileJob {
+    index: usize,
+    file: String,
+    module: String,
+    symbols: Vec<Symbol>,
+    relationships: RelationshipFacts,
+    reused: Option<(String, String)>,
+}
+
+/// Worker-thread events funneled to the serial owner of progress + emission.
+enum WorkerEvent {
+    Progress(String),
+    Done(usize, Box<FileDoc>),
+}
+
+/// `--max-workers N>1` file-page path (#17532): fan the per-file doc builds
+/// (their symbol and file-body LLM calls) out to a bounded pool of scoped
+/// threads. Everything order-sensitive stays serial on this thread — reuse
+/// decisions run in file order before dispatch, and pages are emitted strictly
+/// in file order by buffering out-of-order completions — so the emitted doc
+/// set is byte-identical to the serial path given the same generator outputs.
+#[expect(clippy::too_many_arguments)]
+fn generate_file_docs_pooled(
+    pool: FileGenerationWorkers<'_>,
+    files: &[String],
+    symbols_by_file: &mut BTreeMap<String, Vec<Symbol>>,
+    file_modules: &HashMap<String, String>,
+    symbols_by_id: &HashMap<&str, &Symbol>,
+    input: &CodewikiInput,
+    audit: Option<&AuditContext>,
+    reuse: &mut Option<&mut ReusePlan>,
+    verify_leaves: bool,
+    ai_depth: AiDepth,
+    progress: &mut CodewikiProgress,
+    emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
+    file_docs: &mut Vec<FileDoc>,
+) -> anyhow::Result<()> {
+    let file_total = files.len();
+    let mut neighbor_sets = Vec::with_capacity(file_total);
+    let mut jobs = Vec::with_capacity(file_total);
+    for (index, file) in files.iter().enumerate() {
+        let file_symbols = symbols_by_file.remove(file).unwrap_or_default();
+        // Cross-file relationships are derived before the symbols are moved
+        // into the job; the id set borrows them only within this block.
+        let relationships = {
+            let file_symbol_ids = file_symbols
+                .iter()
+                .map(|symbol| symbol.id.as_str())
+                .collect::<HashSet<&str>>();
+            relationship_facts_for_file(file, &file_symbol_ids, symbols_by_id, &input.graph_edges)
+        };
+        let module = file_modules
+            .get(file)
+            .cloned()
+            .unwrap_or_else(|| module_for_file(file));
+        let neighbors = relationships.neighbor_files(file);
+        let reused = resolve_file_reuse(reuse, file, &module, &neighbors);
+        neighbor_sets.push(neighbors);
+        jobs.push(FileJob {
+            index,
+            file: file.clone(),
+            module,
+            symbols: file_symbols,
+            relationships,
+            reused,
+        });
+    }
+    let deprecations = audit.map(|audit| &audit.deprecations);
+    let tests = audit.map(|audit| &audit.tests);
+    let worker_count = pool.workers.get().min(file_total);
+    let job_queue = Mutex::new(jobs.into_iter());
+    let (event_tx, event_rx) = mpsc::channel();
+    std::thread::scope(|scope| -> anyhow::Result<()> {
+        for _ in 0..worker_count {
+            let event_tx = event_tx.clone();
+            let job_queue = &job_queue;
+            scope.spawn(move || {
+                loop {
+                    let job = job_queue
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .next();
+                    let Some(FileJob {
+                        index,
+                        file,
+                        module,
+                        symbols,
+                        relationships,
+                        reused,
+                    }) = job
+                    else {
+                        break;
+                    };
+                    // Adapt the shared thread-safe callables to the `FnMut`
+                    // surface the doc builder threads per page.
+                    let mut worker_generate = |prompt: &str, system: &str, tier: PromptTier| {
+                        (pool.generate)(prompt, system, tier)
+                    };
+                    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut worker_generate);
+                    // Leaf verification is gated by `verify_scope`; aggregates skip it.
+                    let mut worker_verify = pool
+                        .verify
+                        .filter(|_| verify_leaves)
+                        .map(|verify| move |prompt: &str, system: &str| verify(prompt, system));
+                    let mut leaf_verify: Option<&mut TextVerifier<'_>> = worker_verify
+                        .as_mut()
+                        .map(|verify| verify as &mut TextVerifier<'_>);
+                    let mut progress_sink = |message: String| {
+                        let _ = event_tx.send(WorkerEvent::Progress(message));
+                    };
+                    let file_doc = build_file_doc(
+                        &file,
+                        module,
+                        symbols,
+                        input.leading_chunks.get(&file),
+                        &relationships,
+                        deprecations,
+                        tests,
+                        reused,
+                        &mut generate,
+                        &mut leaf_verify,
+                        ai_depth,
+                        &mut progress_sink,
+                        FileDocPosition {
+                            index: index + 1,
+                            total: file_total,
+                        },
+                    );
+                    if event_tx
+                        .send(WorkerEvent::Done(index, Box::new(file_doc)))
+                        .is_err()
+                    {
+                        // Receiver gone: the run is unwinding; stop cleanly.
+                        break;
+                    }
+                }
+            });
+        }
+        drop(event_tx);
+        // Serialize page writes in file order regardless of completion order:
+        // buffer out-of-order results and emit the ready prefix.
+        let mut completed: BTreeMap<usize, FileDoc> = BTreeMap::new();
+        let mut next_emit = 0_usize;
+        let mut emit_error = None;
+        while let Ok(event) = event_rx.recv() {
+            match event {
+                WorkerEvent::Progress(message) => progress.emit(message),
+                WorkerEvent::Done(index, file_doc) => {
+                    completed.insert(index, *file_doc);
+                    if emit_error.is_some() {
+                        continue;
+                    }
+                    while let Some(file_doc) = completed.remove(&next_emit) {
+                        if let Err(error) = emit_file_doc(
+                            &file_doc,
+                            std::mem::take(&mut neighbor_sets[next_emit]),
+                            emit,
+                        ) {
+                            emit_error = Some(error);
+                            // Stop handing out work; in-flight builds finish,
+                            // fail their sends, and the workers exit.
+                            job_queue
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .by_ref()
+                                .for_each(drop);
+                            break;
+                        }
+                        file_docs.push(file_doc);
+                        next_emit += 1;
+                    }
+                }
+            }
+        }
+        match emit_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    })
 }
 
 fn architecture_invalidation_key(

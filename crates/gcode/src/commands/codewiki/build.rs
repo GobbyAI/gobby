@@ -28,7 +28,7 @@ pub(crate) use audit::{AuditContext, build_audit_context, build_deprecations_doc
 pub(crate) use changes::build_codewiki_changes_doc;
 pub(crate) use concepts::{build_curated_navigation_docs, default_chapter_links};
 pub(crate) use features::build_feature_catalog_doc;
-pub(crate) use file::{FileDocPosition, build_file_doc};
+pub(crate) use file::{FileDocPosition, build_file_doc, resolve_file_reuse};
 pub(crate) use hotspots::build_hotspots_doc;
 pub(crate) use infrastructure::{build_infrastructure_doc, infra_descriptor};
 #[cfg(test)]

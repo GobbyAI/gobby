@@ -169,6 +169,7 @@ pub(crate) use build::{
     build_codewiki_changes_doc, build_codewiki_index_snapshot, build_curated_navigation_docs,
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
+    resolve_file_reuse,
 };
 pub(crate) use publication::{CodewikiPublication, PublicationFingerprint};
 pub(crate) use reuse_guard::{
@@ -185,7 +186,9 @@ pub(crate) use cluster::{
 pub(crate) use cluster::{common_module_for_files, find_file_root};
 // Optional FalkorDB graph queries.
 #[cfg(test)]
-pub(crate) use generation::{GenerateDocsOptions, generate_hierarchical_docs};
+pub(crate) use generation::{
+    FileGenerationWorkers, GenerateDocsOptions, generate_hierarchical_docs,
+};
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
 pub(crate) use graph::{
@@ -271,7 +274,8 @@ pub(crate) use types::{
     CodewikiTruthSuperseded, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc,
     FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding, HotspotNode, HotspotsDoc, InfraSection,
     InfrastructureDoc, ModuleDoc, ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep,
-    SourceSpan, SymbolDoc, TestIndex, VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
+    SourceSpan, SymbolDoc, SyncTextGenerator, SyncTextVerifier, TestIndex, VerifyNote,
+    ranked_source_excerpts, source_excerpt_for_file,
 };
 // Feature catalog row/section types (#888) are only named by the catalog's
 // drift-guard tests; the lib builds the page through `FeatureCatalogDoc`.

@@ -397,6 +397,7 @@ pub(crate) enum Command {
                 "edge_limit",
                 "include_docs",
                 "since",
+                "max_workers",
                 "repair_citations",
             ]
         )]
@@ -460,6 +461,14 @@ pub(crate) enum Command {
         /// `_meta` are preserved either way.
         #[arg(long, value_name = "GIT_REF")]
         since: Option<String>,
+        /// Bounded worker pool for Standard-tier (file) page generation. The
+        /// default 1 keeps generation fully sequential; N>1 fans per-file
+        /// symbol/narrative LLM calls out to N workers while page writes stay
+        /// serialized and deterministic. Aggregate/curated pages are always
+        /// sequential, and in-flight LLM calls remain capped by
+        /// `ai.max_concurrency`.
+        #[arg(long, default_value_t = 1, value_name = "N", value_parser = positive_usize)]
+        max_workers: usize,
         /// Repair-only mode: re-anchor existing pages' `[file:line]` citations
         /// against the current index and exit. No generation, no AI/LLM calls.
         /// Ignores generation flags (`--ai`, `--scope`, `--ai-depth`, …); honors

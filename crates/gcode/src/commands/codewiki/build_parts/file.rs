@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
 use super::super::{
-    AiDepth, CodewikiProgress, DeprecationIndex, FileDoc, GenerationContent, GenerationOutcome,
-    LeadingChunk, PromptTier, RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TestIndex,
-    TextGenerator, TextVerifier, VerifyNote, VerifyOutcome, citation_list, component_label,
-    file_doc_path, ground_text, maybe_generate, prompts, restamp_file_module_link,
-    structural_file_summary, structural_symbol_purpose, verify_with_notes, write_section,
+    AiDepth, DeprecationIndex, FileDoc, GenerationContent, GenerationOutcome, LeadingChunk,
+    PromptTier, RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TestIndex, TextGenerator,
+    TextVerifier, VerifyNote, VerifyOutcome, citation_list, component_label, file_doc_path,
+    ground_text, maybe_generate, prompts, restamp_file_module_link, structural_file_summary,
+    structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::models::Symbol;
 
@@ -14,6 +14,38 @@ use crate::models::Symbol;
 pub(crate) struct FileDocPosition {
     pub(crate) index: usize,
     pub(crate) total: usize,
+}
+
+/// Resolve the reuse decision for one file page against the run's [`ReusePlan`].
+///
+/// Hoisted out of [`build_file_doc`] (#17532) so the plan's `&mut` bookkeeping
+/// stays on the serial caller even when the doc build itself runs on the
+/// bounded worker pool. A file doc's provenance cites only its own file, so
+/// reuse is decided by that single hash plus its cross-file neighbor hashes
+/// (#885, Leaf H): a caller/callee or import-target edit invalidates the page
+/// even though its own source is unchanged. Reuse skips every symbol and file
+/// LLM call; the recorded summary still feeds module prompts and pages.
+///
+/// Cluster assignment is a render input those hashes cannot see: clustering is
+/// global, so an unchanged file can be assigned a new module this run (a
+/// synthetic cluster renamed or dissolved, #17731). Re-stamp the deterministic
+/// `Module:` link with this run's module; a page without a recognizable link
+/// falls back to regeneration.
+pub(crate) fn resolve_file_reuse(
+    reuse: &mut Option<&mut ReusePlan>,
+    file: &str,
+    module: &str,
+    neighbors: &BTreeSet<String>,
+) -> Option<(String, String)> {
+    let sources = BTreeSet::from([file.to_string()]);
+    reuse
+        .as_deref_mut()
+        .and_then(|plan| {
+            plan.reusable_page_with_summary_and_neighbors(&file_doc_path(file), &sources, neighbors)
+        })
+        .and_then(|(page, summary)| {
+            restamp_file_module_link(&page, module).map(|page| (page, summary))
+        })
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -33,31 +65,17 @@ pub(crate) fn build_file_doc(
     // `None` from the AI-off/test entry points. Stamps `SymbolDoc::is_test` so
     // the file page collapses tests into a single count instead of a row each.
     tests: Option<&TestIndex>,
+    // Resolved by [`resolve_file_reuse`] on the serial caller; `Some` carries
+    // the restamped reused page and its recorded summary.
+    reused: Option<(String, String)>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
-    reuse: &mut Option<&mut ReusePlan>,
     ai_depth: AiDepth,
-    progress: &mut CodewikiProgress,
+    // Progress sink rather than `&mut CodewikiProgress` so pool workers can
+    // forward lines to the serial progress owner (#17532).
+    progress: &mut dyn FnMut(String),
     position: FileDocPosition,
 ) -> FileDoc {
-    // A file doc's provenance cites only its own file, so reuse is decided by
-    // that single hash plus its cross-file neighbor hashes (#885, Leaf H): a
-    // caller/callee or import-target edit invalidates the page even though its
-    // own source is unchanged. Reuse skips every symbol and file LLM call; the
-    // recorded summary still feeds module prompts and pages.
-    let sources = BTreeSet::from([file.to_string()]);
-    let neighbors = relationships.neighbor_files(file);
-    let reused = reuse.as_deref_mut().and_then(|plan| {
-        plan.reusable_page_with_summary_and_neighbors(&file_doc_path(file), &sources, &neighbors)
-    });
-    // Cluster assignment is a render input those hashes cannot see: clustering
-    // is global, so an unchanged file can be assigned a new module this run
-    // (a synthetic cluster renamed or dissolved, #17731). Re-stamp the
-    // deterministic `Module:` link with this run's module; a page without a
-    // recognizable link falls back to regeneration.
-    let reused = reused.and_then(|(page, summary)| {
-        restamp_file_module_link(&page, &module).map(|page| (page, summary))
-    });
     let file_verb = if reused.is_some() {
         "reusing"
     } else if ai_depth.includes_files() {
@@ -65,7 +83,7 @@ pub(crate) fn build_file_doc(
     } else {
         "building"
     };
-    progress.emit(format!(
+    progress(format!(
         "{file_verb} file doc file {}/{} {}",
         position.index, position.total, file
     ));
@@ -78,7 +96,7 @@ pub(crate) fn build_file_doc(
         .map(|(index, symbol)| {
             let fallback = structural_symbol_purpose(&symbol);
             let generated = if reused.is_none() && ai_depth.includes_symbols() {
-                progress.emit(format!(
+                progress(format!(
                     "generating symbol doc file {}/{} symbol {}/{} {}",
                     position.index,
                     position.total,
