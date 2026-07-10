@@ -83,6 +83,7 @@ def _plan_without_plan_id(
         body += manifest_yaml.rstrip() + "\n```\n"
     return _write_plan(tmp_path, body, name)
 
+
 _TWO_DELIVERABLES = """
 ## A1 Section
 `kind: deliverable`

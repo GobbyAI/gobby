@@ -223,9 +223,7 @@ def test_planner_spawn_against_clean_plan_succeeds(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("agent_name", ("planner", "plan-adversary"))
-def test_planning_agent_spawn_rejects_missing_plan_id(
-    tmp_path: Path, agent_name: str
-) -> None:
+def test_planning_agent_spawn_rejects_missing_plan_id(tmp_path: Path, agent_name: str) -> None:
     plan = _write_missing_plan_id(tmp_path / "missing-id.md")
     manager = _make_task_manager_with_artifact(str(plan))
 
