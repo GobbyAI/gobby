@@ -75,6 +75,7 @@ def test_reload_workflows_success(runner) -> None:
                 result = runner.invoke(workflows, ["reload"])
                 assert result.exit_code == 0
                 assert "Triggered daemon workflow reload" in result.output
+                assert "headers" in mock_post.call_args.kwargs
 
 
 def test_reload_workflows_daemon_failure_exits_nonzero(runner) -> None:

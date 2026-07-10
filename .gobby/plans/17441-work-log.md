@@ -188,3 +188,93 @@ Additional validation:
 
 Test gaps: none for this leaf's specified CLI grouping, status, rotation, help,
 or bootstrap-persistence behavior.
+
+## 2026-07-10 — #17792 Thread token through Python daemon clients
+
+Session: #8117
+
+Plan:
+
+1. Inspect each daemon client, raw HTTP call, inbox replay path, code-index
+   isolation setup, focused tests, and source-file sizes.
+2. Add the six acceptance behaviors and raw-call assertions before implementation.
+3. Cache and attach bearer headers, retry stdio requests once after a 401 token
+   refresh, sanitize replay headers, and copy the token into isolated homes.
+4. Run focused red/green tests, broader affected suites, static checks,
+   test-quality audit, packaging, diff checks, and size checks.
+5. Commit the leaf and close it with the linked commit.
+
+Implemented:
+
+- Cached `daemon_auth_headers()` in `DaemonClient` and applied it to health and
+  GET/POST/PUT/DELETE requests; 401s now return or raise the exact actionable
+  install/rotate/copy remediation.
+- Cached bearer headers in `DaemonProxy`, attached them to every request, and
+  re-read the token file and retried exactly once after a 401.
+- Attached bearer headers to terminal-context session bootstrap and rich status.
+- Added auth headers to all five clone calls, agent spawn, worktree tool calls,
+  and both workflow reload calls while preserving bare public port health probes.
+- Stripped persisted Authorization headers case-insensitively during inbox replay,
+  attached the current local token, and emitted one actionable warning per drain
+  cycle in required mode when the token is missing.
+- Copied `local_cli_token` with mode `0600` into distinct code-index isolation
+  homes alongside `bootstrap.yaml`.
+- Added the exact acceptance test paths plus focused CLI, warning, bootstrap,
+  and isolated-home coverage.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest tests/utils/test_daemon_client.py
+  tests/mcp_proxy/test_stdio_proxy.py
+  tests/hooks/test_inbox.py::test_replay_attaches_token
+  tests/hooks/test_inbox.py::test_missing_required_token_warns_once_per_drain
+  tests/utils/test_status.py::test_fetch_rich_status_sends_bearer
+  tests/agents/test_isolation.py::TestEnsureIsolationCodeIndex::test_database_url_creates_gcode_wrapper_runtime
+  tests/cli/test_clones_cli.py::TestClonesCreateCommand::test_create_clone_success
+  tests/cli/test_clones_cli.py::TestClonesSpawnCommand::test_spawn_agent_success
+  tests/cli/test_clones_cli.py::TestClonesSyncCommand::test_sync_clone_success
+  tests/cli/test_clones_cli.py::TestClonesMergeCommand::test_merge_clone_success
+  tests/cli/test_clones_cli.py::TestClonesDeleteCommand::test_delete_clone_success
+  tests/cli/test_cli_agents.py::TestAgentsSpawnCommand::test_spawn_success
+  tests/cli/test_worktrees_cli.py::test_create_worktree_success
+  tests/cli/test_workflows_coverage.py::test_reload_workflows_success -q`
+  failed all 16 checks for the intended missing imports, headers, retry,
+  remediation, replay sanitization, warning, and isolated-token copy behavior.
+- Minimal green: the same exact command passed all 16 tests after the scoped
+  implementation and correction of copied-token permissions from `0700` to `0600`.
+- Refactor/final green: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/utils/test_utils_daemon_client.py tests/utils/test_daemon_client.py
+  tests/utils/test_status.py tests/mcp_proxy/test_stdio_proxy.py
+  tests/mcp_proxy/test_mcp_proxy_stdio_session_context.py
+  tests/mcp_proxy/test_mcp_proxy_stdio.py::TestDaemonProxy
+  tests/mcp_proxy/test_mcp_proxy_stdio.py::TestDaemonProxyMethods
+  tests/hooks/test_inbox.py
+  tests/agents/test_isolation.py::TestEnsureIsolationCodeIndex
+  tests/cli/test_clones_cli.py
+  tests/cli/test_cli_agents.py::TestAgentsSpawnCommand
+  tests/cli/test_worktrees_cli.py tests/cli/test_workflows_coverage.py -q`
+  passed 149 tests after formatting and assertion cleanup.
+
+Additional validation:
+
+- `uv run ruff format` on all 19 touched Python source/test files reformatted one
+  file; the repeated focused suite remained green.
+- `uv run ruff check` on the same 19 files passed.
+- `uv run mypy --strict` on all 10 touched source files passed with no issues.
+- `uv run gobby test-quality audit tests/utils/test_daemon_client.py
+  tests/mcp_proxy/test_stdio_proxy.py tests/hooks/test_inbox.py
+  tests/utils/test_status.py tests/agents/test_isolation.py
+  tests/cli/test_clones_cli.py tests/cli/test_cli_agents.py
+  tests/cli/test_worktrees_cli.py tests/cli/test_workflows_coverage.py
+  --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high`
+  initially identified one new medium issue; after strengthening replay response,
+  route, and payload assertions, it scanned 189 tests and reported zero issues.
+- `gcode grep` confirmed nine `headers=daemon_auth_headers()` raw call sites and
+  confirmed the three enumerated public health probes remain bare.
+- `uv build` successfully built the 0.5.0 source distribution and wheel.
+- `git diff --check` passed.
+- All 10 touched non-test Python source files remain below 1,000 lines; no
+  refactor task was required.
+
+Test gaps: none for the specified client, retry, replay, rich-status, raw-call,
+or isolated-home behaviors.

@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from gobby.cli.utils import get_gobby_home
+from gobby.config.bootstrap import load_bootstrap
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     clear_stale_envelope_processing_marker,
@@ -24,6 +25,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
 )
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
+from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
@@ -140,10 +142,17 @@ async def _post_envelope(
     """Replay an inbox envelope through the real hook ingress route."""
     headers = envelope.get("headers")
     request_headers = (
-        {str(key): str(value) for key, value in headers.items()}
+        {
+            str(key): str(value)
+            for key, value in headers.items()
+            if str(key).lower() != "authorization"
+        }
         if isinstance(headers, dict)
         else {}
     )
+    token = read_local_api_token()
+    if token is not None:
+        request_headers["Authorization"] = f"Bearer {token}"
     if envelope_id:
         request_headers[ENVELOPE_ID_HEADER] = envelope_id
 
@@ -169,9 +178,18 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
     if not pending_dir.exists():
         return 0
 
+    pending_files = _iter_inbox_files(pending_dir)
+    if not pending_files:
+        return 0
+    if load_bootstrap().auth_mode == "required" and read_local_api_token() is None:
+        logger.warning(
+            "Daemon API token missing; run 'gobby install' or 'gobby auth token --rotate' "
+            "on the hub machine and copy ~/.gobby/local_cli_token here"
+        )
+
     replayed = 0
     processed_dir = get_processed_envelope_dir(pending_dir)
-    for path in _iter_inbox_files(pending_dir):
+    for path in pending_files:
         envelope_id = envelope_id_from_inbox_path(path)
         if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
             logger.debug("Skipping already-processed hook inbox envelope %s", path.name)

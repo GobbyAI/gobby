@@ -12,6 +12,17 @@ from gobby.utils.status import (
 pytestmark = pytest.mark.unit
 
 
+@patch("gobby.utils.status.daemon_auth_headers", return_value={"Authorization": "Bearer status"})
+@patch("httpx.AsyncClient.get")
+async def test_fetch_rich_status_sends_bearer(mock_get, _mock_headers) -> None:
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"success": True}
+    mock_get.return_value = response
+
+    assert await fetch_rich_status(60887) == {"success": True}
+    assert mock_get.await_args.kwargs["headers"] == {"Authorization": "Bearer status"}
+
+
 class TestStatusUtils:
     @patch("httpx.AsyncClient.get")
     async def test_fetch_rich_status_success(self, mock_get) -> None:

@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from gobby.utils.local_token import daemon_auth_headers
+
 SESSION_BOOTSTRAP_TIMEOUT_SECONDS = 3.0
 
 
@@ -75,6 +77,7 @@ async def resolve_session_id_from_terminal_context(
                     "parent_pid": os.getppid(),
                     "terminal_context": current_terminal_context(),
                 },
+                headers=daemon_auth_headers(),
                 timeout=SESSION_BOOTSTRAP_TIMEOUT_SECONDS,
             )
     except (httpx.HTTPError, OSError):

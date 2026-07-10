@@ -27,6 +27,7 @@ from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -275,6 +276,7 @@ def spawn_agent_cmd(
         response = httpx.post(
             f"{daemon_url}/mcp/gobby-agents/tools/spawn_agent",
             json=arguments,
+            headers=daemon_auth_headers(),
             timeout=30.0,
         )
         response.raise_for_status()

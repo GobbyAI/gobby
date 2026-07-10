@@ -37,6 +37,7 @@ from gobby.mcp_proxy.wait_tools import (
     WAIT_TOOL_NAMES,
     mcp_wrapper_process_fingerprint,
 )
+from gobby.utils.local_token import daemon_auth_headers
 
 
 class CheckDaemonHealth(Protocol):
@@ -93,6 +94,7 @@ class DaemonProxy:
         self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
         self._last_bootstrap_attempt_at: float = 0.0
         self._last_health_ok_at = 0.0
+        self._auth_headers = daemon_auth_headers()
 
     async def _resolve_session_id(self) -> str | None:
         if self._session_id:
@@ -156,13 +158,24 @@ class DaemonProxy:
 
         try:
             async with httpx.AsyncClient() as client:
+                request_headers = {**headers, **self._auth_headers}
                 resp = await client.request(
                     method,
                     f"{self.base_url}{path}",
                     json=json,
-                    headers=headers,
+                    headers=request_headers,
                     timeout=timeout,
                 )
+                if resp.status_code == 401:
+                    self._auth_headers = daemon_auth_headers()
+                    retry_headers = {**headers, **self._auth_headers}
+                    resp = await client.request(
+                        method,
+                        f"{self.base_url}{path}",
+                        json=json,
+                        headers=retry_headers,
+                        timeout=timeout,
+                    )
                 if resp.status_code == 200:
                     data: dict[str, Any] = resp.json()
                     result: dict[str, Any] = _strip_none(data)

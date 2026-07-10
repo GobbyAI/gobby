@@ -31,8 +31,17 @@ import httpx
 
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
 from gobby.utils.daemon_url import validate_daemon_url
+from gobby.utils.local_token import daemon_auth_headers
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
+DAEMON_AUTH_REMEDIATION = (
+    "token missing or stale; run 'gobby install' or 'gobby auth token --rotate' on the hub "
+    "machine and copy ~/.gobby/local_cli_token here"
+)
+
+
+class DaemonAuthenticationError(RuntimeError):
+    """Raised when the daemon rejects the install-scoped bearer token."""
 
 
 class DaemonClient:
@@ -85,6 +94,7 @@ class DaemonClient:
         )
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
+        self._auth_headers = daemon_auth_headers()
 
         # Health status cache (thread-safe)
         self._cache_lock = threading.Lock()
@@ -118,8 +128,13 @@ class DaemonClient:
         try:
             response = httpx.get(
                 f"{self.url}/api/admin/health",
+                headers=self._auth_headers,
                 timeout=self.timeout,
             )
+            if response.status_code == 401:
+                self._mark_health_failed()
+                self.logger.warning("Daemon authentication failed: %s", DAEMON_AUTH_REMEDIATION)
+                return False, DAEMON_AUTH_REMEDIATION
             is_healthy = response.status_code == 200
             if is_healthy:
                 self._log_health_success()
@@ -217,16 +232,24 @@ class DaemonClient:
 
         try:
             if method.upper() == "GET":
-                response = httpx.get(url, timeout=timeout_val)
+                response = httpx.get(url, headers=self._auth_headers, timeout=timeout_val)
             elif method.upper() == "POST":
-                response = httpx.post(url, json=json_data, timeout=timeout_val)
+                response = httpx.post(
+                    url, json=json_data, headers=self._auth_headers, timeout=timeout_val
+                )
             elif method.upper() == "PUT":
-                response = httpx.put(url, json=json_data, timeout=timeout_val)
+                response = httpx.put(
+                    url, json=json_data, headers=self._auth_headers, timeout=timeout_val
+                )
             elif method.upper() == "DELETE":
-                response = httpx.delete(url, timeout=timeout_val)
+                response = httpx.delete(url, headers=self._auth_headers, timeout=timeout_val)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
+            if response.status_code == 401:
+                raise DaemonAuthenticationError(
+                    f"Daemon authentication failed: {DAEMON_AUTH_REMEDIATION}"
+                )
             return response
 
         except Exception as e:

@@ -113,6 +113,10 @@ class TestEnsureIsolationCodeIndex:
         source_home = tmp_path / "home"
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
         workspace.mkdir()
+        source_home.mkdir()
+        source_token = source_home / "local_cli_token"
+        source_token.write_text("isolated-agent-token\n")
+        source_token.chmod(0o600)
         subprocess.run(["git", "init"], cwd=workspace, check=True, capture_output=True)
 
         with (
@@ -143,6 +147,10 @@ class TestEnsureIsolationCodeIndex:
         assert "database_url_ref" not in bootstrap_text
         assert "bind_host: 127.0.0.1" in bootstrap_text
         assert "daemon_port: 61234" in bootstrap_text
+        copied_token = Path(result.runtime_home) / "local_cli_token"
+        assert copied_token.read_text() == "isolated-agent-token\n"
+        assert not copied_token.is_symlink()
+        assert copied_token.stat().st_mode & 0o777 == 0o600
         assert create_proc.await_args_list[0].args[0] == str(wrapper)
         status = subprocess.run(
             ["git", "status", "--porcelain"],

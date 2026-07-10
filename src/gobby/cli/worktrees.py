@@ -28,6 +28,7 @@ from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
 
 
@@ -58,6 +59,7 @@ def _call_worktree_tool(
         response = httpx.post(
             f"{daemon_url}/api/mcp/gobby-worktrees/tools/{tool_name}",
             json=arguments,
+            headers=daemon_auth_headers(),
             timeout=timeout,
         )
         response.raise_for_status()

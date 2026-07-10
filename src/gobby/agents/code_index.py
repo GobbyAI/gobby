@@ -21,6 +21,7 @@ from gobby.config.bootstrap import (
 )
 from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
+from gobby.utils.local_token import LOCAL_API_TOKEN_FILENAME
 from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,7 @@ def _prepare_gcode_runtime(
             "bind_host": daemon_bind_host or DEFAULT_DAEMON_BIND_HOST,
         },
     )
+    _copy_local_api_token(source_home, runtime_home)
     _link_runtime_assets(source_home, runtime_home)
 
     wrapper_path = workspace / _WRAPPER_RELATIVE_PATH
@@ -224,6 +226,18 @@ def _link_runtime_assets(source_home: Path, runtime_home: Path) -> None:
                 logger.debug("Skipping gcode runtime directory link fallback for %s", source)
                 continue
             shutil.copy2(source, target)
+
+
+def _copy_local_api_token(source_home: Path, runtime_home: Path) -> None:
+    """Copy the daemon token into a distinct isolated GOBBY_HOME."""
+    if source_home.resolve() == runtime_home.resolve():
+        return
+    source = source_home / LOCAL_API_TOKEN_FILENAME
+    if not source.is_file():
+        return
+    destination = runtime_home / LOCAL_API_TOKEN_FILENAME
+    shutil.copyfile(source, destination)
+    destination.chmod(0o600)
 
 
 def _chmod_private(path: Path) -> None:

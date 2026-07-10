@@ -11,6 +11,7 @@ import click
 import yaml
 
 from gobby.cli.workflows import common
+from gobby.utils.local_token import daemon_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,7 @@ def _notify_daemon_reload() -> None:
 
         response = httpx.post(
             f"{get_daemon_url()}/api/admin/workflows/reload",
+            headers=daemon_auth_headers(),
             timeout=2.0,
         )
         if response.status_code == 200:
@@ -239,7 +241,11 @@ def reload_workflows(ctx: click.Context) -> None:
 
         if is_running:
             try:
-                response = httpx.post(f"{daemon_url}/api/admin/workflows/reload", timeout=2.0)
+                response = httpx.post(
+                    f"{daemon_url}/api/admin/workflows/reload",
+                    headers=daemon_auth_headers(),
+                    timeout=2.0,
+                )
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("status") == "success":

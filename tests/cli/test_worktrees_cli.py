@@ -79,6 +79,7 @@ def test_create_worktree_success(mock_httpx) -> None:
     assert result.exit_code == 0
     assert "Created worktree: wt-new" in result.output
     mock_httpx.assert_called_once()
+    assert "headers" in mock_httpx.call_args.kwargs
 
 
 def test_create_worktree_failure(mock_httpx) -> None:
@@ -129,6 +130,7 @@ def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) ->
     mock_httpx.assert_called_once_with(
         "http://localhost:9876/api/mcp/gobby-worktrees/tools/delete_worktree",
         json={"worktree_id": "wt-123", "force": False},
+        headers={},
         timeout=30.0,
     )
 

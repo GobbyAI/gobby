@@ -256,6 +256,7 @@ class TestAgentsSpawnCommand:
         assert "Started agent run" in result.output
         assert "ar-newrun123" in result.output
         assert "sess-child001" in result.output
+        assert "headers" in mock_post.call_args.kwargs
 
     @patch("gobby.cli.agents.resolve_session_id")
     @patch("gobby.cli.agents.httpx.post")

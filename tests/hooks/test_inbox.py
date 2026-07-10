@@ -20,6 +20,7 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.inbox import (
     _compute_sleep_seconds,
     _load_envelope,
+    _post_envelope,
     _quarantine_file,
     drain_hook_inbox_once,
 )
@@ -37,6 +38,59 @@ def _valid_envelope() -> dict[str, Any]:
         "source": "claude",
         "headers": {},
     }
+
+
+@pytest.mark.asyncio
+async def test_replay_attaches_token() -> None:
+    envelope = _valid_envelope()
+    envelope["headers"] = {
+        "authorization": "Bearer persisted-stale-token",
+        "X-Gobby-Project-Id": "project-123",
+    }
+    response = MagicMock(status_code=200)
+    client = AsyncMock()
+    client.post = AsyncMock(return_value=response)
+
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value="fresh-token"),
+        patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=client),
+    ):
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        replay_response = await _post_envelope(FastAPI(), envelope)
+
+    assert replay_response is response
+    assert client.post.await_args.args == ("/api/hooks/execute",)
+    assert client.post.await_args.kwargs["json"] is envelope
+    headers = client.post.await_args.kwargs["headers"]
+    assert headers == {
+        "X-Gobby-Project-Id": "project-123",
+        "Authorization": "Bearer fresh-token",
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_required_token_warns_once_per_drain(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    for envelope_id in ("n-0000000000001-abcd", "n-0000000000002-abcd"):
+        (inbox_dir / f"{envelope_id}.json").write_text(json.dumps(_valid_envelope()))
+
+    response = MagicMock(status_code=500)
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value=None),
+        patch("gobby.hooks.inbox.load_bootstrap") as mock_load_bootstrap,
+        patch("gobby.hooks.inbox._post_envelope", new=AsyncMock(return_value=response)),
+        caplog.at_level(logging.WARNING, logger="gobby.hooks.inbox"),
+    ):
+        mock_load_bootstrap.return_value.auth_mode = "required"
+        await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    token_warnings = [record for record in caplog.records if "local_cli_token" in record.message]
+    assert len(token_warnings) == 1
+    assert "gobby auth token --rotate" in token_warnings[0].message
 
 
 def test_malformed_nonempty_marker_logs_and_counts_processed(

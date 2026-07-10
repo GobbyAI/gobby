@@ -18,6 +18,7 @@ from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
 
 
@@ -106,6 +107,7 @@ def create_clone(
         response = httpx.post(
             f"{daemon_url}/mcp/gobby-clones/tools/create_clone",
             json=arguments,
+            headers=daemon_auth_headers(),
             timeout=300.0,  # Clone can take a while
         )
         response.raise_for_status()
@@ -194,6 +196,7 @@ def spawn_agent(
         response = httpx.post(
             f"{daemon_url}/mcp/gobby-agents/tools/spawn_agent",
             json=arguments,
+            headers=daemon_auth_headers(),
             timeout=60.0,
         )
         response.raise_for_status()
@@ -250,6 +253,7 @@ def sync_clone(clone_ref: str, direction: str, json_format: bool) -> None:
         response = httpx.post(
             f"{daemon_url}/mcp/gobby-clones/tools/sync_clone",
             json={"clone_id": clone_id, "direction": direction},
+            headers=daemon_auth_headers(),
             timeout=120.0,
         )
         response.raise_for_status()
@@ -301,6 +305,7 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
         response = httpx.post(
             f"{daemon_url}/mcp/gobby-clones/tools/merge_clone",
             json={"clone_id": clone_id, "target_branch": target_branch},
+            headers=daemon_auth_headers(),
             timeout=120.0,
         )
         response.raise_for_status()
@@ -384,6 +389,7 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
         response = httpx.post(
             f"{daemon_url}/mcp/gobby-clones/tools/delete_clone",
             json={"clone_id": clone_id, "force": force},
+            headers=daemon_auth_headers(),
             timeout=60.0,
         )
         response.raise_for_status()

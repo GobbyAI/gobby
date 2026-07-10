@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,9 @@ async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> dict[str, A
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"http://localhost:{http_port}/api/admin/status", timeout=timeout
+                f"http://localhost:{http_port}/api/admin/status",
+                headers=daemon_auth_headers(),
+                timeout=timeout,
             )
         if response.status_code == 200:
             result: dict[str, Any] = response.json()

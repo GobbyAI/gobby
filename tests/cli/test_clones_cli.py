@@ -113,6 +113,7 @@ class TestClonesCreateCommand:
         assert result.exit_code == 0
         assert "clone-new" in result.output
         mock_httpx.assert_called_once()
+        assert "headers" in mock_httpx.call_args.kwargs
 
     def test_create_clone_failure(self, mock_httpx) -> None:
         """Test 'clones create' failure."""
@@ -161,6 +162,7 @@ class TestClonesSpawnCommand:
         assert result.exit_code == 0
         assert "session-456" in result.output or "Spawned" in result.output
         mock_httpx.assert_called_once()
+        assert "headers" in mock_httpx.call_args.kwargs
 
     def test_spawn_agent_clone_not_found(self, mock_clone_manager) -> None:
         """Test 'clones spawn' with non-existent clone."""
@@ -198,6 +200,7 @@ class TestClonesSyncCommand:
 
         assert result.exit_code == 0
         mock_httpx.assert_called_once()
+        assert "headers" in mock_httpx.call_args.kwargs
 
 
 class TestClonesMergeCommand:
@@ -223,6 +226,7 @@ class TestClonesMergeCommand:
 
         assert result.exit_code == 0
         assert "Merged" in result.output or "success" in result.output.lower()
+        assert "headers" in mock_httpx.call_args.kwargs
 
     def test_merge_clone_conflicts(self, mock_clone_manager, mock_httpx) -> None:
         """Test 'clones merge' with conflicts."""
@@ -267,6 +271,7 @@ class TestClonesDeleteCommand:
 
         assert result.exit_code == 0
         assert "Deleted" in result.output or "success" in result.output.lower()
+        assert "headers" in mock_httpx.call_args.kwargs
 
     def test_delete_clone_force_json_requires_yes(self, mock_clone_manager, mock_httpx) -> None:
         """Test 'clones delete --force --json' without --yes does not delete."""
