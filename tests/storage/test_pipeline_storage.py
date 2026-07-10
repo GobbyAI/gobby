@@ -575,15 +575,15 @@ class TestGetStepsByExecution:
         assert steps == []
 
 
-class TestFailStaleRunningExecutions:
-    """Tests for fail_stale_running_executions method."""
+class TestInterruptStaleRunningExecutions:
+    """Tests for interrupt_stale_running_executions (daemon-restart recovery)."""
 
     def test_marks_running_executions_as_interrupted(self, manager) -> None:
         """Running executions are marked as interrupted (non-terminal, can be resumed)."""
         execution = manager.create_execution(pipeline_name="stale-pipeline")
         manager.update_execution_status(execution_id=execution.id, status=ExecutionStatus.RUNNING)
 
-        count = manager.fail_stale_running_executions()
+        count = manager.interrupt_stale_running_executions()
 
         assert count == 1
         updated = manager.get_execution(execution.id)
@@ -597,7 +597,7 @@ class TestFailStaleRunningExecutions:
             execution_id=execution.id, status=ExecutionStatus.WAITING_APPROVAL
         )
 
-        count = manager.fail_stale_running_executions()
+        count = manager.interrupt_stale_running_executions()
 
         assert count == 0
         updated = manager.get_execution(execution.id)
@@ -611,7 +611,7 @@ class TestFailStaleRunningExecutions:
         step = manager.create_step_execution(execution_id=execution.id, step_id="s1")
         manager.update_step_execution(step_execution_id=step.id, status=StepStatus.RUNNING)
 
-        manager.fail_stale_running_executions()
+        manager.interrupt_stale_running_executions()
 
         updated_step = manager.get_steps_for_execution(execution.id)[0]
         assert updated_step.status == StepStatus.FAILED
@@ -623,11 +623,11 @@ class TestFailStaleRunningExecutions:
         execution = manager.create_execution(pipeline_name="done-pipeline")
         manager.update_execution_status(execution_id=execution.id, status=ExecutionStatus.COMPLETED)
 
-        count = manager.fail_stale_running_executions()
+        count = manager.interrupt_stale_running_executions()
         assert count == 0
 
     def test_exclude_ids_skips_excluded_executions(self, manager) -> None:
-        """Excluded execution IDs are not failed."""
+        """Excluded execution IDs are not interrupted."""
         resumable = manager.create_execution(pipeline_name="resumable-pipeline")
         manager.update_execution_status(execution_id=resumable.id, status=ExecutionStatus.RUNNING)
         non_resumable = manager.create_execution(pipeline_name="non-resumable-pipeline")
@@ -635,7 +635,7 @@ class TestFailStaleRunningExecutions:
             execution_id=non_resumable.id, status=ExecutionStatus.RUNNING
         )
 
-        count = manager.fail_stale_running_executions(exclude_ids={resumable.id})
+        count = manager.interrupt_stale_running_executions(exclude_ids={resumable.id})
 
         assert count == 1
         # Resumable should still be RUNNING
@@ -650,19 +650,72 @@ class TestFailStaleRunningExecutions:
         step = manager.create_step_execution(execution_id=resumable.id, step_id="s1")
         manager.update_step_execution(step_execution_id=step.id, status=StepStatus.RUNNING)
 
-        manager.fail_stale_running_executions(exclude_ids={resumable.id})
+        manager.interrupt_stale_running_executions(exclude_ids={resumable.id})
 
         updated_step = manager.get_steps_for_execution(resumable.id)[0]
         assert updated_step.status == StepStatus.RUNNING
 
-    def test_exclude_ids_empty_set_fails_all(self, manager) -> None:
-        """Empty exclude_ids set fails all running executions."""
+    def test_exclude_ids_empty_set_interrupts_all(self, manager) -> None:
+        """Empty exclude_ids set interrupts all running executions."""
         execution = manager.create_execution(pipeline_name="test-pipeline")
         manager.update_execution_status(execution_id=execution.id, status=ExecutionStatus.RUNNING)
 
-        count = manager.fail_stale_running_executions(exclude_ids=set())
+        count = manager.interrupt_stale_running_executions(exclude_ids=set())
         assert count == 1
-        assert manager.get_execution(execution.id).status == ExecutionStatus.INTERRUPTED
+
+
+class TestFailStaleRunningExecutions:
+    """Tests for fail_stale_running_executions (executor startup sweep, #17756)."""
+
+    def test_marks_running_executions_as_failed(self, manager) -> None:
+        """Running executions are marked FAILED (terminal) with a restart note."""
+        execution = manager.create_execution(pipeline_name="orphan-pipeline")
+        manager.update_execution_status(execution_id=execution.id, status=ExecutionStatus.RUNNING)
+
+        count = manager.fail_stale_running_executions()
+
+        assert count == 1
+        updated = manager.get_execution(execution.id)
+        assert updated is not None
+        assert updated.status == ExecutionStatus.FAILED
+
+    def test_also_fails_running_steps(self, manager) -> None:
+        """Running steps belonging to orphaned executions are also failed."""
+        execution = manager.create_execution(pipeline_name="orphan-pipeline")
+        manager.update_execution_status(execution_id=execution.id, status=ExecutionStatus.RUNNING)
+        step = manager.create_step_execution(execution_id=execution.id, step_id="s1")
+        manager.update_step_execution(step_execution_id=step.id, status=StepStatus.RUNNING)
+
+        manager.fail_stale_running_executions()
+
+        updated_step = manager.get_steps_for_execution(execution.id)[0]
+        assert updated_step.status == StepStatus.FAILED
+        assert updated_step.error == "Daemon restarted"
+
+    def test_leaves_waiting_approval_alone(self, manager) -> None:
+        """Waiting-approval executions stay approvable."""
+        execution = manager.create_execution(pipeline_name="approval-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.WAITING_APPROVAL
+        )
+
+        count = manager.fail_stale_running_executions()
+
+        assert count == 0
+        assert manager.get_execution(execution.id).status == ExecutionStatus.WAITING_APPROVAL
+
+    def test_exclude_ids_skips_live_detached_runs(self, manager) -> None:
+        """Excluded execution IDs (live detached runs) are not failed."""
+        live = manager.create_execution(pipeline_name="live-pipeline")
+        manager.update_execution_status(execution_id=live.id, status=ExecutionStatus.RUNNING)
+        orphan = manager.create_execution(pipeline_name="orphan-pipeline")
+        manager.update_execution_status(execution_id=orphan.id, status=ExecutionStatus.RUNNING)
+
+        count = manager.fail_stale_running_executions(exclude_ids={live.id})
+
+        assert count == 1
+        assert manager.get_execution(live.id).status == ExecutionStatus.RUNNING
+        assert manager.get_execution(orphan.id).status == ExecutionStatus.FAILED
 
 
 class TestApprovalTimeout:

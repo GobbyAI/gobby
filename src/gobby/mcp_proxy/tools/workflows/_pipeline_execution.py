@@ -540,7 +540,8 @@ async def resume_interrupted_pipelines(
     Finds RUNNING executions whose pipeline definition has resume_on_restart=True,
     re-queues them as background tasks using the existing resume path (execution_id),
     and returns the list of resumed execution IDs. Non-resumable executions are left
-    RUNNING so the caller can fail them via fail_stale_running_executions(exclude_ids=...).
+    RUNNING so the caller can mark them via
+    interrupt_stale_running_executions(exclude_ids=...).
 
     Args:
         loader: WorkflowLoader for loading pipeline definitions.

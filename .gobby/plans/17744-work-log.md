@@ -585,3 +585,102 @@ reindex-backed route path), and `tests/mcp_proxy/tools/test_wiki.py`
   stdin content verbatim (unicode), create→already_exists, stale
   hash→precondition_failed with file untouched, matching-hash upsert,
   delete prunes + second delete→not_found.
+
+## #17756 — Detached pipeline runs: `background` flag on `POST /api/pipelines/run`
+
+### Plan
+
+Plan section 1.6. `POST /api/pipelines/run` awaits `executor.execute()`; a wiki-research
+run holds the request open up to ~1h. Add a generic detached capability.
+
+Investigation findings that shaped the design:
+- Daemon startup already recovers orphans: `_recover_pipelines`
+  (runner_lifecycle_subsystems.py) resumes `resume_on_restart` RUNNING executions, then
+  marks the rest INTERRUPTED via storage `fail_stale_running_executions` — which is a
+  misleadingly named alias of `interrupt_stale_running_executions`.
+- Scoping gap: `runner.pipeline_execution_manager` is scoped to `runner.project_id`, and
+  `init_orchestration` skips executor creation entirely when `project_id` is None. Orphans
+  in other projects (served by lazily created per-project executors via
+  `ServiceContainer.get_pipeline_executor`) are never swept — phantom RUNNING forever.
+  The executor-level startup sweep closes exactly this gap.
+
+Changes:
+1. `src/gobby/workflows/pipeline_executor.py`
+   - Extract `_create_execution_record(pipeline, inputs, session_id)` from the
+     record-creation block of `execute()` (definition snapshot + `create_execution`).
+   - `async start_detached(pipeline, inputs, project_id, session_id=None) -> PipelineExecution`:
+     create record, mark RUNNING (so the caller sees RUNNING immediately, no scheduling race),
+     `asyncio.create_task(self.execute(..., execution_id=...), name="pipeline-detached-<id>")`,
+     retain in `self._detached_tasks: set[asyncio.Task]` with a discard + exception-logging
+     done-callback (mirrors `CronExecutor._track_background_task`). `ApprovalRequired` from a
+     detached run is a park, not an error — log info, not error. Track live execution ids in
+     `self._detached_execution_ids` (discarded in the same callback) so the sweep can exclude
+     in-flight runs without parsing task names.
+   - `startup_sweep() -> int`: delegate to
+     `execution_manager.fail_stale_running_executions(exclude_ids=live detached ids)`.
+2. `src/gobby/storage/pipeline_executions.py` — make `fail_stale_running_executions` do what
+   its name says (FAILED) instead of aliasing INTERRUPTED; both variants share parameterized
+   `_mark_stale_running_executions(exclude_ids, *, status)` (same atomic SQL: fail RUNNING
+   steps + daemon-restart note). No backward compat pre-0.5.0.
+3. `src/gobby/runner_lifecycle_subsystems.py` — `_recover_pipelines` calls
+   `interrupt_stale_running_executions` explicitly (daemon-startup resume+notify flow keeps
+   INTERRUPTED semantics).
+4. `src/gobby/app_context.py` — `get_pipeline_executor` runs `pe.startup_sweep()` after lazy
+   creation (own try/except; sweep failure must not kill executor availability). Not wired
+   into `init_orchestration`: the runner path must keep `resume_interrupted_pipelines` →
+   INTERRUPTED ordering, and a FAILED sweep before resume would break `resume_on_restart`.
+5. `src/gobby/servers/routes/pipelines.py` — `PipelineRunRequest.background: bool = False`;
+   when true, `await executor.start_detached(...)` and return
+   `202 {"status": "running", "execution_id", "pipeline_name"}`. Monitoring unchanged
+   (`pipeline_event` WS broadcasts + `GET /api/pipelines/executions*`).
+
+Tests (TDD):
+- NEW `tests/workflows/test_pipeline_executor.py`: `test_start_detached_completes` (1.6.1),
+  `test_startup_sweep_marks_orphans_failed` (1.6.3), sweep excludes in-flight detached runs,
+  done-callback logs detached failures, ApprovalRequired parks without error log.
+- `tests/servers/routes/test_pipelines.py`: `background: true` → 202 running envelope (1.6.2);
+  detached start failure → 500.
+- `tests/storage/test_pipeline_storage.py`: fail variant asserts FAILED; interrupt variant
+  asserts INTERRUPTED (split the old alias expectations).
+- `tests/test_app_context.py`: lazily created executor runs the startup sweep.
+
+### Implementation notes (#17756)
+
+- `PipelineExecutor` gained `_create_execution_record` (extracted from `execute()`'s
+  record-creation block), `start_detached` (record → RUNNING → retained named task), and
+  `startup_sweep`. Done-callback treats `ApprovalRequired` as an approval park (info log);
+  real failures log as errors. Live detached execution ids tracked in
+  `_detached_execution_ids` (same callback discards) so the sweep never fails an in-flight run.
+- Storage: `interrupt_stale_running_executions` and `fail_stale_running_executions` now share
+  `_mark_stale_running_executions(exclude_ids, *, status)`; the fail variant is real
+  (FAILED), no longer an INTERRUPTED alias. `_recover_pipelines` renamed its call to the
+  interrupt variant; `resume_interrupted_pipelines` docstring updated.
+- `ServiceContainer.get_pipeline_executor` runs `startup_sweep()` on lazy creation in its own
+  try/except. Route `POST /api/pipelines/run` with `background: true` returns
+  `202 {"status": "running", "execution_id", "pipeline_name"}`.
+
+### TDD evidence (#17756)
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_pipeline_executor.py
+  tests/servers/routes/test_pipelines.py::TestRunPipeline
+  tests/storage/test_pipeline_storage.py::TestFailStaleRunningExecutions
+  tests/storage/test_pipeline_storage.py::TestInterruptStaleRunningExecutions
+  "tests/test_app_context.py::TestGetPipelineExecutor::test_lazy_creation_runs_startup_sweep"
+  "tests/test_app_context.py::TestGetPipelineExecutor::test_startup_sweep_failure_does_not_block_lazy_creation" -q`
+  → 9 failed, 18 passed (AttributeError: no `start_detached`; FAILED-variant storage tests
+  asserting INTERRUPTED alias; app_context sweep not called; route 202 missing).
+- Green (same command post-implementation): 37 passed.
+- Refactor/final green: full pipeline-surface regression —
+  `GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_pipeline_executor*.py
+  tests/workflows/test_pipeline_resume.py tests/workflows/test_pipeline_heartbeat.py
+  tests/servers/routes/test_pipelines.py tests/storage/test_pipeline_storage.py
+  tests/test_app_context.py tests/events/test_pipeline_integration.py
+  tests/events/test_wake_wiring.py tests/mcp_proxy/tools/test_pipeline_resume.py -q`
+  → **300 passed**.
+- `uv run ruff format` + `ruff check` clean; `uv run mypy` clean on all six touched sources
+  (one `no-any-return` fixed with a declared-type local, matching `execute()`'s idiom).
+- `uv run gobby test-quality audit tests/workflows/test_pipeline_executor.py
+  tests/servers/routes/test_pipelines.py tests/storage/test_pipeline_storage.py
+  tests/test_app_context.py --baseline .gobby/test-quality-baseline.json --fail-on-new
+  --min-severity high` → exit 0 (3 MEDIUM below gate: two `asyncio.sleep(0)` event-loop
+  yields for done-callbacks, one delegation test complemented by real-SQL storage tests).

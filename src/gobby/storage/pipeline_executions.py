@@ -600,6 +600,34 @@ class PipelineExecutionStorageMixin:
         Returns:
             Number of executions marked as interrupted.
         """
+        return self._mark_stale_running_executions(
+            exclude_ids=exclude_ids, status=ExecutionStatus.INTERRUPTED
+        )
+
+    def fail_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:
+        """Mark running executions and their steps as FAILED (terminal).
+
+        Used by the executor startup sweep (#17756): a freshly created
+        per-project executor owns no background tasks, so RUNNING executions
+        in its scope are restart orphans that nothing will resume. The
+        daemon-startup recovery flow keeps interrupt_stale_running_executions
+        instead, so resume_on_restart pipelines stay re-queueable.
+        Leaves waiting_approval executions alone (they can still be approved).
+
+        Args:
+            exclude_ids: Execution IDs to skip (e.g. live detached runs).
+
+        Returns:
+            Number of executions marked as failed.
+        """
+        return self._mark_stale_running_executions(
+            exclude_ids=exclude_ids, status=ExecutionStatus.FAILED
+        )
+
+    def _mark_stale_running_executions(
+        self, exclude_ids: set[str] | None, *, status: ExecutionStatus
+    ) -> int:
+        """Move RUNNING executions (and their RUNNING steps) to *status*."""
         now = utc_now()
 
         def build_not_in_clause(
@@ -638,7 +666,7 @@ class PipelineExecutionStorageMixin:
                 ),
             )
 
-            # Mark running pipeline executions as interrupted.
+            # Move running pipeline executions to the requested stale status.
             cursor = conn.execute(
                 f"""
                 UPDATE pipeline_executions
@@ -646,7 +674,7 @@ class PipelineExecutionStorageMixin:
                 WHERE status = %s AND {project_clause}{exec_exclude_clause}
                 """,  # nosec B608
                 (
-                    ExecutionStatus.INTERRUPTED.value,
+                    status.value,
                     '{"error": "Daemon restarted while execution was in progress"}',
                     now,
                     ExecutionStatus.RUNNING.value,
@@ -657,12 +685,10 @@ class PipelineExecutionStorageMixin:
 
         count: int = cursor.rowcount if cursor else 0
         if count > 0:
-            logger.info("Marked %s stale running executions as interrupted after restart", count)
+            logger.info(
+                "Marked %s stale running executions as %s after restart", count, status.value
+            )
         return count
-
-    def fail_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:
-        """Backwards-compatible alias for interrupt_stale_running_executions."""
-        return self.interrupt_stale_running_executions(exclude_ids=exclude_ids)
 
     def count_by_status(self) -> dict[str, int]:
         """Count executions grouped by status.

@@ -321,6 +321,54 @@ class TestRunPipeline:
         )
         assert response.status_code == 500
 
+    def test_run_pipeline_background_returns_202(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """background: true detaches the run and answers 202 immediately."""
+        mock_pipeline = MagicMock()
+        mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
+
+        mock_execution = MagicMock()
+        mock_execution.id = "pe-detached-1"
+        mock_execution.pipeline_name = "test-pipeline"
+        executor = mock_server.services.get_pipeline_executor.return_value
+        executor.start_detached = AsyncMock(return_value=mock_execution)
+        executor.execute = AsyncMock()
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "test-pipeline", "project_id": "proj-1", "background": True},
+        )
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data == {
+            "status": "running",
+            "execution_id": "pe-detached-1",
+            "pipeline_name": "test-pipeline",
+        }
+        executor.start_detached.assert_awaited_once()
+        call_kwargs = executor.start_detached.await_args.kwargs
+        assert call_kwargs["pipeline"] is mock_pipeline
+        assert call_kwargs["project_id"] == "proj-1"
+        executor.execute.assert_not_called()
+
+    def test_run_pipeline_background_start_error(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        """A failure while starting the detached run surfaces as 500."""
+        mock_pipeline = MagicMock()
+        mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
+
+        executor = mock_server.services.get_pipeline_executor.return_value
+        executor.start_detached = AsyncMock(side_effect=RuntimeError("no loop"))
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "test-pipeline", "project_id": "proj-1", "background": True},
+        )
+        assert response.status_code == 500
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # GET /api/pipelines/{execution_id}

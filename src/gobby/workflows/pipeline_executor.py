@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -130,6 +131,113 @@ class PipelineExecutor(
             run_db=run_db,
         )
 
+        # Detached runs (start_detached): tasks are retained so they are not
+        # garbage-collected mid-run, and their execution IDs let the startup
+        # sweep tell live runs apart from restart orphans.
+        self._detached_tasks: set[asyncio.Task[Any]] = set()
+        self._detached_execution_ids: set[str] = set()
+
+    def _create_execution_record(
+        self,
+        pipeline: PipelineDefinition,
+        inputs: dict[str, Any],
+        session_id: str | None,
+    ) -> PipelineExecution:
+        """Create an execution record with a snapshot of the definition."""
+        try:
+            definition_snapshot = pipeline.model_dump_json()
+        except Exception:
+            definition_snapshot = json_dumps(
+                {"name": pipeline.name, "error": "serialization failed"}
+            )
+        execution: PipelineExecution = self.execution_manager.create_execution(
+            pipeline_name=pipeline.name,
+            inputs_json=json_dumps(inputs),
+            session_id=session_id,
+            definition_json=definition_snapshot,
+        )
+        return execution
+
+    async def start_detached(
+        self,
+        pipeline: PipelineDefinition,
+        inputs: dict[str, Any],
+        project_id: str,
+        session_id: str | None = None,
+    ) -> PipelineExecution:
+        """Start a pipeline execution without awaiting its completion.
+
+        Creates the execution record, marks it RUNNING so callers observe a
+        live execution immediately (no scheduling race), and hands the actual
+        run to a retained background task. Progress is observable through the
+        usual pipeline_event broadcasts and the executions API.
+
+        Returns:
+            The RUNNING PipelineExecution record.
+        """
+        execution = self._create_execution_record(pipeline, inputs, session_id)
+        updated = self.execution_manager.update_execution_status(
+            execution_id=execution.id,
+            status=ExecutionStatus.RUNNING,
+        )
+        if updated:
+            execution = updated
+
+        task = asyncio.create_task(
+            self.execute(
+                pipeline=pipeline,
+                inputs=inputs,
+                project_id=project_id,
+                execution_id=execution.id,
+                session_id=session_id,
+            ),
+            name=f"pipeline-detached-{execution.id}",
+        )
+        self._track_detached_task(task, execution.id)
+        return execution
+
+    def _track_detached_task(self, task: asyncio.Task[Any], execution_id: str) -> None:
+        self._detached_tasks.add(task)
+        self._detached_execution_ids.add(execution_id)
+
+        def _on_done(done: asyncio.Task[Any]) -> None:
+            self._detached_tasks.discard(done)
+            self._detached_execution_ids.discard(execution_id)
+            if done.cancelled():
+                return
+            exc = done.exception()
+            if isinstance(exc, ApprovalRequired):
+                # A detached run reaching an approval gate is parked, not
+                # broken; approval resumes it through the normal flow.
+                logger.info(
+                    f"Detached pipeline run {execution_id} is waiting for approval "
+                    f"(step {exc.step_id})"
+                )
+            elif exc:
+                logger.error(f"Detached pipeline run {execution_id} failed: {exc}")
+
+        task.add_done_callback(_on_done)
+
+    def startup_sweep(self) -> int:
+        """Mark restart-orphaned RUNNING executions FAILED.
+
+        A freshly created executor owns no background tasks, so any RUNNING
+        execution in its manager's scope was orphaned by a daemon restart —
+        detached runs and approval-resumed runs alike. Without this, clients
+        polling the executions API would watch a phantom RUNNING execution
+        forever. Live detached runs are excluded, so the sweep is safe to run
+        at any point in the executor's lifetime.
+
+        Returns:
+            Number of executions marked as failed.
+        """
+        count: int = self.execution_manager.fail_stale_running_executions(
+            exclude_ids=set(self._detached_execution_ids)
+        )
+        if count > 0:
+            logger.info(f"Startup sweep marked {count} orphaned pipeline execution(s) failed")
+        return count
+
     async def execute(
         self,
         pipeline: PipelineDefinition,
@@ -211,19 +319,7 @@ class PipelineExecutor(
                             f"Start a new execution instead."
                         )
                 else:
-                    # Snapshot the pipeline definition for later inspection
-                    try:
-                        definition_snapshot = pipeline.model_dump_json()
-                    except Exception:
-                        definition_snapshot = json_dumps(
-                            {"name": pipeline.name, "error": "serialization failed"}
-                        )
-                    execution = self.execution_manager.create_execution(
-                        pipeline_name=pipeline.name,
-                        inputs_json=json_dumps(inputs),
-                        session_id=session_id,
-                        definition_json=definition_snapshot,
-                    )
+                    execution = self._create_execution_record(pipeline, inputs, session_id)
                     if span.is_recording():
                         span.set_attribute("execution_id", str(execution.id))
                     execution_id = execution.id

@@ -24,6 +24,7 @@ class PipelineRunRequest(BaseModel):
     name: str
     inputs: dict[str, Any] = {}
     project_id: str | None = None
+    background: bool = False
 
 
 class PipelineRunResponse(BaseModel):
@@ -262,7 +263,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
 
         Returns:
             200: Pipeline completed successfully
-            202: Pipeline waiting for approval
+            202: Detached run started (background: true) or pipeline waiting
+                 for approval
             404: Pipeline not found
             500: Execution error
         """
@@ -290,6 +292,29 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         pipeline = await loader.load_pipeline(request.name)
         if pipeline is None:
             raise HTTPException(status_code=404, detail=f"Pipeline '{request.name}' not found")
+
+        if request.background:
+            # Detached run: answer immediately; progress streams over
+            # pipeline_event broadcasts and GET /api/pipelines/executions*.
+            try:
+                execution = await executor.start_detached(
+                    pipeline=pipeline,
+                    inputs=request.inputs,
+                    project_id=project_id,
+                )
+            except Exception as e:
+                logger.error(f"Failed to start detached pipeline run: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to start detached run: {e}"
+                ) from None
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "running",
+                    "execution_id": execution.id,
+                    "pipeline_name": execution.pipeline_name,
+                },
+            )
 
         try:
             # Execute the pipeline

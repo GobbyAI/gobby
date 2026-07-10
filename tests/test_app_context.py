@@ -159,3 +159,37 @@ class TestGetPipelineExecutor:
         assert executor is not None
         # Verify it was cached under the container's project_id
         assert "default-proj" in container._project_infra_cache
+
+    def test_lazy_creation_runs_startup_sweep(self) -> None:
+        """Lazily created executors sweep restart-orphaned RUNNING executions.
+
+        Per-project executors are the only sweep point for projects outside
+        the runner's home project (#17756); the sweep delegates to the
+        execution manager's fail_stale_running_executions.
+        """
+        execution_manager = MagicMock()
+        execution_manager.fail_stale_running_executions.return_value = 0
+        container = _make_container(
+            database=MagicMock(),
+            workflow_loader=MagicMock(),
+            pipeline_execution_manager=execution_manager,
+        )
+
+        executor = container.get_pipeline_executor(project_id="proj-1")
+
+        assert executor is not None
+        execution_manager.fail_stale_running_executions.assert_called_once_with(exclude_ids=set())
+
+    def test_startup_sweep_failure_does_not_block_lazy_creation(self) -> None:
+        """A sweep failure must not make the executor unavailable."""
+        execution_manager = MagicMock()
+        execution_manager.fail_stale_running_executions.side_effect = RuntimeError("db down")
+        container = _make_container(
+            database=MagicMock(),
+            workflow_loader=MagicMock(),
+            pipeline_execution_manager=execution_manager,
+        )
+
+        executor = container.get_pipeline_executor(project_id="proj-1")
+
+        assert executor is not None

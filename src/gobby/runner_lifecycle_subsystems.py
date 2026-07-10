@@ -403,11 +403,11 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         if resumed_ids:
             logger.info(f"Resumed {len(resumed_ids)} pipeline(s) after restart: {resumed_ids}")
 
-        stale_count = runner.pipeline_execution_manager.fail_stale_running_executions(
+        stale_count = runner.pipeline_execution_manager.interrupt_stale_running_executions(
             exclude_ids=set(resumed_ids),
         )
         if stale_count > 0:
-            logger.info(f"Failed {stale_count} non-resumable stale pipeline executions")
+            logger.info(f"Interrupted {stale_count} non-resumable stale pipeline executions")
 
         if stale_count > 0 and runner.completion_registry:
             await _wake_interrupted_pipeline_subscribers(runner)
