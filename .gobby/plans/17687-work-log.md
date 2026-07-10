@@ -58,3 +58,38 @@ Entry format:
   `pages -> crates/gwiki/src/commands/pages.rs :: commands::pages::execute`.
   Final validation: `cargo test -p gobby-code` fully green — 998 lib tests +
   all integration suites, 0 failed; clippy + fmt clean.
+
+## 2026-07-10 18:50 UTC — #17532 — Bounded generation concurrency: --max-workers, default 1 — CLOSED
+
+- Changes: `gcode codewiki --max-workers <N>` (default 1, `positive_usize`).
+  1 maps to `file_workers: None` — the exact pre-change sequential path. N>1
+  fans per-file doc builds out to N `std::thread::scope` workers via new
+  `GenerateDocsOptions::file_workers` (`FileGenerationWorkers`). Resolved
+  generator/verifier closures became `Fn + Send + Sync`
+  (`SyncTextGenerator`/`SyncTextVerifier`, warn-once flags → `AtomicBool`);
+  serial sites adapt via local `FnMut` wrappers. ReusePlan decisions hoisted
+  to `resolve_file_reuse`, resolved serially in file order in both modes;
+  workers funnel progress/docs over mpsc and the main thread emits strictly
+  in file order (DocSink writes stay serialized + deterministic). Module/
+  aggregate/curated generation untouched. In-flight LLM calls stay capped by
+  `ai.max_concurrency` transport permits. CLI/dispatch/contract wired;
+  pinned `gcode.contract.json` regenerated (+`--max-workers`, purge conflict).
+- Commits: c92e52613
+- Validation: `cargo test -p gobby-code --lib` 992 passed / 0 failed;
+  all 7 integration suites green (46 tests); `cargo clippy -p gobby-code
+  --tests` clean; `cargo fmt -p gobby-code --check` clean;
+  `gobby test-quality audit` on touched test paths: 0 failing new issues
+  (1 medium SLEEP_IN_TEST in `pool_bounds_concurrent_generation_calls` —
+  intentional: the sleep creates the overlap window the bounding assertion
+  measures; the `peak <= 3` bound holds independent of timing). New tests:
+  pooled-vs-serial byte equality incl. emit order, pool-of-1 equivalence,
+  in-flight bounding, zero-call reuse through the pool, CLI parse coverage.
+- Deferred: none. Binary NOT reinstalled (bakeoff freeze); deploys with the
+  post-arm-G rebuild.
+- Cross-session note: mid-validation, session #8116's uncommitted #17753
+  gwiki contract diff (`page write`/`page delete`, v13) broke the
+  feature-catalog handler test in the shared tree — same miss class as
+  #17752. Coordinated via P2P message; #8116 took the `resolve_gwiki_handler`
+  fix into their commit (their features.rs edit; not in c92e52613). They
+  also own a pre-existing gobby-wiki `upkeep_near_duplicate_hit...` failure
+  they flagged back.
