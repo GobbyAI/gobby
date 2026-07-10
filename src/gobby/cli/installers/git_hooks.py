@@ -40,6 +40,7 @@ if [ -n "$CHANGED_FILES" ]; then
                         DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}"
                     fi
                     DAEMON_URL="${DAEMON_URL%/}"
+                    # Empty args ensure curl runs without Authorization when token file missing.
                     AUTH_HEADER_ARGS=()
                     TOKEN_FILE="${GOBBY_HOME:-$HOME/.gobby}/local_cli_token"
                     if [ -r "$TOKEN_FILE" ]; then
