@@ -359,3 +359,57 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
         format!("raw/{source_id}.md")
     );
 }
+
+#[test]
+fn public_cli_smoke_targeted_project_compile_requires_topic_before_writes() {
+    let fixture = common::GwikiFixture::new();
+    common::write_gcode_json(fixture.project());
+    let init = gwiki(
+        &fixture,
+        fixture.project(),
+        &["--format", "json", "init", "--project"],
+    );
+    common::assert_success(&init, "project init");
+
+    let vault = fixture.project().join("wiki");
+    let target = vault.join("knowledge/topics/ambiguous.md");
+    let handoff_dir = vault.join("_gwiki/compile");
+    let handoff_count = || {
+        std::fs::read_dir(&handoff_dir)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0)
+    };
+    let before_handoffs = handoff_count();
+
+    let compile = gwiki(
+        &fixture,
+        fixture.project(),
+        &[
+            "--format",
+            "json",
+            "--project",
+            "compile",
+            "--target",
+            "knowledge/topics/ambiguous.md",
+            "--write-intent",
+            "--ai",
+            "off",
+        ],
+    );
+
+    assert!(!compile.status.success(), "ambiguous compile succeeded");
+    let error = common::json_stderr(&compile);
+    assert_eq!(error["code"], "invalid_input");
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("topic") && message.contains("--target")),
+        "{error:#}"
+    );
+    assert!(!target.exists(), "ambiguous target was written");
+    assert!(
+        !vault.join("_gwiki/research-session.json").exists(),
+        "ambiguous compile wrote a checkpoint"
+    );
+    assert_eq!(handoff_count(), before_handoffs, "compile wrote a handoff");
+}

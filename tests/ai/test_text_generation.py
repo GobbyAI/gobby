@@ -2901,7 +2901,7 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     )
     # The qwen binding is a spawn-cold CLI lane, so it is bounded by
     # cli_candidate_timeout_seconds, which the config clamps down to
-    # timeout_seconds (0.01s) here since the default 150s exceeds it.
+    # timeout_seconds (0.01s) here since the default 600s exceeds it.
     service = build_daemon_text_generation_service(
         DaemonConfig(
             ai={

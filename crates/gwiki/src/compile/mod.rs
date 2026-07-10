@@ -141,20 +141,25 @@ pub fn compile_to_wiki_with_options(
     options: WikiCompileOptions,
     generator: Option<ExplainerGenerator<'_>>,
 ) -> Result<WikiCompileOutcome, WikiError> {
+    if request.topic.trim().is_empty() {
+        return Err(WikiError::InvalidInput {
+            field: "topic",
+            message: "compile handoff requires a topic".to_string(),
+        });
+    }
     let target_page = normalize_target_page(session.scope.root(), request.target_page.as_deref())?;
+    if let Some(target_page) = target_page.as_ref() {
+        validate_existing_target_identity(target_page, &request.topic)?;
+    }
     let write_intent = request.write_intent;
     let handoff_request = CompileRequest {
         topic: request.topic,
         outline: request.outline,
-        target_page: None,
-        write_intent: false,
+        target_page: request.target_page,
+        write_intent,
     };
-    let mut handoff =
+    let handoff =
         prepare_handoff_with_persistence(session, handoff_request, options.persist_checkpoint)?;
-    handoff.bundle.target_page = target_page.clone();
-    handoff.bundle.write_intent = write_intent;
-    handoff.state.write_intent = write_intent;
-    record_compile_state(session, handoff.state.clone(), options.persist_checkpoint)?;
 
     let vault_root = session.scope.root();
     let source_paths: Vec<PathBuf> = handoff
@@ -234,17 +239,6 @@ pub fn compile_to_wiki_with_options(
             ),
         });
     }
-    // The bundle pre-write is create-only (`create_new` guards the race). On a
-    // recompile of an existing target the article overwrite below is the write
-    // path, gated by [`WritePolicy::AllowOverwriteAfterMerge`] under
-    // write_intent.
-    if handoff.bundle.write_intent
-        && input.existing_page_body.is_none()
-        && let Some(target_page) = handoff.bundle.target_page.as_ref()
-    {
-        let rendered = render_bundle(&handoff.bundle);
-        write_target_page(session.scope.root(), target_page, &rendered)?;
-    }
     let article = synthesize_article(vault_root, &input, article_page, &explainer)?;
     let mut pages = vec![article.clone()];
     pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);
@@ -269,6 +263,12 @@ pub fn compile_to_wiki_with_options(
     // recompile fail loud (or, before identity-slug resolution, mint a
     // slug-suffixed sibling) whenever the derived source page already exists,
     // e.g. a second topic sharing a source already compiled by another (#17707).
+    if let Some(target_page) = target_page.as_ref() {
+        if let Some(parent) = target_page.parent() {
+            ensure_compile_target_parent_inside_vault(vault_root, parent)?;
+        }
+        validate_existing_target_identity(target_page, &handoff.bundle.topic)?;
+    }
     let article_policy = if write_intent || existing_page_is_machine_owned(&article.path)? {
         WritePolicy::AllowOverwriteAfterMerge
     } else {
@@ -341,6 +341,56 @@ fn existing_target_page_body(target_page: &Path) -> Result<Option<String>, WikiE
         Err(_) => text,
     };
     Ok(Some(body))
+}
+
+fn validate_existing_target_identity(target_page: &Path, topic: &str) -> Result<(), WikiError> {
+    let text = match fs::read_to_string(target_page) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read existing compile target page",
+                path: Some(target_page.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+    let parsed = parse_frontmatter(&text).map_err(|error| WikiError::InvalidInput {
+        field: "target_page",
+        message: format!(
+            "existing compile target {} has malformed frontmatter: {error}",
+            target_page.display()
+        ),
+    })?;
+    let Some(title) = parsed.metadata.title.as_deref().map(str::trim) else {
+        return Err(WikiError::InvalidInput {
+            field: "target_page",
+            message: format!(
+                "existing compile target {} requires a non-empty frontmatter title",
+                target_page.display()
+            ),
+        });
+    };
+    if title.is_empty() {
+        return Err(WikiError::InvalidInput {
+            field: "target_page",
+            message: format!(
+                "existing compile target {} requires a non-empty frontmatter title",
+                target_page.display()
+            ),
+        });
+    }
+    if title != topic.trim() {
+        return Err(WikiError::InvalidInput {
+            field: "target_page",
+            message: format!(
+                "existing compile target {} has title {title:?}, expected {:?}",
+                target_page.display(),
+                topic.trim()
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Whether an existing article page was authored by this compile pipeline.
@@ -452,7 +502,7 @@ fn prepare_handoff_with_persistence(
         write_intent: request.write_intent,
         path: bundle_path,
     };
-    let rendered = render_bundle(&bundle);
+    let rendered = render_bundle(&bundle, session.scope.root());
 
     if let Some(parent) = bundle.path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {

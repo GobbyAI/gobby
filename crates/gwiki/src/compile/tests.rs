@@ -79,6 +79,19 @@ fn compile_bundle_contains_required_sections() {
     );
 
     let rendered = std::fs::read_to_string(&outcome.bundle.path).expect("bundle written");
+    assert!(
+        rendered.contains("# Compile bundle: Compile behavior"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("## Target page\n\n- compile-behavior.md"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("## Write intent\n\n- false"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("raw/research/compile.md"), "{rendered}");
     assert!(rendered.contains("## Topic outline"));
     assert!(rendered.contains("## Accepted sources"));
     assert!(rendered.contains("## Citations"));
@@ -241,10 +254,9 @@ fn compile_rejects_target_page_through_symlinked_parent() {
     std::os::unix::fs::symlink(outside.path(), vault.path().join("linked"))
         .expect("symlink outside");
 
-    let error = write_target_page(
+    let error = normalize_target_page(
         vault.path(),
-        &vault.path().join("linked/outside.md"),
-        "# Outside\n",
+        Some(std::path::Path::new("linked/outside.md")),
     )
     .expect_err("symlinked target parent rejected");
 
@@ -275,10 +287,9 @@ fn compile_rejects_target_page_through_symlinked_parent() {
         panic!("symlink outside: {error}");
     }
 
-    let error = write_target_page(
+    let error = normalize_target_page(
         vault.path(),
-        &vault.path().join("linked/outside.md"),
-        "# Outside\n",
+        Some(std::path::Path::new("linked/outside.md")),
     )
     .expect_err("symlinked target parent rejected");
 
@@ -674,6 +685,142 @@ fn recompile_of_machine_page_overwrites_without_write_intent() {
 }
 
 #[test]
+fn explicit_target_with_different_title_is_never_overwritten() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Compile evidence.\n").expect("note written");
+    let target = PathBuf::from("knowledge/topics/unrelated.md");
+    let page_path = scope.root().join(&target);
+    std::fs::create_dir_all(page_path.parent().expect("target parent")).expect("target dir");
+    let original = "---\ntitle: Unrelated Topic\nsynthesis_mode: daemon\n---\n\nOriginal body.\n";
+    std::fs::write(&page_path, original).expect("page written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let mut generated = false;
+    let mut generator = |_prompt: &ExplainerPrompt| {
+        generated = true;
+        unreachable!("identity validation must run before generation")
+    };
+
+    let error = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Requested Topic".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(target),
+            write_intent: true,
+        },
+        WikiCompileOptions::default(),
+        Some(&mut generator),
+    )
+    .expect_err("mismatched target title must fail");
+
+    match error {
+        WikiError::InvalidInput { field, .. } => assert_eq!(field, "target_page"),
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert!(!generated, "generator must remain untouched");
+    assert_eq!(
+        std::fs::read_to_string(&page_path).expect("page retained"),
+        original
+    );
+}
+
+#[test]
+fn explicit_target_identity_is_rechecked_after_generation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Compile evidence.\n").expect("note written");
+    let target = PathBuf::from("knowledge/topics/requested-topic.md");
+    let page_path = scope.root().join(&target);
+    std::fs::create_dir_all(page_path.parent().expect("target parent")).expect("target dir");
+    std::fs::write(
+        &page_path,
+        "---\ntitle: Requested Topic\nsynthesis_mode: daemon\n---\n\nOriginal body.\n",
+    )
+    .expect("page written");
+    let intruder = "---\ntitle: Different Topic\nsynthesis_mode: daemon\n---\n\nConcurrent body.\n";
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let mut generator = |_prompt: &ExplainerPrompt| {
+        std::fs::write(&page_path, intruder).expect("concurrent page replacement");
+        Ok(ExplainerResponse {
+            text: "## Overview\nGenerated body [source: raw/research/compile.md].\n".to_string(),
+            model: Some("mock-model".to_string()),
+            route: "daemon",
+            tool_use_count: None,
+            turns: None,
+            usage: None,
+        })
+    };
+
+    let error = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Requested Topic".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(target),
+            write_intent: true,
+        },
+        WikiCompileOptions::default(),
+        Some(&mut generator),
+    )
+    .expect_err("identity replacement after generation must fail");
+
+    match error {
+        WikiError::InvalidInput { field, .. } => assert_eq!(field, "target_page"),
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(&page_path).expect("replacement retained"),
+        intruder
+    );
+}
+
+#[test]
+fn explicit_target_requires_parseable_non_empty_title() {
+    for (name, existing) in [
+        ("missing", "# Missing frontmatter title\n"),
+        ("empty", "---\ntitle: '   '\n---\n\nEmpty title.\n"),
+        ("malformed", "---\ntitle: Requested Topic\n"),
+    ] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = ResearchScope::project_for_id("project-1", temp.path());
+        let note_path = scope.root().join("raw/research/compile.md");
+        std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+        std::fs::write(&note_path, "Compile evidence.\n").expect("note written");
+        let target = PathBuf::from(format!("knowledge/topics/{name}.md"));
+        let page_path = scope.root().join(&target);
+        std::fs::create_dir_all(page_path.parent().expect("target parent")).expect("target dir");
+        std::fs::write(&page_path, existing).expect("page written");
+        let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+        let error = compile_to_wiki(
+            &mut session,
+            CompileRequest {
+                topic: "Requested Topic".to_string(),
+                outline: Vec::new(),
+                target_page: Some(target),
+                write_intent: true,
+            },
+        )
+        .expect_err("invalid target title must fail closed");
+
+        match error {
+            WikiError::InvalidInput { field, .. } => assert_eq!(field, "target_page", "{name}"),
+            other => panic!("unexpected {name} error: {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&page_path).expect("page retained"),
+            existing,
+            "{name} target changed"
+        );
+    }
+}
+
+#[test]
 fn recompile_over_hand_authored_page_requires_write_intent() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());
@@ -683,7 +830,7 @@ fn recompile_over_hand_authored_page_requires_write_intent() {
     let target = PathBuf::from("knowledge/topics/hand-authored.md");
     let page_path = scope.root().join(&target);
     std::fs::create_dir_all(page_path.parent().expect("target parent")).expect("target dir");
-    let curated = "# Hand authored\n\nCurated by a human; no synthesis_mode.\n";
+    let curated = "---\ntitle: Hand Authored\n---\n\n# Hand authored\n\nCurated by a human.\n";
     std::fs::write(&page_path, curated).expect("page written");
 
     // A page without `synthesis_mode` provenance is not machine-owned, so the
@@ -719,7 +866,7 @@ fn recompile_carries_existing_target_body_into_prompt() {
     std::fs::create_dir_all(target_path.parent().expect("target parent")).expect("topics dir");
     std::fs::write(
         &target_path,
-        "---\ntitle: Stale Title\n---\n\n## Overview\n\nPreviously compiled claim.\n",
+        "---\ntitle: Durable Compile\n---\n\n## Overview\n\nPreviously compiled claim.\n",
     )
     .expect("target written");
     let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
@@ -744,7 +891,25 @@ fn recompile_carries_existing_target_body_into_prompt() {
     );
     assert!(outcome.prompt.user.contains("Previously compiled claim."));
     // Frontmatter is stripped before the body enters the prompt.
-    assert!(!outcome.prompt.user.contains("Stale Title"));
+    assert!(!outcome.prompt.user.contains("title: Durable Compile"));
+
+    let handoff = std::fs::read_to_string(
+        scope
+            .root()
+            .join("_gwiki/compile")
+            .join(format!("{}.md", outcome.handoff_id)),
+    )
+    .expect("persisted handoff");
+    assert!(
+        handoff.contains("# Compile bundle: Durable Compile"),
+        "{handoff}"
+    );
+    assert!(
+        handoff.contains("## Target page\n\n- knowledge/topics/durable-compile.md"),
+        "{handoff}"
+    );
+    assert!(handoff.contains("## Write intent\n\n- true"), "{handoff}");
+    assert!(handoff.contains("raw/research/compile.md"), "{handoff}");
 }
 
 #[test]
@@ -856,28 +1021,6 @@ fn compile_appends_page_write_log_entries() {
     assert!(article_line.starts_with("- "), "{article_line}");
     assert!(article_line.contains("page_created:"), "{article_line}");
     assert!(article_line.contains("Logged Compile"), "{article_line}");
-}
-
-#[test]
-fn write_target_page_rejects_existing_page_without_overwrite_race() {
-    let vault = tempfile::tempdir().expect("vault tempdir");
-    let target = vault.path().join("existing.md");
-    std::fs::write(&target, "human-authored wiki page").expect("existing page");
-
-    let error = write_target_page(vault.path(), &target, "# Replacement\n")
-        .expect_err("existing target rejected");
-
-    assert!(matches!(
-        error,
-        WikiError::InvalidInput {
-            field: "write_intent",
-            ..
-        }
-    ));
-    assert_eq!(
-        std::fs::read_to_string(&target).expect("existing page retained"),
-        "human-authored wiki page"
-    );
 }
 
 #[test]

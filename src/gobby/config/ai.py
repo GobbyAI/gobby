@@ -104,13 +104,13 @@ class GenerationConfig(BaseModel):
         ),
     )
     cli_candidate_timeout_seconds: float = Field(
-        default=150.0,
+        default=600.0,
         gt=0.0,
         description=(
             "Maximum seconds for a single candidate attempt on a spawn-cold lane "
             "(CLI subprocess, daemon, ACP, or the Claude SDK that spawns a CLI). "
             "These lanes pay cold-start cost, so they get more headroom than the "
-            "fast-lane candidate_timeout_seconds. Must stay below timeout_seconds."
+            "fast-lane candidate_timeout_seconds. Must stay at or below timeout_seconds."
         ),
     )
     spawn_cold_max_concurrency: int = Field(

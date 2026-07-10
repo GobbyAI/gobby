@@ -477,13 +477,21 @@ notes with the selected sources in selector order. On a fresh vault with no
 research checkpoint, compile creates the checkpoint from the provided `[TOPIC]`
 or `--topic`; without either topic seed it returns `invalid_input`.
 
+Targeted project compiles require an explicit positional `[TOPIC]`; a topic
+scope supplies that identity for topic-scoped compiles. Checkpoint sources are
+reused only when the requested topic matches the checkpoint topic. For a new
+topic, pass repeatable `--source` selectors explicitly. If `--target` already
+exists, its frontmatter must contain a non-empty `title` that exactly matches
+the requested topic after trimming surrounding whitespace. `--write-intent`
+authorizes the matching-title update; it never bypasses target identity checks.
+
 **Options:**
 - `[TOPIC]` — Optional positional naming the article topic.
 - `--outline <HEADING>` — Seed an article heading. Repeatable to set the section order.
 - `--source <SOURCE_ID_OR_PATH>` — Select an ingested source for this compile session. Repeatable; duplicates by source ID are ignored after the first occurrence.
 - `--kind <source|concept|topic>` — Article kind (default: `topic`). Determines which `knowledge/` subdirectory the page lands in (`knowledge/sources`, `knowledge/concepts`, or `knowledge/topics`).
 - `--target <PAGE>` — Explicit vault-relative target page path.
-- `--write-intent` — Authorize overwriting an existing target page. By default `compile` **refuses** to overwrite an existing page and returns an `invalid_input` error asking for merge/diff handling; `--write-intent` opts into overwrite-after-merge.
+- `--write-intent` — Authorize overwriting an existing matching-title target page. By default `compile` **refuses** to overwrite a hand-authored page and returns an `invalid_input` error asking for merge/diff handling; `--write-intent` opts into overwrite-after-merge.
 
 `compile` is the only article-generation step. Research and audit produce
 accepted notes and findings; `compile` turns those notes into cited pages and
@@ -815,7 +823,9 @@ always produces degraded output by design.
 
 By default `compile` will not overwrite an existing target page. Pass
 `--write-intent` to authorize overwrite-after-merge once you've confirmed the
-merge is intended.
+merge is intended. Existing explicit targets must have parseable frontmatter
+with a non-empty `title` matching the requested topic; identity mismatches fail
+closed regardless of write intent or machine-owned synthesis metadata.
 
 ---
 

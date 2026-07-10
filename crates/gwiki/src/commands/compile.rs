@@ -1,5 +1,5 @@
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gobby_core::ai::AiNoticeKind;
 use gobby_core::config::AiRouting;
@@ -32,8 +32,10 @@ pub(crate) fn execute(
 ) -> Result<CommandOutcome, WikiError> {
     let resolved_scope = resolve_command_scope(&scope)?;
     let research_scope = session::ResearchScope::from(&resolved_scope);
+    validate_target_topic_identity(topic.as_deref(), &research_scope, target_page.as_deref())?;
     let topic_seed = compile_topic_seed(topic.as_deref(), &research_scope);
     let mut session = load_compile_session(research_scope, topic_seed.as_deref())?;
+    validate_checkpoint_source_identity(topic_seed.as_deref(), &session, !source.is_empty())?;
     if !source.is_empty() {
         apply_source_selection(&mut session, &source)?;
     } else {
@@ -230,6 +232,53 @@ fn resolve_compile_topic(topic_seed: Option<String>, session: &session::Research
     })
 }
 
+fn validate_target_topic_identity(
+    topic: Option<&str>,
+    scope: &session::ResearchScope,
+    target_page: Option<&Path>,
+) -> Result<(), WikiError> {
+    if target_page.is_some()
+        && matches!(scope, session::ResearchScope::Project { .. })
+        && topic.is_none()
+    {
+        return Err(WikiError::InvalidInput {
+            field: "topic",
+            message: "project-scoped compile with --target requires an explicit TOPIC".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_checkpoint_source_identity(
+    requested_topic: Option<&str>,
+    session: &session::ResearchSession,
+    has_explicit_sources: bool,
+) -> Result<(), WikiError> {
+    let Some(requested_topic) = requested_topic else {
+        return Ok(());
+    };
+    if has_explicit_sources {
+        return Ok(());
+    }
+    let checkpoint_topic = session.compile_state.as_ref().map_or_else(
+        || match &session.scope {
+            session::ResearchScope::Topic { name, .. } => name.as_str(),
+            session::ResearchScope::Project { .. } => session.question.as_str(),
+        },
+        |state| state.topic.as_str(),
+    );
+    if requested_topic.trim() != checkpoint_topic.trim() {
+        return Err(WikiError::InvalidInput {
+            field: "source",
+            message: format!(
+                "requested topic {requested_topic:?} does not match checkpoint topic \
+                 {checkpoint_topic:?}; pass explicit --source selectors"
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn apply_source_selection(
     session: &mut session::ResearchSession,
     selectors: &[String],
@@ -310,6 +359,56 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn targeted_project_compile_requires_explicit_topic() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = session::ResearchScope::project_for_id("project-1", temp.path());
+
+        let error = validate_target_topic_identity(None, &scope, Some(&PathBuf::from("page.md")))
+            .expect_err("project target without an explicit topic must fail");
+
+        match error {
+            WikiError::InvalidInput { field, message } => {
+                assert_eq!(field, "topic");
+                assert!(message.contains("--target"), "{message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_topic_mismatch_requires_explicit_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = session::ResearchScope::project_for_id("project-1", temp.path());
+        let checkpoint =
+            session::ResearchSession::new("Checkpoint Topic", scope, Vec::new(), 1, None)
+                .expect("checkpoint session");
+
+        let error =
+            validate_checkpoint_source_identity(Some("Different Topic"), &checkpoint, false)
+                .expect_err("cross-topic checkpoint reuse must fail");
+
+        match error {
+            WikiError::InvalidInput { field, message } => {
+                assert_eq!(field, "source");
+                assert!(message.contains("--source"), "{message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        validate_checkpoint_source_identity(Some("Checkpoint Topic"), &checkpoint, false)
+            .expect("matching checkpoint topic may reuse sources");
+        validate_checkpoint_source_identity(Some("Different Topic"), &checkpoint, true)
+            .expect("explicit sources permit a new topic");
+
+        let topic_scope = session::ResearchScope::topic("Scoped Topic", temp.path());
+        let scoped_checkpoint =
+            session::ResearchSession::new("A research question", topic_scope, Vec::new(), 1, None)
+                .expect("topic checkpoint");
+        validate_checkpoint_source_identity(Some("Scoped Topic"), &scoped_checkpoint, false)
+            .expect("topic scope name is the checkpoint topic identity");
     }
 
     #[test]

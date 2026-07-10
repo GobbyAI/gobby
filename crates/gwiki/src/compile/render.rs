@@ -1,5 +1,3 @@
-use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::WikiError;
@@ -8,10 +6,24 @@ use crate::support::time;
 
 use super::*;
 
-pub(crate) fn render_bundle(bundle: &CompileBundle) -> String {
+pub(crate) fn render_bundle(bundle: &CompileBundle, vault_root: &Path) -> String {
     let mut rendered = String::new();
     rendered.push_str("# Compile bundle: ");
     rendered.push_str(&bundle.topic);
+    rendered.push_str("\n\n");
+
+    rendered.push_str("## Target page\n\n- ");
+    match bundle.target_page.as_ref() {
+        Some(target_page) => {
+            let relative = target_page.strip_prefix(vault_root).unwrap_or(target_page);
+            rendered.push_str(&relative.to_string_lossy());
+        }
+        None => rendered.push_str("None recorded."),
+    }
+    rendered.push_str("\n\n");
+
+    rendered.push_str("## Write intent\n\n- ");
+    rendered.push_str(if bundle.write_intent { "true" } else { "false" });
     rendered.push_str("\n\n");
 
     render_list_section(&mut rendered, "Topic outline", &bundle.outline);
@@ -62,49 +74,7 @@ fn render_list_section(rendered: &mut String, title: &str, values: &[String]) {
     rendered.push('\n');
 }
 
-pub(crate) fn write_target_page(
-    vault_root: &Path,
-    target_page: &Path,
-    rendered: &str,
-) -> Result<(), WikiError> {
-    if let Some(parent) = target_page.parent() {
-        ensure_compile_target_parent_inside_vault(vault_root, parent)?;
-        fs::create_dir_all(parent).map_err(|error| WikiError::Io {
-            action: "create compile target directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })?;
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target_page)
-        .map_err(|error| {
-            if error.kind() == ErrorKind::AlreadyExists {
-                WikiError::InvalidInput {
-                    field: "write_intent",
-                    message: format!(
-                        "existing page {} requires merge/diff handling before overwrite",
-                        target_page.display()
-                    ),
-                }
-            } else {
-                WikiError::Io {
-                    action: "write compile target page",
-                    path: Some(target_page.to_path_buf()),
-                    source: error,
-                }
-            }
-        })?;
-    file.write_all(rendered.as_bytes())
-        .map_err(|error| WikiError::Io {
-            action: "write compile target page",
-            path: Some(target_page.to_path_buf()),
-            source: error,
-        })
-}
-
-fn ensure_compile_target_parent_inside_vault(
+pub(crate) fn ensure_compile_target_parent_inside_vault(
     vault_root: &Path,
     parent: &Path,
 ) -> Result<(), WikiError> {
@@ -178,7 +148,11 @@ pub(crate) fn normalize_target_page(
             message: "compile target page must identify a wiki document".to_string(),
         });
     }
-    Ok(Some(vault_root.join(normalized)))
+    let target_page = vault_root.join(normalized);
+    if let Some(parent) = target_page.parent() {
+        ensure_compile_target_parent_inside_vault(vault_root, parent)?;
+    }
+    Ok(Some(target_page))
 }
 
 pub(crate) fn slugify(topic: &str) -> String {
