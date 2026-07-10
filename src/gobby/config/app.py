@@ -165,6 +165,10 @@ class DaemonConfig(BaseModel):
         description="Host/IP to bind servers to. Use 'localhost' for local-only access, "
         "'0.0.0.0' for all interfaces, or a specific IP (e.g., Tailscale IP) for restricted access.",
     )
+    auth_mode: str = Field(
+        default="required",
+        description="Daemon API authentication mode selected by bootstrap.yaml.",
+    )
     daemon_health_check_interval: float = Field(
         default=10.0,
         description="Daemon health check interval in seconds",

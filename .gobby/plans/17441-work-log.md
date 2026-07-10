@@ -57,3 +57,64 @@ Additional validation:
   task was required.
 
 Test gaps: none for this leaf's specified storage, CLI, or daemon-startup behavior.
+
+## 2026-07-10 — #17790 Add auth_mode to bootstrap and daemon config
+
+Session: #8117
+
+Plan:
+
+1. Inspect bootstrap parsing, DaemonConfig composition, the installed template,
+   Rust endpoint parsing, and source-file sizes.
+2. Add focused Python and Rust tests before implementation.
+3. Add typed bootstrap parsing with a required default and hard rejection, flow
+   the value into DaemonConfig, and update the bundled template and manifest.
+4. Run focused Python and Rust tests, static checks, packaging, and test-quality audit.
+5. Commit the leaf and close it with the linked commit.
+
+Implemented:
+
+- Added `AuthMode = Literal["required", "disabled"]` and a strict bootstrap parser.
+- Defaulted absent `auth_mode` to `required` and raised `BootstrapConfigError` for
+  unsupported values.
+- Emitted `auth_mode` through `BootstrapConfig.to_config_dict()` and added the
+  top-level `DaemonConfig.auth_mode` field.
+- Documented `auth_mode: "required"` in the installed bootstrap template and
+  refreshed its bundled-content manifest hash.
+- Added focused Python coverage and the Rust `reads_bootstrap_with_auth_mode`
+  tolerance test without adding an unused Rust config field.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py -q`
+  failed both initial tests because `BootstrapConfig` and `DaemonConfig` lacked
+  `auth_mode`.
+- Minimal green: the same command passed 2 tests after the smallest config parser
+  and flow implementation; `cargo test -p gobby-core reads_bootstrap_with_auth_mode`
+  passed 1 test and confirmed unknown-key tolerance.
+- Refactor/final green: after separating the Python behaviors, `GOBBY_TEST_PROTECT=1
+  uv run pytest tests/config/test_bootstrap.py tests/config/test_bootstrap_falkordb.py
+  tests/config/test_bootstrap_postgres.py tests/config/test_app_config.py -q` passed
+  185 tests. `cargo test -p gobby-core bootstrap::tests` passed 23 tests.
+
+Additional validation:
+
+- `uv run ruff format --check src/gobby/config/bootstrap.py src/gobby/config/app.py
+  tests/config/test_bootstrap.py` reported all 3 files formatted.
+- `uv run ruff check src/gobby/config/bootstrap.py src/gobby/config/app.py
+  tests/config/test_bootstrap.py` passed.
+- `uv run mypy --strict src/gobby/config/bootstrap.py src/gobby/config/app.py`
+  passed with no issues in 2 source files.
+- `cargo clippy -p gobby-core -- -D warnings` passed.
+- `cargo fmt --all -- --check` initially found 3 formatting defects in pre-existing
+  dirty `gwiki` changes. `cargo fmt --all` fixed them, and the repeated check passed.
+- `uv run gobby test-quality audit tests/config/test_bootstrap.py --baseline
+  .gobby/test-quality-baseline.json --fail-on-new --min-severity high` scanned 4
+  tests and reported zero issues.
+- `uv build` successfully built the 0.5.0 source distribution and wheel.
+- `git diff --check --` on all #17790 target files passed.
+- Touched non-test Python and Rust source files remain below 1,000 lines; no
+  refactor task was required.
+
+Test gaps: none for the specified bootstrap parsing, DaemonConfig flow, template,
+or Rust unknown-key tolerance behavior.

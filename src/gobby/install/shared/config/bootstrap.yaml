@@ -1,5 +1,6 @@
 # Gobby bootstrap — settings needed before the database is available.
 # All other configuration is managed via the web UI or gobby-config MCP tools.
+auth_mode: "required"
 hub_backend: "postgres"
 database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
 postgres_install_mode: "docker"

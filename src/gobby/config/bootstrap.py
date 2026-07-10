@@ -29,6 +29,7 @@ DEFAULT_DAEMON_PORT = 60887
 DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 
+AuthMode = Literal["required", "disabled"]
 HubBackend = Literal["postgres"]
 PostgresInstallMode = Literal["docker"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
@@ -59,6 +60,7 @@ class BootstrapConfig:
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
     falkordb_password: str = "gobbyfalkor"
+    auth_mode: AuthMode = "required"
     hub_backend: HubBackend = "postgres"
     database_url: str | None = None
     postgres_install_mode: PostgresInstallMode | None = None
@@ -74,6 +76,7 @@ class BootstrapConfig:
             "bind_host": self.bind_host,
             "websocket": {"port": self.websocket_port},
             "ui": {"port": self.ui_port},
+            "auth_mode": self.auth_mode,
             "hub_backend": self.hub_backend,
             "database_url": self.database_url,
             "postgres_install_mode": self.postgres_install_mode,
@@ -126,6 +129,7 @@ def load_bootstrap(
                 "database_url_ref is no longer supported. Rewrite bootstrap.yaml with database_url."
             )
         postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
+        auth_mode = _parse_auth_mode(data.get("auth_mode", BootstrapConfig.auth_mode))
         if explicit_hub_backend and resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
@@ -135,6 +139,7 @@ def load_bootstrap(
             websocket_port=int(data.get("websocket_port", BootstrapConfig.websocket_port)),
             ui_port=int(data.get("ui_port", BootstrapConfig.ui_port)),
             falkordb_password=_load_falkordb_password(data),
+            auth_mode=auth_mode,
             hub_backend=hub_backend,
             database_url=database_url,
             postgres_install_mode=postgres_install_mode,
@@ -157,6 +162,12 @@ def _load_falkordb_password(data: dict[str, Any]) -> str:
 
 def _default_bootstrap_config() -> BootstrapConfig:
     return BootstrapConfig(falkordb_password=_load_falkordb_password({}))
+
+
+def _parse_auth_mode(value: object) -> AuthMode:
+    if value in ("required", "disabled"):
+        return cast(AuthMode, value)
+    raise BootstrapConfigError("auth_mode must be one of: required, disabled")
 
 
 def _parse_hub_backend(value: object) -> HubBackend:
