@@ -5,13 +5,22 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 interface AuthState {
   authRequired: boolean
   authenticated: boolean
+  credentialsConfigured: boolean
   loading: boolean
+}
+
+const FAIL_CLOSED_STATE: AuthState = {
+  authRequired: true,
+  authenticated: false,
+  credentialsConfigured: true,
+  loading: false,
 }
 
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
     authRequired: false,
     authenticated: true, // optimistic default — no flash
+    credentialsConfigured: true,
     loading: true,
   })
 
@@ -19,18 +28,18 @@ export function useAuth() {
     try {
       const res = await fetch(`${BASE_URL}/api/auth/status`, { credentials: 'include' })
       if (!res.ok) {
-        setState({ authRequired: false, authenticated: true, loading: false })
+        setState(FAIL_CLOSED_STATE)
         return
       }
       const data = await res.json()
       setState({
         authRequired: data.auth_required ?? false,
         authenticated: data.authenticated ?? true,
+        credentialsConfigured: data.credentials_configured ?? false,
         loading: false,
       })
     } catch {
-      // If status endpoint fails, assume no auth required
-      setState({ authRequired: false, authenticated: true, loading: false })
+      setState(FAIL_CLOSED_STATE)
     }
   }, [])
 

@@ -12,6 +12,7 @@ vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
     authRequired: false,
     authenticated: true,
+    credentialsConfigured: true,
     loading: false,
     login: vi.fn(),
     logout: vi.fn(),
@@ -691,6 +692,7 @@ describe("App wiring", () => {
     vi.mocked(useAuth).mockReturnValue({
       authRequired: true,
       authenticated: true,
+      credentialsConfigured: true,
       loading: false,
       login: vi.fn(),
       logout,
@@ -714,6 +716,7 @@ describe("App wiring", () => {
       vi.mocked(useAuth).mockReturnValue({
         authRequired: false,
         authenticated: true,
+        credentialsConfigured: true,
         loading: false,
         login: vi.fn(),
         logout: vi.fn(),

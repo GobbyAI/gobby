@@ -51,6 +51,7 @@ export default function App() {
   const {
     authRequired,
     authenticated,
+    credentialsConfigured,
     loading: authLoading,
     login,
     logout,
@@ -443,7 +444,7 @@ export default function App() {
     );
   }
   if (authRequired && !authenticated) {
-    return <LoginPage onLogin={login} />;
+    return <LoginPage credentialsConfigured={credentialsConfigured} onLogin={login} />;
   }
 
   const visibleToastMessage = toastMessage ?? transportError?.message ?? null;

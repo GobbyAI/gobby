@@ -3,10 +3,11 @@ import { GobbyLogo } from '../shared/GobbyLogo'
 import { Heading } from '../shared/Heading'
 
 interface LoginPageProps {
+  credentialsConfigured: boolean
   onLogin: (username: string, password: string, rememberMe: boolean) => Promise<string | null>
 }
 
-export function LoginPage({ onLogin }: LoginPageProps) {
+export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
@@ -21,6 +22,24 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(false)
     if (err) setError(err)
   }, [username, password, rememberMe, onLogin])
+
+  if (!credentialsConfigured) {
+    return (
+      <div style={styles.container}>
+        <section style={styles.card}>
+          <div style={styles.logoRow}>
+            <GobbyLogo label="Gobby" size={36} />
+            <Heading level={1} style={styles.title}>Gobby</Heading>
+          </div>
+          <p style={styles.subtitle}>Web credentials are not configured.</p>
+          <p style={styles.setupText}>
+            Run <code style={styles.command}>gobby auth credentials</code> on the daemon host,
+            then reload this page.
+          </p>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div style={styles.container}>
@@ -127,6 +146,20 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--color-error)',
     fontSize: '0.85rem',
     textAlign: 'center' as const,
+  },
+  setupText: {
+    margin: 0,
+    color: 'var(--text-secondary)',
+    fontSize: '0.9rem',
+    lineHeight: 1.5,
+    textAlign: 'center' as const,
+  },
+  command: {
+    padding: '0.15rem 0.35rem',
+    borderRadius: 4,
+    background: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-mono)',
   },
   label: {
     display: 'flex',

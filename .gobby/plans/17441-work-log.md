@@ -663,3 +663,73 @@ Additional validation:
 Test gap: live-daemon end-to-end coverage belongs to dependent task #17800.
 This leaf covers its construction, handshake, ASGI endpoint, proxy transport,
 shared credential parsing, and HMR compatibility boundaries in isolation.
+
+## #17798 — Web UI auth status and credential setup UX
+
+Plan:
+
+1. Add focused hook tests for `credentials_configured` mapping and fail-closed
+   HTTP/network status failures, plus a component test for the unconfigured
+   credential guidance; capture the exact pre-implementation failures.
+2. Extend the auth hook state with credential readiness, preserve a truthful
+   fallback for unknown readiness, and pass the value through the App auth gate.
+3. Render daemon-host setup guidance in `LoginPage` when credentials are absent
+   and retain the existing form for configured credentials.
+4. Run minimal green, final focused regressions, frontend lint/type/build,
+   test-quality, and source-size checks; commit and close.
+
+Test judgment:
+
+- Hook tests cover the API contract directly: successful status responses
+  surface `credentials_configured`, while non-OK responses and rejected fetches
+  both resolve to an unauthenticated, auth-required state.
+- A `LoginPage` component test proves absent credentials show the exact daemon
+  host command and remove username/password inputs and submit action.
+- Focused App regression and TypeScript checking cover the new hook-to-component
+  prop flow without duplicating component behavior in a broad integration test.
+
+Implemented:
+
+- `useAuth` now surfaces `credentialsConfigured` from the status response.
+  Non-OK responses and rejected status requests resolve through one fail-closed
+  state: authentication required, unauthenticated, and credential readiness
+  treated as unknown/potentially configured so outages do not produce false
+  setup claims.
+- `App` passes credential readiness through its authentication gate, and its
+  existing auth mocks now model the complete hook contract.
+- `LoginPage` replaces the login form with daemon-host setup guidance and the
+  exact `gobby auth credentials` command when credentials are absent. Configured
+  installations retain the existing login flow.
+
+TDD evidence:
+
+- Red: `cd web && npm test -- src/hooks/useAuth.test.tsx
+  src/components/auth/LoginPage.test.tsx` ran 4 tests across 2 files and failed
+  all 4 expected behaviors: `credentialsConfigured` was absent, HTTP and network
+  errors remained fail-open, and the login form still rendered without setup
+  guidance.
+- Minimal green: the same exact command passed all 4 tests after adding status
+  mapping, fail-closed state, prop flow, and setup guidance.
+- Refactor/final green: the same exact command passed all 4 tests after
+  consolidating both failure paths into one typed fail-closed state.
+
+Additional validation:
+
+- `cd web && npm test -- src/hooks/useAuth.test.tsx
+  src/components/auth/LoginPage.test.tsx src/__tests__/App.test.tsx` passed all
+  20 focused hook, component, and App regression tests.
+- `cd web && npm run lint` completed ESLint and Stylelint with zero warnings.
+- `cd web && npm run type-check` passed `tsc --noEmit`.
+- `cd web && npm run build` passed TypeScript compilation and the Vite production
+  build, transforming 2,003 modules.
+- `uv run gobby test-quality audit web/src/hooks/useAuth.test.tsx
+  web/src/components/auth/LoginPage.test.tsx --baseline
+  .gobby/test-quality-baseline.json --fail-on-new --min-severity high` scanned
+  2 files and 3 test definitions with zero issues or new high-severity findings.
+- Touched production TypeScript files remain below 1,000 lines: `useAuth.ts` is
+  82 lines, `LoginPage.tsx` is 200, and `App.tsx` is 717. No refactor task is
+  required.
+
+Test gap: live daemon/browser authentication remains assigned to dependent task
+#17800. This leaf covers the hook API mapping, failure states, component branch,
+and App integration with deterministic Vitest coverage.
