@@ -98,6 +98,8 @@ class KnowledgeGraphReader:
         edge_half_life_days: float = 30.0,
         cluster_recall_expansion: bool = False,
         cluster_expansion_per_entity: int = 3,
+        cooccur_alpha: float | None = None,
+        cooccur_support_cap: int | None = None,
         active_memory_filter: ActiveMemoryFilter | None = None,
     ) -> None:
         self._falkor = falkor_client
@@ -107,6 +109,11 @@ class KnowledgeGraphReader:
         self._edge_half_life_days = edge_half_life_days
         self._cluster_recall_expansion = cluster_recall_expansion
         self._cluster_expansion_per_entity = max(cluster_expansion_per_entity, 0)
+        # None means "read the writer module globals at call time" (static floor
+        # plus benchmark monkeypatch surface); a value is a #17200 fitted
+        # override and must match what the writer blends with.
+        self._cooccur_alpha = cooccur_alpha
+        self._cooccur_support_cap = cooccur_support_cap
         self._active_memory_filter = active_memory_filter
         self._vector_index_ensured = False
         self._traversal_timeout_count = 0
@@ -286,6 +293,12 @@ class KnowledgeGraphReader:
         cosine. Unweighted edges (no ``r.weight``/``r.support``) yield None
         components; ``edge_decay_factor`` is 1.0 when edge decay is off.
         """
+        alpha = self._cooccur_alpha if self._cooccur_alpha is not None else COOCCUR_ALPHA
+        cap = (
+            self._cooccur_support_cap
+            if self._cooccur_support_cap is not None
+            else COOCCUR_SUPPORT_CAP
+        )
         blend: float | None
         try:
             blend = float(raw_weight) if raw_weight is not None else None
@@ -293,13 +306,13 @@ class KnowledgeGraphReader:
             blend = None
         support_norm: float | None = None
         try:
-            if edge_support is not None and COOCCUR_SUPPORT_CAP > 0:
-                support_norm = min(int(edge_support), COOCCUR_SUPPORT_CAP) / COOCCUR_SUPPORT_CAP
+            if edge_support is not None and cap > 0:
+                support_norm = min(int(edge_support), cap) / cap
         except (TypeError, ValueError):
             support_norm = None
         cosine: float | None = None
-        if blend is not None and support_norm is not None and COOCCUR_ALPHA > 0:
-            cosine = (blend - (1.0 - COOCCUR_ALPHA) * support_norm) / COOCCUR_ALPHA
+        if blend is not None and support_norm is not None and alpha > 0:
+            cosine = (blend - (1.0 - alpha) * support_norm) / alpha
             cosine = min(max(cosine, 0.0), 1.0)
         decay = 1.0
         if self._graph_edge_decay:

@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 
 # Co-occurrence edge-weighting constants. The FORM of the weight blend is fixed;
 # these coefficients are the frozen winners of the offline recall sweep in
-# tests/memory/test_recall_benchmark.py. They are deliberately NOT runtime config
-# knobs -- the benchmark sweeps them by monkeypatching these module globals, and
-# production ships the frozen values only.
+# tests/memory/test_recall_benchmark.py and remain the static rollback floor.
+# The benchmark sweeps them by monkeypatching these module globals, so the
+# writer/reader read them at call time unless an explicit fitted override was
+# injected at construction (#17200 gate-shipped constants only).
 COOCCUR_ALPHA: float = 0.5
 COOCCUR_SUPPORT_CAP: int = 5
 # Bounded fanout: only the top-N salient entities of a memory form co-occurrence
@@ -53,10 +54,20 @@ def _project_scope(var: str) -> str:
 class KnowledgeGraphWriter:
     """Owns FalkorDB schema and write mechanics for graph projection."""
 
-    def __init__(self, falkor_client: FalkorClient) -> None:
+    def __init__(
+        self,
+        falkor_client: FalkorClient,
+        *,
+        cooccur_alpha: float | None = None,
+        cooccur_support_cap: int | None = None,
+    ) -> None:
         self._falkor = falkor_client
         self._graph_schema_ensured = False
         self._graph_schema_lock = asyncio.Lock()
+        # None means "read the module globals at call time" (static floor plus
+        # benchmark monkeypatch surface); a value is a #17200 fitted override.
+        self._cooccur_alpha = cooccur_alpha
+        self._cooccur_support_cap = cooccur_support_cap
 
     @property
     def graph_schema_ensured(self) -> bool:
@@ -276,8 +287,12 @@ class KnowledgeGraphWriter:
             {"pairs": pair_params, "project_id": project_id},
         )
 
-        alpha = COOCCUR_ALPHA
-        cap = COOCCUR_SUPPORT_CAP
+        alpha = self._cooccur_alpha if self._cooccur_alpha is not None else COOCCUR_ALPHA
+        cap = (
+            self._cooccur_support_cap
+            if self._cooccur_support_cap is not None
+            else COOCCUR_SUPPORT_CAP
+        )
         write_rows: list[dict[str, Any]] = []
         delete_rows: list[dict[str, str]] = []
         for row in support_rows:

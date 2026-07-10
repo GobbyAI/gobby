@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from gobby.memory.services._search_constants import _GRAPH_SYNTHETIC_SIM_DISCOUNT
 from gobby.memory.services._search_models import SearchDebugHit, SearchDebugSnapshot
 from gobby.storage.memories import Memory
 
@@ -25,17 +26,26 @@ def emit_search_debug(
     rrf_applied: bool,
     graph_score_map: dict[str, float] | None = None,
     graph_component_map: dict[str, dict[str, float | None]] | None = None,
+    graph_synthetic_similarity_discount: float | None = None,
 ) -> None:
     """Emit a best-effort search diagnostics snapshot."""
     if search_debug_sink is None:
         return
 
     graph_scores = dict(graph_score_map or {})
+    # The logged discount must be the EFFECTIVE value (#17200 fitted constants
+    # may differ from the static default) so offline refits replay correctly.
+    effective_discount = (
+        graph_synthetic_similarity_discount
+        if graph_synthetic_similarity_discount is not None
+        else _GRAPH_SYNTHETIC_SIM_DISCOUNT
+    )
     snapshot = SearchDebugSnapshot(
         merged_ids=list(merged_ids),
         returned_ids=[mem.id for mem in returned],
         ranking_score_map=dict(ranking_score_map),
         rrf_applied=rrf_applied,
+        graph_synthetic_similarity_discount=effective_discount,
         query=query,
         project_id=project_id,
         session_id=session_id,

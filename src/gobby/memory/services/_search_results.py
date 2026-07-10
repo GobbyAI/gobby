@@ -29,6 +29,7 @@ def build_results(
     half_life: float,
     effective_min_score: float,
     limit: int,
+    graph_synthetic_discount: float = _GRAPH_SYNTHETIC_SIM_DISCOUNT,
 ) -> list[Memory]:
     """Hydrate ranked IDs into active memories and apply search metadata."""
     scored: list[tuple[Memory, float, float | None]] = []
@@ -70,7 +71,7 @@ def build_results(
             graph_confidence = graph_score_map.get(memory_id)
             if graph_confidence is not None:
                 decay_factor = temporal_decay(mem.updated_at, half_life)
-                similarity = graph_confidence * _GRAPH_SYNTHETIC_SIM_DISCOUNT * decay_factor
+                similarity = graph_confidence * graph_synthetic_discount * decay_factor
                 synthetic_similarity = True
 
         if effective_min_score > 0 and similarity is not None and similarity < effective_min_score:

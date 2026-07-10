@@ -70,6 +70,8 @@ class KnowledgeGraphService:
         cluster_expansion_per_entity: int = 3,
         cluster_min_cluster_size: int = 5,
         cluster_min_samples: int | None = 2,
+        cooccur_alpha: float | None = None,
+        cooccur_support_cap: int | None = None,
         active_memory_filter: ActiveMemoryFilter | None = None,
     ) -> None:
         self._falkor = falkor_client
@@ -84,7 +86,11 @@ class KnowledgeGraphService:
         self._cluster_min_cluster_size = cluster_min_cluster_size
         self._cluster_min_samples = cluster_min_samples
 
-        self._writer = KnowledgeGraphWriter(falkor_client)
+        self._writer = KnowledgeGraphWriter(
+            falkor_client,
+            cooccur_alpha=cooccur_alpha,
+            cooccur_support_cap=cooccur_support_cap,
+        )
         self._extractor = KnowledgeGraphExtractor(
             prompt_loader,
             llm_service=llm_service,
@@ -99,6 +105,8 @@ class KnowledgeGraphService:
             edge_half_life_days=edge_half_life_days,
             cluster_recall_expansion=cluster_recall_expansion,
             cluster_expansion_per_entity=cluster_expansion_per_entity,
+            cooccur_alpha=cooccur_alpha,
+            cooccur_support_cap=cooccur_support_cap,
             active_memory_filter=active_memory_filter,
         )
         self._code_linker = KnowledgeGraphCodeLinker(

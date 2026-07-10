@@ -15,6 +15,7 @@ from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
+    from gobby.memory.recall_constants import RecallConstants
     from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -40,12 +41,15 @@ def resolve_recall_signal_path(path: str | None) -> Path:
 def make_recall_signal_sink(
     config: MemoryConfig,
     db: HubDatabase | None = None,
+    recall_constants: RecallConstants | None = None,
 ) -> Callable[[SearchDebugSnapshot], None] | None:
     """Build the default-off SearchService debug sink for recall signal logging.
 
     JSONL append is gated by ``recall_signal_logging``; the Postgres hub
     dual-write (#17196) is gated by ``recall_signal_hub`` and requires ``db``.
     Both writes fail open — signal capture never disturbs search.
+    ``recall_constants`` carries the effective #17200 ranking constants so
+    logged events replay against what search actually used.
     """
     jsonl_enabled = getattr(config, "recall_signal_logging", False)
     hub_db = db if getattr(config, "recall_signal_hub", False) else None
@@ -58,7 +62,7 @@ def make_recall_signal_sink(
         event = build_recall_signal_event(
             snapshot=snapshot,
             timestamp=datetime.now(UTC).isoformat(),
-            weighting=_weighting_snapshot(config),
+            weighting=_weighting_snapshot(config, recall_constants),
         )
         if jsonl_enabled:
             append_recall_signal_events([event], path)
@@ -153,8 +157,16 @@ def append_recall_signal_events(events: list[dict[str, Any]], path: Path) -> Non
         logger.debug("Recall signal log append failed", exc_info=True)
 
 
-def _weighting_snapshot(config: MemoryConfig) -> dict[str, object]:
-    return {
+def _weighting_snapshot(
+    config: MemoryConfig, recall_constants: RecallConstants | None = None
+) -> dict[str, object]:
+    # Effective half-life: the #17200 resolved value when provided (fitted
+    # constants may differ from the configured field), else the config read.
+    if recall_constants is not None:
+        half_life: object = _finite_or_none(recall_constants.half_life_days)
+    else:
+        half_life = _finite_or_none(getattr(config, "temporal_decay_half_life_days", None))
+    snapshot: dict[str, object] = {
         "graph_edge_weighting": getattr(config, "graph_edge_weighting", False),
         "graph_edge_decay": getattr(config, "graph_edge_decay", False),
         "edge_half_life_days": _finite_or_none(getattr(config, "edge_half_life_days", None)),
@@ -163,10 +175,13 @@ def _weighting_snapshot(config: MemoryConfig) -> dict[str, object]:
         "cluster_expansion_per_entity": getattr(config, "cluster_expansion_per_entity", 3),
         "cluster_min_cluster_size": getattr(config, "cluster_min_cluster_size", 5),
         "cluster_min_samples": getattr(config, "cluster_min_samples", 2),
-        "temporal_decay_half_life_days": _finite_or_none(
-            getattr(config, "temporal_decay_half_life_days", None)
-        ),
+        "temporal_decay_half_life_days": half_life,
     }
+    if recall_constants is not None:
+        snapshot["recall_constants_source"] = recall_constants.source
+        snapshot["cooccur_alpha"] = _finite_or_none(recall_constants.cooccur_alpha)
+        snapshot["cooccur_support_cap"] = recall_constants.cooccur_support_cap
+    return snapshot
 
 
 def _hit_to_event(

@@ -23,6 +23,7 @@ def _make_manager(
     graph_search: bool = True,
     graph_min_score: float = 0.5,
     rrf_k: int = 60,
+    config: MemoryConfig | None = None,
 ) -> MemoryManager:
     """Create a MemoryManager with controlled dependencies."""
     db = MagicMock()
@@ -30,7 +31,7 @@ def _make_manager(
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
 
-    config = MemoryConfig()
+    config = config if config is not None else MemoryConfig()
 
     kwargs = {
         "db": db,
@@ -825,11 +826,13 @@ class TestTemporalDecayIntegration:
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
 
+        # Half-life resolves once at construction (#17200), so disable decay
+        # via config up front rather than mutating the built manager.
         manager = _make_manager(
             vector_store=vs,
             embed_fn=embed_fn,
+            config=MemoryConfig(temporal_decay_half_life_days=0.0),
         )
-        object.__setattr__(manager.config, "temporal_decay_half_life_days", 0.0)
 
         now = datetime.now(UTC)
         old = now - timedelta(days=365)

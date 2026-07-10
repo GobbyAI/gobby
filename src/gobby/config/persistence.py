@@ -550,6 +550,24 @@ class MemoryConfig(BaseModel):
         ),
     )
 
+    use_fitted_recall_constants: bool = Field(
+        default=False,
+        description=(
+            "Apply the pooled fitted recall ranking constants from a shipped "
+            "#17198 gate decision record as the daemon-global defaults. The "
+            "static constants remain the one-flag rollback floor: a missing, "
+            "malformed, or non-shipping (reject) record keeps static behavior "
+            "even when enabled (#17200)."
+        ),
+    )
+    fitted_recall_decision_path: str | None = Field(
+        default=None,
+        description=(
+            "Override path for the recall refit gate decision record JSON. None "
+            "resolves to ~/.gobby/recall_refit_decision.json. '~' is expanded."
+        ),
+    )
+
     @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
     @classmethod
     def validate_probability(cls, v: float) -> float:

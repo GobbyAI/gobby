@@ -2,6 +2,78 @@
 
 Adaptive tuning of memory recall parameters from feedback.
 
+## 2026-07-10 — #17200: Promote fitted recall defaults to MemoryConfig with one-flag rollback
+
+**Status:** closed completed (session #8113)
+
+**Plan.** Build the Phase 3a promotion machinery so a shipped #17198 gate
+decision activates daemon-wide with zero code change, while treating the
+current reject outcome as first-class: static constants stay authoritative
+in every failure or reject path, and one flag flip rolls back. Wire the
+resolved constants into every runtime consumer of the four tuned params
+(half-life, graph synthetic discount, co-occurrence alpha/cap) and into the
+observational signal log so future refits replay against what search
+actually used.
+
+**What shipped:**
+
+1. `MemoryConfig.use_fitted_recall_constants` (default off) and
+   `fitted_recall_decision_path` (default
+   `~/.gobby/recall_refit_decision.json`, the daemon-global pooled
+   location) in `src/gobby/config/persistence.py`, mirroring the
+   #17096/#17097 default-off flag pattern.
+2. Resolver in `src/gobby/memory/recall_constants.py`:
+   `RecallConstants` (values + `source` + `reason`) and
+   `resolve_recall_constants(config)`. Flag off → static. Flag on with a
+   missing, malformed, non-object, or `ship: false` record → static with
+   the gate's reasons carried into `reason` (the reject is first-class —
+   today's real record at `.gobby/plans/17198-refit-decision.json` is a
+   data-starved reject, so nothing activates). Flag on with a shipped
+   record → validated `fitted_params` (finite; half-life > 0; discount in
+   (0,1]; alpha in [0,1]; integer cap ≥ 1); any invalid value falls back
+   to static with a logged reason.
+3. Consumer wiring: `MemoryManager` resolves once and threads the
+   constants into `SearchService` (half-life + graph synthetic discount →
+   `build_results`), and fitted co-occurrence alpha/cap into
+   `KnowledgeGraphWriter.merge_cooccurrence_edges` (blend write) and
+   `KnowledgeGraphReader._edge_components` (algebraic un-blend) via
+   `KnowledgeGraphService`. Writer/reader keep reading the frozen module
+   globals when no override is injected, preserving the
+   `test_recall_benchmark.py` monkeypatch sweep surface.
+4. Provenance-correct logging: `SearchDebugSnapshot` now carries the
+   effective discount, and the recall-signal weighting snapshot reports
+   the effective half-life plus `recall_constants_source`,
+   `cooccur_alpha`, and `cooccur_support_cap`, so offline refits fit
+   against the constants that actually ranked the logged hits.
+
+**Flag-flip evidence (validation criterion).**
+`tests/memory/test_recall_constants.py` (25 tests, synthetic
+`GateDecision.to_record()` records, zero labels needed): flag off with a
+shipped record stays static; flag on applies fitted values (including over
+a user-configured half-life); flipping the flag back restores the static
+floor exactly; reject/missing/malformed/invalid-params records keep static
+with reasons. Static floor asserted equal to the production sources
+(30.0d, 0.9, α=0.5, cap=5).
+
+**Behavioral note.** `SearchService` half-life now resolves once at
+construction instead of per-call `getattr`; a test that mutated config
+after construction (`test_decay_disabled_preserves_order`) was updated to
+configure `temporal_decay_half_life_days=0.0` up front, matching how the
+daemon actually builds the manager.
+
+**Validation:** ruff format/check clean; mypy clean (10 files);
+`GOBBY_TEST_PROTECT=1 uv run pytest tests/memory/` 887 passed / 2 skipped;
+`tests/config/` + recall benchmark/fit/refit suites 608 passed / 2
+skipped; test-quality audit 0 issues; smoke import of
+`MEMORY_RECALL_PRODUCER` consumers OK.
+
+**Epic impact.** #17201 (drift detection + regression alarm) unblocks: it
+can key off `RecallConstants.source`/`reason` and the logged
+`recall_constants_source` to distinguish static and fitted regimes. When
+digest labels cross the #17198 floors and a rerun gate ships, promotion is
+an ops step (write the record to `~/.gobby/recall_refit_decision.json`,
+set the flag) with rollback = unset the flag.
+
 ## 2026-07-10 — #17199: Learned per-edge-type / LTR weights (conditional) — closed as not needed
 
 **Status:** closed not-needed (session #8113, no code change)

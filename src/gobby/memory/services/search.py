@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.memory.recall_constants import RecallConstants, resolve_recall_constants
 from gobby.memory.services._search_access import update_access_stats as update_memory_access_stats
 from gobby.memory.services._search_backfill import collect_active_results
 from gobby.memory.services._search_constants import DEFAULT_SEARCH_LIMIT
@@ -51,6 +52,7 @@ class SearchService:
         vector_store_failure_logger: Callable[[str, BaseException], None],
         run_db: Callable[..., Awaitable[Any]] | None = None,
         search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
+        recall_constants: RecallConstants | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
@@ -65,6 +67,9 @@ class SearchService:
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
         self._search_debug_sink = search_debug_sink
+        self._recall_constants = (
+            recall_constants if recall_constants is not None else resolve_recall_constants(config)
+        )
 
     async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
@@ -122,7 +127,7 @@ class SearchService:
 
             embed_query = extract_keywords(query) or query
             query_embedding = await self._embed_fn(embed_query, is_query=True)
-            half_life = getattr(self._config, "temporal_decay_half_life_days", 30.0)
+            half_life = self._recall_constants.half_life_days
             effective_min_score = min_score if min_score is not None else 0.0
             filters = memory_project_scope_filter(project_id, include_global=include_global)
             use_graph = self._kg_service is not None and self._falkordb_graph_search
@@ -315,6 +320,7 @@ class SearchService:
             rrf_applied=rrf_applied,
             graph_score_map=graph_score_map,
             graph_component_map=graph_component_map,
+            graph_synthetic_similarity_discount=(self._recall_constants.graph_synthetic_discount),
         )
 
     def _build_results(
@@ -355,6 +361,7 @@ class SearchService:
             half_life=half_life,
             effective_min_score=effective_min_score,
             limit=limit,
+            graph_synthetic_discount=self._recall_constants.graph_synthetic_discount,
         )
 
     async def _search_graph_scored(
