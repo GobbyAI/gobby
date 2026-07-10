@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 __all__ = ["AuthConfig", "ToolApprovalConfig", "ToolApprovalPolicy", "UIConfig"]
 
@@ -37,25 +37,13 @@ class ToolApprovalConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Basic authentication for the web UI.
+    """Non-secret web authentication settings."""
 
-    Leave username and password empty to disable auth (default).
-    Once both are set, the UI requires login. Password is encrypted
-    via Fernet in the secrets table.
-    """
+    model_config = ConfigDict(extra="ignore")
 
     username: str = Field(
         default="",
-        description="Username for web UI login. Leave empty to disable auth.",
-    )
-    password: str = Field(
-        default="",
-        description="Password for web UI login (encrypted in secrets table).",
-    )
-    session_secret: str = Field(
-        default="",
-        description="HMAC signing key for session cookies (auto-generated on first login).",
-        json_schema_extra={"ui_hidden": True},
+        description="Username for web UI login.",
     )
 
 

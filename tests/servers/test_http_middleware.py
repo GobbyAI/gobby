@@ -1,15 +1,49 @@
 """HTTP server lifespan and middleware behavior tests."""
 
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
+from gobby.servers.middleware.auth import AuthMiddleware
+from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+
+def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:
+    token = "local-cli-token"
+    ConfigStore(temp_db).set(LOCAL_API_TOKEN_HASH_KEY, hash_token(token), source="system")
+    session_token, _ = AuthStore(temp_db).create_session()
+    server = SimpleNamespace(
+        auth_service=AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
+    )
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+
+    @app.get("/api/tasks")
+    async def protected() -> dict[str, bool]:
+        return {"ok": True}
+
+    client = TestClient(app)
+
+    bearer = client.get("/api/tasks", headers={"Authorization": f"Bearer {token}"})
+    alias = client.get("/api/tasks", headers={"X-Gobby-Local-Token": token})
+    client.cookies.set("gobby_session", session_token)
+    cookie = client.get("/api/tasks")
+
+    assert bearer.status_code == 200
+    assert alias.status_code == 200
+    assert cookie.status_code == 200
 
 
 class TestLifespan:

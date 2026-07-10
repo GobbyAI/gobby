@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-import hashlib
 import hmac
 import logging
 import threading
@@ -15,7 +12,14 @@ from typing import Literal
 
 from starlette.requests import Request
 
-from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
+from gobby.storage.auth import (
+    LOCAL_API_TOKEN_HASH_KEY,
+    PASSWORD_HASH_KEY,
+    USERNAME_KEY,
+    AuthStore,
+    hash_token,
+    verify_password_hash,
+)
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import local_token_path
@@ -24,17 +28,9 @@ logger = logging.getLogger(__name__)
 
 AuthMode = Literal["required", "disabled"]
 
-_WEB_USERNAME_KEY = "auth.username"
-_WEB_PASSWORD_HASH_KEY = "auth.password_hash"
 _SESSION_COOKIE = "gobby_session"
 _LOCAL_TOKEN_HEADER = "X-Gobby-Local-Token"
-_SCRYPT_N = 2**14
-_SCRYPT_R = 8
-_SCRYPT_P = 1
-_SCRYPT_DKLEN = 32
 _NEVER_REFRESHED = float("-inf")
-_INVALID_PASSWORD_DIGEST = bytes([0xFF]) * _SCRYPT_DKLEN
-_EMPTY_PASSWORD_DIGEST = bytes(_SCRYPT_DKLEN)
 
 
 def _optional_string(value: object) -> str | None:
@@ -50,36 +46,6 @@ def _read_token_file(path: Path) -> str | None:
         logger.warning("Unable to read local API token file %s: %s", path, exc)
         return None
     return token or None
-
-
-def _verify_scrypt(password: str, stored_hash: str | None) -> bool:
-    expected = _INVALID_PASSWORD_DIGEST
-    derived = _EMPTY_PASSWORD_DIGEST
-    valid_format = False
-
-    if stored_hash is not None:
-        parts = stored_hash.split("$")
-        if len(parts) == 6 and parts[:4] == ["scrypt", str(_SCRYPT_N), "8", "1"]:
-            try:
-                salt = base64.b64decode(parts[4], validate=True)
-                candidate = base64.b64decode(parts[5], validate=True)
-            except (ValueError, binascii.Error):
-                pass
-            else:
-                if salt and len(candidate) == _SCRYPT_DKLEN:
-                    expected = candidate
-                    derived = hashlib.scrypt(
-                        password.encode("utf-8"),
-                        salt=salt,
-                        n=_SCRYPT_N,
-                        r=_SCRYPT_R,
-                        p=_SCRYPT_P,
-                        dklen=_SCRYPT_DKLEN,
-                    )
-                    valid_format = True
-
-    digest_matches = hmac.compare_digest(derived, expected)
-    return valid_format and digest_matches
 
 
 class AuthService:
@@ -155,8 +121,14 @@ class AuthService:
             username.encode("utf-8"),
             expected_username.encode("utf-8"),
         )
-        password_matches = _verify_scrypt(password, stored_hash)
+        password_matches = verify_password_hash(password, stored_hash)
         return username_matches and password_matches
+
+    @property
+    def credentials_configured(self) -> bool:
+        self.refresh()
+        with self._lock:
+            return bool(self._web_username and self._web_password_hash)
 
     def local_token(self) -> str | None:
         self.refresh()
@@ -171,8 +143,8 @@ class AuthService:
 
             config_store = ConfigStore(self._database_getter())
             token_hash = _optional_string(config_store.get(LOCAL_API_TOKEN_HASH_KEY))
-            web_username = _optional_string(config_store.get(_WEB_USERNAME_KEY))
-            web_password_hash = _optional_string(config_store.get(_WEB_PASSWORD_HASH_KEY))
+            web_username = _optional_string(config_store.get(USERNAME_KEY))
+            web_password_hash = _optional_string(config_store.get(PASSWORD_HASH_KEY))
             local_token_plaintext = _read_token_file(self._token_file)
 
             self._token_hash = token_hash

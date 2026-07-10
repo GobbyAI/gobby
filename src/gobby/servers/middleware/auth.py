@@ -84,14 +84,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path == "/" or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
             return await call_next(request)
 
-        # Check if auth is enabled
-        from gobby.servers.routes.auth import is_auth_enabled, validate_session_cookie
-
-        if not is_auth_enabled(self.server):
+        auth_service = self.server.auth_service
+        if not auth_service.enabled:
             return await call_next(request)
 
-        # Auth is enabled — validate session cookie
-        if validate_session_cookie(request, self.server):
+        if auth_service.is_request_authenticated(request):
             return await call_next(request)
 
         # Not authenticated
@@ -99,7 +96,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # API request — return 401 JSON
             return JSONResponse(
                 status_code=401,
-                content={"error": "Authentication required"},
+                content={
+                    "error": (
+                        "Authentication required. CLI clients need ~/.gobby/local_cli_token "
+                        "(run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
+                    )
+                },
             )
 
         # SPA route — let the frontend handle it (it will show login page)

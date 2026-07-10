@@ -166,11 +166,12 @@ class TestGetConfigValues:
         assert values["daemon_port"] == expected["daemon_port"]
         assert values["websocket"] == expected["websocket"]
 
-    def test_secret_keys_auto_detected(self, client: TestClient) -> None:
-        """Keys matching secret patterns are reported in secret_keys."""
+    def test_removed_auth_password_is_not_exposed(self, client: TestClient) -> None:
         response = client.get("/api/config/values")
         data = response.json()
-        assert "auth.password" in data["secret_keys"]
+        assert "password" not in data["values"]["auth"]
+        assert "session_secret" not in data["values"]["auth"]
+        assert "auth.password" not in data["secret_keys"]
 
     def test_values_accept_hub_database_protocol(
         self, non_local_hub_db: Any, real_config: DaemonConfig
@@ -1570,11 +1571,12 @@ class TestDeepMerge:
 class TestSecretAwareConfig:
     """Tests for secret masking in GET /values and encryption in PUT /values."""
 
-    def test_get_values_masks_auto_detected_secrets(self, client: TestClient) -> None:
-        """Auto-detected secret keys (like auth.password) are masked."""
+    def test_get_values_omits_removed_auth_secrets(self, client: TestClient) -> None:
         response = client.get("/api/config/values")
         data = response.json()
-        assert "auth.password" in data["secret_keys"]
+        assert "password" not in data["values"]["auth"]
+        assert "session_secret" not in data["values"]["auth"]
+        assert "auth.password" not in data["secret_keys"]
 
     def test_put_secret_value_encrypts(
         self, client: TestClient, temp_db: Any, mock_machine_id: Any
@@ -1750,13 +1752,13 @@ class TestSecretAwareConfig:
         # Set a secret
         client.put(
             "/api/config/values",
-            json={"values": {"auth": {"password": "my-secret-pw"}}},
+            json={"values": {"databases": {"falkordb": {"password": "my-secret"}}}},
         )
 
         # GET should show masked value
         response = client.get("/api/config/values")
         data = response.json()
-        assert data["values"]["auth"]["password"] == "********"
+        assert data["values"]["databases"]["falkordb"]["password"] == "********"
 
     def test_export_includes_config_secret_keys(
         self, client: TestClient, temp_db: Any, mock_machine_id: Any

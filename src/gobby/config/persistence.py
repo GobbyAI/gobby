@@ -105,8 +105,7 @@ class FalkorConfig(BaseModel):
         default=None,
         description=(
             "FalkorDB password (Redis AUTH). `databases.falkordb.password` resolves to "
-            "secret-store name `falkordb_password` to avoid colliding with the web login "
-            "`auth.password` secret. Must be provided when "
+            "secret-store name `falkordb_password` for stable disambiguation. Must be provided when "
             "FalkorDB is enabled. Supports ${ENV_VAR} pattern for env var expansion at load time."
         ),
     )

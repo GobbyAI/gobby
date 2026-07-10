@@ -9,8 +9,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.auth import hash_password
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
@@ -39,10 +39,10 @@ def config_no_auth() -> DaemonConfig:
 
 
 def _setup_auth_password(db, password: str = "correctpassword") -> None:
-    """Store a password in the secrets table via ConfigStore.set_secret."""
+    """Store web credentials in the shared auth service's config keys."""
     config_store = ConfigStore(db)
-    secret_store = SecretStore(db)
-    config_store.set_secret("auth.password", password, secret_store, source="user")
+    config_store.set("auth.username", "testuser", source="user")
+    config_store.set("auth.password_hash", hash_password(password), source="user")
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +51,24 @@ def _setup_auth_password(db, password: str = "correctpassword") -> None:
 
 
 class TestAuthStatus:
+    def test_status_credentials_configured(self, temp_db, config_no_auth, task_manager) -> None:
+        _setup_auth_password(temp_db)
+        server = create_http_server(
+            config=config_no_auth,
+            database=temp_db,
+            task_manager=task_manager,
+            auth_mode="required",
+        )
+
+        response = TestClient(server.app).get("/api/auth/status")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "auth_required": True,
+            "authenticated": False,
+            "credentials_configured": True,
+        }
+
     def test_auth_not_required_when_unconfigured(
         self, temp_db, config_no_auth, task_manager
     ) -> None:
@@ -67,7 +85,10 @@ class TestAuthStatus:
     def test_auth_required_when_configured(self, temp_db, config_with_auth, task_manager) -> None:
         _setup_auth_password(temp_db)
         server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
+            config=config_with_auth,
+            database=temp_db,
+            task_manager=task_manager,
+            auth_mode="required",
         )
         client = TestClient(server.app)
         resp = client.get("/api/auth/status")
@@ -84,6 +105,7 @@ class TestAuthStatus:
             config=config_with_auth,
             database=non_local_hub_db,
             task_manager=LocalTaskManager(non_local_hub_db),
+            auth_mode="required",
         )
         client = TestClient(server.app)
 
@@ -104,7 +126,10 @@ class TestAuthLogin:
     def test_login_success(self, temp_db, config_with_auth, task_manager) -> None:
         _setup_auth_password(temp_db, "mypassword")
         server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
+            config=config_with_auth,
+            database=temp_db,
+            task_manager=task_manager,
+            auth_mode="required",
         )
         client = TestClient(server.app)
         resp = client.post(
@@ -170,7 +195,10 @@ class TestAuthLogout:
     def test_logout_clears_session(self, temp_db, config_with_auth, task_manager) -> None:
         _setup_auth_password(temp_db, "mypassword")
         server = create_http_server(
-            config=config_with_auth, database=temp_db, task_manager=task_manager
+            config=config_with_auth,
+            database=temp_db,
+            task_manager=task_manager,
+            auth_mode="required",
         )
         client = TestClient(server.app)
 

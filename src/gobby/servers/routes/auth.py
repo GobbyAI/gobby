@@ -14,8 +14,6 @@ from pydantic import BaseModel
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.auth import AuthStore
-from gobby.storage.config_store import config_key_to_secret_name
-from gobby.storage.secrets import SecretStore
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -33,53 +31,9 @@ class LoginRequest(BaseModel):
     remember_me: bool = False
 
 
-def _get_auth_credentials(server: "HTTPServer") -> tuple[str, str]:
-    """Get configured username and password.
-
-    Returns:
-        Tuple of (username, stored_password). Both empty if auth not configured.
-    """
-    config = server.services.config
-    if not config:
-        return "", ""
-
-    username = config.auth.username
-    if not username:
-        return "", ""
-
-    # Resolve password from secrets (Fernet-encrypted in secrets table)
-    secret_store = SecretStore(require_hub_database(server.services.database))
-
-    secret_name = config_key_to_secret_name("auth.password")
-    stored_password = secret_store.get(secret_name)
-
-    if not stored_password:
-        return "", ""
-
-    return username, stored_password
-
-
-def is_auth_enabled(server: "HTTPServer") -> bool:
-    """Check if auth is configured (both username and password set)."""
-    username, password_hash = _get_auth_credentials(server)
-    return bool(username and password_hash)
-
-
 def _get_auth_store(server: "HTTPServer") -> AuthStore:
     """Get or create AuthStore instance."""
     return AuthStore(require_hub_database(server.services.database))
-
-
-def validate_session_cookie(request: Request, server: "HTTPServer") -> bool:
-    """Validate the session cookie from a request.
-
-    Used by auth middleware.
-    """
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return False
-    auth_store = _get_auth_store(server)
-    return auth_store.validate_session(token)
 
 
 def create_auth_router(server: "HTTPServer") -> APIRouter:
@@ -89,16 +43,13 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
     @router.post("/login")
     async def login(req: LoginRequest) -> JSONResponse:
         """Authenticate with username/password, set session cookie."""
-        username, stored_password = _get_auth_credentials(server)
-
-        if not username or not stored_password:
+        if not server.auth_service.credentials_configured:
             return JSONResponse(
                 status_code=400,
                 content={"ok": False, "error": "Authentication not configured"},
             )
 
-        # Validate credentials
-        if req.username != username or req.password != stored_password:
+        if not server.auth_service.verify_password(req.username, req.password):
             logger.warning(f"Failed login attempt for user: {req.username}")
             return JSONResponse(
                 status_code=401,
@@ -143,26 +94,16 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
 
         Returns whether auth is required and if the current session is valid.
         """
-        auth_required = is_auth_enabled(server)
-
-        if not auth_required:
-            return JSONResponse(
-                content={
-                    "auth_required": False,
-                    "authenticated": True,  # No auth needed = always authenticated
-                }
-            )
-
-        token = request.cookies.get(COOKIE_NAME)
-        authenticated = False
-        if token:
-            auth_store = _get_auth_store(server)
-            authenticated = auth_store.validate_session(token)
+        auth_required = server.auth_service.enabled
+        authenticated = (
+            server.auth_service.is_request_authenticated(request) if auth_required else True
+        )
 
         return JSONResponse(
             content={
-                "auth_required": True,
+                "auth_required": auth_required,
                 "authenticated": authenticated,
+                "credentials_configured": server.auth_service.credentials_configured,
             }
         )
 

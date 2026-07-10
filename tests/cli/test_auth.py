@@ -55,7 +55,9 @@ def test_auth_remove_configured(mock_stores):
     result = runner.invoke(auth, ["credentials", "--remove"])
     assert result.exit_code == 0
     assert "Auth removed for user 'admin'." in result.output
-    config.delete.assert_called_with("auth.username")
+    config.delete.assert_any_call("auth.username")
+    assert config.delete.call_count == 2
+    config.delete.assert_any_call("auth.password_hash")
     config.clear_secret.assert_called_with("auth.password", secret)
 
 
@@ -64,11 +66,19 @@ def test_auth_setup_new(mock_stores):
     config.get.return_value = None
     runner = CliRunner()
     # Provide username, password, confirm password
-    result = runner.invoke(auth, ["credentials"], input="admin\nmypass\nmypass\n")
+    with patch("gobby.cli.auth.hash_password", return_value="scrypt$16384$8$1$salt$hash"):
+        result = runner.invoke(auth, ["credentials"], input="admin\nmypass\nmypass\n")
     assert result.exit_code == 0
     assert "Auth enabled for user 'admin'." in result.output
-    config.set.assert_called_with("auth.username", "admin", source="user")
-    config.set_secret.assert_called_with("auth.password", "mypass", secret, source="user")
+    config.set.assert_any_call("auth.username", "admin", source="user")
+    assert config.set.call_count == 2
+    config.set.assert_any_call(
+        "auth.password_hash",
+        "scrypt$16384$8$1$salt$hash",
+        source="user",
+    )
+    config.set_secret.assert_not_called()
+    config.clear_secret.assert_called_once_with("auth.password", secret)
 
 
 def test_auth_reset_password(mock_stores):
@@ -76,10 +86,17 @@ def test_auth_reset_password(mock_stores):
     config.get.return_value = "admin"
     runner = CliRunner()
     # Provide password, confirm password
-    result = runner.invoke(auth, ["credentials"], input="newpass\nnewpass\n")
+    with patch("gobby.cli.auth.hash_password", return_value="scrypt$16384$8$1$salt$hash"):
+        result = runner.invoke(auth, ["credentials"], input="newpass\nnewpass\n")
     assert result.exit_code == 0
     assert "Password updated for user 'admin'." in result.output
-    config.set_secret.assert_called_with("auth.password", "newpass", secret, source="user")
+    config.set.assert_called_once_with(
+        "auth.password_hash",
+        "scrypt$16384$8$1$salt$hash",
+        source="user",
+    )
+    config.set_secret.assert_not_called()
+    config.clear_secret.assert_called_once_with("auth.password", secret)
 
 
 def test_auth_group_has_credentials_and_token_commands() -> None:

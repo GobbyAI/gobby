@@ -492,3 +492,83 @@ Additional validation:
 
 Test gaps: none for the six named 3.1 acceptance items or the retained HTTP/auth
 route behavior covered by the focused regression files.
+
+## 2026-07-10 — #17796 Rewrite middleware and auth routes on AuthService
+
+Session: #8117
+
+Plan:
+
+1. Inspect middleware, auth routes, credential CLI, startup storage, config
+   hydration, and adjacent tests with gcode; verify the shared AuthService
+   contract from #17795.
+2. Add the four named 3.2 acceptance tests plus CLI/config regressions and
+   capture an exact red failure.
+3. Centralize scrypt hashing, rewrite middleware/routes, migrate legacy Fernet
+   credentials atomically, and update adjacent legacy tests.
+4. Run focused auth/config/startup regressions, strict typing, lint, security,
+   test-quality, and build checks; commit and close.
+
+Implemented:
+
+- Moved the canonical password hash/verify primitives into
+  `gobby.storage.auth` so CLI setup, daemon migration, and AuthService share the
+  exact `scrypt$16384$8$1$<salt_b64>$<hash_b64>` representation.
+- Rewrote AuthMiddleware to use `server.auth_service.enabled` and
+  `is_request_authenticated`, preserving the phase's existing public-prefix
+  list and returning the required CLI/browser remediation in API 401 bodies.
+- Deleted `_get_auth_credentials`, `is_auth_enabled`, and
+  `validate_session_cookie`; login now uses AuthService timing-safe password
+  verification, and status reports `auth_required`, `authenticated`, and
+  `credentials_configured`.
+- Changed `gobby auth credentials` to persist only the scrypt hash through
+  ConfigStore and clean up the legacy `auth.password` secret/reference on set,
+  reset, or removal.
+- Added an atomic startup migration after secret-envelope setup and local-token
+  provisioning. It hashes a decryptable legacy password, removes both legacy
+  rows, and logs the required `gobby auth credentials` recovery instruction on
+  failure.
+- Removed dead `AuthConfig.password` and `session_secret` fields, explicitly
+  retained `extra="ignore"` for internal hash keys, and updated configuration
+  regressions so the removed credential surface stays absent.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/test_auth_service.py::test_legacy_password_migration
+  tests/servers/test_http_middleware.py::test_bearer_and_alias_accepted
+  tests/servers/routes/test_auth_routes.py::TestAuthStatus::test_status_credentials_configured
+  tests/cli/test_auth.py::test_auth_credentials_store_scrypt_hash -q` failed
+  during collection with `ImportError: cannot import name 'hash_password' from
+  'gobby.servers.auth_service'` before the shared hashing API existed.
+- Minimal green: the same exact command passed all 4 tests after the storage
+  hashing API, migration, middleware, route, and CLI changes. It exposed one
+  Starlette per-request-cookie deprecation warning, which was removed by using
+  the client's cookie jar.
+- Refactor/final green: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/test_auth_service.py tests/servers/test_http_middleware.py
+  tests/servers/test_auth_middleware.py tests/servers/routes/test_auth_routes.py
+  tests/servers/routes/test_configuration_routes.py
+  tests/servers/routes/test_communications.py tests/cli/test_auth.py
+  tests/test_runner_init.py tests/storage/test_auth.py -q` passed all 233 tests
+  with no warnings.
+
+Additional validation:
+
+- `uv run ruff format --check` and `uv run ruff check` passed on all 8 touched
+  production files and 10 touched test files.
+- `uv run mypy --strict` passed on all 8 touched production files.
+- `uv run bandit -c pyproject.toml` found no issues in the touched production
+  files.
+- `uv run gobby test-quality audit ... --baseline
+  .gobby/test-quality-baseline.json --fail-on-new --min-severity high` scanned
+  220 tests across the 10 touched test paths and reported zero issues.
+- `uv build` successfully built the source distribution and wheel.
+- Every touched non-test Python file remains below 1,000 lines; the largest is
+  `src/gobby/runner_init/storage.py` at 250 lines, so no refactor task was
+  required.
+
+Test gaps: none for the five named 3.2 acceptance items. Focused regression
+coverage also proves public-route exemptions, disabled mode, logout, config
+masking, startup ordering, CLI removal/reset, and token provisioning remain
+intact.

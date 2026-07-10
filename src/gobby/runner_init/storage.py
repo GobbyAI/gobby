@@ -15,7 +15,8 @@ from gobby.runner_init.helpers import (
     init_hub_database,
 )
 from gobby.shutdown_intent import ShutdownIntent
-from gobby.storage.auth import ensure_local_api_token
+from gobby.storage.auth import PASSWORD_HASH_KEY, ensure_local_api_token, hash_password
+from gobby.storage.config_store import config_key_to_secret_name
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -25,8 +26,32 @@ from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_PASSWORD_KEY = "auth.password"
+
+
+def _migrate_legacy_auth_password(
+    config_store: ConfigStore,
+    secret_store: SecretStore,
+) -> bool:
+    """Replace the legacy encrypted web password with a scrypt hash atomically."""
+    if config_store.get(PASSWORD_HASH_KEY) is not None:
+        return False
+
+    secret_name = config_key_to_secret_name(_LEGACY_PASSWORD_KEY)
+    password = secret_store.get(secret_name)
+    if password is None:
+        return False
+
+    with config_store.db.transaction():
+        config_store.set(PASSWORD_HASH_KEY, hash_password(password), source="migration")
+        config_store.delete(_LEGACY_PASSWORD_KEY)
+        secret_store.delete(secret_name)
+    return True
 
 
 def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
@@ -97,6 +122,14 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     )
     secret_migration = runner.secret_store.ensure_ready(required_secret_names=required_secret_names)
     ensure_local_api_token(runner.config_store)
+    try:
+        if _migrate_legacy_auth_password(runner.config_store, runner.secret_store):
+            logger.info("Migrated legacy web password to a scrypt hash")
+    except Exception as exc:
+        logger.warning(
+            "Failed to migrate legacy web password; run 'gobby auth credentials': %s",
+            exc,
+        )
     if secret_migration.migrated:
         logger.info(
             "Migrated %s legacy machine-bound secrets to envelope encryption",

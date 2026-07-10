@@ -1,11 +1,9 @@
-"""Authentication store for web UI sessions.
+"""Authentication storage helpers for daemon tokens, passwords, and sessions."""
 
-Manages auth sessions in the hub database for cookie-based login.
-Passwords are encrypted via Fernet in the secrets table (same as API keys).
-Sessions are random tokens with expiry.
-"""
-
+import base64
+import binascii
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -23,6 +21,14 @@ logger = logging.getLogger(__name__)
 SESSION_DURATION = timedelta(hours=12)  # Default (no remember-me)
 REMEMBER_ME_DURATION = timedelta(days=30)  # Remember me checked
 LOCAL_API_TOKEN_HASH_KEY = "auth.api_token_hash"
+PASSWORD_HASH_KEY = "auth.password_hash"
+USERNAME_KEY = "auth.username"
+_SCRYPT_N = 2**14
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+_SCRYPT_DKLEN = 32
+_INVALID_PASSWORD_DIGEST = bytes([0xFF]) * _SCRYPT_DKLEN
+_EMPTY_PASSWORD_DIGEST = bytes(_SCRYPT_DKLEN)
 _TOKEN_REMEDIATION = (
     "copy ~/.gobby/local_cli_token from the hub machine or run 'gobby auth token --rotate'"
 )
@@ -30,6 +36,60 @@ _TOKEN_REMEDIATION = (
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def hash_password(password: str, *, salt: bytes | None = None) -> str:
+    """Create the canonical scrypt password hash stored in config_store."""
+    password_salt = salt or secrets.token_bytes(16)
+    derived = hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=password_salt,
+        n=_SCRYPT_N,
+        r=_SCRYPT_R,
+        p=_SCRYPT_P,
+        dklen=_SCRYPT_DKLEN,
+    )
+    return "$".join(
+        (
+            "scrypt",
+            str(_SCRYPT_N),
+            str(_SCRYPT_R),
+            str(_SCRYPT_P),
+            base64.b64encode(password_salt).decode("ascii"),
+            base64.b64encode(derived).decode("ascii"),
+        )
+    )
+
+
+def verify_password_hash(password: str, stored_hash: str | None) -> bool:
+    """Verify a password against the canonical scrypt representation."""
+    expected = _INVALID_PASSWORD_DIGEST
+    derived = _EMPTY_PASSWORD_DIGEST
+    valid_format = False
+
+    if stored_hash is not None:
+        parts = stored_hash.split("$")
+        expected_prefix = ["scrypt", str(_SCRYPT_N), str(_SCRYPT_R), str(_SCRYPT_P)]
+        if len(parts) == 6 and parts[:4] == expected_prefix:
+            try:
+                salt = base64.b64decode(parts[4], validate=True)
+                candidate = base64.b64decode(parts[5], validate=True)
+            except (ValueError, binascii.Error):
+                pass
+            else:
+                if salt and len(candidate) == _SCRYPT_DKLEN:
+                    expected = candidate
+                    derived = hashlib.scrypt(
+                        password.encode("utf-8"),
+                        salt=salt,
+                        n=_SCRYPT_N,
+                        r=_SCRYPT_R,
+                        p=_SCRYPT_P,
+                        dklen=_SCRYPT_DKLEN,
+                    )
+                    valid_format = True
+
+    return valid_format and hmac.compare_digest(derived, expected)
 
 
 def _write_new_local_api_token() -> str:

@@ -54,11 +54,10 @@ def client(server):
 
 @pytest.fixture
 def ui_auth_client(server: Any, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setattr("gobby.servers.routes.auth.is_auth_enabled", lambda _server: True)
-    monkeypatch.setattr(
-        "gobby.servers.routes.auth.validate_session_cookie",
-        lambda _request, _server: False,
-    )
+    auth_service = MagicMock()
+    auth_service.enabled = True
+    auth_service.is_request_authenticated.return_value = False
+    monkeypatch.setattr(server, "auth_service", auth_service)
     return TestClient(server.app)
 
 

@@ -42,6 +42,7 @@ def create_http_server(
     database: Any | None = None,
     span_storage: Any | None = None,
     transcript_reader: Any | None = None,
+    auth_mode: str | None = None,
 ) -> HTTPServer:
     """
     Create an HTTPServer instance with the new ServiceContainer API.
@@ -89,6 +90,7 @@ def create_http_server(
         port=port,
         test_mode=test_mode,
         codex_client=codex_client,
+        auth_mode=auth_mode,
     )
 
 

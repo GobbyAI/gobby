@@ -14,10 +14,13 @@ import gobby.servers.auth_service as auth_service_module
 import gobby.servers.http as http_module
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.config.ui import AuthConfig
+from gobby.runner_init import storage as storage_module
 from gobby.servers.auth_service import AuthService
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
@@ -64,6 +67,39 @@ def _password_hash(password: str, salt: bytes = b"auth-service-test") -> str:
             base64.b64encode(derived).decode(),
         )
     )
+
+
+def test_legacy_password_migration(temp_db: HubDatabase, tmp_path: Path) -> None:
+    config_store = ConfigStore(temp_db)
+    secret_store = SecretStore(temp_db)
+    config_store.set("auth.username", "legacy-user")
+    config_store.set_secret("auth.password", "legacy-password", secret_store)
+
+    migrated = storage_module._migrate_legacy_auth_password(config_store, secret_store)
+
+    assert migrated is True
+    assert config_store.get("auth.password") is None
+    assert secret_store.get("password") is None
+    password_hash = config_store.get("auth.password_hash")
+    assert isinstance(password_hash, str)
+    assert password_hash.startswith("scrypt$16384$8$1$")
+    service = AuthService(lambda: temp_db, "required", token_file=tmp_path / "missing")
+    assert service.verify_password("legacy-user", "legacy-password") is True
+
+
+def test_auth_config_ignores_removed_credentials() -> None:
+    config = AuthConfig.model_validate(
+        {
+            "username": "admin",
+            "password": "legacy-password",
+            "session_secret": "legacy-secret",
+            "api_token_hash": "hash",
+            "password_hash": "hash",
+        }
+    )
+
+    assert config.username == "admin"
+    assert set(type(config).model_fields) == {"username"}
 
 
 def test_verify_bearer_rotation_refresh(
