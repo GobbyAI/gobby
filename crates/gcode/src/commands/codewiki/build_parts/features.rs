@@ -249,6 +249,10 @@ fn resolve_gwiki_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gwiki/src/commands/read.rs",
             "commands::read::execute",
         ),
+        "pages" => (
+            "crates/gwiki/src/commands/pages.rs",
+            "commands::pages::execute",
+        ),
         "refresh" => (
             "crates/gwiki/src/commands/refresh/mod.rs",
             "commands::refresh::execute",
