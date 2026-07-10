@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -683,6 +684,37 @@ def create_memory_registry(
             }
         except ImportError as e:
             return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="densify_knowledge_graph_cooccurrence",
+        description=(
+            "Bulk-materialize derived CO_OCCURS edges over the existing knowledge graph "
+            "from MENTIONED_IN structure and stored entity embeddings (no LLM). "
+            "Idempotent and batched; safe to rerun."
+        ),
+    )
+    async def densify_knowledge_graph_cooccurrence(
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Retrofit CO_OCCURS support edges onto a graph built before
+        materialize_cooccurrence was enabled.
+
+        Args:
+            project_id: Optional project ID. Defaults to the current project.
+        """
+        try:
+            kg_service = memory_manager.kg_service
+            if not kg_service:
+                return {"success": False, "error": "Knowledge graph service not available"}
+
+            effective_project_id = (
+                project_id if project_id is not None else get_current_project_id()
+            )
+            result = await kg_service.densify_cooccurrence(project_id=effective_project_id)
+            return {"success": True, **asdict(result)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

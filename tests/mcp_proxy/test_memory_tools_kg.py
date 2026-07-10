@@ -132,6 +132,58 @@ class TestReclusterKnowledgeGraphEntitiesTool:
         assert result["error"] == "Knowledge graph service not available"
 
 
+class TestDensifyKnowledgeGraphCooccurrenceTool:
+    """Tests for the densify_knowledge_graph_cooccurrence MCP tool."""
+
+    def test_densify_knowledge_graph_cooccurrence_tool_exists(self) -> None:
+        registry, _ = _make_registry()
+        tool_names = [t["name"] for t in registry.list_tools()]
+        assert "densify_knowledge_graph_cooccurrence" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_densify_knowledge_graph_cooccurrence_returns_counters(self) -> None:
+        from gobby.memory.services.knowledge_graph.densify import CooccurrenceDensifyResult
+
+        registry, manager = _make_registry()
+        kg_service = MagicMock()
+        kg_service.densify_cooccurrence = AsyncMock(
+            return_value=CooccurrenceDensifyResult(
+                project_id="project-1",
+                weighted=True,
+                memories_scanned=10,
+                entities_with_embedding=6,
+                pairs_total=12,
+                pairs_skipped_no_embedding=2,
+                pairs_merged=10,
+                batches=1,
+                edges_before=0,
+                edges_after=10,
+            )
+        )
+        manager._kg_service = kg_service
+
+        tool_fn = registry.get_tool("densify_knowledge_graph_cooccurrence")
+        result = await tool_fn(project_id="project-1")
+
+        assert result["success"] is True
+        assert result["project_id"] == "project-1"
+        assert result["pairs_merged"] == 10
+        assert result["pairs_skipped_no_embedding"] == 2
+        assert result["edges_after"] == 10
+        kg_service.densify_cooccurrence.assert_awaited_once_with(project_id="project-1")
+
+    @pytest.mark.asyncio
+    async def test_densify_knowledge_graph_cooccurrence_errors_without_kg_service(self) -> None:
+        registry, manager = _make_registry()
+        assert manager._kg_service is None
+
+        tool_fn = registry.get_tool("densify_knowledge_graph_cooccurrence")
+        result = await tool_fn(project_id="project-1")
+
+        assert result["success"] is False
+        assert result["error"] == "Knowledge graph service not available"
+
+
 class TestExportMemoryGraphRemoved:
     """Test that export_memory_graph tool is removed."""
 

@@ -13,6 +13,7 @@ from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
 from .clustering import ClusterRunResult, recluster_project_entities
 from .code_linker import KnowledgeGraphCodeLinker
+from .densify import CooccurrenceDensifyResult, densify_cooccurrence
 from .extraction import KnowledgeGraphExtractor
 from .maintenance import KnowledgeGraphMaintenance
 from .models import (
@@ -591,6 +592,22 @@ class KnowledgeGraphService:
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
         """Delete all Memory nodes for a project, then clean orphaned entities."""
         return await self._maintenance.clear_project_graph(project_id)
+
+    async def densify_cooccurrence(
+        self, project_id: str | None = None
+    ) -> CooccurrenceDensifyResult:
+        """Bulk-retrofit derived CO_OCCURS edges from MENTIONED_IN structure (no LLM).
+
+        Weighting follows the same ``graph_edge_weighting`` gate as the per-memory
+        write path, so densified edges match what the write path would produce.
+        """
+        await self._ensure_graph_schema()
+        return await densify_cooccurrence(
+            self._falkor,
+            self._writer,
+            project_id,
+            weighted=self._graph_edge_weighting,
+        )
 
     async def _link_entities_to_code(
         self,
