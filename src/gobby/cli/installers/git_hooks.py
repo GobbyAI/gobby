@@ -40,8 +40,17 @@ if [ -n "$CHANGED_FILES" ]; then
                         DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}"
                     fi
                     DAEMON_URL="${DAEMON_URL%/}"
+                    AUTH_HEADER_ARGS=()
+                    TOKEN_FILE="${GOBBY_HOME:-$HOME/.gobby}/local_cli_token"
+                    if [ -r "$TOKEN_FILE" ]; then
+                        IFS= read -r TOKEN < "$TOKEN_FILE" || true
+                        if [ -n "$TOKEN" ]; then
+                            AUTH_HEADER_ARGS=(-H "Authorization: Bearer $TOKEN")
+                        fi
+                    fi
                     if command -v jq >/dev/null 2>&1; then
                         if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                            "${AUTH_HEADER_ARGS[@]}" \
                             -H "Content-Type: application/json" \
                             --data-binary @- \
                             "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
@@ -52,6 +61,7 @@ if [ -n "$CHANGED_FILES" ]; then
                     else
                         JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
                         if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
+                            "${AUTH_HEADER_ARGS[@]}" \
                             -H "Content-Type: application/json" \
                             --data "{\"root_path\":\"$JSON_ROOT\"}" \
                             "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then

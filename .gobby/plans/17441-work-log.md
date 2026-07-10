@@ -278,3 +278,61 @@ Additional validation:
 
 Test gaps: none for the specified client, retry, replay, rich-status, raw-call,
 or isolated-home behaviors.
+
+## 2026-07-10 — #17793 Add token to installed git-hook curl template
+
+Session: #8117
+
+Plan:
+
+1. Inspect the generated reindex body, existing hook-template coverage, worktree
+   state, and source-file size.
+2. Add the exact acceptance test before implementation and capture its intended
+   bearer-header failure.
+3. Read the optional local token into a Bash argument array and expand it at both
+   codewiki-refresh curl sites.
+4. Exercise both jq and shell-fallback branches with and without a token, run
+   focused regressions and static checks, audit test quality, commit, and close.
+
+Implemented:
+
+- Read `${GOBBY_HOME:-$HOME/.gobby}/local_cli_token` when readable and non-empty.
+- Stored the optional `-H "Authorization: Bearer $TOKEN"` pair in a Bash array,
+  preserving a zero-argument expansion when the file is missing or empty.
+- Expanded the array at both the jq-piped and shell-escaped curl branches.
+- Added `tests/cli/installers/test_git_hooks.py::test_hook_body_includes_token`,
+  which executes both branches against isolated fake executables for token-present
+  and token-missing cases.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/cli/installers/test_git_hooks.py::test_hook_body_includes_token -q`
+  failed because `Authorization: Bearer test-token` was absent from captured curl
+  arguments.
+- Minimal green: the same exact command passed 1 test after adding the optional
+  header array and expanding it at both curl sites.
+- Refactor/final green: after extending the harness to execute both curl branches,
+  the command exposed a test-only PATH defect (`FileNotFoundError` for `bash`).
+  Using `/bin/bash` fixed the harness; the same exact command then passed 1 test.
+
+Additional validation:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/installers/test_git_hooks.py
+  tests/cli/installers/test_git_hooks_installer.py::TestHookTemplates -q` passed
+  all 6 focused acceptance and existing template tests.
+- `uv run ruff format src/gobby/cli/installers/git_hooks.py
+  tests/cli/installers/test_git_hooks.py` left both files unchanged.
+- `uv run ruff check src/gobby/cli/installers/git_hooks.py
+  tests/cli/installers/test_git_hooks.py` passed.
+- `uv run mypy --strict src/gobby/cli/installers/git_hooks.py
+  tests/cli/installers/test_git_hooks.py` passed with no issues.
+- `uv run gobby test-quality audit tests/cli/installers/test_git_hooks.py
+  --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high`
+  scanned 1 test and reported zero issues.
+- `gcode grep` confirmed two optional-header expansions, one in each curl branch.
+- `src/gobby/cli/installers/git_hooks.py` ends at line 673 and remains below
+  1,000, so no refactor task was required.
+
+Test gaps: none for token-present, token-missing, jq, fallback, generated-template,
+or marker-installed behavior.
