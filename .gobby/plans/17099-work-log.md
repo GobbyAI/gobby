@@ -2,6 +2,67 @@
 
 Adaptive tuning of memory recall parameters from feedback.
 
+## 2026-07-10 — #17197: Extend offline recall benchmark harness to real labeled data
+
+**Status:** done (session #8113)
+
+**Delivered:**
+
+- `src/gobby/memory/recall_fit.py` (NEW) — the labeled-data fit/replay core.
+  `ReplayRow` + `replay_row_from_signal_row` adapter, exact replay algebra
+  (`decay' = decay ** (h_logged/h_new)` for exponential half-life; logged
+  graph-synthetic discount recovered algebraically when absent; first-order
+  alpha/cap re-blend from attributed edge components), `replayed_sort_key`
+  mirroring the `build_results` ordering (semantic-first similarity axis,
+  RRF `ranking_score` tiebreak) so the fit is evaluated on the FULL
+  SearchService ranking path, not `find_related_memory_ids`.
+  IPS position propensities = smoothed label coverage per
+  `(injection_group, injection_position)` with unlabeled injected rows in
+  denominators; clipped inverse weights. Pairwise objective forms pairs only
+  between labeled rows in the same request (never-retrieved/unlabeled ≠
+  negative). Per-project deterministic request split +
+  `fit_partial_pooled` (pooled grid fit, per-project fits shrunk by
+  `lam = n_pairs/(n_pairs + m)`), `fit_and_evaluate` returning
+  fitted-vs-logged-baseline holdout comparison (`LabeledFitReport`) — the
+  exact shape #17198's must-beat-static gate consumes.
+- `RecallSignalStore.fetch_replay_rows` (NEW) — LEFT-JOIN loader: ALL
+  injected hits with an optional label from ONE explicit `label_source`
+  (required kwarg — digest vs llm_judge streams never silently mix; newest
+  `labeled_at` wins within a stream), plus request replay context
+  (`weighting`, `graph_synthetic_similarity_discount`).
+- `tests/memory/test_recall_benchmark.py` — docstring now documents the two
+  sides (synthetic corpus retained as recall-side/false-negative eval;
+  labeled data precision-side ONLY); `_run_labeled_fit` labeled counterpart
+  of `_run_arm`; `test_recall_benchmark_labeled_fit` seeds planted rows
+  through the REAL hub tables (store → join → fit) and asserts the fit
+  recovers the planted 7d half-life and beats the logged baseline 1.000 vs
+  0.000 on the per-project holdout.
+- Tests: `tests/memory/test_recall_fit.py` (27 unit tests: replay algebra
+  incl. decay re-exponentiation exactness and boost preservation,
+  propensities/clipping, pairwise semantics incl. no-pairs-across-requests
+  and unlabeled exclusion, deterministic per-project split, shrinkage
+  behavior, planted end-to-end recovery, param validation, adapter) + 4
+  `fetch_replay_rows` join tests in `tests/storage/test_recall_signals.py`.
+
+**Also fixed (rule 8):** `_evaluate` in the benchmark iterated
+`find_related_memory_ids(...)` directly, but the reader now returns
+`RelatedMemoryTraversal` — the synthetic arms test was broken on the branch
+(`TypeError: not iterable`). Fixed to `.memory_ids`; arms test passes again
+against live FalkorDB.
+
+**Validation:** ruff format/check + mypy clean; unit 27/27; storage 17/17;
+labeled benchmark passed vs test Postgres hub; synthetic arms passed vs live
+FalkorDB; `gobby test-quality audit` on the three touched test files: 0
+issues.
+
+**Epic impact:** #17198 is now unblocked with a working fit surface: load one
+label stream via `fetch_replay_rows`, adapt, `fit_and_evaluate` over a wider
+(alpha, cap) grid, read fitted-vs-static holdout numbers off
+`LabeledFitReport`. Caveats recorded in the module docstring: alpha/cap
+replay is first-order (single-edge attribution); cluster params are NOT
+offline-replayable — they change candidate sets, so they stay on the live
+synthetic arms.
+
 ## 2026-07-10 — #17492: Non-LLM CO_OCCURS densify/backfill pass
 
 **Status:** done (session #8113)

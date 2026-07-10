@@ -1,9 +1,26 @@
-"""Integration recall benchmark for derived traversal-support edges + weighting.
+"""Integration recall benchmark: synthetic traversal arms + labeled-data fit.
 
-This exercises REAL Cypher against an ephemeral FalkorDB graph (the FakeFalkorDB
-stub cannot model weighted traversal faithfully). It measures the graph-traversal
-recall the decision gate of gobby task #17096 cares about, isolating three effects
-with four arms:
+Two complementary evaluation sides live here (#17197):
+
+- **Synthetic corpus arms (recall-side / false-negative eval).** The
+  hub-and-spoke corpus has full ground truth, so it can measure what
+  traversal *fails to retrieve*. This is the only side that can make recall
+  claims; it is retained unchanged below.
+- **Labeled-data fit (precision-side ONLY).** Real usefulness labels exist
+  only for memories that were actually injected, so they can say "what we
+  injected was (not) useful" — never what we failed to retrieve. The labeled
+  arm (``_run_labeled_fit``) fits and evaluates on real labeled rows from the
+  promoted hub tables via ``gobby.memory.recall_fit``: pairwise objective
+  with IPS injection-position propensity weighting, never-retrieved memories
+  treated as unlabeled (not negative), per-project partial-pooling split, and
+  replay over the FULL ranking path (the ``SearchService`` blend ordering
+  incl. temporal decay and ``ranking_mode``), not just
+  ``find_related_memory_ids``.
+
+The synthetic side exercises REAL Cypher against an ephemeral FalkorDB graph
+(the FakeFalkorDB stub cannot model weighted traversal faithfully). It measures
+the graph-traversal recall the decision gate of gobby task #17096 cares about,
+isolating three effects with four arms:
 
     baseline                -> typed edges only, no weights
     cooccurrence_unweighted -> CO_OCCURS materialized, neutral traversal weights
@@ -35,13 +52,20 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
+from gobby.memory.recall_fit import (
+    LabeledFitReport,
+    default_replay_grid,
+    fit_and_evaluate,
+    replay_row_from_signal_row,
+)
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
+from gobby.storage.recall_signals import RecallSignalStore
 from tests.memory._recall_corpus import (
     DIM,
     NUM_CLUSTERS,
@@ -53,6 +77,9 @@ from tests.memory._recall_corpus import (
     build_corpus,
     make_embed_fn,
 )
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = [pytest.mark.integration]
 
@@ -87,7 +114,7 @@ async def _evaluate(service: KnowledgeGraphService, corpus: list[MemoryDef]) -> 
         result = await service.find_related_memory_ids(
             _seed_keys(mem), max_hops=2, limit=K, project_id=None
         )
-        ranked = [mid for mid in result if mid != mem.memory_id]
+        ranked = [mid for mid in result.memory_ids if mid != mem.memory_id]
         topk = set(ranked[:K])
         recalls.append(len(topk & expected) / len(expected))
         rr = 0.0
@@ -157,6 +184,114 @@ async def _run_arm(
         cluster_count=cluster_count,
         clustered_entities=clustered_entities,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Labeled-data fit arm (precision-side; #17197)                               #
+# --------------------------------------------------------------------------- #
+
+_LABEL_TS = "2026-07-09T12:00:00+00:00"
+_LOGGED_HALF_LIFE = 30.0
+
+
+def _labeled_hit(memory_id: str, *, rank: int, raw: float, decay: float) -> dict[str, object]:
+    return {
+        "memory_id": memory_id,
+        "rank": rank,
+        "search_via": "semantic",
+        "similarity": raw * decay,
+        "raw_semantic_score": raw,
+        "temporal_decay_factor": decay,
+        "ranking_score": 1.0 - rank * 0.1,
+        "ranking_mode": "semantic_only",
+        "graph_score": None,
+        "edge_cosine": None,
+        "edge_support_norm": None,
+        "edge_weight_blend": None,
+        "edge_decay_factor": None,
+    }
+
+
+def _seed_labeled_signal_rows(store: RecallSignalStore) -> None:
+    """Plant real hub rows where the logged ranking inverts usefulness.
+
+    Per request: the useful memory is recent but lower-raw-scored (0.6 * 0.9),
+    the not-useful one is stale but higher-raw-scored (0.8 * 0.7 -> logged
+    winner), plus one unlabeled hit that only feeds propensity denominators.
+    Any replayed half-life shorter than the logged 30d flips every request,
+    so the fit must beat the logged-params baseline on the holdout.
+    """
+    for project in ("proj-fit-a", "proj-fit-b"):
+        for i in range(4):
+            request_id = f"{project}-req-{i}"
+            session_id = f"sess-{project}"
+            store.insert_signal_event(
+                {
+                    "schema_version": 3,
+                    "timestamp": _LABEL_TS,
+                    "session_id": session_id,
+                    "recall_request_id": request_id,
+                    "project_id": project,
+                    "caller": "memory.recall",
+                    "query": f"benchmark query {i}",
+                    "merged_ids": ["mem-bad", "mem-useful", "mem-unlabeled"],
+                    "returned_ids": ["mem-bad", "mem-useful", "mem-unlabeled"],
+                    "rrf_applied": False,
+                    "graph_synthetic_similarity_discount": None,
+                    "ranking_score_map": {},
+                    "graph_score_map": {},
+                    "weighting": {"temporal_decay_half_life_days": _LOGGED_HALF_LIFE},
+                    "hits": [
+                        _labeled_hit("mem-bad", rank=0, raw=0.8, decay=0.7),
+                        _labeled_hit("mem-useful", rank=1, raw=0.6, decay=0.9),
+                        _labeled_hit("mem-unlabeled", rank=2, raw=0.5, decay=0.8),
+                    ],
+                }
+            )
+            store.record_injection_outcomes(
+                [
+                    {
+                        "session_id": session_id,
+                        "recall_request_id": request_id,
+                        "memory_id": memory_id,
+                        "project_id": project,
+                        "outcome": "injected",
+                        "injection_position": position,
+                        "injection_group": "context",
+                        "caller": "memory.recall",
+                    }
+                    for position, memory_id in enumerate(["mem-useful", "mem-bad", "mem-unlabeled"])
+                ]
+            )
+            for memory_id, useful in (("mem-useful", True), ("mem-bad", False)):
+                store.insert_usefulness_label(
+                    {
+                        "session_id": session_id,
+                        "recall_request_id": request_id,
+                        "memory_id": memory_id,
+                        "project_id": project,
+                        "label_source": "digest",
+                        "judge_useful": useful,
+                        "judge_protocol_version": "17195-digest-v1",
+                        "position_randomized": False,
+                        "length_controlled": False,
+                        "labeled_at": _LABEL_TS,
+                    }
+                )
+
+
+def _run_labeled_fit(store: RecallSignalStore, *, label_source: str) -> LabeledFitReport:
+    """The labeled counterpart of ``_run_arm``: fit + holdout-eval on real rows.
+
+    Loads every injected hit (labeled or not) for one label stream from the
+    hub join, replays the full ranking path under a parameter grid, and
+    returns the fitted-vs-logged-baseline comparison #17198's ship gate needs.
+    """
+    rows = [
+        replay_row_from_signal_row(row)
+        for row in store.fetch_replay_rows(label_source=label_source)
+    ]
+    return fit_and_evaluate(rows, default_replay_grid())
 
 
 # --------------------------------------------------------------------------- #
@@ -298,3 +433,63 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
             await client.query("MATCH (n) DETACH DELETE n")
         finally:
             await client.close()
+
+
+def test_recall_benchmark_labeled_fit(temp_db: HubDatabase) -> None:
+    """Precision-side benchmark: fit/eval on real labeled rows from hub tables.
+
+    Exercises the full labeled pipeline against the REAL promoted tables
+    (hits ⋈ injected outcomes ⋈ requests, LEFT JOIN digest labels): planted
+    rows where the logged ranking inverts usefulness, a per-project
+    partial-pooling split, IPS position-propensity weighting with unlabeled
+    rows in the denominators, and replay over the SearchService blend
+    ordering (temporal decay + ranking_mode), not find_related_memory_ids.
+    """
+    store = RecallSignalStore(temp_db)
+    _seed_labeled_signal_rows(store)
+
+    report = _run_labeled_fit(store, label_source="digest")
+
+    print("\n=== Labeled recall fit (gobby #17197) ===")
+    print(
+        f"rows={report.rows_total} labeled={report.rows_labeled} "
+        f"train_requests={report.train_requests} eval_requests={report.eval_requests}"
+    )
+    print(f"fitted pooled: {report.fitted.pooled}")
+    print(f"project pairs: {report.fitted.project_pairs}")
+    print(
+        f"holdout: baseline={report.baseline_eval.accuracy:.3f} "
+        f"fitted={report.fitted_eval.accuracy:.3f} "
+        f"(pairs={report.fitted_eval.pair_count})"
+    )
+
+    # All seeded rows come back through the join; unlabeled rows are present
+    # (propensity denominators) but never form pairs.
+    assert report.rows_total == 24
+    assert report.rows_labeled == 16
+    assert report.train_requests == 4
+    assert report.eval_requests == 4
+
+    # The fit recovers a shorter half-life and must beat the logged-params
+    # baseline on the per-project holdout (the #17198 gate comparison).
+    assert report.fitted.pooled.half_life_days == 7.0
+    assert report.baseline_eval.accuracy == pytest.approx(0.0)
+    assert report.fitted_eval.accuracy == pytest.approx(1.0)
+    assert set(report.fitted_eval.per_project) == {"proj-fit-a", "proj-fit-b"}
+    for accuracy in report.fitted_eval.per_project.values():
+        assert 0.0 <= accuracy <= 1.0
+
+    # Label streams stay separable: asking for judge labels finds the same
+    # feature rows but zero labels — digest labels never leak into that fit.
+    judge_rows = [
+        replay_row_from_signal_row(row) for row in store.fetch_replay_rows(label_source="llm_judge")
+    ]
+    assert len(judge_rows) == 24
+    assert all(row.judge_useful is None for row in judge_rows)
+
+    # Full-ranking-path features drove the replay (not graph traversal).
+    fit_rows = [
+        replay_row_from_signal_row(row) for row in store.fetch_replay_rows(label_source="digest")
+    ]
+    assert all(row.ranking_mode == "semantic_only" for row in fit_rows)
+    assert all(row.temporal_decay_factor is not None for row in fit_rows)

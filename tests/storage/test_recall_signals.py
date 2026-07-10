@@ -316,6 +316,123 @@ class TestFitRowJoin:
         assert rows == []
 
 
+class TestReplayRowJoin:
+    """fetch_replay_rows: the #17197 harness loader (LEFT JOIN labels)."""
+
+    def _seed(self, store: RecallSignalStore) -> None:
+        store.insert_signal_event(_event())
+        store.record_injection_outcomes(
+            [
+                {
+                    "session_id": "sess-1",
+                    "recall_request_id": "req-1",
+                    "memory_id": "mem-1",
+                    "outcome": "injected",
+                    "injection_position": 1,
+                    "injection_group": "context",
+                    "caller": "memory.recall",
+                },
+                {
+                    "session_id": "sess-1",
+                    "recall_request_id": "req-1",
+                    "memory_id": "mem-2",
+                    "outcome": "injected",
+                    "injection_position": 0,
+                    "injection_group": "fact",
+                    "caller": "memory.recall",
+                },
+            ]
+        )
+        # Only mem-2 is labeled, and only in the digest stream.
+        store.insert_usefulness_label(
+            {
+                "session_id": "sess-1",
+                "recall_request_id": "req-1",
+                "memory_id": "mem-2",
+                "label_source": "digest",
+                "judge_useful": True,
+                "judge_protocol_version": "17195-digest-v1",
+                "position_randomized": False,
+                "length_controlled": False,
+                "labeled_at": "2026-07-09T13:00:00+00:00",
+            }
+        )
+
+    def test_returns_unlabeled_injected_rows_with_null_label(
+        self, store: RecallSignalStore
+    ) -> None:
+        self._seed(store)
+
+        rows = store.fetch_replay_rows(label_source="digest")
+
+        # Both injected hits come back — the unlabeled one feeds propensity
+        # denominators (never-retrieved/unlabeled ≠ negative).
+        assert [row["memory_id"] for row in rows] == ["mem-1", "mem-2"]
+        unlabeled, labeled = rows
+        assert unlabeled["judge_useful"] is None
+        assert unlabeled["label_source"] is None
+        assert unlabeled["injection_position"] == 1
+        assert labeled["judge_useful"] is True
+        assert labeled["label_source"] == "digest"
+        assert labeled["injection_group"] == "fact"
+        # Request-level replay context is attached.
+        assert labeled["weighting"] == {"graph_edge_weighting": True}
+        assert labeled["graph_synthetic_similarity_discount"] == pytest.approx(0.9)
+
+    def test_label_streams_stay_separable(self, store: RecallSignalStore) -> None:
+        self._seed(store)
+
+        rows = store.fetch_replay_rows(label_source="llm_judge")
+
+        # Digest labels never leak into a judge-stream fit: same feature
+        # rows, zero labels.
+        assert len(rows) == 2
+        assert all(row["judge_useful"] is None for row in rows)
+
+    def test_latest_label_wins_within_stream(self, store: RecallSignalStore) -> None:
+        self._seed(store)
+        store.insert_usefulness_label(
+            {
+                "session_id": "sess-1",
+                "recall_request_id": "req-1",
+                "memory_id": "mem-2",
+                "label_source": "digest",
+                "judge_useful": False,
+                "judge_protocol_version": "17195-digest-v2",
+                "position_randomized": False,
+                "length_controlled": False,
+                "labeled_at": "2026-07-10T13:00:00+00:00",
+            }
+        )
+
+        rows = store.fetch_replay_rows(label_source="digest")
+
+        labeled = [row for row in rows if row["memory_id"] == "mem-2"]
+        assert len(labeled) == 1
+        assert labeled[0]["judge_useful"] is False
+        assert labeled[0]["judge_protocol_version"] == "17195-digest-v2"
+
+    def test_excludes_filtered_outcomes_and_scopes_by_project(
+        self, store: RecallSignalStore
+    ) -> None:
+        store.insert_signal_event(_event())
+        store.record_injection_outcomes(
+            [
+                {
+                    "session_id": "sess-1",
+                    "recall_request_id": "req-1",
+                    "memory_id": "mem-1",
+                    "outcome": "filtered",
+                    "drop_reason": "already_injected",
+                    "caller": "memory.recall",
+                },
+            ]
+        )
+
+        assert store.fetch_replay_rows(label_source="digest") == []
+        assert store.fetch_replay_rows(label_source="digest", project_id="proj-1") == []
+
+
 class TestJsonlBackfill:
     def test_load_signal_events_jsonl(self, store: RecallSignalStore, tmp_path: Path) -> None:
         path = tmp_path / "recall_signal.jsonl"

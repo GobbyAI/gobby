@@ -369,3 +369,67 @@ class RecallSignalStore:
         )
         rows = cursor.fetchall()
         return [{**dict(row), "weighting": _json_value(row["weighting"])} for row in rows]
+
+    def fetch_replay_rows(
+        self,
+        *,
+        label_source: str,
+        project_id: str | None = None,
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        """Return ALL injected hits with an optional label from one source.
+
+        The offline replay/fit harness (``gobby.memory.recall_fit``, #17197)
+        needs every injected row — labeled rows form preference pairs,
+        unlabeled rows feed position-propensity denominators. Hence LEFT JOIN
+        on ``recall_usefulness`` where ``fetch_fit_rows`` inner-joins.
+
+        ``label_source`` is required: the contract forbids silently mixing
+        label streams (digest vs llm_judge) in a fit. When a pair carries
+        several append-only label rows under that source, the newest
+        ``labeled_at`` wins. ``judge_useful`` is NULL for unlabeled rows.
+        """
+        conditions = ["o.outcome = 'injected'"]
+        params: list[Any] = [label_source]
+        if project_id is not None:
+            conditions.append("r.project_id = %s")
+            params.append(project_id)
+        params.append(limit)
+
+        cursor = self.db.execute(
+            f"""
+            SELECT h.session_id, h.recall_request_id, h.memory_id, h.project_id,
+                   h.rank, h.search_via, h.similarity, h.raw_semantic_score,
+                   h.temporal_decay_factor, h.ranking_score, h.ranking_mode,
+                   h.graph_score, h.edge_cosine, h.edge_support_norm,
+                   h.edge_weight_blend, h.edge_decay_factor,
+                   o.injection_position, o.injection_group, o.turn_seq,
+                   u.label_source, u.judge_useful, u.judge_confidence,
+                   u.judge_protocol_version,
+                   r.rrf_applied, r.weighting, r.caller,
+                   r.graph_synthetic_similarity_discount
+            FROM recall_signal_hits h
+            JOIN recall_injection_outcomes o
+              ON o.recall_request_id = h.recall_request_id
+             AND o.memory_id = h.memory_id
+            JOIN recall_signal_requests r
+              ON r.session_id = h.session_id
+             AND r.recall_request_id = h.recall_request_id
+            LEFT JOIN LATERAL (
+                SELECT label_source, judge_useful, judge_confidence,
+                       judge_protocol_version
+                FROM recall_usefulness u
+                WHERE u.recall_request_id = h.recall_request_id
+                  AND u.memory_id = h.memory_id
+                  AND u.label_source = %s
+                ORDER BY u.labeled_at DESC, u.id DESC
+                LIMIT 1
+            ) u ON TRUE
+            WHERE {" AND ".join(conditions)}
+            ORDER BY h.recall_request_id, h.rank
+            LIMIT %s
+            """,
+            tuple(params),
+        )
+        rows = cursor.fetchall()
+        return [{**dict(row), "weighting": _json_value(row["weighting"])} for row in rows]
