@@ -72,6 +72,13 @@ pub struct WikiCompileOptions {
     /// Set by `gwiki upkeep` for LLM-proposed concept pages; interactive
     /// compiles leave it false.
     pub mark_candidate: bool,
+    /// Skip the existing-target frontmatter-title identity check (#17804).
+    /// Set by `gwiki upkeep` when its page-disposition resolution already
+    /// decided to merge a cluster into an existing page whose title is not
+    /// the cluster topic (near-duplicate merges, case-variant key matches;
+    /// #17727). Interactive targeted compiles leave it false and keep the
+    /// full protection.
+    pub allow_target_identity_mismatch: bool,
 }
 
 impl Default for WikiCompileOptions {
@@ -84,6 +91,7 @@ impl Default for WikiCompileOptions {
             extra_tags: Vec::new(),
             persist_checkpoint: true,
             mark_candidate: false,
+            allow_target_identity_mismatch: false,
         }
     }
 }
@@ -148,7 +156,9 @@ pub fn compile_to_wiki_with_options(
         });
     }
     let target_page = normalize_target_page(session.scope.root(), request.target_page.as_deref())?;
-    if let Some(target_page) = target_page.as_ref() {
+    if let Some(target_page) = target_page.as_ref()
+        && !options.allow_target_identity_mismatch
+    {
         validate_existing_target_identity(target_page, &request.topic)?;
     }
     let write_intent = request.write_intent;
@@ -267,7 +277,9 @@ pub fn compile_to_wiki_with_options(
         if let Some(parent) = target_page.parent() {
             ensure_compile_target_parent_inside_vault(vault_root, parent)?;
         }
-        validate_existing_target_identity(target_page, &handoff.bundle.topic)?;
+        if !options.allow_target_identity_mismatch {
+            validate_existing_target_identity(target_page, &handoff.bundle.topic)?;
+        }
     }
     let article_policy = if write_intent || existing_page_is_machine_owned(&article.path)? {
         WritePolicy::AllowOverwriteAfterMerge

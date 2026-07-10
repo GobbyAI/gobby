@@ -728,6 +728,42 @@ fn explicit_target_with_different_title_is_never_overwritten() {
 }
 
 #[test]
+fn allow_target_identity_mismatch_permits_upkeep_merge_into_existing_page() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Compile evidence.\n").expect("note written");
+    let target = PathBuf::from("knowledge/topics/unrelated.md");
+    let page_path = scope.root().join(&target);
+    std::fs::create_dir_all(page_path.parent().expect("target parent")).expect("target dir");
+    let original = "---\ntitle: Unrelated Topic\nsynthesis_mode: daemon\n---\n\nOriginal body.\n";
+    std::fs::write(&page_path, original).expect("page written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let outcome = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Requested Topic".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: Some(target.clone()),
+            write_intent: true,
+        },
+        WikiCompileOptions {
+            allow_target_identity_mismatch: true,
+            ..WikiCompileOptions::default()
+        },
+        None,
+    )
+    .expect("upkeep-style merge compiles into the mismatched target");
+
+    assert_eq!(outcome.article_path, scope.root().join(&target));
+    let merged = std::fs::read_to_string(&page_path).expect("page rewritten");
+    assert_ne!(merged, original, "merge must rewrite the target page");
+    assert!(merged.contains("Requested Topic"), "{merged}");
+}
+
+#[test]
 fn explicit_target_identity_is_rechecked_after_generation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

@@ -891,6 +891,11 @@ fn compile_cluster(
         None => true,
         Some(page) => crate::lifecycle::page_is_candidate(vault_root, page),
     };
+    // An Update disposition is upkeep's own identity decision: near-duplicate
+    // merges (and case-variant key matches) deliberately compile a cluster
+    // into an existing page whose title is not the cluster topic, so the
+    // targeted-compile identity check (#17804) must not veto it.
+    let allow_target_identity_mismatch = target_page.is_some();
 
     let outcome = compile_to_wiki_with_options(
         &mut session,
@@ -908,6 +913,7 @@ fn compile_cluster(
             extra_tags: vec![ENTITY_TAG.to_string()],
             persist_checkpoint: false,
             mark_candidate,
+            allow_target_identity_mismatch,
         },
         generator,
     )?;
