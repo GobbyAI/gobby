@@ -11,14 +11,102 @@ Exercises the real AuthMixin._authenticate method with all code paths:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from websockets.http11 import Response
 
 from gobby.servers.websocket.auth import AuthMixin
+from gobby.servers.websocket.models import WebSocketConfig
+from gobby.servers.websocket.server import WebSocketServer
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+
+
+async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.config.app import DaemonConfig
+    from gobby.runner_init import servers as runner_servers
+
+    auth_callback = AsyncMock(
+        side_effect=lambda token: "local-cli" if token == "daemon-token" else None
+    )
+    websocket_init: dict[str, object] = {}
+
+    class FakeHTTPServer:
+        auth_service_enabled = True
+
+        def __init__(self, *, services: object, **_kwargs: object) -> None:
+            self.services = services
+            self.auth_service = SimpleNamespace(
+                enabled=self.auth_service_enabled,
+                verify_ws_token=auth_callback,
+            )
+            self._internal_manager = object()
+            self.broadcaster = SimpleNamespace(websocket_server=None)
+
+        def set_runner_getter(self, getter: object) -> None:
+            self.runner_getter = getter
+
+    class FakeWebSocketServer:
+        def __init__(self, **kwargs: object) -> None:
+            websocket_init.update(kwargs)
+
+    runner = MagicMock()
+    runner.config = DaemonConfig(websocket={"enabled": True})
+    runner.codex_client = None
+    runner.wake_dispatcher = MagicMock()
+    runner.cron_scheduler = None
+    runner.system_automation_loop = None
+    runner.communications_manager = None
+    runner.pipeline_executor = None
+    runner.message_processor = None
+    runner.agent_lifecycle_monitor = None
+    runner._dev_mode = False
+
+    monkeypatch.setattr(runner_servers, "HTTPServer", FakeHTTPServer)
+    monkeypatch.setattr(runner_servers, "WebSocketServer", FakeWebSocketServer)
+    monkeypatch.setattr(runner_servers, "set_app_context", MagicMock())
+    monkeypatch.setattr(
+        runner_servers.WebChatRuntimeManager, "__init__", lambda self, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "gobby.runner_broadcasting.setup_agent_event_broadcasting",
+        lambda _server: None,
+    )
+
+    runner_servers.init_servers(runner)
+
+    wired_callback = websocket_init.get("auth_callback")
+    assert wired_callback is auth_callback
+
+    auth_server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=wired_callback,
+    )
+    websocket = _make_ws()
+    missing = await auth_server._authenticate(websocket, _make_request())
+    accepted = await auth_server._authenticate(
+        websocket,
+        _make_request("Bearer daemon-token"),
+    )
+
+    assert missing is not None
+    assert missing.status_code == 401
+    assert accepted is None
+    assert websocket.user_id == "local-cli"
+    auth_callback.assert_awaited_once_with("daemon-token")
+
+    websocket_init.clear()
+    FakeHTTPServer.auth_service_enabled = False
+    runner_servers.init_servers(runner)
+
+    assert websocket_init.get("auth_callback") is None
 
 
 class ConcreteAuthServer(AuthMixin):

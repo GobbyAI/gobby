@@ -4,9 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer, websockets_logger
 
 pytestmark = pytest.mark.unit
+
+
+def test_default_bind_is_localhost() -> None:
+    assert WebSocketConfig().host == "localhost"
 
 
 @pytest.mark.asyncio

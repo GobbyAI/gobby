@@ -572,3 +572,94 @@ Test gaps: none for the five named 3.2 acceptance items. Focused regression
 coverage also proves public-route exemptions, disabled mode, logout, config
 masking, startup ordering, CLI removal/reset, and token provisioning remain
 intact.
+
+## 2026-07-10 — #17797 Wire WebSocket auth and browser proxy bearer bridge
+
+Session: #8117
+
+Plan:
+
+1. Inspect standalone WebSocket construction, handshake authentication, the
+   HTTP `/ws` proxy, AuthService credential APIs, and adjacent tests with
+   gcode; preserve concurrent #17757 work.
+2. Add the named standalone wiring and proxy cookie-bridge acceptance tests,
+   plus a localhost fallback assertion, then capture the exact pre-change red
+   failure.
+3. Wire `AuthService.verify_ws_token` into the standalone server when auth is
+   enabled; authenticate proxy upgrades before upstream connection and inject
+   the daemon bearer token into that upstream connection.
+4. Run minimal green, refactor/final-green focused regressions, lint, strict
+   typing, security, test-quality, build, and source-size checks; commit and
+   close.
+
+Test judgment:
+
+- Runner-construction integration plus the standalone server's handshake
+  authenticator prove rejection and bearer acceptance through the callback
+  supplied during initialization.
+- ASGI endpoint tests prove `/ws` closes with 4401 before proxying for missing
+  credentials and bridges both a session cookie and bearer header into one
+  daemon-owned upstream bearer token.
+- A focused unit assertion proves the fallback WebSocket bind remains
+  localhost.
+
+Implemented:
+
+- Runner initialization now supplies `AuthService.verify_ws_token` to the
+  standalone WebSocket server exactly when shared authentication is enabled;
+  disabled mode retains the local-first callback-free handshake.
+- Both `/ws` endpoint shapes authenticate the incoming WebSocket connection
+  through AuthService before opening an upstream connection. Missing or invalid
+  credentials close with code 4401, while a missing daemon token after a valid
+  browser credential closes with 1011.
+- Authenticated proxy connections inject the install-scoped daemon token using
+  websockets 16.0 `additional_headers`. Disabled-auth and Vite HMR proxy paths
+  retain their header-free connection shape.
+- Widened the shared request-authentication boundary from Starlette `Request`
+  to its `HTTPConnection` base so HTTP requests and WebSocket upgrades use the
+  same typed credential parser.
+- Corrected the standalone server example to bind to `localhost`; the
+  `WebSocketConfig` default was already localhost and now has an explicit
+  regression assertion.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/websocket/test_auth.py::test_wired_callback_rejects_and_accepts
+  tests/servers/test_ws_proxy_auth.py::test_proxy_rejects_missing_credentials
+  tests/servers/test_ws_proxy_auth.py::test_proxy_cookie_bridge
+  tests/servers/test_ws_proxy_auth.py::test_proxy_bearer_bridge
+  tests/servers/websocket/test_server.py::test_default_bind_is_localhost -q`
+  collected 5 tests and failed the four new auth behaviors: callback was absent,
+  bare proxy traffic closed 1011, and both accepted proxy paths omitted
+  `additional_headers`. The pre-existing localhost default assertion passed.
+- Minimal green: the same exact command passed all 5 tests after callback
+  wiring, pre-proxy authentication, and upstream bearer injection.
+- Refactor/final green: the same exact command passed all 5 tests after keeping
+  the existing header-free connection signature for disabled-auth and HMR
+  proxy traffic and exercising the real standalone WebSocket server
+  authenticator.
+
+Additional validation:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/websocket/test_auth.py tests/servers/websocket/test_server.py
+  tests/servers/test_ws_proxy_auth.py tests/servers/test_app_factory_ui_modes.py
+  tests/servers/test_auth_service.py tests/servers/test_http_middleware.py -q`
+  passed all 49 focused regression tests without warnings.
+- `uv run ruff format --check` and `uv run ruff check` passed on all 7 touched
+  source and test files.
+- `uv run mypy --strict` passed on all 4 touched production files.
+- `uv run bandit -q -c pyproject.toml` found no issues in the 4 touched
+  production files.
+- `uv run gobby test-quality audit ... --baseline
+  .gobby/test-quality-baseline.json --fail-on-new --min-severity high` scanned
+  29 tests across the 3 touched test files and reported zero issues.
+- `uv build` successfully built the source distribution and wheel.
+- Every touched non-test Python file remains below 1,000 lines; the largest is
+  `src/gobby/servers/websocket/server.py` at 433 lines, so no refactor task was
+  required.
+
+Test gap: live-daemon end-to-end coverage belongs to dependent task #17800.
+This leaf covers its construction, handshake, ASGI endpoint, proxy transport,
+shared credential parsing, and HMR compatibility boundaries in isolation.

@@ -63,7 +63,18 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
         target = f"ws://localhost:{ws_port}/{path}"
         if query:
             target += f"?{query}"
-        await _proxy_websocket(websocket, target)
+
+        bearer_token: str | None = None
+        if server.auth_service.enabled:
+            if not server.auth_service.is_request_authenticated(websocket):
+                await websocket.close(code=4401)
+                return
+            bearer_token = server.auth_service.local_token()
+            if bearer_token is None:
+                await websocket.close(code=1011)
+                return
+
+        await _proxy_websocket(websocket, target, bearer_token=bearer_token)
 
     @app.websocket("/ws")
     async def ws_proxy_root(websocket: WebSocket) -> None:
@@ -72,15 +83,29 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
     logger.debug(f"WebSocket proxy mounted at /ws -> localhost:{ws_port}")
 
 
-async def _proxy_websocket(websocket: WebSocket, target: str) -> None:
+async def _proxy_websocket(
+    websocket: WebSocket,
+    target: str,
+    *,
+    bearer_token: str | None = None,
+) -> None:
     import websockets
 
     try:
         requested_subprotocols = _requested_websocket_subprotocols(websocket.headers)
-        async with websockets.connect(
-            target,
-            subprotocols=requested_subprotocols or None,
-        ) as backend:
+        if bearer_token:
+            backend_connection = websockets.connect(
+                target,
+                subprotocols=requested_subprotocols or None,
+                additional_headers=[("Authorization", f"Bearer {bearer_token}")],
+            )
+        else:
+            backend_connection = websockets.connect(
+                target,
+                subprotocols=requested_subprotocols or None,
+            )
+
+        async with backend_connection as backend:
             await websocket.accept(subprotocol=getattr(backend, "subprotocol", None))
 
             async def client_to_backend() -> None:

@@ -61,7 +61,7 @@ class WebSocketServer(
 
     Example:
         ```python
-        config = WebSocketConfig(host="0.0.0.0", port=60888)
+        config = WebSocketConfig(host="localhost", port=60888)
 
         async with WebSocketServer(config, mcp_manager) as server:
             await server.serve_forever()

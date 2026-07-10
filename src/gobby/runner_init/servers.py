@@ -129,6 +129,11 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.websocket_server = WebSocketServer(
             config=websocket_config,
             mcp_manager=runner.mcp_proxy,
+            auth_callback=(
+                runner.http_server.auth_service.verify_ws_token
+                if runner.http_server.auth_service.enabled
+                else None
+            ),
             session_manager=runner.session_manager,
             db_executor=runner.db_executor,
             daemon_config=runner.config,

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from starlette.requests import Request
+from starlette.requests import HTTPConnection
 
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
@@ -89,7 +89,7 @@ class AuthService:
     async def verify_ws_token(self, token: str) -> str | None:
         return "local-cli" if self.verify_bearer(token) else None
 
-    def is_request_authenticated(self, request: Request) -> bool:
+    def is_request_authenticated(self, request: HTTPConnection) -> bool:
         authorization = request.headers.get("Authorization")
         if authorization is not None:
             parts = authorization.split(maxsplit=1)
