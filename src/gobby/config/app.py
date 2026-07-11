@@ -14,7 +14,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gobby.config._loading import (
@@ -559,14 +558,12 @@ def load_config(
             config_path = Path(config_file)
             if config_path.exists() and config_path.name != "bootstrap.yaml":
                 try:
-                    with open(config_path) as f:
-                        file_dict = yaml.safe_load(f)
-                except (OSError, yaml.YAMLError) as e:
+                    file_dict = load_yaml(str(config_path), secret_resolver=secret_resolver)
+                except (OSError, ValueError) as e:
                     logger.warning("Ignoring unreadable config file %s: %s", config_path, e)
                 else:
-                    if isinstance(file_dict, dict):
-                        _reject_removed_file_config_sections(file_dict, config_path)
-                        deep_merge(config_dict, file_dict)
+                    _reject_removed_file_config_sections(file_dict, config_path)
+                    deep_merge(config_dict, file_dict)
 
         # Layer 3: DB values (runtime overrides via config_store)
         delete_stale_default_feature_candidate_rows(config_store)

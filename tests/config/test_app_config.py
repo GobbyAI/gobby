@@ -674,6 +674,84 @@ class TestLoadConfig:
         assert isinstance(config, DaemonConfig)
         assert "Ignoring unreadable config file" in caplog.text
 
+    def test_load_config_resolves_nested_layer_two_env_and_secret_values(
+        self,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Layer 2 resolves nested references before DaemonConfig validation."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text(
+            "memory:\n"
+            "  crossref_threshold: ${LAYER_TWO_THRESHOLD}\n"
+            "  recall_signal_log_path: $secret:LAYER_TWO_LOG_PATH\n"
+        )
+        monkeypatch.setenv("LAYER_TWO_THRESHOLD", "0.73")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        def resolve_secret(name: str) -> str | None:
+            return "/tmp/layer-two.jsonl" if name == "LAYER_TWO_LOG_PATH" else None
+
+        config = load_config(
+            config_file=str(config_file),
+            config_store=DummyConfigStore(),
+            secret_resolver=resolve_secret,
+        )
+
+        assert config.memory.crossref_threshold == 0.73
+        assert config.memory.recall_signal_log_path == "/tmp/layer-two.jsonl"
+
+    def test_load_config_surfaces_unresolved_layer_two_reference(
+        self,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An unresolved typed Layer 2 value warns and fails config validation."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text("memory:\n  crossref_threshold: $secret:MISSING_THRESHOLD\n")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        with (
+            caplog.at_level(logging.WARNING),
+            pytest.raises(
+                ValueError,
+                match="Configuration validation failed",
+            ),
+        ):
+            load_config(
+                config_file=str(config_file),
+                config_store=DummyConfigStore(),
+                secret_resolver=lambda _name: None,
+            )
+
+        assert "Unresolved secret '$secret:MISSING_THRESHOLD'" in caplog.text
+
+    def test_load_config_db_value_overrides_unresolved_layer_two_reference(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Layer 3 keeps precedence over its corresponding Layer 2 value."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text("memory:\n  crossref_threshold: $secret:MISSING_THRESHOLD\n")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {"memory.crossref_threshold": 0.81}
+
+        config = load_config(
+            config_file=str(config_file),
+            config_store=DummyConfigStore(),
+            secret_resolver=lambda _name: None,
+        )
+
+        assert config.memory.crossref_threshold == 0.81
+
     def test_load_config_rejects_removed_llm_providers_file_section(self, temp_dir: Path) -> None:
         """Legacy llm_providers file config now fails loudly."""
         config_file = temp_dir / "config.yaml"
