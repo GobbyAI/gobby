@@ -185,6 +185,25 @@ def read_shutdown_intent(
     return _record_from_marker_data(data, max_age_seconds=max_age_seconds)
 
 
+def recover_stale_restart_intent(
+    record: ShutdownIntentRecord,
+    *,
+    max_age_seconds: float,
+) -> ShutdownIntentRecord:
+    """Re-evaluate a consumed stale restart marker with a longer age window."""
+    if (
+        not record.stale
+        or record.raw is None
+        or record.raw.get("intent") != ShutdownIntent.RESTART.value
+    ):
+        return record
+
+    recovered = _record_from_marker_data(record.raw, max_age_seconds=max_age_seconds)
+    if recovered.stale or recovered.intent is not ShutdownIntent.RESTART:
+        return record
+    return recovered
+
+
 def read_active_shutdown_intent(
     *,
     max_age_seconds: float = 120.0,

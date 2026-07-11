@@ -22,8 +22,8 @@ from gobby.shutdown_intent import (
     ShutdownIntent,
     ShutdownIntentRecord,
     format_shutdown_source,
-    read_active_shutdown_intent,
     read_shutdown_intent,
+    recover_stale_restart_intent,
 )
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.workflows.summary_actions import (
@@ -946,20 +946,11 @@ def setup_signal_handlers(
     def _read_signal_shutdown_record() -> ShutdownIntentRecord:
         home = get_gobby_home()
         shutdown_record = read_shutdown_intent(home=home)
-        if (
-            shutdown_record.intent is ShutdownIntent.STOP
-            and shutdown_record.source == "external_sigterm"
-            and shutdown_record.sender_pid is None
-            and shutdown_record.timestamp is None
-            and shutdown_record.error is None
-        ):
-            active_record = read_active_shutdown_intent(home=home, max_age_seconds=120)
-            if (
-                active_record is not None
-                and not active_record.stale
-                and active_record.error is None
-            ):
-                return active_record
+        if shutdown_record.stale:
+            return recover_stale_restart_intent(
+                shutdown_record,
+                max_age_seconds=120,
+            )
         return shutdown_record
 
     def _make_handler(sig: signal.Signals) -> Callable[[], None]:

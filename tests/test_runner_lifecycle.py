@@ -1919,6 +1919,50 @@ class TestSignalHandlerBehavior:
             for record in caplog.records
         )
 
+    def test_signal_handler_recovers_consumed_thirty_second_restart_marker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_maintenance import setup_signal_handlers
+        from gobby.shutdown_intent import write_shutdown_intent
+
+        mock_loop = MagicMock()
+        captured_handler = None
+
+        def capture_handler(sig, handler):
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = handler
+
+        mock_loop.add_signal_handler = capture_handler
+        shutdown_callback = MagicMock()
+        shutdown_intent_callback = MagicMock()
+        marker_written_at = 1_000.0
+
+        with patch("gobby.shutdown_intent.time.time", return_value=marker_written_at):
+            write_shutdown_intent(
+                "cli_restart",
+                ShutdownIntent.RESTART,
+                sender_pid=123,
+                home=tmp_path,
+            )
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+            patch("gobby.shutdown_intent.time.time", return_value=marker_written_at + 30.0),
+        ):
+            setup_signal_handlers(
+                shutdown_callback,
+                shutdown_intent_callback=shutdown_intent_callback,
+            )
+            assert captured_handler is not None
+            captured_handler()
+
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
+        shutdown_callback.assert_called_once_with()
+        assert not (tmp_path / "shutdown_intent_active.json").exists()
+
     def test_signal_handler_still_shuts_down_when_intent_callback_fails(
         self,
         tmp_path: Path,

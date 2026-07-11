@@ -15,6 +15,7 @@ from gobby.shutdown_intent import (
     read_active_shutdown_intent,
     read_shutdown_intent,
     read_shutdown_source_record,
+    recover_stale_restart_intent,
     write_shutdown_intent,
 )
 
@@ -49,6 +50,74 @@ def test_read_shutdown_intent_consumes_stale_marker(tmp_path: Path) -> None:
     assert record.stale is True
     assert record.raw == payload
     assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("age_seconds", "expected_intent", "expected_stale"),
+    [
+        pytest.param(30.0, ShutdownIntent.RESTART, False, id="thirty-seconds"),
+        pytest.param(119.999, ShutdownIntent.RESTART, False, id="inside-boundary"),
+        pytest.param(120.0, ShutdownIntent.STOP, True, id="at-boundary"),
+    ],
+)
+def test_recover_consumed_restart_marker_with_extended_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    age_seconds: float,
+    expected_intent: ShutdownIntent,
+    expected_stale: bool,
+) -> None:
+    now = 1_000.0
+    monkeypatch.setattr("gobby.shutdown_intent.time.time", lambda: now)
+    marker = tmp_path / "shutdown_intent_active.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "source": "cli_restart",
+                "intent": "restart",
+                "sender_pid": 123,
+                "timestamp": now - age_seconds,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    consumed = read_shutdown_intent(home=tmp_path)
+    recovered = recover_stale_restart_intent(consumed, max_age_seconds=120.0)
+
+    assert consumed.stale is True
+    assert not marker.exists()
+    assert recovered.intent is expected_intent
+    assert recovered.stale is expected_stale
+
+
+@pytest.mark.parametrize("raw_intent", ["stop", "invalid"])
+def test_recover_consumed_marker_preserves_non_restart_safety(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_intent: str,
+) -> None:
+    now = 1_000.0
+    monkeypatch.setattr("gobby.shutdown_intent.time.time", lambda: now)
+    marker = tmp_path / "shutdown_intent_active.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "source": "cli_stop",
+                "intent": raw_intent,
+                "sender_pid": 123,
+                "timestamp": now - 30.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    consumed = read_shutdown_intent(home=tmp_path)
+    recovered = recover_stale_restart_intent(consumed, max_age_seconds=120.0)
+
+    assert recovered is consumed
+    assert recovered.intent is ShutdownIntent.STOP
+    assert recovered.stale is True
 
 
 def test_read_shutdown_intent_preserves_stale_marker_without_consume(tmp_path: Path) -> None:
