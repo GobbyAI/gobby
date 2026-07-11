@@ -1,0 +1,24 @@
+/* Markdown-rendering primitives shared by MarkdownBody consumers. */
+
+/* Wikilinks from the remarkWikilink plugin (plan wiki-obsidian-panel §2.3).
+   The hProperties className replaces Anchor's default classes, so these
+   rules carry the full link style. Unresolved keeps a permanent dashed
+   underline — a non-hue cue on top of the muted color (deutan-safe). */
+.wikilink {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.wikilink:hover {
+  text-decoration: underline;
+}
+
+.wikilink--unresolved {
+  color: var(--text-muted);
+  text-decoration: underline dashed;
+  text-underline-offset: 2px;
+}
+
+.wikilink--unresolved:hover {
+  text-decoration: underline dashed;
+}

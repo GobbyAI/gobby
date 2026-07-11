@@ -1,19 +1,54 @@
 import { memo, useMemo } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { marked } from 'marked'
+import type { PluggableList } from 'unified'
 
 import { codeBlockComponents } from '../chat/CodeBlock'
 
+const defaultRemarkPlugins: PluggableList = [remarkGfm]
+
+// The default sanitizer only keeps http/https/mailto/tel and relative URLs;
+// wikilink: URLs from the remarkWikilink plugin must survive it.
+function urlTransform(url: string): string {
+  return url.startsWith('wikilink:') ? url : defaultUrlTransform(url)
+}
+
 const MemoizedBlock = memo(
-  ({ content }: { content: string }) => (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={codeBlockComponents}>
+  ({
+    content,
+    plugins,
+    components,
+  }: {
+    content: string
+    plugins: PluggableList
+    components: Partial<Components>
+  }) => (
+    <ReactMarkdown remarkPlugins={plugins} components={components} urlTransform={urlTransform}>
       {content}
     </ReactMarkdown>
   ),
-  (prev, next) => prev.content === next.content,
+  (prev, next) =>
+    prev.content === next.content &&
+    prev.plugins === next.plugins &&
+    prev.components === next.components,
 )
 MemoizedBlock.displayName = 'MarkdownBody.MemoizedBlock'
+
+// Stable per-reference ids so the block key changes when a caller swaps the
+// extension props — content-equal cached blocks must re-render under a new
+// plugin or component set.
+let nextExtensionId = 1
+const extensionIds = new WeakMap<object, number>()
+function extensionIdentity(value: object | undefined): number {
+  if (!value) return 0
+  let id = extensionIds.get(value)
+  if (id === undefined) {
+    id = nextExtensionId++
+    extensionIds.set(value, id)
+  }
+  return id
+}
 
 function stableHash(s: string): string {
   let h = 0
@@ -112,9 +147,15 @@ function stripProtocolTags(text: string): string {
 export function MarkdownBody({
   content,
   id,
+  remarkPlugins,
+  components,
 }: {
   content: string
   id: string
+  /** Extra remark plugins appended after the default remarkGfm. */
+  remarkPlugins?: PluggableList
+  /** Component overrides merged over the default codeBlockComponents. */
+  components?: Partial<Components>
 }) {
   const blocks = useMemo(() => {
     const cleaned = stripProtocolTags(content)
@@ -122,10 +163,26 @@ export function MarkdownBody({
     return tokens.map((token) => token.raw)
   }, [content])
 
+  const mergedPlugins = useMemo<PluggableList>(
+    () =>
+      remarkPlugins?.length ? [...defaultRemarkPlugins, ...remarkPlugins] : defaultRemarkPlugins,
+    [remarkPlugins],
+  )
+  const mergedComponents = useMemo<Partial<Components>>(
+    () => (components ? { ...codeBlockComponents, ...components } : codeBlockComponents),
+    [components],
+  )
+  const extensionKey = `${extensionIdentity(remarkPlugins)}-${extensionIdentity(components)}`
+
   return (
     <>
       {blocks.map((block, i) => (
-        <MemoizedBlock key={`${id}-${i}-${stableHash(block)}`} content={block} />
+        <MemoizedBlock
+          key={`${id}-${i}-${stableHash(block)}-${extensionKey}`}
+          content={block}
+          plugins={mergedPlugins}
+          components={mergedComponents}
+        />
       ))}
     </>
   )
