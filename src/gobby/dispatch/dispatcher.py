@@ -176,7 +176,7 @@ async def _run_heartbeat_unlocked(
     for candidate in candidates:
         if _action_cap_reached(result, max_actions):
             return _cap_reached(result)
-        if await run_db(count_active_agents, resolved_db, project_id=project_id) >= cap:
+        if await run_db(count_active_agents, resolved_db) >= cap:
             return _cap_reached(result)
 
         snapshot_candidate = await run_db(
@@ -361,8 +361,8 @@ async def _execute_action_with_agent_cap(
         )
 
     spawn_failure: DispatchSpawnFailed | None = None
-    with db.transaction_immediate(AgentCapAdmission(project_id=project_id)):
-        if count_active_agents(db, project_id=project_id) >= cap:
+    with db.transaction_immediate(AgentCapAdmission(project_id=None)):
+        if count_active_agents(db) >= cap:
             mutex.release()
             return _AGENT_CAP_REACHED
 

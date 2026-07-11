@@ -739,28 +739,47 @@ async def test_heartbeat_reaps_stale_pending_runs_before_agent_cap(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_heartbeats_serialize_agent_cap_admission(
+async def test_concurrent_project_heartbeats_share_global_agent_cap(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """Concurrent heartbeats cannot spawn past the active-agent cap."""
+    """Concurrent project heartbeats cannot spawn past the global active-agent cap."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
     sync_bundled_agents(temp_db)
     first_task = _task(temp_db, sample_project, title="First dispatch", stage_state="in_progress")
-    second_task = _task(temp_db, sample_project, title="Second dispatch", stage_state="in_progress")
-    parent_session = SessionManager(temp_db).register(
+    other_project = LocalProjectManager(temp_db).create(name="other-dispatch-project")
+    other_project_dict = {"id": other_project.id}
+    second_task = _task(
+        temp_db,
+        other_project_dict,
+        title="Second dispatch",
+        stage_state="in_progress",
+    )
+    sessions = SessionManager(temp_db)
+    first_parent_session = sessions.register(
         external_id="dispatcher-parent",
         machine_id="machine-1",
         source="test",
         project_id=sample_project["id"],
     )
+    second_parent_session = sessions.register(
+        external_id="other-dispatcher-parent",
+        machine_id="machine-1",
+        source="test",
+        project_id=other_project.id,
+    )
     agents = LocalAgentRunManager(temp_db)
-    agents.create(parent_session_id=parent_session.id, provider="codex", prompt="existing")
+    agents.create(parent_session_id=first_parent_session.id, provider="codex", prompt="existing")
+    parent_sessions = {
+        first_task.id: first_parent_session.id,
+        second_task.id: second_parent_session.id,
+    }
 
     first_spawn_started = asyncio.Event()
     second_unlocked_entered = asyncio.Event()
@@ -778,7 +797,7 @@ async def test_concurrent_heartbeats_serialize_agent_cap_admission(
 
     async def fake_spawn_agent(action: SpawnAgentAction, **_kwargs: object) -> str:
         run = agents.create(
-            parent_session_id=parent_session.id,
+            parent_session_id=parent_sessions[action.task_id],
             provider="codex",
             prompt=action.prompt,
             task_id=action.task_id,
@@ -791,10 +810,10 @@ async def test_concurrent_heartbeats_serialize_agent_cap_admission(
             await release_first_spawn.wait()
         return run.id
 
-    async def run_dispatch() -> dispatcher.HeartbeatResult:
+    async def run_dispatch(project_id: str) -> dispatcher.HeartbeatResult:
         return await dispatcher.run_heartbeat(
             db=temp_db,
-            project_id=sample_project["id"],
+            project_id=project_id,
             max_active_agents=2,
             max_actions=1,
         )
@@ -802,11 +821,11 @@ async def test_concurrent_heartbeats_serialize_agent_cap_admission(
     monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", observed_run_heartbeat_unlocked)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
 
-    first = asyncio.create_task(run_dispatch())
+    first = asyncio.create_task(run_dispatch(sample_project["id"]))
     second: asyncio.Task[dispatcher.HeartbeatResult] | None = None
     try:
         await asyncio.wait_for(first_spawn_started.wait(), 5)
-        second = asyncio.create_task(run_dispatch())
+        second = asyncio.create_task(run_dispatch(other_project.id))
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(second_unlocked_entered.wait(), 0.1)
         release_first_spawn.set()
@@ -821,7 +840,9 @@ async def test_concurrent_heartbeats_serialize_agent_cap_admission(
     assert second_result.executed == 0
     assert second_result.cap_reached is True
     assert spawned_task_ids == [first_task.id]
+    assert original_count_active_agents(temp_db) == 2
     assert original_count_active_agents(temp_db, project_id=sample_project["id"]) == 2
+    assert original_count_active_agents(temp_db, project_id=other_project.id) == 0
     assert second_task.id not in spawned_task_ids
 
 
