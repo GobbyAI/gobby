@@ -592,14 +592,6 @@ export async function savePage(
   };
 }
 
-export async function createPage(
-  scope: WikiFetchScope,
-  path: string,
-  content: string,
-): Promise<WikiSaveResult> {
-  return savePage(scope, { path, content, mode: "create" });
-}
-
 export async function deletePage(scope: WikiFetchScope, path: string): Promise<WikiJson> {
   const envelope = await readEnvelope(`/api/wiki/delete${wikiQuery(scope)}`, {
     method: "POST",

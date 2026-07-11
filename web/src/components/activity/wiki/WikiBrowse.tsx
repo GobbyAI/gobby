@@ -1,7 +1,8 @@
 /**
  * Browse composition for the wiki and code modes (plan wiki-obsidian-panel
- * §3.1): pages fetch + node index, lazy graph fetch, wide/narrow layout with
- * persisted tree sizing, quick-open, and the tree/reader/backlinks wiring.
+ * §3.1/§3.2): pages fetch + node index, lazy graph fetch, wide/narrow layout
+ * with persisted tree sizing, quick-open, the tree/reader/backlinks wiring,
+ * and the edit/create editor takeover of the reader pane.
  */
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
@@ -11,6 +12,7 @@ import { ResizeHandle } from "../../chat/artifacts/ResizeHandle";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { WikiBacklinks } from "./WikiBacklinks";
+import { WikiPageEditor, type WikiEditorIntent } from "./WikiPageEditor";
 import { WikiPageTree } from "./WikiPageTree";
 import { WikiPageReader } from "./WikiPageReader";
 import { WikiQuickOpen } from "./WikiQuickOpen";
@@ -63,6 +65,8 @@ interface WikiBrowseProps {
   search: string;
   wide: boolean;
   actions: WikiTabActions;
+  /** Bumped by the shell after writes — refetches pages (and graph if loaded). */
+  refreshSeq?: number;
   onOpenGraph: () => void;
 }
 
@@ -73,6 +77,7 @@ export function WikiBrowse({
   search,
   wide,
   actions,
+  refreshSeq = 0,
   onOpenGraph,
 }: WikiBrowseProps) {
   const requestKey = `${scope.projectId ?? ""}:${scope.topic ?? ""}`;
@@ -84,6 +89,12 @@ export function WikiBrowse({
   const [graph, setGraph] = useState<{ key: string; payload: WikiGraphPayload } | null>(null);
   const [graphWanted, setGraphWanted] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  // The editor intent captures the selection it was opened over; any guarded
+  // navigation that changes the selection dismisses it by derivation.
+  const [editorIntent, setEditorIntent] = useState<{
+    intent: WikiEditorIntent;
+    at: string | null;
+  } | null>(null);
   const [treeWidth, setTreeWidth] = useState(loadTreeWidth);
   const [split, setSplit] = useState(loadSplit);
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
@@ -103,16 +114,18 @@ export function WikiBrowse({
     return () => {
       cancelled = true;
     };
-  }, [requestKey, retrySeq, scope]);
+  }, [refreshSeq, requestKey, retrySeq, scope]);
 
   // The graph payload is heavy — fetch it once, only after something asks
-  // for it (backlinks expand or the unresolved-mentions view).
+  // for it (backlinks expand or the unresolved-mentions view). The key folds
+  // in refreshSeq so an already-loaded graph refetches after writes.
+  const graphKey = `${requestKey}#${refreshSeq}`;
   useEffect(() => {
-    if (!graphWanted || graph?.key === requestKey) return;
+    if (!graphWanted || graph?.key === graphKey) return;
     let cancelled = false;
     fetchGraph(scope)
       .then((payload) => {
-        if (!cancelled) setGraph({ key: requestKey, payload });
+        if (!cancelled) setGraph({ key: graphKey, payload });
       })
       .catch(() => {
         // Backlinks degrade to linked mentions alone without the graph.
@@ -120,7 +133,7 @@ export function WikiBrowse({
     return () => {
       cancelled = true;
     };
-  }, [graph, graphWanted, requestKey, scope]);
+  }, [graph, graphKey, graphWanted, scope]);
 
   const pagesState: PagesState =
     pagesResult && pagesResult.key === requestKey ? pagesResult.state : { status: "loading" };
@@ -185,6 +198,13 @@ export function WikiBrowse({
     }
   };
 
+  const openCreate = useCallback(
+    (seed: string) => {
+      setEditorIntent({ intent: { kind: "create", seed }, at: selectedPath });
+    },
+    [selectedPath],
+  );
+
   const tree = (
     <WikiPageTree
       pages={pages}
@@ -195,25 +215,49 @@ export function WikiBrowse({
       error={pagesState.status === "error" ? pagesState.message : null}
       onRetry={() => setRetrySeq((seq) => seq + 1)}
       onOpen={openPage}
+      onCreateAt={openCreate}
       onDelete={handleDelete}
     />
   );
 
-  const reader = selectedPath ? (
+  const liveEditorIntent =
+    editorIntent && editorIntent.at === selectedPath ? editorIntent.intent : null;
+
+  const reader = liveEditorIntent ? (
+    <WikiPageEditor
+      key={
+        liveEditorIntent.kind === "edit"
+          ? `edit:${liveEditorIntent.path}`
+          : `create:${liveEditorIntent.seed}`
+      }
+      scope={scope}
+      intent={liveEditorIntent}
+      actions={actions}
+      onClose={() => setEditorIntent(null)}
+      onSaved={(path) => {
+        setEditorIntent(null);
+        if (path !== selectedPath) void nav.openPage(path);
+      }}
+    />
+  ) : selectedPath ? (
     <WikiPageReader
       scope={scope}
       path={selectedPath}
       nav={nav}
       nodeIndex={nodeIndex}
-      graph={graph?.key === requestKey ? graph.payload : null}
+      graph={graph?.key === graphKey ? graph.payload : null}
       onOpenGraph={onOpenGraph}
+      onToggleEdit={() =>
+        setEditorIntent({ intent: { kind: "edit", path: selectedPath }, at: selectedPath })
+      }
+      onCreate={openCreate}
       onDelete={handleDelete}
       footer={
         <WikiBacklinks
           scope={scope}
           path={selectedPath}
           nodeIndex={nodeIndex}
-          graph={graph?.key === requestKey ? graph.payload : null}
+          graph={graph?.key === graphKey ? graph.payload : null}
           onExpand={() => setGraphWanted(true)}
           onOpen={openPage}
         />

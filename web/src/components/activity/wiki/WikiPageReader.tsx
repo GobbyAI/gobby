@@ -23,6 +23,7 @@ import {
   breadcrumbSegments,
   codePathToSourcePath,
   resolveWikilinkTarget,
+  seedCreatePath,
   type WikiGraphPayload,
   type WikiNodeIndex,
 } from "./WikiTabModel";
@@ -89,8 +90,10 @@ interface WikiPageReaderProps {
   graph: WikiGraphPayload | null;
   onOpenGraph: () => void;
   onDelete?: (path: string) => void;
-  /** §3.2 wires editing; absent handler renders the toggle disabled. */
+  /** Edit toggle — hidden for read-only pages or when the host doesn't wire it. */
   onToggleEdit?: () => void;
+  /** Create-form opener; receives the prefilled path seed. */
+  onCreate?: (seed: string) => void;
   /** Rendered below the body — the backlinks section slot. */
   footer?: ReactNode;
 }
@@ -104,6 +107,7 @@ export function WikiPageReader({
   onOpenGraph,
   onDelete,
   onToggleEdit,
+  onCreate,
   footer,
 }: WikiPageReaderProps) {
   // Results are keyed by the request they answered; a key mismatch during
@@ -226,8 +230,14 @@ export function WikiPageReader({
   }, [detail, graph]);
 
   const sourcePath = codePathToSourcePath(path);
+  // code pages read-only: generated code/** pages expose no edit, delete, or
+  // create affordances (the backend rejects such writes anyway).
+  const readOnly = path.startsWith("code/");
   const kebabItems: QuickMenuItem[] = [
     { label: "Open in graph", onSelect: onOpenGraph },
+    ...(onCreate && !readOnly
+      ? [{ label: "New page", onSelect: () => onCreate(path.replace(/[^/]*$/, "")) }]
+      : []),
     { label: "Copy path", onSelect: () => void navigator.clipboard?.writeText(path) },
     ...(sourcePath
       ? [
@@ -237,7 +247,7 @@ export function WikiPageReader({
           },
         ]
       : []),
-    ...(onDelete && !path.startsWith("code/")
+    ...(onDelete && !readOnly
       ? [{ label: "Delete", destructive: true, onSelect: () => onDelete(path) }]
       : []),
   ];
@@ -284,15 +294,16 @@ export function WikiPageReader({
           })}
         </nav>
         <div className="ml-auto flex items-center gap-1">
-          <button
-            type="button"
-            className={ghostIconButton}
-            disabled={!onToggleEdit}
-            title={onToggleEdit ? "Edit page" : "Editing lands with the edit milestone"}
-            onClick={onToggleEdit}
-          >
-            Edit
-          </button>
+          {onToggleEdit && !readOnly ? (
+            <button
+              type="button"
+              className={ghostIconButton}
+              title="Edit page"
+              onClick={onToggleEdit}
+            >
+              Edit
+            </button>
+          ) : null}
           <QuickMenu items={kebabItems} menuLabel="Page actions" triggerLabel="Page actions" />
         </div>
       </div>
@@ -313,7 +324,18 @@ export function WikiPageReader({
         {detail && detail.status === "not_found" ? (
           <ActivityPanelEmpty
             heading="Page not found"
-            body={`“${path}” has not been created yet. Page creation lands with the edit milestone.`}
+            body={`“${path}” has not been created yet.`}
+            footer={
+              onCreate && !readOnly ? (
+                <button
+                  type="button"
+                  className="rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                  onClick={() => onCreate(seedCreatePath(path))}
+                >
+                  Create this page
+                </button>
+              ) : undefined
+            }
           />
         ) : null}
 
@@ -375,10 +397,18 @@ export function WikiPageReader({
             {missingTarget ? (
               <p
                 role="status"
-                className="mb-3 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground"
+                className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground"
               >
-                “{missingTarget}” has not been created yet. Page creation lands with the
-                edit milestone.
+                <span>“{missingTarget}” has not been created yet.</span>
+                {onCreate ? (
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-1.5 py-0.5 text-xs text-foreground hover:bg-muted"
+                    onClick={() => onCreate(seedCreatePath(missingTarget))}
+                  >
+                    Create this page
+                  </button>
+                ) : null}
               </p>
             ) : null}
 

@@ -67,10 +67,12 @@ describe("useWikiTabActions", () => {
 
     expect(saved).toMatchObject({ ok: false, conflict: true, code: "precondition_failed" });
     expect(onRefetch).not.toHaveBeenCalled();
-    expect(result.current.status.error).toMatch(/hash/i);
+    // Conflicts are caller-owned UX (§3.2 conflict panel / inline 409) — no
+    // parallel global error line.
+    expect(result.current.status.error).toBeNull();
   });
 
-  it("creates a page then navigates to it", async () => {
+  it("reports a create-mode save with a created message", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -80,16 +82,23 @@ describe("useWikiTabActions", () => {
         }),
       ),
     );
-    const onNavigate = vi.fn(async () => {});
+    const onRefetch = vi.fn(async () => {});
     const { result } = renderHook(() =>
-      useWikiTabActions({ scope: {}, wiki: makeWikiHelpers(), onNavigate }),
+      useWikiTabActions({ scope: {}, wiki: makeWikiHelpers(), onRefetch }),
     );
 
+    let saved: unknown;
     await act(async () => {
-      await result.current.createPageAndNavigate("knowledge/topics/example.md", "# New");
+      saved = await result.current.savePageAndRefresh({
+        path: "knowledge/topics/example.md",
+        content: "# New",
+        mode: "create",
+      });
     });
 
-    expect(onNavigate).toHaveBeenCalledWith("knowledge/topics/example.md");
+    expect(saved).toMatchObject({ ok: true, created: true });
+    expect(onRefetch).toHaveBeenCalledTimes(1);
+    expect(result.current.status.message).toMatch(/created/i);
   });
 
   it("runs compile through the kept useWiki helper with busy state", async () => {

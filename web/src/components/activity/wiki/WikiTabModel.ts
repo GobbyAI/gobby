@@ -248,3 +248,30 @@ export function wikiNodeVal(degree: number): number {
   const val = 2 + 3 * Math.sqrt(Math.max(degree, 0));
   return Math.min(val, WIKI_NODE_VAL_MAX);
 }
+
+const CREATE_PATH_PATTERN = /^[a-z0-9\-/_.]+$/;
+const CREATE_PATH_RULE =
+  "Paths must resolve under knowledge/, use a-z 0-9 - _ . /, and end in .md.";
+
+/** Mirrors gwiki write confinement: knowledge/**, markdown file, no traversal. */
+export function validateCreatePath(path: string): string | null {
+  const segments = path.split("/");
+  const name = segments[segments.length - 1] ?? "";
+  const traversal = segments.some(
+    (segment) => segment === "" || segment === "." || segment === "..",
+  );
+  const valid =
+    CREATE_PATH_PATTERN.test(path) &&
+    path.startsWith("knowledge/") &&
+    !traversal &&
+    name.endsWith(".md") &&
+    name !== ".md";
+  return valid ? null : CREATE_PATH_RULE;
+}
+
+/** Normalize a wikilink target or folder prefix into a create-form seed. */
+export function seedCreatePath(target: string): string {
+  const base = target.startsWith("knowledge/") ? target : `knowledge/${target}`;
+  if (base.endsWith("/") || base.endsWith(".md")) return base;
+  return `${base}.md`;
+}

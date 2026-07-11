@@ -225,6 +225,33 @@ it("handles \\"quoted\\" names", () => {
     assert report.issues == ()
 
 
+def test_member_access_test_is_not_a_test_declaration(tmp_path: Path) -> None:
+    """`x.test(...)` in comments or code is member access, not a test call."""
+    tests_dir = tmp_path / "web" / "src" / "__tests__"
+    tests_dir.mkdir(parents=True)
+    path = tests_dir / "sample.test.ts"
+    path.write_text(
+        """
+import { it, expect } from 'vitest'
+
+/**
+ * The conflict contract lives in WikiPageEditor.conflict.test.tsx (3.2.4).
+ */
+const HAS_PREFIX = /^a/.test("abc")
+
+it("uses a regex", () => {
+  expect(HAS_PREFIX).toBe(true)
+})
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 1
+    assert report.issues == ()
+
+
 def test_supported_test_suffixes_are_analyzed_without_unsupported_warnings(
     tmp_path: Path,
 ) -> None:

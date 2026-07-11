@@ -16,7 +16,9 @@ from gobby.test_quality._analyzer_scanner import (
 )
 from gobby.test_quality.models import AuditIssue
 
-_SCRIPT_TEST_CALL_RE = re.compile(r"\b(?P<name>it|test)(?P<modifier>\.\w+)?\s*\(")
+# The lookbehind rejects member access such as `/^a/.test(...)` or prose like
+# `foo.test.tsx (...)` in comments — test declarations are never dot-prefixed.
+_SCRIPT_TEST_CALL_RE = re.compile(r"(?<![.\w$])(?P<name>it|test)(?P<modifier>\.\w+)?\s*\(")
 _SCRIPT_ASSERTION_RE = re.compile(r"\b(?:expect|assert(?:\.\w+)?)\s*\(")
 _SCRIPT_SLEEP_RE = re.compile(r"\b(?:setTimeout|setInterval)\s*\(")
 

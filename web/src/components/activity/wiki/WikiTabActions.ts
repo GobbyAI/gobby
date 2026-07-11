@@ -8,7 +8,6 @@
 import { useCallback, useMemo, useState } from "react";
 
 import {
-  createPage,
   deletePage,
   launchResearch,
   savePage,
@@ -41,8 +40,6 @@ export interface UseWikiTabActionsOptions {
   wiki: WikiActionHelpers;
   /** Refetch hook fired after successful writes (page/pages/backlinks). */
   onRefetch?: () => Promise<void> | void;
-  /** Navigation hook fired after create (open the new page). */
-  onNavigate?: (path: string) => Promise<void> | void;
   /** Navigation hook fired after delete (leave the deleted page). */
   onNavigateBack?: () => Promise<void> | void;
 }
@@ -51,7 +48,6 @@ export interface WikiTabActions {
   status: WikiActionStatus;
   clearStatus: () => void;
   savePageAndRefresh: (request: WikiSaveRequest) => Promise<WikiSaveResult | null>;
-  createPageAndNavigate: (path: string, content: string) => Promise<boolean>;
   deletePageAndNavigateBack: (path: string) => Promise<boolean>;
   refreshIndex: () => Promise<void>;
   runCompile: () => Promise<void>;
@@ -67,7 +63,6 @@ export function useWikiTabActions({
   scope,
   wiki,
   onRefetch,
-  onNavigate,
   onNavigateBack,
 }: UseWikiTabActionsOptions): WikiTabActions {
   const [status, setStatus] = useState<WikiActionStatus>(IDLE_STATUS);
@@ -100,9 +95,15 @@ export function useWikiTabActions({
         const result = await savePage(scope, request);
         if (result.ok) {
           await onRefetch?.();
-          setStatus({ busy: null, message: `Saved ${request.path}`, error: null });
+          setStatus({
+            busy: null,
+            message: `${result.created ? "Created" : "Saved"} ${request.path}`,
+            error: null,
+          });
         } else {
-          setStatus({ busy: null, message: null, error: result.message });
+          // Conflicts are caller-owned UX (§3.2 conflict panel / inline 409);
+          // a parallel global error line would double-message them.
+          setStatus(IDLE_STATUS);
         }
         return result;
       } catch (error) {
@@ -115,24 +116,6 @@ export function useWikiTabActions({
       }
     },
     [onRefetch, scope],
-  );
-
-  const createPageAndNavigate = useCallback(
-    async (path: string, content: string): Promise<boolean> => {
-      const result = await run(
-        "create",
-        async () => {
-          const created = await createPage(scope, path, content);
-          if (!created.ok) throw new Error(created.message);
-          await onRefetch?.();
-          await onNavigate?.(created.path ?? path);
-          return created;
-        },
-        `Created ${path}`,
-      );
-      return result !== null;
-    },
-    [onNavigate, onRefetch, run, scope],
   );
 
   const deletePageAndNavigateBack = useCallback(
@@ -203,7 +186,6 @@ export function useWikiTabActions({
       status,
       clearStatus,
       savePageAndRefresh,
-      createPageAndNavigate,
       deletePageAndNavigateBack,
       refreshIndex,
       runCompile,
@@ -215,7 +197,6 @@ export function useWikiTabActions({
     [
       attachFile,
       clearStatus,
-      createPageAndNavigate,
       deletePageAndNavigateBack,
       ingestUrl,
       launchResearchRun,

@@ -585,3 +585,79 @@ export const browseGraphEnvelope: EnvelopeFixture = {
     },
   },
 };
+
+/** Watcher-reindexed Gobby variant — new hash + body (§3.2 conflict tests). */
+export const browseReadGobbyChangedEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "found",
+    requested: { kind: "path", value: "knowledge/concepts/gobby.md" },
+    wiki_path: "knowledge/concepts/gobby.md",
+    title: "Gobby",
+    content:
+      '---\ntitle: "Gobby"\nsource_kind: "concept"\ntags:\n  - gwiki\n---\n\n# Gobby\n\nGobby was reindexed by the watcher while an editor was open.\n',
+    content_format: "markdown",
+    content_hash: "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+    byte_len: 132,
+    truncated: false,
+    candidates: [],
+    degradations: [],
+  },
+};
+
+/** 409 body: mode="create" against an existing page (§3.2 inline conflict). */
+export const alreadyExistsBody = {
+  detail: {
+    ok: false,
+    command: "page-write",
+    status: "failed",
+    payload: { code: "already_exists" },
+    stderr: "",
+    error: {
+      type: "command",
+      returncode: 2,
+      message: "page already exists at knowledge/concepts/gobby.md",
+    },
+  },
+};
+
+/** not_found read — drives the §3.2 create-this-page affordance. */
+export const notFoundReadEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "not_found",
+    requested: { kind: "path", value: "knowledge/concepts/gwiki.md" },
+    candidates: [],
+    degradations: [],
+  },
+};
+
+/** Generated code page read — §3.2 read-only affordance tests. */
+export const browseReadCodeEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "found",
+    requested: { kind: "path", value: "code/_architecture.md" },
+    wiki_path: "code/_architecture.md",
+    title: "Architecture Overview",
+    content: "# Architecture Overview\n\nGenerated codewiki page.\n",
+    content_format: "markdown",
+    content_hash: "cc33",
+    byte_len: 50,
+    truncated: false,
+    candidates: [],
+    degradations: [],
+  },
+};

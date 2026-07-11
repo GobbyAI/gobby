@@ -61,6 +61,7 @@ interface ModeBodyProps {
   search: string;
   wide: boolean;
   actions: WikiTabActions;
+  refreshSeq: number;
   onOpenGraph: () => void;
 }
 
@@ -72,6 +73,7 @@ function ModeBody({
   search,
   wide,
   actions,
+  refreshSeq,
   onOpenGraph,
 }: ModeBodyProps) {
   const offline = summary.state === "unavailable";
@@ -104,6 +106,7 @@ function ModeBody({
       search={search}
       wide={wide}
       actions={actions}
+      refreshSeq={refreshSeq}
       onOpenGraph={onOpenGraph}
     />
   );
@@ -123,6 +126,8 @@ export const WikiTab = memo(function WikiTab({
   const [ingestOpen, setIngestOpen] = useState(false);
   const [ingestDraft, setIngestDraft] = useState("");
   const [wide, setWide] = useState(true);
+  // Bumped after successful writes so the browse pages/graph fetches re-run.
+  const [browseRefreshSeq, setBrowseRefreshSeq] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -172,8 +177,10 @@ export const WikiTab = memo(function WikiTab({
   const actions = useWikiTabActions({
     scope,
     wiki,
-    onRefetch: wiki.refresh,
-    onNavigate: (path) => nav.openPage(path),
+    onRefetch: async () => {
+      setBrowseRefreshSeq((seq) => seq + 1);
+      await wiki.refresh();
+    },
     onNavigateBack: () => nav.back(),
   });
 
@@ -340,6 +347,7 @@ export const WikiTab = memo(function WikiTab({
         search={search}
         wide={wide}
         actions={actions}
+        refreshSeq={browseRefreshSeq}
         onOpenGraph={handleOpenGraph}
       />
 
