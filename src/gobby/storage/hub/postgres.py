@@ -24,10 +24,13 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
+    BuildDryRunMutation,
     ChatAttachmentMutation,
     CronRunAdmission,
     Cursor,
     DispatchMutexRow,
+    GitHubIssueTriageMutation,
+    IntegrationWorkspaceMutex,
     LockAcquisitionOrderError,
     LockTarget,
     Row,
@@ -202,7 +205,7 @@ class PostgresHubDatabase:
             yield txn
 
     @contextmanager
-    def transaction_immediate(self, lock: LockTarget | None = None) -> Iterator[Transaction]:
+    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
         with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
             yield txn
 
@@ -638,12 +641,18 @@ def _validate_identifier(identifier: str) -> None:
 
 
 def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
+    if isinstance(lock, BuildDryRunMutation):
+        return (f"build_dry_run:{lock.project_id}",)
     if isinstance(lock, CronRunAdmission):
         return ("cron_run_admission",)
     if isinstance(lock, AgentCapAdmission):
         return (f"agent_cap_admission:{lock.project_id or '*'}",)
     if isinstance(lock, DispatchMutexRow):
         return (f"dispatch_mutex:{lock.task_id}",)
+    if isinstance(lock, GitHubIssueTriageMutation):
+        return (f"github_issue_triage:{lock.project_id}:{lock.repo}#{lock.issue_number}",)
+    if isinstance(lock, IntegrationWorkspaceMutex):
+        return (f"integration_workspace_mutex:{lock.integration_key}",)
     if isinstance(lock, SessionRegistration):
         return (
             "session_register:"

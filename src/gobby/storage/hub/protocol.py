@@ -10,11 +10,14 @@ from typing import Any, ClassVar, Literal, Protocol
 Row = Mapping[str, Any]
 
 __all__ = [
+    "BuildDryRunMutation",
     "Cursor",
     "ChatAttachmentMutation",
     "CronRunAdmission",
     "DispatchMutexRow",
     "HubDatabase",
+    "GitHubIssueTriageMutation",
+    "IntegrationWorkspaceMutex",
     "LockAcquisitionOrderError",
     "LockTarget",
     "Row",
@@ -53,6 +56,14 @@ class LockTarget(Protocol):
 
 
 @dataclass(frozen=True)
+class BuildDryRunMutation:
+    """Outer lock for a dry-run build and its nested task mutations."""
+
+    PRIORITY: ClassVar[int] = 50
+    project_id: str
+
+
+@dataclass(frozen=True)
 class AgentCapAdmission:
     """Serializes dispatcher admission against active-agent caps."""
 
@@ -65,6 +76,16 @@ class CronRunAdmission:
     """Serializes cron run admission against global active-run caps."""
 
     PRIORITY: ClassVar[int] = 100
+
+
+@dataclass(frozen=True)
+class GitHubIssueTriageMutation:
+    """Serializes task creation or update for one GitHub issue."""
+
+    PRIORITY: ClassVar[int] = 150
+    project_id: str
+    repo: str
+    issue_number: int
 
 
 @dataclass(frozen=True)
@@ -81,6 +102,14 @@ class DispatchMutexRow:
 
     PRIORITY: ClassVar[int] = 300
     task_id: str
+
+
+@dataclass(frozen=True)
+class IntegrationWorkspaceMutex:
+    """Serializes lease acquisition for one integration workspace."""
+
+    PRIORITY: ClassVar[int] = 350
+    integration_key: str
 
 
 @dataclass(frozen=True)
@@ -245,7 +274,7 @@ class HubDatabase(Protocol):
 
     def transaction_immediate(
         self,
-        lock: LockTarget | None = None,
+        lock: LockTarget,
     ) -> AbstractContextManager[Transaction]:
         """Open a write-intent transaction for a typed lock target."""
         ...

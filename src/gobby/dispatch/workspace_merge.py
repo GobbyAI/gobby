@@ -19,7 +19,7 @@ from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
@@ -612,7 +612,7 @@ def _local_target_path_if_checked_out(
 def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
     now = datetime.now(UTC)
     until = now + timedelta(seconds=MERGE_TTL_SECONDS)
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(IntegrationWorkspaceMutex(integration_key=key)) as conn:
         row = conn.execute(
             "SELECT lease_until, lease_holder FROM integration_workspace_mutex WHERE integration_key = %s",
             (key,),

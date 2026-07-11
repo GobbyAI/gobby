@@ -46,7 +46,7 @@ from gobby.storage.build_history import (
     best_effort_start_run,
     best_effort_update_run_context,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import BuildDryRunMutation, HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 
 _DRY_RUN_PLAN_TASK_ID = "dry-run:plan-file"
@@ -153,7 +153,7 @@ async def _build_dry_run(
 ) -> BuildResult:
     result: BuildResult | None = None
     try:
-        with db.transaction_immediate():
+        with db.transaction_immediate(BuildDryRunMutation(project_id=project_id)):
             result = await _build_impl(
                 input_ref,
                 opts,

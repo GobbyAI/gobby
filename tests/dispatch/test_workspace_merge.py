@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import threading
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -8,8 +12,12 @@ import pytest
 from gobby.build.workspaces import BuildWorkspaceError, _integration_branch
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
-from gobby.dispatch.workspace_merge import _non_gobby_status_lines, execute_merge_workspace
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.dispatch.workspace_merge import (
+    _acquire_integration_mutex,
+    _non_gobby_status_lines,
+    execute_merge_workspace,
+)
+from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -44,6 +52,77 @@ def _assert_worktree_removed(
 ) -> None:
     assert worktrees.get(worktree_id) is None
     assert not worktree_path.exists()
+
+
+class _LeaseTransaction:
+    def __init__(self, db: _ConcurrentLeaseDB, *, serialized: bool) -> None:
+        self._db = db
+        self._serialized = serialized
+        self._row: dict[str, str] | None = None
+
+    def execute(
+        self,
+        sql: str,
+        params: tuple[object, ...] = (),
+    ) -> _LeaseTransaction:
+        key = str(params[0])
+        if "SELECT lease_until" in sql:
+            with self._db.state_guard:
+                row = self._db.rows.get(key)
+                self._row = dict(row) if row is not None else None
+            if not self._serialized:
+                self._db.concurrent_reads.wait(timeout=1)
+            return self
+        if "INSERT INTO integration_workspace_mutex" in sql:
+            with self._db.state_guard:
+                self._db.rows[key] = {
+                    "lease_until": str(params[1]),
+                    "lease_holder": str(params[2]),
+                }
+            return self
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+    def fetchone(self) -> dict[str, str] | None:
+        return self._row
+
+
+class _ConcurrentLeaseDB:
+    def __init__(self) -> None:
+        self.concurrent_reads = threading.Barrier(2)
+        self.state_guard = threading.Lock()
+        self.transaction_guard = threading.Lock()
+        self.rows: dict[str, dict[str, str]] = {}
+        self.seen_locks: list[object | None] = []
+
+    @contextmanager
+    def transaction_immediate(
+        self,
+        lock: object | None = None,
+    ) -> Iterator[_LeaseTransaction]:
+        self.seen_locks.append(lock)
+        if lock is None:
+            yield _LeaseTransaction(self, serialized=False)
+            return
+        with self.transaction_guard:
+            yield _LeaseTransaction(self, serialized=True)
+
+
+async def test_integration_mutex_allows_exactly_one_concurrent_lease_holder() -> None:
+    db = _ConcurrentLeaseDB()
+    callers_ready = threading.Barrier(2)
+
+    def acquire() -> bool:
+        callers_ready.wait(timeout=1)
+        return _acquire_integration_mutex(db, "epic:123")  # type: ignore[arg-type]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: acquire(), range(2)))
+
+    assert sorted(results) == [False, True]
+    assert db.seen_locks == [
+        IntegrationWorkspaceMutex(integration_key="epic:123"),
+        IntegrationWorkspaceMutex(integration_key="epic:123"),
+    ]
 
 
 async def test_non_gobby_status_lines_ignores_gobby_paths_with_full_or_stripped_prefix() -> None:
