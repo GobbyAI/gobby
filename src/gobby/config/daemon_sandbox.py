@@ -1,5 +1,7 @@
 """Daemon-owned sandbox defaults for web chat and agents."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 __all__ = ["DaemonOwnedSandboxConfig"]
@@ -11,6 +13,14 @@ class DaemonOwnedSandboxConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="Enable sandboxing for daemon-owned runtimes in this category.",
+    )
+    mode: Literal["permissive", "restrictive"] = Field(
+        default="permissive",
+        description="Sandbox strictness level for daemon-owned runtimes.",
+    )
+    allow_network: bool = Field(
+        default=True,
+        description="Allow daemon-owned runtimes to access the network.",
     )
     extra_read_paths: list[str] = Field(
         default_factory=list,
