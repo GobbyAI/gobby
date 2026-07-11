@@ -263,16 +263,15 @@ def _normalize_bool(value: Any, field_name: str) -> bool:
 def _normalize_int(value: Any, field_name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"{field_name} must be an integer")
+    if value < 1:
+        raise ValueError(f"{field_name} must be greater than or equal to 1")
     return value
 
 
 def _normalize_optional_int(value: Any, field_name: str) -> int | None:
     if value is None:
         return None
-    normalized = _normalize_int(value, field_name)
-    if normalized < 1:
-        raise ValueError(f"{field_name} must be greater than or equal to 1")
-    return normalized
+    return _normalize_int(value, field_name)
 
 
 def _normalize_optional_str(value: Any, field_name: str) -> str | None:
