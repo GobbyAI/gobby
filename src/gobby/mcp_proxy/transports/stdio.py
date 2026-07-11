@@ -2,8 +2,6 @@
 
 import asyncio
 import logging
-import os
-import re
 import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
@@ -15,51 +13,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from gobby.mcp_proxy.bundled import resolve_runtime_stdio_args
 from gobby.mcp_proxy.models import ConnectionState, MCPError
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
-
-# Pattern for ${VAR} or ${VAR:-default} environment variable expansion
-ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-
-
-def _expand_env_var(value: str) -> str:
-    """Expand ${VAR} and ${VAR:-default} patterns in a string.
-
-    Args:
-        value: String that may contain ${VAR} patterns
-
-    Returns:
-        String with environment variables expanded
-    """
-
-    def replace_match(match: re.Match[str]) -> str:
-        var_name = match.group(1)
-        default_value = match.group(2)  # None if no default specified
-
-        env_value = os.environ.get(var_name)
-
-        if env_value is not None and env_value != "":
-            return env_value
-        elif default_value is not None:
-            return default_value
-        else:
-            # Leave unchanged if no value and no default
-            return match.group(0)
-
-    return ENV_VAR_PATTERN.sub(replace_match, value)
-
-
-def _expand_env_dict(env: dict[str, str] | None) -> dict[str, str] | None:
-    """Expand environment variables in env dict values.
-
-    Args:
-        env: Dictionary of environment variables (may contain ${VAR} patterns)
-
-    Returns:
-        Dictionary with expanded values, or None if input is None
-    """
-    if env is None:
-        return None
-
-    return {key: _expand_env_var(value) for key, value in env.items()}
+from gobby.utils.env import expand_env_mapping, expand_env_variables
 
 
 def _expand_args(args: list[str] | None) -> list[str] | None:
@@ -74,7 +28,7 @@ def _expand_args(args: list[str] | None) -> list[str] | None:
     if args is None:
         return None
 
-    return [_expand_env_var(arg) for arg in args]
+    return [expand_env_variables(arg) for arg in args]
 
 
 if TYPE_CHECKING:
@@ -208,7 +162,7 @@ class StdioTransportConnection(BaseTransportConnection):
             # Expand ${VAR} patterns in args and env values
             runtime_args = resolve_runtime_stdio_args(self.config.name, self.config.args)
             expanded_args = _expand_args(runtime_args) or []
-            expanded_env = _expand_env_dict(self.config.env)
+            expanded_env = expand_env_mapping(self.config.env)
 
             params = StdioServerParameters(
                 command=self.config.command,

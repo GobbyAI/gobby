@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.utils.env import expand_env_mapping, expand_env_variables
+
 if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
     from gobby.hooks.events import HookEvent
@@ -162,14 +164,15 @@ class WebhookDispatcher:
             "User-Agent": "Gobby-Webhook/1.0",
             "X-Gobby-Event": payload.get("event_type", "unknown"),
         }
-        headers.update(endpoint.headers)
+        headers.update(expand_env_mapping(endpoint.headers) or {})
+        url = expand_env_variables(endpoint.url)
 
         while attempts <= endpoint.retry_count:
             attempts += 1
 
             try:
                 response = await client.post(
-                    endpoint.url,
+                    url,
                     json=payload,
                     headers=headers,
                     timeout=endpoint.timeout,

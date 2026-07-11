@@ -226,6 +226,38 @@ class TestWebhookDispatcherTrigger:
         await dispatcher.close()
 
     @pytest.mark.asyncio
+    async def test_trigger_expands_environment_in_url_and_headers(
+        self, sample_event: HookEvent, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Expand URL/header variables while preserving unresolved placeholders."""
+        monkeypatch.setenv("WEBHOOK_HOST", "hooks.example.com")
+        monkeypatch.setenv("WEBHOOK_TOKEN", "secret-token")
+        monkeypatch.delenv("WEBHOOK_UNSET", raising=False)
+        endpoint = WebhookEndpointConfig(
+            name="expanded-webhook",
+            url="https://${WEBHOOK_HOST}/hook",
+            events=["session_start"],
+            headers={
+                "Authorization": "Bearer ${WEBHOOK_TOKEN}",
+                "X-Unresolved": "${WEBHOOK_UNSET}",
+            },
+        )
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
+
+        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = httpx.Response(200, json={"status": "ok"})
+
+            results = await dispatcher.trigger(sample_event)
+
+        assert results[0].success is True
+        mock_post.assert_awaited_once()
+        call = mock_post.await_args
+        assert call.args[0] == "https://hooks.example.com/hook"
+        assert call.kwargs["headers"]["Authorization"] == "Bearer secret-token"
+        assert call.kwargs["headers"]["X-Unresolved"] == "${WEBHOOK_UNSET}"
+        await dispatcher.close()
+
+    @pytest.mark.asyncio
     async def test_trigger_client_error_no_retry(
         self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
     ):

@@ -7,13 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.models import MCPServerConfig
-from gobby.mcp_proxy.transports.stdio import (
-    ENV_VAR_PATTERN,
-    StdioTransportConnection,
-    _expand_args,
-    _expand_env_dict,
-    _expand_env_var,
-)
+from gobby.mcp_proxy.transports.stdio import StdioTransportConnection, _expand_args
+from gobby.utils.env import ENV_VAR_PATTERN, expand_env_mapping, expand_env_variables
 
 pytestmark = pytest.mark.unit
 
@@ -74,23 +69,23 @@ class TestEnvVarPattern:
 
 
 class TestExpandEnvVar:
-    """Tests for _expand_env_var function."""
+    """Tests for expand_env_variables function."""
 
     def test_no_var_returns_unchanged(self) -> None:
         """String without variables is returned unchanged."""
-        result = _expand_env_var("plain string")
+        result = expand_env_variables("plain string")
         assert result == "plain string"
 
     def test_expands_existing_var(self) -> None:
         """Expands variable that exists in environment."""
         with patch.dict(os.environ, {"TEST_VAR": "test_value"}):
-            result = _expand_env_var("${TEST_VAR}")
+            result = expand_env_variables("${TEST_VAR}")
             assert result == "test_value"
 
     def test_expands_var_in_path(self) -> None:
         """Expands variable embedded in path."""
         with patch.dict(os.environ, {"USER": "alice"}):
-            result = _expand_env_var("/home/${USER}/data")
+            result = expand_env_variables("/home/${USER}/data")
             assert result == "/home/alice/data"
 
     def test_missing_var_no_default_unchanged(self) -> None:
@@ -98,53 +93,53 @@ class TestExpandEnvVar:
         with patch.dict(os.environ, {}, clear=True):
             # Ensure the var doesn't exist
             os.environ.pop("NONEXISTENT_VAR", None)
-            result = _expand_env_var("${NONEXISTENT_VAR}")
+            result = expand_env_variables("${NONEXISTENT_VAR}")
             assert result == "${NONEXISTENT_VAR}"
 
     def test_missing_var_with_default_uses_default(self) -> None:
         """Missing variable with default uses the default."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MISSING", None)
-            result = _expand_env_var("${MISSING:-fallback}")
+            result = expand_env_variables("${MISSING:-fallback}")
             assert result == "fallback"
 
     def test_empty_var_with_default_uses_default(self) -> None:
         """Empty variable with default uses the default."""
         with patch.dict(os.environ, {"EMPTY_VAR": ""}):
-            result = _expand_env_var("${EMPTY_VAR:-fallback}")
+            result = expand_env_variables("${EMPTY_VAR:-fallback}")
             assert result == "fallback"
 
     def test_set_var_ignores_default(self) -> None:
         """Set variable ignores the default."""
         with patch.dict(os.environ, {"SET_VAR": "actual"}):
-            result = _expand_env_var("${SET_VAR:-fallback}")
+            result = expand_env_variables("${SET_VAR:-fallback}")
             assert result == "actual"
 
     def test_empty_default_allowed(self) -> None:
         """Empty default string is valid."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MISSING", None)
-            result = _expand_env_var("${MISSING:-}")
+            result = expand_env_variables("${MISSING:-}")
             assert result == ""
 
     def test_multiple_vars_in_string(self) -> None:
         """Expands multiple variables in single string."""
         with patch.dict(os.environ, {"HOST": "localhost", "PORT": "8080"}):
-            result = _expand_env_var("http://${HOST}:${PORT}/api")
+            result = expand_env_variables("http://${HOST}:${PORT}/api")
             assert result == "http://localhost:8080/api"
 
     def test_mixed_found_and_missing(self) -> None:
         """Handles mix of found and missing variables."""
         with patch.dict(os.environ, {"FOUND": "yes"}, clear=True):
             os.environ.pop("MISSING", None)
-            result = _expand_env_var("${FOUND}-${MISSING:-default}")
+            result = expand_env_variables("${FOUND}-${MISSING:-default}")
             assert result == "yes-default"
 
     def test_default_with_special_chars(self) -> None:
         """Default value can contain special characters."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("VAR", None)
-            result = _expand_env_var("${VAR:-http://localhost:8080}")
+            result = expand_env_variables("${VAR:-http://localhost:8080}")
             assert result == "http://localhost:8080"
 
     def test_nested_braces_not_supported(self) -> None:
@@ -157,7 +152,7 @@ class TestExpandEnvVar:
         """
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("OUTER", None)
-            result = _expand_env_var("${OUTER:-${INNER}}")
+            result = expand_env_variables("${OUTER:-${INNER}}")
             # Default is "${INNER" (up to first }), plus trailing "}" = "${INNER}"
             assert result == "${INNER}"
 
@@ -167,12 +162,12 @@ class TestExpandEnvDict:
 
     def test_none_returns_none(self) -> None:
         """None input returns None."""
-        result = _expand_env_dict(None)
+        result = expand_env_mapping(None)
         assert result is None
 
     def test_empty_dict_returns_empty(self) -> None:
         """Empty dict returns empty dict."""
-        result = _expand_env_dict({})
+        result = expand_env_mapping({})
         assert result == {}
 
     def test_expands_all_values(self) -> None:
@@ -183,7 +178,7 @@ class TestExpandEnvDict:
                 "DATA_DIR": "${HOME}/data",
                 "PLAIN": "no_vars",
             }
-            result = _expand_env_dict(env)
+            result = expand_env_mapping(env)
             assert result == {
                 "USERNAME": "alice",
                 "DATA_DIR": "/home/alice/data",
@@ -194,7 +189,7 @@ class TestExpandEnvDict:
         """Keys are not modified, only values."""
         with patch.dict(os.environ, {"KEY": "value"}):
             env = {"${KEY}": "${KEY}"}
-            result = _expand_env_dict(env)
+            result = expand_env_mapping(env)
             assert "${KEY}" in result  # Key unchanged
             assert result["${KEY}"] == "value"  # Value expanded
 
@@ -254,7 +249,7 @@ class TestIntegrationScenarios:
             }
 
             expanded_args = _expand_args(args)
-            expanded_env = _expand_env_dict(env)
+            expanded_env = expand_env_mapping(env)
 
             assert expanded_args == ["--api-key", "sk-test-key", "--port", "3001"]
             assert expanded_env == {
