@@ -357,6 +357,47 @@ def test_failure_bucket_references_do_not_admit_failure(feedback: str) -> None:
 @pytest.mark.parametrize(
     "feedback",
     [
+        # Exact fragment from the #17766 close verdict that misfired: ask-mode
+        # domain vocabulary ("error+retry", "resolved/unresolved citation
+        # behavior") sits between the gate word "tests" and the bare adjective
+        # "unresolved", which the loose errors-remain window read as
+        # "test ... errors ... unresolved".
+        (
+            "WikiAskMode.test.tsx (14 tests) covers extractive/synthesized "
+            "flows, staged progress/cancel, error+retry, resolved/unresolved "
+            "citation behavior with mode flip and search fallback, grounding "
+            "callout presence/absence, and history CRUD."
+        ),
+        ("The error chip and the unresolved citation chip are covered by the same rendering test."),
+        (
+            "New tests verify error+retry rendering and mark unresolved "
+            "citations with a search-vault fallback."
+        ),
+    ],
+)
+def test_ui_error_state_vocabulary_does_not_admit_failure(feedback: str) -> None:
+    """Feature vocabulary about error/unresolved UI states is not an admission."""
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "Test errors are unresolved in the frontend package.",
+        "Errors remain unresolved in the coverage check.",
+        "The lint gate reports errors still remaining after the fix.",
+    ],
+)
+def test_predicated_errors_remain_still_admits_failure(feedback: str) -> None:
+    """Errors genuinely predicated as remaining/unresolved still block closure."""
+    assert matched_required_validation_failure_pattern(feedback) is not None
+    assert feedback_admits_required_validation_failure(feedback) is True
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
         "tests: 9 passed, 1 failed",
         "Validation summary: 2 failures remain.",
         "Tests are failing in the required check.",

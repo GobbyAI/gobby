@@ -157,10 +157,19 @@ _FAILURE_THEN_VALIDATION_GATE_RE = re.compile(
     rf"\b{_VALIDATION_FAILURE_WORDS}\b{_SAME_SENTENCE_PROXIMITY}\b{_VALIDATION_GATE_WORDS}\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_ERRORS_REMAIN_PREDICATE = (
+    # "errors remain", "errors are unresolved", "errors still remaining" —
+    # remain/unresolved must predicate the errors through at most a short
+    # copula/adverb gap. A bare adjective later in the sentence ("resolved/"
+    # "unresolved citation behavior") is feature vocabulary, not an admission
+    # (#17766 close verdict misfire).
+    r"\berrors?\s+"
+    r"(?:(?:are|is|was|were|still|currently)\s+){0,2}"
+    r"(?:remain(?:s|ed|ing)?|unresolved)\b"
+)
 _VALIDATION_GATE_THEN_ERRORS_REMAIN_RE = re.compile(
     # Example: "Validation gate errors remain unresolved."
-    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}\berrors?\b.{{0,40}}"
-    r"\b(?:remain|remaining|unresolved)\b",
+    rf"\b{_VALIDATION_GATE_WORDS}\b.{{0,100}}{_ERRORS_REMAIN_PREDICATE}",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _VALIDATION_ERRORS_REMAIN_RE = re.compile(
@@ -171,8 +180,7 @@ _VALIDATION_ERRORS_REMAIN_RE = re.compile(
 )
 _ERRORS_REMAIN_THEN_VALIDATION_GATE_RE = re.compile(
     # Example: "Errors remain in the validation step."
-    r"\berrors?\b.{0,40}\b(?:remain|remaining|unresolved)\b.{0,100}"
-    rf"\b{_VALIDATION_GATE_WORDS}\b",
+    rf"{_ERRORS_REMAIN_PREDICATE}.{{0,100}}\b{_VALIDATION_GATE_WORDS}\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _ERRORS_PREVENTED_CLEAN_PASS_RE = re.compile(
