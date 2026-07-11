@@ -151,11 +151,16 @@ async def _cleanup_or_quarantine_spawned_run(
         return terminated
 
     cleanup_task = asyncio.create_task(cleanup())
-    try:
-        return await asyncio.shield(cleanup_task)
-    except asyncio.CancelledError:
-        await cleanup_task
-        raise
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            terminated = await asyncio.shield(cleanup_task)
+            break
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    if cancellation is not None:
+        raise cancellation
+    return terminated
 
 
 async def cleanup_unattached_spawned_run(

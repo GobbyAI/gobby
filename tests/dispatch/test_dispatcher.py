@@ -2856,12 +2856,12 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
 
 
 @pytest.mark.asyncio
-async def test_cancelled_spawn_cleanup_quarantines_before_propagating(
+async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """Cancellation waits for unconfirmed termination to become quarantined."""
+    """Repeated cancellation waits for unconfirmed termination to become quarantined."""
     from gobby.agents import kill as agent_kill
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -2919,6 +2919,14 @@ async def test_cancelled_spawn_cleanup_quarantines_before_propagating(
     )
     await kill_started.wait()
     heartbeat.cancel()
+    second_cancellation_requested = asyncio.Event()
+
+    def cancel_again() -> None:
+        heartbeat.cancel()
+        second_cancellation_requested.set()
+
+    asyncio.get_running_loop().call_soon(cancel_again)
+    await second_cancellation_requested.wait()
     assert heartbeat.done() is False
     assert kill_tasks[0] is not heartbeat
     assert kill_tasks[0].cancelling() == 0
