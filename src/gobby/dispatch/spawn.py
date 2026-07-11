@@ -237,7 +237,14 @@ async def spawn_agent(
     if not run_id:
         raise DispatchSpawnFailed("missing run_id")
 
-    _persist_spawn_artifacts(db, action.task_id, result)
+    try:
+        _persist_spawn_artifacts(db, action.task_id, result)
+    except DispatchSpawnFailed as exc:
+        raise DispatchSpawnFailed(
+            str(exc),
+            stage_failure_cited_subtasks=exc.stage_failure_cited_subtasks,
+            spawned_run_id=str(run_id),
+        ) from exc
     try:
         _subscribe_build_coordinator_completion(
             db=db,

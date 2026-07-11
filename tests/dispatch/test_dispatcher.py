@@ -2730,6 +2730,104 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263") is None
 
 
+async def test_artifact_persistence_failure_terminalizes_spawned_run_before_redispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Post-spawn artifact failures cannot leave an active orphaned run."""
+    from gobby.agents import kill as agent_kill
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher, spawn_artifacts
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+    run_storage = LocalAgentRunManager(temp_db)
+    run_ids = [
+        "31e864df-cdf6-5a37-85f2-c3270f226f14",
+        "61125fd1-d82d-533b-b16a-af4bde641d29",
+    ]
+    spawned: list[str] = []
+    killed: list[str] = []
+
+    async def fake_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
+        run_id = run_ids[len(spawned)]
+        run = run_storage.create(
+            parent_session_id=SYSTEM_SESSION_ID,
+            provider="codex",
+            prompt="go",
+            agent_name="backend-developer",
+            task_id=task.id,
+            run_id=run_id,
+        )
+        run_storage.start(run.id)
+        spawned.append(run.id)
+        result: dict[str, object] = {"success": True, "run_id": run.id}
+        if len(spawned) == 1:
+            result.update(
+                worktree_id="81574289-ce50-5388-9583-e3d8b770c35d",
+                worktree_path="/tmp/orphaned-dispatch-worktree",
+                base_commit_sha="base-sha",
+            )
+        return result
+
+    def fail_set_artifacts_atomic(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("injected artifact persistence failure")
+
+    async def fake_kill_agent(run: Any, db: HubDatabase, *, close_terminal: bool) -> None:
+        assert db is temp_db
+        assert close_terminal is True
+        killed.append(str(run.id))
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(spawn_artifacts, "_set_artifacts_atomic", fail_set_artifacts_atomic)
+    monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+
+    first_result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+        max_actions=1,
+    )
+
+    first_run = run_storage.get(run_ids[0])
+    assert first_result.executed == 1
+    assert first_run is not None
+    assert first_run.status == "error"
+    assert killed == [run_ids[0]]
+    assert storage.get_mutex(task.id) is None
+    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+
+    second_result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+        max_actions=1,
+    )
+
+    second_run = run_storage.get(run_ids[1])
+    assert second_result.executed == 1
+    assert spawned == run_ids
+    assert second_run is not None
+    assert second_run.status == "running"
+    assert storage.get_mutex(task.id).run_id == run_ids[1]
+
+
 @pytest.mark.asyncio
 async def test_spawn_unavailable_does_not_mark_task_failed(
     monkeypatch: pytest.MonkeyPatch,

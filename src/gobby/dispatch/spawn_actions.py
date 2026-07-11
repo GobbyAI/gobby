@@ -59,7 +59,15 @@ async def execute_spawn_action(
         )
         if inspect.isawaitable(raw_run_id):
             raw_run_id = await cast(Awaitable[str | None], raw_run_id)
-    except (DispatchSpawnFailed, DispatchSpawnUnavailable):
+    except DispatchSpawnFailed as exc:
+        if exc.spawned_run_id is not None:
+            await cleanup_unattached_spawned_run(
+                exc.spawned_run_id,
+                db=db,
+                error=f"artifact persistence failed after spawn: {exc}",
+            )
+        raise
+    except DispatchSpawnUnavailable:
         raise
     except BaseException:
         if mutex.run_id is None:
