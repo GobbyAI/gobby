@@ -186,11 +186,10 @@ def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bo
         runner = get_runner() if callable(get_runner) else None
     if runner is None:
         return False
-    if callable(getattr(type(runner), "request_shutdown", None)):
-        runner.request_shutdown(intent)
-        return True
-    runner._shutdown_intent = intent
-    runner._shutdown_requested = True
+    request_shutdown = getattr(type(runner), "request_shutdown", None)
+    if not callable(request_shutdown):
+        return False
+    runner.request_shutdown(intent)
     return True
 
 

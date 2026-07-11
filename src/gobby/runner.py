@@ -195,7 +195,10 @@ class GobbyRunner:
 
     def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
         """Request daemon shutdown and optionally set the semantic intent."""
-        if intent is not None:
+        restart_already_requested = (
+            self._shutdown_requested and self._shutdown_intent is ShutdownIntent.RESTART
+        )
+        if intent is not None and not (restart_already_requested and intent is ShutdownIntent.STOP):
             self._shutdown_intent = intent
         self._shutdown_requested = True
 

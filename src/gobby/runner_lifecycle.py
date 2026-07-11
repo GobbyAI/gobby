@@ -134,8 +134,8 @@ async def run_daemon(runner: GobbyRunner) -> None:
         _startup_tracker = StartupTracker()
 
         setup_signal_handlers(
-            lambda: setattr(runner, "_shutdown_requested", True),
-            shutdown_intent_callback=lambda intent: setattr(runner, "_shutdown_intent", intent),
+            runner.request_shutdown,
+            shutdown_intent_callback=runner.request_shutdown,
         )
 
         from gobby.cli.utils import get_gobby_home
@@ -207,7 +207,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 done, _ = await asyncio.wait({server_task}, timeout=0.5)
                 if server_task in done:
                     server_failure = server_task.result()
-                    runner._shutdown_requested = True
+                    runner.request_shutdown()
 
             await shutdown_daemon_services(
                 runner,
