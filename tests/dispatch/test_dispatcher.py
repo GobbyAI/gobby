@@ -2856,6 +2856,97 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
 
 
 @pytest.mark.asyncio
+async def test_cancelled_spawn_cleanup_quarantines_before_propagating(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Cancellation waits for unconfirmed termination to become quarantined."""
+    from gobby.agents import kill as agent_kill
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+    run_storage = LocalAgentRunManager(temp_db)
+    run_id = "c86fcbb1-49ca-580a-b7d8-115194dd1aa7"
+    spawned: list[str] = []
+    kill_tasks: list[asyncio.Task[Any]] = []
+    kill_started = asyncio.Event()
+    allow_kill_result = asyncio.Event()
+
+    async def fake_spawn_agent(*_args: object, **_kwargs: object) -> str:
+        run = run_storage.create(
+            parent_session_id=SYSTEM_SESSION_ID,
+            provider="codex",
+            prompt="go",
+            agent_name="backend-developer",
+            task_id=task.id,
+            run_id=run_id,
+        )
+        run_storage.start(run.id)
+        spawned.append(run.id)
+        raise dispatcher.DispatchSpawnFailed(
+            "injected post-spawn persistence failure",
+            spawned_run_id=run.id,
+        )
+
+    async def fake_kill_agent(
+        run: Any,
+        db: HubDatabase,
+        *,
+        close_terminal: bool,
+    ) -> dict[str, object]:
+        assert run.id == run_id
+        assert db is temp_db
+        assert close_terminal is True
+        current_task = asyncio.current_task()
+        assert current_task is not None
+        kill_tasks.append(current_task)
+        kill_started.set()
+        await allow_kill_result.wait()
+        return {"success": False, "error": "termination remains unconfirmed"}
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
+    monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
+
+    heartbeat = asyncio.create_task(
+        dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    )
+    await kill_started.wait()
+    heartbeat.cancel()
+    assert heartbeat.done() is False
+    assert kill_tasks[0] is not heartbeat
+    assert kill_tasks[0].cancelling() == 0
+
+    allow_kill_result.set()
+    with pytest.raises(asyncio.CancelledError):
+        await heartbeat
+
+    run = run_storage.get(run_id)
+    quarantined_task = task_manager.get_task(task.id)
+    mutex = storage.get_mutex(task.id)
+    assert run is not None
+    assert run.status == "running"
+    assert mutex is not None
+    assert mutex.run_id == run_id
+    assert quarantined_task.is_escalated is True
+    assert quarantined_task.escalation_reason == f"dispatch_spawn_cleanup_unconfirmed:{run_id}"
+
+    second_result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert second_result.executed == 0
+    assert spawned == [run_id]
+
+
+@pytest.mark.asyncio
 async def test_spawn_unavailable_does_not_mark_task_failed(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,

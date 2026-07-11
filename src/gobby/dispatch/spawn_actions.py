@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable, Sequence
@@ -62,19 +63,16 @@ async def execute_spawn_action(
             raw_run_id = await cast(Awaitable[str | None], raw_run_id)
     except DispatchSpawnFailed as exc:
         if exc.spawned_run_id is not None:
-            terminated = await cleanup_unattached_spawned_run(
-                exc.spawned_run_id,
+            terminated = await _cleanup_or_quarantine_spawned_run(
+                action,
+                run_id=exc.spawned_run_id,
+                mutex=mutex,
                 db=db,
                 error=f"artifact persistence failed after spawn: {exc}",
+                cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
+                quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
             if not terminated:
-                await quarantine_unterminated_spawned_run(
-                    action,
-                    run_id=exc.spawned_run_id,
-                    mutex=mutex,
-                    db=db,
-                    error=f"artifact persistence failed after spawn: {exc}",
-                )
                 return exc.spawned_run_id
         raise
     except DispatchSpawnUnavailable:
@@ -88,15 +86,16 @@ async def execute_spawn_action(
         try:
             await run_db(mutex.attach, run_id)
         except RuntimeDispatchMutexError as exc:
-            terminated = await cleanup_unattached_spawned_run(run_id, db=db, error=str(exc))
+            terminated = await _cleanup_or_quarantine_spawned_run(
+                action,
+                run_id=run_id,
+                mutex=mutex,
+                db=db,
+                error=f"dispatch mutex attach failed: {exc}",
+                cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
+                quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
+            )
             if not terminated:
-                await quarantine_unterminated_spawned_run(
-                    action,
-                    run_id=run_id,
-                    mutex=mutex,
-                    db=db,
-                    error=f"dispatch mutex attach failed: {exc}",
-                )
                 return run_id
             await handle_spawn_failure(
                 action,
@@ -110,21 +109,53 @@ async def execute_spawn_action(
             error = f"spawn attach interrupted: {type(exc).__name__}"
             if str(exc):
                 error = f"{error}: {exc}"
-            terminated = await cleanup_unattached_spawned_run(run_id, db=db, error=error)
+            terminated = await _cleanup_or_quarantine_spawned_run(
+                action,
+                run_id=run_id,
+                mutex=mutex,
+                db=db,
+                error=error,
+                cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
+                quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
+            )
             if terminated:
                 await run_db(mutex.release)
-            else:
-                await quarantine_unterminated_spawned_run(
-                    action,
-                    run_id=run_id,
-                    mutex=mutex,
-                    db=db,
-                    error=error,
-                )
             raise
         return run_id
     await handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
     return None
+
+
+async def _cleanup_or_quarantine_spawned_run(
+    action: SpawnAgentAction,
+    *,
+    run_id: str,
+    mutex: RuntimeDispatchMutex,
+    db: HubDatabase,
+    error: str,
+    cleanup_unattached_spawned_run: AsyncCallback,
+    quarantine_unterminated_spawned_run: AsyncCallback,
+) -> bool:
+    """Finish cleanup or durable quarantine before propagating cancellation."""
+
+    async def cleanup() -> bool:
+        terminated = bool(await cleanup_unattached_spawned_run(run_id, db=db, error=error))
+        if not terminated:
+            await quarantine_unterminated_spawned_run(
+                action,
+                run_id=run_id,
+                mutex=mutex,
+                db=db,
+                error=error,
+            )
+        return terminated
+
+    cleanup_task = asyncio.create_task(cleanup())
+    try:
+        return await asyncio.shield(cleanup_task)
+    except asyncio.CancelledError:
+        await cleanup_task
+        raise
 
 
 async def cleanup_unattached_spawned_run(
