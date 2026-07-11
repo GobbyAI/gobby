@@ -8,6 +8,8 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.worktrees import Worktree
 
+STORED_AT = "2026-01-01T00:00:00+00:00"
+
 pytestmark = pytest.mark.unit
 
 
@@ -49,8 +51,8 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
     with patch(
@@ -113,8 +115,8 @@ async def test_create_worktree_preserves_project_json_trailing_newline(
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
 
@@ -143,8 +145,8 @@ async def test_create_worktree_installs_droid_hooks(
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
 
@@ -185,8 +187,8 @@ async def test_create_worktree_installs_codex_hooks(
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
 
@@ -268,8 +270,8 @@ async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktr
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
     with patch(
@@ -303,8 +305,8 @@ async def test_create_worktree_use_local_explicit(
         base_branch="develop",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
     result = await registry.call(
@@ -344,8 +346,8 @@ async def test_create_worktree_auto_detects_unpushed(
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
     result = await registry.call(
@@ -383,8 +385,8 @@ async def test_create_worktree_no_unpushed_uses_remote(
         base_branch="main",
         agent_session_id=None,
         status="active",
-        created_at="now",
-        updated_at="now",
+        created_at=STORED_AT,
+        updated_at=STORED_AT,
         merged_at=None,
     )
     result = await registry.call(
