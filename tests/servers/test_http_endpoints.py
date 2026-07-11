@@ -8,6 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.app import DaemonConfig
+from gobby.config.extensions import HookExtensionsConfig, WebhookEndpointConfig, WebhooksConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -691,6 +693,41 @@ class TestWebhooksEndpoints:
         assert data["success"] is True
         assert data["enabled"] is False
         assert data["endpoints"] == []
+
+    def test_list_webhooks_includes_failure_policy(self, session_storage: SessionManager) -> None:
+        """Webhook management output exposes the configured failure policy."""
+        config = DaemonConfig(
+            hook_extensions=HookExtensionsConfig(
+                webhooks=WebhooksConfig(
+                    endpoints=[
+                        WebhookEndpointConfig(
+                            name="security-gate",
+                            url="https://example.com/hook",
+                            can_block=True,
+                            fail_closed=True,
+                        )
+                    ]
+                )
+            )
+        )
+        services = ServiceContainer(
+            config=config,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+            auth_mode="disabled",
+        )
+
+        with TestClient(server.app) as client:
+            response = client.get("/api/webhooks")
+
+        assert response.status_code == 200
+        assert response.json()["endpoints"][0]["fail_closed"] is True
 
     def test_test_webhook_missing_name(self, webhooks_client: TestClient) -> None:
         """Test webhook test with missing name."""

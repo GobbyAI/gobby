@@ -46,6 +46,7 @@ function makeConfigValues(): Record<string, unknown> {
             retry_count: 2,
             retry_delay: 1.5,
             can_block: false,
+            fail_closed: true,
             enabled: true,
           },
         ],
@@ -169,6 +170,9 @@ describe('IntegrationsHooksSection', () => {
       screen.getByRole('switch', { name: 'ci-bridge can block the action' }),
     ).not.toBeChecked()
     expect(
+      screen.getByRole('switch', { name: 'ci-bridge fail closed' }),
+    ).toBeChecked()
+    expect(
       screen.getByRole('switch', { name: 'ci-bridge enabled' }),
     ).toBeChecked()
   })
@@ -238,7 +242,10 @@ describe('IntegrationsHooksSection', () => {
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
     const saved = (ctx.saveConfig as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(saved['hook_extensions.webhooks.endpoints']).toEqual([
-      expect.objectContaining({ url: 'https://ci.example/v2' }),
+      expect.objectContaining({
+        url: 'https://ci.example/v2',
+        fail_closed: true,
+      }),
     ])
   })
 

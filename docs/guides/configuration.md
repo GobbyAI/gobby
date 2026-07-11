@@ -439,7 +439,8 @@ hook_extensions:
 ```
 
 Webhook endpoints support custom headers, retries, and blocking behavior through
-the `can_block` flag.
+the `can_block` flag. Failures remain fail-open by default; set `fail_closed: true`
+on a blocking endpoint when transport or HTTP failures must block the action.
 
 ### Tool Approval And Chat
 

@@ -81,6 +81,10 @@ class WebhookEndpointConfig(BaseModel):
         default=False,
         description="If True, webhook can block the action via response decision field",
     )
+    fail_closed: bool = Field(
+        default=False,
+        description="If True, a failed blocking webhook blocks the action",
+    )
     enabled: bool = Field(
         default=True,
         description="Enable or disable this webhook",

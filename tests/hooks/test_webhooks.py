@@ -66,6 +66,7 @@ class TestWebhookEndpointConfig:
         assert config.retry_count == 3
         assert config.retry_delay == 1.0
         assert config.can_block is False
+        assert config.fail_closed is False
         assert config.enabled is True
         assert config.events == []
         assert config.headers == {}
@@ -81,10 +82,12 @@ class TestWebhookEndpointConfig:
             retry_count=5,
             retry_delay=2.0,
             can_block=True,
+            fail_closed=True,
         )
         assert config.timeout == 30.0
         assert config.retry_count == 5
         assert config.can_block is True
+        assert config.fail_closed is True
         assert "session_start" in config.events
 
 
@@ -292,6 +295,7 @@ class TestBlockingWebhooks:
     @pytest.mark.asyncio
     async def test_blocking_webhook_allow(self, blocking_endpoint: WebhookEndpointConfig):
         """Test blocking webhook that allows action."""
+        blocking_endpoint = blocking_endpoint.model_copy(update={"fail_closed": True})
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="test-session",
@@ -379,6 +383,70 @@ class TestBlockingWebhooks:
             decision, reason = dispatcher.get_blocking_decision(results)
             assert decision == "block"  # deny is treated as block
             assert reason == "Dangerous command"
+
+        await dispatcher.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("can_block", "fail_closed", "expected_decision"),
+        [
+            (True, False, "allow"),
+            (True, True, "block"),
+            (False, True, "allow"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "failure_mode",
+        ["client_error", "server_error", "timeout", "connection_error"],
+    )
+    async def test_blocking_webhook_failure_policy(
+        self,
+        blocking_endpoint: WebhookEndpointConfig,
+        can_block: bool,
+        fail_closed: bool,
+        expected_decision: str,
+        failure_mode: str,
+    ) -> None:
+        """Blocking webhook failures honor the endpoint's explicit failure policy."""
+        endpoint = blocking_endpoint.model_copy(
+            update={
+                "can_block": can_block,
+                "fail_closed": fail_closed,
+                "retry_count": 1,
+                "retry_delay": 0.1,
+            }
+        )
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(),
+            data={"tool": "bash"},
+        )
+
+        with (
+            patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post,
+            patch("gobby.hooks.webhooks.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            if failure_mode == "client_error":
+                mock_post.return_value = httpx.Response(
+                    400,
+                    json={"decision": "block", "error": "invalid"},
+                )
+            elif failure_mode == "server_error":
+                mock_post.return_value = httpx.Response(503, json={"error": "unavailable"})
+            elif failure_mode == "timeout":
+                mock_post.side_effect = httpx.TimeoutException("timeout")
+            else:
+                mock_post.side_effect = httpx.ConnectError("offline")
+
+            results = await dispatcher.trigger(event)
+
+        assert len(results) == 1
+        assert results[0].success is False
+        assert results[0].attempts == (1 if failure_mode == "client_error" else 2)
+        assert dispatcher.get_blocking_decision(results)[0] == expected_decision
 
         await dispatcher.close()
 

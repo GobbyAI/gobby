@@ -213,7 +213,7 @@ class WebhookDispatcher:
                         error=f"HTTP {response.status_code}",
                         attempts=attempts,
                         duration_ms=duration_ms,
-                        decision=decision,
+                        decision="block" if endpoint.can_block and endpoint.fail_closed else None,
                     )
 
                 # 5xx errors are retryable
@@ -256,6 +256,7 @@ class WebhookDispatcher:
             error=last_error,
             attempts=attempts,
             duration_ms=duration_ms,
+            decision="block" if endpoint.can_block and endpoint.fail_closed else None,
         )
 
     async def trigger(self, event: HookEvent) -> list[WebhookResult]:
@@ -334,6 +335,8 @@ class WebhookDispatcher:
                 reason = None
                 if result.response_body:
                     reason = result.response_body.get("reason")
+                if reason is None:
+                    reason = result.error
                 return ("block", reason)
 
         return ("allow", None)
