@@ -671,46 +671,46 @@ def _persist_spawn_artifacts(
     task_id: str,
     result: Mapping[str, object],
 ) -> None:
-    artifacts = TaskArtifactManager(db).get_artifacts(task_id)
     fields: dict[str, str | int | None] = {}
-    worktree_id = result.get("worktree_id")
-    worktree_path = result.get("worktree_path")
-    clone_id = result.get("clone_id")
-    base_commit_sha = result.get("base_commit_sha")
-    if (
-        isinstance(worktree_id, str)
-        and isinstance(worktree_path, str)
-        and worktree_id != artifacts.integration_workspace_id
-    ):
-        fields["worktree_id"] = worktree_id
-        fields["worktree_path"] = worktree_path
-    clone_path = result.get("clone_path")
-    if (
-        isinstance(clone_id, str)
-        and isinstance(clone_path, str)
-        and clone_id != artifacts.integration_clone_id
-    ):
-        fields["clone_id"] = clone_id
-        fields["clone_path"] = clone_path
-    if fields and isinstance(base_commit_sha, str) and base_commit_sha:
-        fields["base_commit_sha"] = base_commit_sha
-    elif (
-        not fields
-        and isinstance(base_commit_sha, str)
-        and base_commit_sha
-        and (artifacts.worktree_path or artifacts.clone_path)
-    ):
-        fields["base_commit_sha"] = base_commit_sha
-    if fields:
-        try:
+    try:
+        artifacts = TaskArtifactManager(db).get_artifacts(task_id)
+        worktree_id = result.get("worktree_id")
+        worktree_path = result.get("worktree_path")
+        clone_id = result.get("clone_id")
+        base_commit_sha = result.get("base_commit_sha")
+        if (
+            isinstance(worktree_id, str)
+            and isinstance(worktree_path, str)
+            and worktree_id != artifacts.integration_workspace_id
+        ):
+            fields["worktree_id"] = worktree_id
+            fields["worktree_path"] = worktree_path
+        clone_path = result.get("clone_path")
+        if (
+            isinstance(clone_id, str)
+            and isinstance(clone_path, str)
+            and clone_id != artifacts.integration_clone_id
+        ):
+            fields["clone_id"] = clone_id
+            fields["clone_path"] = clone_path
+        if fields and isinstance(base_commit_sha, str) and base_commit_sha:
+            fields["base_commit_sha"] = base_commit_sha
+        elif (
+            not fields
+            and isinstance(base_commit_sha, str)
+            and base_commit_sha
+            and (artifacts.worktree_path or artifacts.clone_path)
+        ):
+            fields["base_commit_sha"] = base_commit_sha
+        if fields:
             _set_artifacts_atomic(db, task_id, **fields)
-        except (TaskArtifactConstraintError, ValueError, psycopg.Error) as exc:
-            logger.error(
-                "Failed to persist dispatcher spawn artifacts",
-                extra={"task_id": task_id, "fields": fields},
-                exc_info=True,
-            )
-            raise DispatchSpawnFailed("artifact_persistence_failed") from exc
+    except (TaskArtifactConstraintError, ValueError, psycopg.Error) as exc:
+        logger.error(
+            "Failed to persist dispatcher spawn artifacts",
+            extra={"task_id": task_id, "fields": fields},
+            exc_info=True,
+        )
+        raise DispatchSpawnFailed("artifact_persistence_failed") from exc
 
 
 def _field(

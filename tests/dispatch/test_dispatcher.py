@@ -2831,11 +2831,13 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
 
 
 @pytest.mark.parametrize("kill_outcome", ["success", "returned_failure", "raised"])
+@pytest.mark.parametrize("artifact_failure_point", ["read", "write"])
 async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_redispatch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     kill_outcome: str,
+    artifact_failure_point: str,
 ) -> None:
     """Post-spawn artifact failures cannot leave an active orphaned run."""
     from gobby.agents import kill as agent_kill
@@ -2881,6 +2883,19 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
     def fail_set_artifacts_atomic(*_args: object, **_kwargs: object) -> None:
         raise ValueError("injected artifact persistence failure")
 
+    original_get_artifacts = spawn_artifacts.TaskArtifactManager.get_artifacts
+    artifact_read_failed = False
+
+    def fail_first_post_spawn_artifact_read(
+        manager: spawn_artifacts.TaskArtifactManager,
+        task_id: str,
+    ) -> Any:
+        nonlocal artifact_read_failed
+        if spawned and not artifact_read_failed:
+            artifact_read_failed = True
+            raise psycopg.errors.SerializationFailure("injected artifact read failure")
+        return original_get_artifacts(manager, task_id)
+
     async def fake_kill_agent(
         run: Any, db: HubDatabase, *, close_terminal: bool
     ) -> dict[str, object]:
@@ -2898,7 +2913,14 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(spawn_artifacts, "_set_artifacts_atomic", fail_set_artifacts_atomic)
+    if artifact_failure_point == "read":
+        monkeypatch.setattr(
+            spawn_artifacts.TaskArtifactManager,
+            "get_artifacts",
+            fail_first_post_spawn_artifact_read,
+        )
+    else:
+        monkeypatch.setattr(spawn_artifacts, "_set_artifacts_atomic", fail_set_artifacts_atomic)
     monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
