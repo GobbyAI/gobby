@@ -83,6 +83,7 @@ from gobby.config.ui import (
     AuthConfig,
     ToolApprovalConfig,
     UIConfig,
+    is_loopback_bind_host,
 )
 from gobby.config.ui import (
     ToolApprovalPolicy as ToolApprovalPolicy,
@@ -473,6 +474,20 @@ class DaemonConfig(BaseModel):
         if not (1.0 <= v <= 300.0):
             raise ValueError("daemon_health_check_interval must be between 1.0 and 300.0 seconds")
         return v
+
+    @model_validator(mode="after")
+    def validate_remote_ui_auth(self) -> DaemonConfig:
+        """Refuse unauthenticated UI exposure beyond the loopback interface."""
+        if (
+            self.ui.enabled
+            and self.auth_mode != "required"
+            and not is_loopback_bind_host(self.bind_host)
+        ):
+            raise ValueError(
+                "ui.enabled requires auth_mode='required' when bind_host is not localhost "
+                "or a numeric loopback address"
+            )
+        return self
 
     @model_validator(mode="after")
     def apply_generation_profile_defaults(self) -> DaemonConfig:
