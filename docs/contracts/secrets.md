@@ -5,6 +5,33 @@ trusted local binaries that support standalone direct-hub mode. Remote clients
 can create, replace, list metadata, and delete secrets; remote clients never
 receive plaintext secret values, the DEK, or KEK material.
 
+Daemon API tokens follow a separate one-way verification contract. They grant
+daemon access and never participate in secret-envelope encryption.
+
+## Daemon API Token
+
+| Surface | Contract |
+| --- | --- |
+| Plaintext | `$GOBBY_HOME/local_cli_token` (default `~/.gobby/local_cli_token`), written with mode `0600` |
+| Hub verifier | SHA-256 hex digest in `config_store` key `auth.api_token_hash` |
+| Canonical HTTP credential | `Authorization: Bearer <token>` |
+| Local alias | `X-Gobby-Local-Token: <token>` |
+| Browser credential | `gobby_session` cookie created by `/api/auth/login` |
+
+`gobby install` provisions the token. A file-only install is adopted into the
+hub on daemon startup. When both values exist, the hub hash is authoritative;
+a missing or mismatched file requires `gobby auth token --rotate` on the hub
+machine and a fresh copy to every additional client machine.
+
+Rotation replaces the plaintext file and stored hash together. Running clients
+refresh within about five seconds. The old token stops authorizing HTTP and
+direct WebSocket connections; browser sessions remain independent and the
+browser WebSocket proxy reads the refreshed daemon token.
+
+Web UI passwords are stored as salted scrypt hashes in `auth.password_hash`.
+Daemon startup migrates a decryptable legacy `auth.password` secret to this
+hash and removes the legacy value.
+
 ## Envelope Model
 
 - Secret values in `secrets.encrypted_value` are encrypted with one random

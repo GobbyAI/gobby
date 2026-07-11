@@ -22,8 +22,10 @@ Adoption means:
 4. Classify the existing schema.
 5. If the schema is adoptable, run additive daemon migrations in place.
 6. Run the one-time embedding namespace migration from `embeddings.*` to `ai.embeddings.*`.
-7. Write `bootstrap.yaml` with the adopted Postgres DSN only after migrations succeed.
-8. Leave the original standalone data intact for gcode and gwiki consumers.
+7. Provision `~/.gobby/local_cli_token` with mode `0600` and store its SHA-256
+   digest as `auth.api_token_hash` when the hub is reachable.
+8. Write `bootstrap.yaml` with the adopted Postgres DSN only after migrations succeed.
+9. Leave the original standalone data intact for gcode and gwiki consumers.
 
 Failed adoption must stop before destructive changes. It must not drop, truncate, or recreate existing subset tables.
 
@@ -52,9 +54,23 @@ Both subsets are adoptable inputs. Their data must survive the daemon full-schem
 
 ## Bootstrap Output
 
-After successful adoption, `~/.gobby/bootstrap.yaml` is the CLI source of truth for the hub connection. It must point at the adopted Postgres instance and advertise `hub_backend: postgres`.
+After successful adoption, `~/.gobby/bootstrap.yaml` is the CLI source of truth
+for the hub connection. It must point at the adopted Postgres instance,
+advertise `hub_backend: postgres`, and carry the selected `auth_mode`. Missing
+`auth_mode` resolves to `required`.
 
 The previous `~/.gobby/gcore.yaml` entry can remain for standalone installs, but new daemon-aware CLIs should resolve the hub through `bootstrap.yaml`.
+
+## Hub-Client Token Output
+
+`gobby install` owns `$GOBBY_HOME/local_cli_token` (default
+`~/.gobby/local_cli_token`) as part of the hub-client installation contract. A
+database-unreachable install still creates the `0600` token file; first daemon
+startup adopts its hash into `config_store`. Additional trusted client machines
+receive an exact copy of the file with the same permissions.
+
+`gobby auth token --rotate` replaces the hub token and stored hash. Operators
+must recopy the file to every additional client machine after rotation.
 
 ## Embedding Namespace Migration
 
@@ -69,4 +85,4 @@ Embedding namespace invariants:
 
 See `ai-daemon-contract.md` for the full D6 writer and reader inventory.
 
-_Last verified: 2026-06-23_
+_Last verified: 2026-07-10_

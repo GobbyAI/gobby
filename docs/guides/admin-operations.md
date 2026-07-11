@@ -25,7 +25,7 @@ uv run gobby status
 Set local UI auth:
 
 ```bash
-uv run gobby auth
+uv run gobby auth credentials
 ```
 
 Store a secret:
@@ -48,14 +48,26 @@ uv run gobby pack --dry-run
 
 ## Authentication
 
-`gobby auth` configures local web authentication. It stores the username in
-config and the password through the config secret store. Removing auth uses:
+Daemon API auth is required by default. `gobby install` provisions the
+owner-readable `$GOBBY_HOME/local_cli_token` (default
+`~/.gobby/local_cli_token`); daemon clients send it as a bearer token. Inspect
+its file/hash agreement with:
 
 ```bash
-uv run gobby auth --remove
+uv run gobby auth token
 ```
 
-Restart the daemon after changing auth settings.
+Browser authentication is configured separately. The username lives at
+`auth.username`; the salted scrypt password hash lives at
+`auth.password_hash`:
+
+```bash
+uv run gobby auth credentials
+uv run gobby auth credentials --remove
+```
+
+Restart the daemon after changing browser credentials. The browser session
+cookie is `gobby_session`.
 
 HTTP auth routes:
 
@@ -65,7 +77,79 @@ POST /api/auth/logout
 GET  /api/auth/status
 ```
 
-The browser session cookie is `gobby_session`.
+### Rotate The Local Token
+
+1. Check the current state with `gobby auth token`.
+2. Run `gobby auth token --rotate` on the hub machine.
+3. Wait up to five seconds for running clients to refresh.
+4. Copy `$GOBBY_HOME/local_cli_token` (default `~/.gobby/local_cli_token`) to
+   every additional trusted client machine and set mode `0600`.
+5. Re-run the verification matrix below. The old token must return `401`.
+
+Capture and verify old-token invalidation on the hub machine:
+
+```bash
+BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
+OLD_TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+uv run gobby auth token --rotate
+sleep 6
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer $OLD_TOKEN" \
+  "$BASE/api/admin/status")" = 401
+```
+
+Rotation updates the file and authoritative `auth.api_token_hash`. Existing
+browser sessions remain valid; the `/ws` cookie bridge uses the refreshed token
+for its upstream standalone-WebSocket connection.
+
+### Manual Verification Matrix
+
+Run the HTTP checks from a machine holding the current token:
+
+```bash
+BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
+TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+
+for path in /api/health /api/admin/health /api/admin/startup-progress; do
+  curl -fsS "$BASE$path" >/dev/null
+done
+
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  "$BASE/api/admin/status")" = 401
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Authorization: Bearer invalid-token' \
+  "$BASE/api/admin/status")" = 401
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/admin/status" >/dev/null
+curl -fsS -H "X-Gobby-Local-Token: $TOKEN" \
+  "$BASE/api/admin/status" >/dev/null
+
+# FastMCP is mounted at /mcp; its current transport endpoint is /mcp/mcp.
+curl -fsS "$BASE/mcp/mcp" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"auth-check","version":"1.0"}}}'
+```
+
+Then verify clients that acquire the token automatically:
+
+```bash
+uv run gobby tasks list --limit 1
+uv run gobby mcp-proxy call-tool gobby-tasks list_tasks \
+  --json-args '{"limit":1}'
+```
+
+In a disposable repository with installed Gobby hooks, create a commit and
+confirm the hook completes without a `401`:
+
+```bash
+git commit --allow-empty -m "chore: verify authenticated Gobby hook"
+```
+
+Finally, open the Web UI, log in with credentials from `gobby auth credentials`,
+open Chat, and confirm chat frames continue across `/ws`. This checks the browser
+cookie and WebSocket bearer bridge together.
 
 ## Secrets
 
@@ -164,7 +248,7 @@ Admin command families:
 
 ```bash
 uv run gobby status
-uv run gobby auth
+uv run gobby auth ...
 uv run gobby secrets ...
 uv run gobby service ...
 uv run gobby export ...
@@ -219,4 +303,4 @@ Use progressive discovery before calling any server.
 - [prompts.md](prompts.md)
 - [cron-scheduler.md](cron-scheduler.md)
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-07-10_

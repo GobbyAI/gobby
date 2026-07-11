@@ -25,7 +25,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | Command | Purpose | Source |
 | --- | --- | --- |
 | `agents` | Manage agent definitions and agent runs. | `src/gobby/cli/agents.py` |
-| `auth` | Set up or reset web UI authentication credentials. | `src/gobby/cli/auth.py` |
+| `auth` | Manage web credentials and the local daemon API token. | `src/gobby/cli/auth.py` |
 | `build` | Start and control lifecycle automation for plans, epics, and tasks. | `src/gobby/cli/build.py` |
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
@@ -167,6 +167,8 @@ gobby uninstall [OPTIONS]
 | `--embedding-provider PROVIDER` | Force embedding provider compatibility mode. |
 | `--embedding-model MODEL` | Override the embedding model. |
 | `--embedding-dim N` | Override the embedding dimension. |
+| `--secret-kek-posture [key-file|passphrase]` | Select daemon-local secret KEK storage. |
+| `--auth-mode [required|disabled]` | Persist daemon API authentication mode in `bootstrap.yaml`. |
 | `--no-interactive` | Run without prompts. |
 | `-C`, `--path PATH` | Install against a specific path. |
 
@@ -184,6 +186,27 @@ gobby uninstall [OPTIONS]
 | `--volumes` | Remove service volumes where supported. |
 | `--project` | Remove project-scoped configuration. |
 | `-C`, `--path PATH` | Uninstall from a specific path. |
+
+### `gobby auth`
+
+Manage browser credentials and the install-scoped daemon API token.
+
+```bash
+gobby auth credentials [--remove]
+gobby auth token [--show] [--rotate]
+```
+
+| Command or option | Purpose |
+| --- | --- |
+| `credentials` | Create credentials or reset the configured user's password. |
+| `credentials --remove` | Remove browser credentials and disable Web UI login. |
+| `token` | Show token path, file presence, stored hash prefix, and file/DB agreement. |
+| `token --show` | Print the plaintext token for deliberate client provisioning. |
+| `token --rotate` | Replace the token file and stored hash; recopy the file to other machines. |
+
+The token command reads `$GOBBY_HOME/local_cli_token` (default
+`~/.gobby/local_cli_token`). Rotation is picked up by running clients within
+about five seconds.
 
 ### `gobby mcp-server`
 
@@ -620,4 +643,4 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-07-10_

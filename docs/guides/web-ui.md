@@ -44,15 +44,32 @@ Open the web app:
 http://localhost:60887/#chat
 ```
 
+Create or reset browser credentials, then restart the daemon:
+
+```bash
+uv run gobby auth credentials
+uv run gobby restart
+```
+
+The login page exchanges those credentials for the HTTP-only `gobby_session`
+cookie. The same cookie authorizes API requests and the `/ws` browser proxy.
+
 Check the backend directly when the UI appears disconnected:
 
 ```bash
 curl -sS http://localhost:60887/api/auth/status
-curl -sS http://localhost:60887/api/admin/status
+TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  http://localhost:60887/api/admin/status
 ```
 
 Use the Tailscale URL from `gobby status` when operating from another trusted
 device.
+
+Removing browser credentials uses `gobby auth credentials --remove`. Daemon API
+auth remains required and token-based clients continue to work. Setting
+bootstrap `auth_mode: disabled` opens daemon surfaces and is intended only for
+an explicitly trusted isolated environment.
 
 ## Navigation
 
@@ -212,4 +229,4 @@ For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
 - [observability.md](observability.md)
 - [http-endpoints.md](http-endpoints.md)
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-10_

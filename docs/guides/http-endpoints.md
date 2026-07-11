@@ -43,31 +43,43 @@ context; any `session_id` inside the JSON body remains a target-tool argument.
 
 ## Authentication
 
-Authentication is optional. When no UI credentials are configured, every route
-passes through unchanged. When username/password auth is configured, API routes
-require a valid UI session cookie except the public surfaces below:
+Daemon auth is required by default. Protected HTTP requests accept these
+credentials, in precedence order:
 
-- `/api/auth/*`
-- `/api/hooks/*`
-- `/api/local/*`
-- `/api/github/webhooks/*`
-- `/api/sessions/*`
-- `/api/mcp/*`
-- `/api/admin/health`
-- `/api/admin/status`
-- `/api/admin/metrics`
-- `/api/admin/config`
-- `/api/health*` legacy health-check paths if present
-- `/assets/*`
-- `/favicon.ico`
-- `/logo.png`
-- `/ws` and `/ws/*`
+1. `Authorization: Bearer <local_cli_token>`
+2. `X-Gobby-Local-Token: <local_cli_token>`
+3. A valid `gobby_session` browser cookie
+
+The plaintext token lives at `$GOBBY_HOME/local_cli_token` (default
+`~/.gobby/local_cli_token`) with mode `0600`. External streamable-HTTP MCP
+clients must send the bearer header to the `/mcp` mount. Gobby CLI, hook,
+stdio-proxy, and daemon-aware Rust clients read the token file automatically.
+
+The complete unauthenticated HTTP surface is:
+
+| Match | Public surface | Reason |
+| --- | --- | --- |
+| Exact | `/` | Production SPA shell |
+| Exact | `/api/health` | Lifecycle health probe |
+| Exact | `/api/admin/health` | Startup/liveness probe |
+| Exact | `/api/admin/startup-progress` | CLI startup progress probe |
+| Prefix | `/api/auth/` | Login, logout, and auth status |
+| Prefix | `/api/comms/webhooks/` | Channel-signature validation runs in the route |
+| Prefix | `/api/github/webhooks/` | GitHub HMAC validation runs in the route |
+| Prefix | `/assets/` | Production UI assets |
+| Exact | `/favicon.ico` | Production UI asset |
+| Exact | `/logo.png` | Production UI asset |
+
+Every other `/api/*`, `/mcp*`, and `/memory*` request requires authentication.
+The standalone WebSocket server on port `60888` requires bearer auth during the
+handshake. The HTTP `/ws` proxy requires a valid browser cookie and injects the
+daemon's current token into the upstream connection.
 
 Unauthenticated protected API requests return `401` with:
 
 ```json
 {
-  "error": "Authentication required"
+  "error": "Authentication required. CLI clients need ~/.gobby/local_cli_token (run 'gobby install' or 'gobby auth token --rotate'). Browsers: log in."
 }
 ```
 
@@ -75,9 +87,9 @@ Unauthenticated protected API requests return `401` with:
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/mcp` | MCP HTTP transport | FastMCP protocol mount. JSON-RPC clients use this mount directly. |
-| `/ws` | WebSocket | Proxy to the standalone WebSocket server. |
-| `/ws/{path}` | WebSocket | Proxy subpaths to the standalone WebSocket server. |
+| `/mcp` | MCP HTTP transport | FastMCP protocol mount. External clients send the local-token bearer header. |
+| `/ws` | WebSocket | Cookie-authenticated proxy to the standalone WebSocket server. |
+| `/ws/{path}` | WebSocket | Cookie-authenticated proxy subpaths to the standalone WebSocket server. |
 | `/assets/*` | `GET` | Production UI assets, mounted only when production UI mode is enabled and assets exist. |
 | `/{path}` | `GET` | Production UI SPA fallback, mounted only when production UI mode is enabled. Does not intercept `/api`, `/ws`, or `/health` paths. |
 
@@ -589,7 +601,7 @@ daemon config.
 Routes use FastAPI status codes for validation and service errors:
 
 - `400` for invalid or missing request data
-- `401` for unauthenticated protected API requests when UI auth is enabled
+- `401` for unauthenticated protected API, MCP, and memory requests in required mode
 - `404` for missing resources or non-mounted UI fallback exclusions
 - `500` for unhandled server errors
 - `503` when a required daemon manager or subsystem is unavailable
@@ -598,4 +610,4 @@ Hook execution is the exception: adapter-compatible hook failures are usually
 acknowledged with a response that lets the caller continue, because CLI hooks
 must not crash the calling agent runtime.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-07-10_

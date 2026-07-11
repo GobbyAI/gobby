@@ -74,6 +74,7 @@ daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
 ui_port: 60889
+auth_mode: required
 falkordb_password: "gobbyfalkor"
 ```
 
@@ -89,6 +90,12 @@ stays owner-readable only. Gobby-generated helper bootstraps also use
 
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
+
+`auth_mode` accepts `required` or `disabled` and defaults to `required` when
+omitted. Required mode protects daemon HTTP, MCP, memory, and WebSocket surfaces
+with the install-scoped local token or a browser session. Persist an explicit
+choice with `gobby install --auth-mode required|disabled`. Use `disabled` only
+inside an explicitly trusted isolated environment.
 
 For a daemon and PostgreSQL hub shared across Tailscale, keep `bind_host` as the
 daemon listen address and configure remote clients with both the daemon endpoint
@@ -614,4 +621,4 @@ after changing server definitions.
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-05-23_
+_Last verified: 2026-07-10_

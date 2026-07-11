@@ -114,6 +114,20 @@ ui_port: 60889
 `daemon_url` tells local clients, hooks, and helper binaries where to dial.
 `database_url` tells direct-hub tools where the shared metadata lives. Set both.
 
+Daemon HTTP and WebSocket auth is required by default. Copy the hub machine's
+install-scoped token to every trusted client machine and preserve owner-only
+permissions:
+
+```bash
+install -d -m 700 ~/.gobby
+scp gobby-box.tailnet.ts.net:~/.gobby/local_cli_token ~/.gobby/local_cli_token
+chmod 600 ~/.gobby/local_cli_token
+```
+
+Repeat this copy after `gobby auth token --rotate` on the hub machine. Gobby's
+CLI, hooks, stdio MCP proxy, and daemon-aware Rust clients read this file and
+send `Authorization: Bearer <token>` automatically.
+
 Keep client `bind_host` as `localhost` unless that machine is also running its
 own daemon. `GOBBY_PORT` and `GOBBY_DAEMON_PORT` only override the port used for
 a local daemon URL; they do not name the remote host. Prefer `GOBBY_DAEMON_URL`
@@ -123,32 +137,42 @@ Quick checks from a client:
 
 ```bash
 curl http://gobby-box.tailnet.ts.net:60887/api/admin/health
+TOKEN="$(tr -d '\r\n' < ~/.gobby/local_cli_token)"
+curl -H "Authorization: Bearer $TOKEN" \
+  http://gobby-box.tailnet.ts.net:60887/api/admin/status
 psql "postgresql://gobby:<password>@gobby-box.tailnet.ts.net:60891/gobby" -c "select 1"
 ```
 
 ## Security Model
 
-This setup trusts the tailnet. Anyone allowed by Tailscale ACLs and PostgreSQL
-auth can reach privileged local-first control surfaces.
+This setup grants trusted operators three distinct capabilities: tailnet reach,
+daemon API access through the local token or browser session, and direct hub
+access through PostgreSQL credentials.
 
 The Tailscale ACL should allow only the operator trust group to reach ports
 `60887`, `60888`, `60889`, and `60891` on the daemon box.
 
-With no UI credentials configured, the HTTP API is unauthenticated. Daemon API
-access allows callers to read and mutate tasks, sessions, memory, configuration,
-MCP proxy state, and admin status. Agent spawn routes can start processes on the
-daemon box with access to daemon-local projects, worktrees, clones, credentials,
-and provider CLIs. Treat daemon API access as command execution on the daemon
-machine.
+The daemon requires authentication by default. CLI and integration clients use
+the shared install token; browsers use credentials configured by `gobby auth
+credentials` and receive a `gobby_session` cookie. Only lifecycle probes, auth
+routes, signed webhook receivers, and static UI assets are public. See
+[HTTP Endpoints](./http-endpoints.md#authentication) for the exact list.
+
+Daemon API access allows callers to read and mutate tasks, sessions, memory,
+configuration, MCP proxy state, and admin status. Agent spawn routes can start
+processes on the daemon box with access to daemon-local projects, worktrees,
+clones, credentials, and provider CLIs. Treat possession of the token or a
+browser session as command execution authority on the daemon machine.
 
 PostgreSQL access allows direct reads and writes to hub metadata. Restrict
 `pg_hba.conf`, rotate the hub password if it leaks, and avoid sharing the DSN
 outside the same operator trust group.
 
-UI username/password auth can protect many HTTP API routes, but several local
-integration surfaces are intentionally public or separately scoped. Do not use
-UI auth as the only boundary for a shared stack. Tailscale ACLs and Postgres
-auth remain the boundary.
+Standalone `gcode` and `gwiki` direct-hub operations remain outside daemon HTTP
+auth. Their authority comes from PostgreSQL DSN possession and, for encrypted
+secret access, KEK possession. Tailscale ACLs, daemon auth, PostgreSQL auth, and
+KEK custody must all match the same operator trust group. Per-user authorization
+and remote-machine ownership remain tracked by #17769.
 
 ## Secrets
 
@@ -205,3 +229,5 @@ client `database_url`.
 If secret-backed config works on the daemon box but fails from a remote client,
 that client is trying to decrypt or resolve secrets locally. Route the operation
 through the daemon or deliberately provision the trusted standalone binary path.
+
+_Last verified: 2026-07-10_

@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Daemon HTTP, MCP, memory, and WebSocket surfaces now require authentication
+  by default. Existing installations must re-run `gobby install` to provision
+  `~/.gobby/local_cli_token` and refresh installed Git-hook curl bodies before
+  restarting onto this change. Additional client machines need a `0600` copy
+  of the hub token.
+- Rebuild and reinstall the `ghook`, `gcode`, and `gwiki` Rust binaries before
+  restarting the daemon so every daemon-facing Rust client sends the bearer
+  token. Standalone direct-hub `gcode` and `gwiki` access continues to use the
+  PostgreSQL DSN and KEK contract.
+- `gobby auth` is now a command group. Use `gobby auth credentials [--remove]`
+  for browser credentials and `gobby auth token [--show] [--rotate]` for the
+  local daemon API token.
+- Web UI passwords are stored as salted scrypt hashes. Daemon startup
+  automatically migrates a decryptable legacy encrypted `auth.password` value
+  and removes the legacy entry.
+
+Set `auth_mode: disabled` in `bootstrap.yaml`, or run `gobby install --auth-mode
+disabled`, only for an explicitly trusted isolated environment.
+
 ## [0.4.9] - 2026-05-26
 
 0.4.9 focuses on PostgreSQL-only runtime hardening, build/review completion

@@ -893,3 +893,69 @@ scanned 3 touched test files and 32 tests with zero issues and zero new
 high-severity findings.
 - Touched production sources remain under 1,000 lines: `websocket/auth.py` is
 100 lines and `_app_ui.py` is 321 lines. No refactor task is required.
+
+## #17801 — Required-by-default daemon auth documentation
+
+Plan:
+
+1. Verify the effective auth-mode precedence, exact public HTTP surface,
+accepted credential forms, token storage and rotation behavior, web credential
+storage, install provisioning, CLI signatures, and live MCP mount against the
+implemented source and command help.
+2. Refresh the shared-stack, secrets, identity, Web UI, HTTP, admin,
+configuration, hub-install, and CLI guides around one consistent contract:
+required mode is the default, daemon clients use the install-scoped token, and
+browser clients use web credentials plus the `gobby_session` cookie.
+3. Add an operator rotation and verification runbook, including public and
+protected curl checks, daemon-backed CLI and MCP proxy checks, a hooked-repo
+commit, and browser login/chat WebSocket verification.
+4. Add the 0.5.0 breaking upgrade notes, update guide freshness dates, validate
+all touched links and documented commands, review the complete diff, then
+commit and close the final leaf.
+
+Test judgment:
+
+- This leaf changes documentation only, so executable behavior tests would not
+exercise any changed runtime path.
+- Validation will combine exact `gobby auth`, `gobby install`, `gobby tasks`,
+and `gobby mcp-proxy` help output with source-to-doc checks for middleware,
+bootstrap, storage, and install contracts; automated relative-link,
+whitespace, and manual diff checks cover the documentation artifacts.
+- The live daemon behavior is already covered by #17800's five-test E2E suite;
+this leaf documents that proven surface without restarting or contacting the
+user's daemon.
+
+Implemented:
+
+- Replaced the stale optional-auth descriptions with the required-by-default
+contract, exact public path/prefix table, bearer/local-alias/cookie credential
+forms, standalone and proxied WebSocket behavior, and external streamable-HTTP
+MCP bearer requirement.
+- Documented the `0600` token file, authoritative SHA-256 config-store hash,
+file-only install adoption, multi-machine copy requirement, five-second
+rotation window, old-token invalidation, scrypt web-password storage, and
+automatic legacy-password migration across the secrets and identity contracts.
+- Updated shared-stack and hub-install setup for client token distribution while
+preserving the direct-hub `gcode`/`gwiki` DSN plus KEK boundary and #17769
+multi-user limitation.
+- Added Web UI login setup, bootstrap `auth_mode`, the `gobby auth` command
+group, complete rotation runbook, curl/CLI/MCP/hook/browser verification matrix,
+and 0.5.0 breaking upgrade notes. Updated every touched guide freshness footer.
+
+Validation:
+
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/docs/ -q` passed all 8 focused
+documentation contract tests in 0.27 seconds.
+- `uv run gobby auth --help`, both auth-subcommand help commands, `uv run gobby
+install --help`, `uv run gobby tasks list --help`, and `uv run gobby mcp-proxy
+call-tool --help` all exited 0 and matched the documented command surfaces.
+- The documentation audit parsed all 10 target artifacts, resolved every
+relative link, syntax-checked 58 Bash blocks, confirmed the current freshness
+footer on every touched guide, and matched all 6 exact public paths plus all 4
+public prefixes from `middleware/auth.py`.
+- The tech-writer retired-term and stale-auth-claim scans returned no matches.
+`git diff --check` passed for the 11 task-owned files, including this work log.
+
+Test gap: no runtime path changed in this documentation-only leaf. #17800's
+five live-daemon E2E tests already cover the HTTP, MCP, WebSocket, rotation, and
+disabled-mode behavior documented here.

@@ -25,6 +25,21 @@ Missing and placeholder machine ids are not registry rows. Blank values and lega
 fallbacks such as `unknown` and `unknown-machine` mean the client did not provide a
 real machine identity.
 
+## Daemon Access Credentials
+
+Daemon auth establishes access to one operator-controlled daemon. The
+install-scoped `local_cli_token` authorizes CLI, hook, MCP, HTTP, and direct
+WebSocket clients. Web credentials in `auth.username` and the scrypt
+`auth.password_hash` create `gobby_session` browser sessions.
+
+These credentials represent daemon access capabilities. They do not populate
+`machines.owner_user_id`, identify the calling machine, or add row-level user
+ownership to tasks, sessions, memory, agents, or workflows. Machine identity
+continues to come from the client-supplied `machine_id` contract.
+
+See [Secrets Contract](./secrets.md#daemon-api-token) for token storage, header,
+and rotation semantics.
+
 ## Sessions
 
 `sessions.machine_id` remains the client-supplied machine identity used in the
@@ -39,6 +54,6 @@ the session. The derivation is:
 ## Future Fleets
 
 Fleet daemons and nodes should register as machines first, then associate ownership
-through `owner_user_id` when auth exists. A node can host many sessions; a user can
-own many machines; a shared stack can serve many users without changing the session
-schema.
+through `owner_user_id` when multi-user authorization exists. A node can host many
+sessions; a user can own many machines; a shared stack can serve many users without
+changing the session schema.
