@@ -1961,6 +1961,72 @@ class TestAgentEventBroadcastingCallback:
     """Tests for the broadcast_agent_event callback via fire_agent_event."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("event_type", "expected_task_count"),
+        [("agent_started", 3), ("agent_completed", 4)],
+    )
+    async def test_broadcast_tasks_retained_until_completion(
+        self,
+        event_type: str,
+        expected_task_count: int,
+    ) -> None:
+        """Every agent lifecycle broadcast stays anchored until its coroutine completes."""
+        import gobby.runner_broadcasting as rb
+        from gobby.runner_broadcasting import fire_agent_event, setup_agent_event_broadcasting
+
+        release = asyncio.Event()
+
+        async def wait_for_release(*_args: object, **_kwargs: object) -> None:
+            await release.wait()
+
+        mock_ws_server = MagicMock()
+        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=wait_for_release)
+        mock_ws_server.broadcast_tmux_session_event = AsyncMock(side_effect=wait_for_release)
+
+        mock_pty_manager = MagicMock()
+        mock_pty_manager.stop_reader = AsyncMock(side_effect=wait_for_release)
+        mock_tmux_reader = MagicMock()
+        mock_tmux_reader.start_reader = AsyncMock(side_effect=wait_for_release)
+        mock_tmux_reader.stop_reader = AsyncMock(side_effect=wait_for_release)
+
+        old_callback = rb._agent_event_callback
+        tasks_before = set(rb._agent_broadcast_tasks)
+        scheduled_tasks: set[asyncio.Task[None]] = set()
+        try:
+            with (
+                patch(
+                    "gobby.agents.pty_reader.get_pty_reader_manager",
+                    return_value=mock_pty_manager,
+                ),
+                patch(
+                    "gobby.agents.tmux.get_tmux_output_reader",
+                    return_value=mock_tmux_reader,
+                ),
+            ):
+                setup_agent_event_broadcasting(mock_ws_server)
+
+            fire_agent_event(
+                event_type,
+                "run-123",
+                {"tmux_session_name": "agent-run-123"},
+            )
+
+            scheduled_tasks = rb._agent_broadcast_tasks - tasks_before
+            assert len(scheduled_tasks) == expected_task_count
+            assert all(not task.done() for task in scheduled_tasks)
+
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*scheduled_tasks), timeout=1.0)
+
+            assert scheduled_tasks.isdisjoint(rb._agent_broadcast_tasks)
+        finally:
+            release.set()
+            unfinished_tasks = [task for task in scheduled_tasks if not task.done()]
+            if unfinished_tasks:
+                await asyncio.gather(*unfinished_tasks, return_exceptions=True)
+            rb._agent_event_callback = old_callback
+
+    @pytest.mark.asyncio
     async def test_broadcast_callback_invoked(self):
         """Test that fire_agent_event invokes the broadcast callback."""
         import gobby.runner_broadcasting as rb
