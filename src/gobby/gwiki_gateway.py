@@ -291,7 +291,7 @@ class GwikiGateway:
 
     async def health(self) -> dict[str, Any]:
         result = await self._run_json("health", ["health"])
-        self._normalize_health_report_heading(result)
+        await self._normalize_health_report_heading(result)
         return result
 
     async def sources(self) -> dict[str, Any]:
@@ -620,7 +620,7 @@ class GwikiGateway:
             "topic": self._topic,
         }
 
-    def _normalize_health_report_heading(self, result: dict[str, Any]) -> None:
+    async def _normalize_health_report_heading(self, result: dict[str, Any]) -> None:
         payload = result.get("payload")
         if not isinstance(payload, dict):
             return
@@ -630,9 +630,13 @@ class GwikiGateway:
             return
         report_path = Path(root) / text_path
         try:
-            text = report_path.read_text()
-        except OSError:
+            await asyncio.to_thread(self._normalize_health_report_file, report_path)
+        except (OSError, ValueError):
             return
+
+    @staticmethod
+    def _normalize_health_report_file(report_path: Path) -> None:
+        text = report_path.read_text(encoding="utf-8")
         lines = text.splitlines(keepends=True)
         if not lines:
             return
@@ -642,4 +646,4 @@ class GwikiGateway:
         if first_line == "Wiki health report":
             newline = lines[0][len(first_line) :]
             lines[0] = f"# Wiki health report{newline}"
-            report_path.write_text("".join(lines))
+            report_path.write_text("".join(lines), encoding="utf-8")
