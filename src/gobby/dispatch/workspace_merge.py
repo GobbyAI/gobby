@@ -39,6 +39,10 @@ GUIDE_ROW_RE = re.compile(
 logger = logging.getLogger(__name__)
 
 
+class _StaleMergeStateError(RuntimeError):
+    """Raised when an interrupted workspace merge cannot be recovered automatically."""
+
+
 @dataclass(frozen=True)
 class _WorkspacePaths:
     source_path: str
@@ -88,6 +92,7 @@ def _execute_merge_workspace_sync(
         try:
             _ensure_branch(paths.source_path, source_branch, "source")
             _ensure_branch(paths.target_path, action.target_branch, "target")
+            _recover_stale_merge_state(paths.target_path, "target integration workspace")
             source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
             _ensure_target_merge_safe(
                 paths.target_path, source_commit, "target integration workspace"
@@ -138,6 +143,11 @@ def _execute_merge_workspace_sync(
             _mark_source_merged(action, db=db, source_id=paths.source_id)
             _complete_merge_stage(db, action.task_id, merge_sha)
             return merge_sha
+        except _StaleMergeStateError as exc:
+            reason = f"stale_merge_state:{exc}"
+            _append_merge_failure_audit(db, action.task_id, reason)
+            _fail_merge_stage(db, action.task_id, reason)
+            return None
         except RuntimeError as exc:
             reason = f"workspace_merge_failed:{exc}"
             _append_merge_failure_audit(db, action.task_id, reason)
@@ -323,6 +333,25 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
     current = _git_stdout(path, ["rev-parse", "--abbrev-ref", "HEAD"])
     if current != expected:
         raise RuntimeError(f"{label} workspace branch mismatch: {current} != {expected}")
+
+
+def _recover_stale_merge_state(path: str, label: str) -> None:
+    """Abort a merge left behind by an interrupted dispatch before starting another."""
+    merge_head = _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    if merge_head.returncode != 0:
+        return
+
+    abort = _git(Path(path), ["merge", "--abort"])
+    remaining = _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    if abort.returncode == 0 and remaining.returncode != 0:
+        logger.warning("Recovered interrupted merge in %s", path)
+        return
+
+    detail = abort.stderr.strip() or "MERGE_HEAD remains after git merge --abort"
+    raise _StaleMergeStateError(
+        f"{label} contains an interrupted merge; automatic git merge --abort failed: {detail}. "
+        f"Repair the checkout at {path} and retry dispatch"
+    )
 
 
 def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> None:

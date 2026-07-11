@@ -32,6 +32,25 @@ async def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
     return cleared
 
 
+def sweep_expired_integration_workspace_leases(
+    db: HubDatabase,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Delete integration-workspace mutexes whose leases have expired."""
+    resolved_now = now or datetime.now(UTC)
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM integration_workspace_mutex
+             WHERE lease_until IS NOT NULL
+               AND lease_until < %s
+            """,
+            (resolved_now.isoformat(),),
+        )
+        return int(cursor.rowcount)
+
+
 def sweep_orphan_no_run_dispatch_mutexes(
     mutex_storage: TaskDispatchMutexManager,
     db: HubDatabase,

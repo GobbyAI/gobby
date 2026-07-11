@@ -3662,10 +3662,25 @@ async def test_startup_sweep_clears_expired_leases(
     storage = _mutex_storage(temp_db)
     past = datetime.now(UTC) - timedelta(seconds=60)
     storage.acquire_mutex(task.id, holder="old", kind="test", ttl_seconds=1, now=past)
+    temp_db.execute(
+        """
+        INSERT INTO integration_workspace_mutex (
+            integration_key, lease_until, lease_holder, updated_at
+        ) VALUES (%s, %s, %s, %s)
+        """,
+        ("worktree:integration/root", past, "dead-dispatcher", past),
+    )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], startup=True)
 
     assert storage.get_mutex(task.id) is None
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM integration_workspace_mutex WHERE integration_key = %s",
+            ("worktree:integration/root",),
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

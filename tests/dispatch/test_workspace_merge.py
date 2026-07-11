@@ -206,6 +206,107 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
 
 
+async def test_execute_merge_workspace_recovers_interrupted_target_merge(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration"
+    task_path = tmp_path / "task"
+    repo.mkdir()
+    _init_repo(repo)
+    (repo / "conflict.txt").write_text("base\n")
+    _git(repo, "add", "conflict.txt")
+    _git(repo, "commit", "-m", "base conflict file")
+    _git(repo, "worktree", "add", "-b", "integration/root", str(integration_path), "main")
+    _git(repo, "worktree", "add", "-b", "task/leaf", str(task_path), "integration/root")
+    for path in (repo, integration_path, task_path):
+        _git(path, "config", "user.email", "test@example.com")
+        _git(path, "config", "user.name", "Test User")
+
+    (repo / "conflict.txt").write_text("stale source\n")
+    _git(repo, "add", "conflict.txt")
+    _git(repo, "commit", "-m", "stale source change")
+    (integration_path / "conflict.txt").write_text("integration\n")
+    _git(integration_path, "add", "conflict.txt")
+    _git(integration_path, "commit", "-m", "integration change")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+
+    interrupted = subprocess.run(
+        ["git", "merge", "main"],
+        cwd=integration_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert interrupted.returncode != 0
+    assert _git(integration_path, "rev-parse", "--verify", "MERGE_HEAD")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    worktrees = LocalWorktreeManager(temp_db)
+    worktrees.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        worktree_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = worktrees.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        worktree_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        worktree_path=str(task_path),
+        worktree_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    merge_sha = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="worktree",
+            target_branch="integration/root",
+            source_workspace_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    assert merge_sha == _git(integration_path, "rev-parse", "HEAD")
+    assert (integration_path / "conflict.txt").read_text() == "integration\n"
+    assert (integration_path / "feature.txt").read_text() == "feature\n"
+    assert task_manager.stage_states.get(leaf.id, "merge").state == "done"
+    assert (
+        subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", "MERGE_HEAD"],
+            cwd=integration_path,
+            capture_output=True,
+            check=False,
+        ).returncode
+        != 0
+    )
+
+
 async def test_execute_merge_workspace_completes_already_merged_worktree(
     temp_db: HubDatabase,
     tmp_path: Path,

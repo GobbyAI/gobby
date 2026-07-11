@@ -39,6 +39,7 @@ from gobby.dispatch.constants import (
 from gobby.dispatch.context import _field, build_context, reload_candidate
 from gobby.dispatch.daemon_resume import try_resume_daemon_stop_run
 from gobby.dispatch.lease_cleanup import (
+    sweep_expired_integration_workspace_leases,
     sweep_expired_leases,
     sweep_orphan_no_run_dispatch_mutexes,
 )
@@ -161,6 +162,15 @@ async def _run_heartbeat_unlocked(
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         await sweep_expired_leases(mutex_storage)
+        expired_integration_leases = await run_db(
+            sweep_expired_integration_workspace_leases,
+            resolved_db,
+        )
+        if expired_integration_leases:
+            logger.info(
+                "Dispatcher cleared %d expired integration workspace lease(s)",
+                expired_integration_leases,
+            )
     orphan_mutexes = await run_db(
         sweep_orphan_no_run_dispatch_mutexes,
         mutex_storage,
