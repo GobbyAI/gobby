@@ -658,6 +658,40 @@ async def test_heartbeat_dispatches_reopened_review_under_gated_holistic_root(
     assert spawned[0].agent_slug == "qa-reviewer"
 
 
+@pytest.mark.asyncio
+async def test_heartbeat_escalates_exhausted_holistic_qa_review(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(
+        temp_db,
+        sample_project,
+        stage_name="holistic_qa",
+        stage_state="needs_review",
+    )
+    temp_db.execute(
+        """
+        UPDATE task_stage_states
+        SET review_round_count = %s, max_review_rounds = %s
+        WHERE task_id = %s AND stage_name = %s
+        """,
+        (2, 2, task.id, "holistic_qa"),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        max_actions=1,
+    )
+
+    escalated = get_task(temp_db, task.id)
+    assert result.executed == 1
+    assert escalated.is_escalated is True
+    assert escalated.escalation_reason == "holistic_qa_max_review_rounds"
+
+
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
     """Count active agents scopes by parent session project."""
     from gobby.dispatch.dispatcher import count_active_agents

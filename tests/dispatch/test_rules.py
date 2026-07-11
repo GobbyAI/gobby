@@ -872,6 +872,21 @@ def test_attended_review_cap_escalates_with_reason() -> None:
     assert action.reason == "development_max_review_rounds"
 
 
+def test_holistic_qa_review_escalates_when_review_cap_reached() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at(
+            "holistic_qa",
+            "needs_review",
+            stage_overrides={"review_round_count": 2, "max_review_rounds": 2},
+        )
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "holistic_qa_max_review_rounds"
+
+
 def test_base_rules_order_excludes_merge_rule() -> None:
     from gobby.dispatch.rules import BASE_RULES
 

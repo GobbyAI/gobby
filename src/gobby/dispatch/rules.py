@@ -315,8 +315,10 @@ def holistic_qa_rule(task: object, context: object) -> Action | None:
 
 def holistic_qa_review_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "holistic_qa", "needs_review")
-    if stage is None or _stage_review_exhausted(stage, context):
+    if stage is None:
         return None
+    if _stage_review_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_review_rounds")
     if not _agent_dispatchable(context, "holistic-reviewer"):
         return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "holistic-reviewer", resume_review=True)
