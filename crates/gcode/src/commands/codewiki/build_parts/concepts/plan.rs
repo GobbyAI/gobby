@@ -529,6 +529,12 @@ pub(super) fn normalize_narrative_pages(
     let mut ordered = Vec::with_capacity(DEFAULT_CHAPTERS.len() + extras.len());
     for chapter in DEFAULT_CHAPTERS {
         if let Some(mut page) = spine.remove(chapter.slug) {
+            // Spine titles are canon: the guided tour and curated index link
+            // spine chapters through `default_chapter_links()`, which derives
+            // slugs from `chapter.title` — a model re-wording would move the
+            // page to a different `NN-<title>` slug and dangle every tour
+            // link at publish (#17848).
+            page.title = chapter.title.to_string();
             enrich_default_chapter(&mut page, chapter, modules, files, concepts);
             ordered.push(page);
         } else {
@@ -875,5 +881,37 @@ mod tests {
         );
         assert_eq!(before[9].slug, "10-cli-entrypoints");
         assert_eq!(after[9].slug, "10-cli-runtime");
+    }
+
+    // A model may re-word a spine chapter's title ("Overview — Gobby's build
+    // pipeline..."); the canonical title must win so the on-disk slug stays
+    // exactly what `default_chapter_links()` renders in the guided tour —
+    // otherwise repo.md links `narrative/01-overview` while the page lands at
+    // `01-overview-gobby-s-build-pipeline-...` and publish fails closed on the
+    // dangling link (#17848).
+    #[test]
+    fn re_titled_spine_chapter_keeps_the_canonical_slug_and_title() {
+        let ordered = normalize_narrative_pages(
+            vec![narrative_page(
+                "01-overview",
+                "Overview — Gobby's build pipeline and the gcode tool",
+            )],
+            &[],
+            &[],
+            &[],
+        );
+
+        assert_eq!(ordered[0].slug, "01-overview");
+        assert_eq!(ordered[0].title, "Overview");
+        let links = default_chapter_links();
+        let spine_slugs: Vec<&str> = ordered[..links.len()]
+            .iter()
+            .map(|page| page.slug.as_str())
+            .collect();
+        let link_slugs: Vec<&str> = links.iter().map(|(slug, _)| slug.as_str()).collect();
+        assert_eq!(
+            spine_slugs, link_slugs,
+            "every guided-tour link must resolve to a normalized spine page"
+        );
     }
 }
