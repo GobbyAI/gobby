@@ -151,3 +151,36 @@ Entry format:
 - Action: healing arm S by rerunning the exact arm command (reuse
   regenerates only the 23 degraded pages + missing aggregates), then arm O
   → arm G per `/Users/josh/.claude/plans/i-had-the-absolute-modular-pizza.md`.
+
+## 2026-07-11 13:40 UTC — #17823 — Fix codewiki publish link validation flagging wikilinks inside code spans — CLOSED
+
+- Changes: `code_wikilinks` (crates/gcode/src/commands/codewiki/
+  publication.rs) now masks fenced code blocks (backtick/tilde fences,
+  CommonMark char + length matching) and inline code spans (equal-length
+  backtick runs; unmatched runs stay literal) before extracting `[[...]]`
+  targets. Quoted wikilink examples inside code no longer fail publish;
+  real links still resolve and real broken links still fail closed. Known
+  scoped gap: 4-space-indented code blocks are not masked (generated pages
+  use fences/inline code; documented here rather than speculatively
+  handled).
+- Found by: #17531 arm S heal attempt=4 died at publish (exit=1) because
+  the regenerated modules.rs.md correctly QUOTED
+  `Module: [[code/modules/<file.module>]]` in backticks and the validator
+  treated it as a broken generated link, stranding the whole stage.
+- Commits: 65288f7ba
+- Validation: `cargo test -p gobby-code` fully green — 998 lib tests + all
+  integration suites, 0 failed (includes 2 new publish-level tests:
+  quoted-links-in-code-spans/fences publish cleanly with no placeholder
+  leakage; real broken link after an unmatched backtick still fails).
+  `cargo clippy -p gobby-code --tests` clean; `cargo fmt -p gobby-code
+  --check` clean; `gobby test-quality audit` on tests/publication.rs:
+  0 new issues vs baseline.
+- Deferred: none.
+- Daemon-restart log (for #17531 evidence doc): cli_restart shutdowns at
+  2026-07-11 04:31Z, 07:03Z, 09:28Z, 10:20Z (sender pids 2688/52294/
+  90029/78680, none announced); each degraded in-flight heal pages
+  (staged degraded peaked 33). Also disabled misconfigured cron
+  `gobby:monitor:17731-17806-hourly` (agent_spawn parent = project UUID,
+  11 consecutive failures).
+- NOTE: binary reinstall required for the fix to reach the heal (freeze
+  superseded 2026-07-10); reinstall logged in #17531 evidence narrative.
