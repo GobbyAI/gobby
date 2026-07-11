@@ -5,6 +5,7 @@ import { createMockWebSocket, type MockWebSocketInstance } from '../../test/mock
 // The module uses module-level singleton state, so we need to reset it between tests.
 // We re-import after resetting modules.
 let useWebSocketEvent: typeof import('../useWebSocketEvent').useWebSocketEvent
+let useWebSocketConnected: typeof import('../useWebSocketEvent').useWebSocketConnected
 let mockWs: { instances: MockWebSocketInstance[]; MockWebSocket: typeof WebSocket; restore: () => void }
 
 beforeEach(() => {
@@ -24,6 +25,7 @@ async function loadModule() {
   vi.resetModules()
   const mod = await import('../useWebSocketEvent')
   useWebSocketEvent = mod.useWebSocketEvent
+  useWebSocketConnected = mod.useWebSocketConnected
 }
 
 describe('useWebSocketEvent', () => {
@@ -280,5 +282,41 @@ describe('useWebSocketEvent', () => {
       'session-1',
     ])
     expect(fetchMock.mock.calls[1][0]).toContain('/api/sessions?project_id=proj-1&limit=100')
+  })
+})
+
+describe('useWebSocketConnected', () => {
+  it('tracks the singleton connection state across open and close', async () => {
+    await loadModule()
+
+    // An event consumer opens the singleton; the connected reader observes it.
+    const { result } = renderHook(() => {
+      useWebSocketEvent('pipeline_event', () => undefined)
+      return useWebSocketConnected()
+    })
+
+    expect(result.current).toBe(false)
+    const ws = mockWs.instances[0]
+
+    act(() => ws.simulateOpen())
+    expect(result.current).toBe(true)
+
+    // Server-side drop: connected flips off until the reconnect succeeds.
+    act(() => ws.simulateClose())
+    expect(result.current).toBe(false)
+
+    act(() => vi.advanceTimersByTime(2000))
+    const reconnected = mockWs.instances[1]
+    act(() => reconnected.simulateOpen())
+    expect(result.current).toBe(true)
+  })
+
+  it('does not open the socket by itself', async () => {
+    await loadModule()
+
+    const { result } = renderHook(() => useWebSocketConnected())
+
+    expect(mockWs.instances).toHaveLength(0)
+    expect(result.current).toBe(false)
   })
 })

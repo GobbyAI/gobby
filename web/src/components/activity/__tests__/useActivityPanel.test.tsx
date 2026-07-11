@@ -168,6 +168,24 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.effectiveMode).toBe('split')
   })
 
+  it('switches tabs on the gobby:show-activity-tab event and ignores unknown tabs', () => {
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'pipelines' } }),
+      )
+    })
+    expect(result.current.activeTab).toBe('pipelines')
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'bogus' } }),
+      )
+    })
+    expect(result.current.activeTab).toBe('pipelines')
+  })
+
   it('clears the transient override when the user explicitly toggles layout', () => {
     const { result } = renderHook(() => useActivityPanel(false))
 

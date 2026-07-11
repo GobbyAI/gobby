@@ -201,6 +201,19 @@ export function useActivityPanel(isMobile: boolean) {
     [dirtyGuard, isMobile],
   )
 
+  // Cross-tab escape hatch (`gobby:open-command-palette` precedent): deep
+  // components dispatch `gobby:show-activity-tab` with `{tab}` instead of
+  // threading `showTab` through every panel surface.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab
+      const normalized = normalizeStoredTab(tab ?? null)
+      if (normalized) showTab(normalized)
+    }
+    window.addEventListener('gobby:show-activity-tab', handler)
+    return () => window.removeEventListener('gobby:show-activity-tab', handler)
+  }, [showTab])
+
   const closeIfAutoOpened = useCallback(() => {
     void dirtyGuard.guardedRun(() => {
       setViewOverride(null)

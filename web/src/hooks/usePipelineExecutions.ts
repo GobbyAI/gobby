@@ -52,6 +52,9 @@ export interface UsePipelineExecutionsOptions {
   projectId?: string;
   limit?: number;
   offset?: number;
+  /** Seeds the initial pipeline_name filter so the first fetch is already
+   * scoped (later `setFilters` calls still win). Read once on mount. */
+  pipelineName?: string;
 }
 
 const DEFAULT_LIMIT = 50;
@@ -62,7 +65,7 @@ export function usePipelineExecutions(
   // Backward-compat: callers used to pass a bare projectId string.
   const opts: UsePipelineExecutionsOptions =
     typeof options === "string" ? { projectId: options } : (options ?? {});
-  const { projectId, limit = DEFAULT_LIMIT, offset = 0 } = opts;
+  const { projectId, limit = DEFAULT_LIMIT, offset = 0, pipelineName } = opts;
 
   const [executions, setExecutions] = useState<PipelineExecutionRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -71,7 +74,9 @@ export function usePipelineExecutions(
   );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<Filters>({});
+  const [filters, setFilters] = useState<Filters>(() =>
+    pipelineName ? { pipeline_name: pipelineName } : {},
+  );
   const refetchTimerRef = useRef<number | null>(null);
 
   const fetchExecutions = useCallback(async () => {

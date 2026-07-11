@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 // ---------------------------------------------------------------------------
 // Singleton WebSocket connection shared across all consumers
@@ -18,6 +18,30 @@ const handlers = new Map<string, Set<Handler>>()
 
 /** All event types any consumer has registered for */
 const subscribedTypes = new Set<string>()
+
+/** Singleton connection state — lets consumers (e.g. polling fallbacks)
+ * distinguish "events will arrive" from "the socket is down". */
+let connected = false
+const connectionListeners = new Set<() => void>()
+
+function setConnected(next: boolean) {
+  if (connected === next) return
+  connected = next
+  for (const listener of connectionListeners) {
+    listener()
+  }
+}
+
+function subscribeConnection(listener: () => void): () => void {
+  connectionListeners.add(listener)
+  return () => {
+    connectionListeners.delete(listener)
+  }
+}
+
+function readConnection(): boolean {
+  return connected
+}
 
 function getWsUrl(): string {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -52,6 +76,7 @@ function connect() {
 
   ws.onopen = () => {
     reconnectAttempts = 0
+    setConnected(true)
     sendSubscriptions()
   }
 
@@ -59,6 +84,7 @@ function connect() {
 
   ws.onclose = () => {
     ws = null
+    setConnected(false)
     if (!closed) {
       const baseDelay = Math.min(BASE_DELAY * 2 ** reconnectAttempts, MAX_DELAY)
       const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1)
@@ -142,10 +168,23 @@ export function useWebSocketEvent(eventType: string, handler: Handler): void {
           ws.close()
           ws = null
         }
+        setConnected(false)
         // Reset so next mount can reconnect
         closed = false
         reconnectAttempts = 0
       }
     }
   }, [eventType])
+}
+
+/**
+ * Read the singleton event-socket connection state.
+ *
+ * Consumers that must not depend on the WebSocket alone (e.g. §5.2's
+ * research-run polling fallback) use this to switch to polling while the
+ * socket is down. Subscribing here does NOT open the connection — pair it
+ * with a `useWebSocketEvent` consumer somewhere in the tree.
+ */
+export function useWebSocketConnected(): boolean {
+  return useSyncExternalStore(subscribeConnection, readConnection)
 }

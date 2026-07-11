@@ -95,6 +95,18 @@ describe('usePipelineExecutions', () => {
     expect(secondUrl).toContain('offset=10')
   })
 
+  it('seeds the pipeline_name filter so the first fetch is already scoped', async () => {
+    renderHook(() =>
+      usePipelineExecutions({ projectId: 'proj-1', pipelineName: 'wiki-research' }),
+    )
+
+    await waitFor(() => {
+      expect(mockFetch.fn).toHaveBeenCalledTimes(1)
+    })
+    const url = String(mockFetch.fn.mock.calls[0][0])
+    expect(url).toContain('pipeline_name=wiki-research')
+  })
+
   it('accepts a bare projectId string for backward compatibility', async () => {
     const { result } = renderHook(() => usePipelineExecutions('proj-1'))
 

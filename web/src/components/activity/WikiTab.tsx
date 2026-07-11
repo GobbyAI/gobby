@@ -2,8 +2,8 @@
  * Four-mode wiki shell (plan wiki-obsidian-panel §2.2): Wiki | Code | Ask |
  * Research with persisted mode/scope, dirty-guarded transitions, and the
  * kebab action surface. Wiki and Code render the §3.1 browse experience,
- * Ask renders the §5.1 grounded Q&A mode; the research body is a
- * placeholder until its milestone (§5.2).
+ * Ask renders the §5.1 grounded Q&A mode, and Research renders the §5.2
+ * pipeline launch/monitor mode.
  */
 
 import {
@@ -20,6 +20,7 @@ import { useWiki } from "../../hooks/useWiki";
 import { useDirtyGuard } from "./dirtyGuard";
 import { WikiAskMode } from "./wiki/WikiAskMode";
 import { WikiBrowse } from "./wiki/WikiBrowse";
+import { WikiResearchMode } from "./wiki/WikiResearchMode";
 import { WikiGraphView } from "./wiki/WikiGraphView";
 import { WikiSourcesManager } from "./wiki/WikiSourcesManager";
 import { useWikiTabActions, type WikiTabActions } from "./wiki/WikiTabActions";
@@ -90,20 +91,13 @@ function ModeBody({
   }
   if (mode === "research") {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-2 px-4 py-6">
-        <textarea
-          aria-label="Research prompt"
-          disabled
-          rows={3}
-          placeholder="Describe a research run…"
-          className="max-w-[65ch] resize-none rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground disabled:opacity-60"
-        />
-        <p className="max-w-[65ch] text-xs text-muted-foreground">
-          {offline
-            ? "The wiki gateway is unreachable — the composer is disabled until it recovers."
-            : "Research runs launch the wiki-research pipeline; the composer lands with the research milestone."}
-        </p>
-      </div>
+      <WikiResearchMode
+        scope={scope}
+        nav={nav}
+        offline={offline}
+        actions={actions}
+        onOpenGraph={onOpenGraph}
+      />
     );
   }
   return (
