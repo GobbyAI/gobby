@@ -367,11 +367,20 @@ def e2e_project_dir() -> Generator[Path]:
 
 
 @pytest.fixture(scope="function")
+def e2e_auth_mode(request: pytest.FixtureRequest) -> str:
+    """Select daemon auth mode, with required remaining the suite default."""
+    mode = getattr(request, "param", "required")
+    assert mode in {"required", "disabled"}
+    return mode
+
+
+@pytest.fixture(scope="function")
 def e2e_config(
     e2e_project_dir: Path,
     postgres_database_url: str,
     postgres_schema: str,
     postgres_db: Any,
+    e2e_auth_mode: str,
 ) -> Generator[tuple[Path, int, int]]:
     """Create an isolated config file with unique ports."""
     _ = postgres_db  # Fixture side effect: migrated and reset isolated Postgres schema.
@@ -431,7 +440,7 @@ postgres_install_mode: docker
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
-auth_mode: required
+auth_mode: {e2e_auth_mode}
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)

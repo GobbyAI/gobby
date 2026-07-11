@@ -822,3 +822,74 @@ Final validation:
 Test gap: dependent #17800 owns the live browser/CLI end-to-end authentication
 suite. This leaf validates required-mode daemon HTTP clients and restart paths
 with isolated temporary homes and ports.
+
+## #17800 — Live daemon end-to-end auth suite
+
+Plan:
+
+1. Add a reusable E2E auth-mode fixture seam while preserving required mode as
+the suite default, then create the five named acceptance tests in
+`tests/e2e/test_daemon_auth.py`.
+2. Exercise the HTTP matrix with real valid requests so required mode proves
+missing and invalid credentials fail while bearer and legacy local-token
+headers reach successful route behavior.
+3. Exercise both live WebSocket surfaces: standalone-port handshake auth and
+HTTP `/ws` cookie bridging with real welcome and ping/pong frames.
+4. Rotate the isolated install token through the real CLI, poll through the
+five-second refresh boundary, and verify HTTP, direct WebSocket, and cookie
+bridge behavior without restarting the daemon.
+5. Run the disabled-mode case against a separately spawned temporary-home
+daemon, then complete focused regression, lint, format, type, test-quality,
+diff, isolation, and source-size checks before committing and closing.
+
+Test judgment:
+
+- End-to-end CLI/API tests are required because the behavior crosses bootstrap
+configuration, token-file provisioning, PostgreSQL `ConfigStore`, middleware,
+the rotation CLI, and a live daemon process.
+- Live WebSocket checks must validate handshake rejection/acceptance and actual
+frames on both the standalone port and HTTP proxy; mocked proxy tests cannot
+prove upstream bearer injection or refresh after rotation.
+- Every daemon uses the existing E2E temporary home, isolated PostgreSQL schema,
+random ports, `GOBBY_TEST_PROTECT=1`, and teardown process-tree cleanup. The
+user's running daemon and real local state stay outside the test boundary.
+
+Implemented:
+
+- Added the five named live-daemon tests covering the required HTTP matrix,
+standalone and proxied WebSockets, CLI token rotation, WebSocket rotation, and
+disabled mode. Requests use real session registration, hooks, MCP initialize,
+and memory-dream routes; the standard E2E daemon's intentionally unavailable
+memory manager returns its downstream 503 after authentication rather than 401.
+- Added a parameterized `e2e_auth_mode` fixture seam while preserving required
+mode for every existing E2E test.
+- Corrected standalone WebSocket rejection responses for websockets 16 by
+placing diagnostic text in the response body and keeping the HTTP reason phrase
+valid. Missing and invalid credentials now produce parseable 401/403 handshakes.
+- The HTTP `/ws` bridge now accepts the upgrade before closing unauthenticated
+clients with application code 4401, making the specified close code observable
+to real browser/WebSocket clients.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest
+tests/e2e/test_daemon_auth.py -q` collected all five tests and finished with 3
+failures, 1 pass, and 1 setup error in 390.98 seconds. It exposed invalid
+standalone handshake responses, HTTP 403 instead of observable proxy close 4401,
+missing disabled-mode fixture plumbing, and invalid test session setup.
+- Minimal green: the HTTP required/disabled pair passed 2 tests in 160.05
+seconds; the rotation pair passed 2 tests in 160.47 seconds; the live WS auth
+test passed in 76.82 seconds after the protocol fixes.
+- Focused standalone/proxy unit regression passed all 27 tests. The earlier
+standalone-only run exposed four stale reason-phrase assertions; after updating
+them to assert response bodies, all 24 standalone auth tests passed.
+
+Final validation:
+
+- Refactor/final green: the exact red command passed all 5 live-daemon tests in
+399.17 seconds with no warnings.
+- Ruff check, strict MyPy, and `git diff --check` passed. Test-quality audit
+scanned 3 touched test files and 32 tests with zero issues and zero new
+high-severity findings.
+- Touched production sources remain under 1,000 lines: `websocket/auth.py` is
+100 lines and `_app_ui.py` is 321 lines. No refactor task is required.

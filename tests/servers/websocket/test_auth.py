@@ -210,7 +210,7 @@ class TestMissingAuthHeader:
 
         result = await server._authenticate(ws, request)
 
-        assert "Missing Authorization header" in result.reason_phrase
+        assert b"Missing Authorization header" in result.body
 
     async def test_callback_not_called(self) -> None:
         callback = AsyncMock(return_value="user-1")
@@ -269,7 +269,7 @@ class TestInvalidAuthFormat:
 
         result = await server._authenticate(ws, request)
 
-        assert "Bearer token" in result.reason_phrase
+        assert b"Bearer token" in result.body
 
     async def test_callback_not_called_for_bad_format(self) -> None:
         callback = AsyncMock(return_value="user-1")
@@ -355,7 +355,7 @@ class TestInvalidToken:
 
         result = await server._authenticate(ws, request)
 
-        assert "Invalid token" in result.reason_phrase
+        assert b"Invalid token" in result.body
 
     async def test_empty_string_user_id_treated_as_invalid(self) -> None:
         """Callback returning empty string should be treated as invalid."""
@@ -392,7 +392,7 @@ class TestAuthCallbackException:
 
         result = await server._authenticate(ws, request)
 
-        assert "Internal server error" in result.reason_phrase
+        assert b"Internal server error" in result.body
 
     async def test_different_exception_types_all_return_500(self) -> None:
         """All exception types should be caught and return 500."""

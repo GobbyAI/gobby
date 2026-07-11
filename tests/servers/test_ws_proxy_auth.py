@@ -96,6 +96,7 @@ async def test_proxy_rejects_missing_credentials(monkeypatch: pytest.MonkeyPatch
 
     await _proxy_endpoint()(websocket, "chat")
 
+    assert websocket.accepted is True
     assert websocket.closed_codes == [4401]
     assert connect_calls == []
 

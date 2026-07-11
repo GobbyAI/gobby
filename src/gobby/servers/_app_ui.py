@@ -67,6 +67,7 @@ def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
         bearer_token: str | None = None
         if server.auth_service.enabled:
             if not server.auth_service.is_request_authenticated(websocket):
+                await websocket.accept()
                 await websocket.close(code=4401)
                 return
             bearer_token = server.auth_service.local_token()
