@@ -202,6 +202,11 @@ export function normalizePages(payload: unknown): WikiPagesResult {
   };
 }
 
+export interface WikiPageCandidate {
+  path: string;
+  title: string | null;
+}
+
 export interface WikiPageDetail {
   path: string | null;
   title: string | null;
@@ -213,6 +218,8 @@ export interface WikiPageDetail {
   contentHash: string | null;
   status: string | null;
   truncated: boolean;
+  /** Populated on `status: "ambiguous"` reads — the match-picker input. */
+  candidates: WikiPageCandidate[];
 }
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
@@ -229,6 +236,14 @@ function splitFrontmatter(content: string): { frontmatter: Record<string, unknow
   }
 }
 
+function normalizePageCandidate(value: unknown): WikiPageCandidate | null {
+  if (typeof value === "string") return value ? { path: value, title: null } : null;
+  const record = asRecord(value);
+  const path = fieldText(record, "path", "wiki_path");
+  if (!path) return null;
+  return { path, title: fieldText(record, "title") };
+}
+
 export function normalizePage(payload: unknown): WikiPageDetail {
   const record = asRecord(payload);
   const content = fieldText(record, "content") ?? "";
@@ -242,6 +257,9 @@ export function normalizePage(payload: unknown): WikiPageDetail {
     contentHash: fieldText(record, "content_hash"),
     status: fieldText(record, "status"),
     truncated: fieldBoolean(record, "truncated"),
+    candidates: asList(record.candidates ?? record.matches)
+      .map(normalizePageCandidate)
+      .filter((candidate): candidate is WikiPageCandidate => candidate !== null),
   };
 }
 

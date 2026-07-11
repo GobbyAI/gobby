@@ -459,3 +459,129 @@ export const sourcesEnvelope: EnvelopeFixture = {
     ],
   },
 };
+
+/** Read fixture with wikilinks and a Citations section (§3.1 browse tests). */
+export const browseReadGobbyEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "found",
+    requested: { kind: "path", value: "knowledge/concepts/gobby.md" },
+    wiki_path: "knowledge/concepts/gobby.md",
+    title: "Gobby",
+    content:
+      '---\ntitle: "Gobby"\nsource_kind: "concept"\ntags:\n  - gwiki\n  - compiled\n---\n\n# Gobby\n\nGobby is a local-first daemon. See [[knowledge/concepts/gwiki|Gwiki]] and [[missing/page|Missing]].\n\n## Citations\n\n- [[knowledge/sources/src-82182128d032cefe-session-c1c0c073|Session: c1c0c073]]\n',
+    content_format: "markdown",
+    content_hash: "6d98b22ffd529e5a4d32c3c3803206d2",
+    byte_len: 260,
+    truncated: false,
+    candidates: [],
+    degradations: [],
+  },
+};
+
+export const browseReadGwikiEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "found",
+    requested: { kind: "path", value: "knowledge/concepts/gwiki.md" },
+    wiki_path: "knowledge/concepts/gwiki.md",
+    title: "Gwiki",
+    content:
+      '---\ntitle: "Gwiki"\nsource_kind: "concept"\ntags:\n  - gwiki\n---\n\n# Gwiki\n\nGwiki compiles the wiki.\n',
+    content_format: "markdown",
+    content_hash: "0db1596ac2f34b7cd2e04a491b692406",
+    byte_len: 96,
+    truncated: false,
+    candidates: [],
+    degradations: [],
+  },
+};
+
+/** Ambiguous title read (§3.1 match picker). */
+export const browseAmbiguousReadEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "ambiguous",
+    requested: { kind: "title", value: "gobby" },
+    wiki_path: null,
+    title: null,
+    content: "",
+    content_format: "markdown",
+    content_hash: null,
+    byte_len: 0,
+    truncated: false,
+    candidates: [
+      { path: "knowledge/concepts/gobby.md", title: "Gobby" },
+      { path: "code/files/src/gobby/runner.py.md", title: "src/gobby/runner.py" },
+    ],
+    degradations: [],
+  },
+};
+
+/**
+ * Graph subset for browse tests: one links edge whose unresolved target's
+ * raw_target equals the Gobby page path — the "unresolved mentions" input.
+ */
+export const browseGraphEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "graph",
+  stderr: "",
+  payload: {
+    command: "graph",
+    degraded: false,
+    degraded_sources: [],
+    nodes: [
+      {
+        id: "document-knowledge-concepts-gwiki-md-11aa22bb",
+        kind: "wiki_page",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: "knowledge/concepts/gwiki.md",
+        title: "Gwiki",
+      },
+      {
+        id: "unresolved-knowledge-concepts-gobby-9cc00dd1",
+        kind: "unresolved_target",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: null,
+        title: "knowledge/concepts/gobby",
+      },
+    ],
+    edges: {
+      links: [
+        {
+          source: "document-knowledge-concepts-gwiki-md-11aa22bb",
+          target: "unresolved-knowledge-concepts-gobby-9cc00dd1",
+          kind: "links",
+          raw_target: "knowledge/concepts/gobby",
+        },
+      ],
+      imports: [],
+      calls: [],
+      callers: [],
+      trust: [],
+      audit: [],
+    },
+    analytics: {
+      bridges: [],
+      centrality: [],
+      communities: [],
+      god_nodes: [],
+      hotspots: [],
+      unexpected_links: [],
+    },
+  },
+};

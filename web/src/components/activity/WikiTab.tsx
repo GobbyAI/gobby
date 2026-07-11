@@ -1,8 +1,8 @@
 /**
  * Four-mode wiki shell (plan wiki-obsidian-panel §2.2): Wiki | Code | Ask |
  * Research with persisted mode/scope, dirty-guarded transitions, and the
- * kebab action surface. Mode bodies are placeholders until the browse,
- * graph, and ask/research milestones replace them (§P3–P5).
+ * kebab action surface. Wiki and Code render the §3.1 browse experience;
+ * ask/research bodies are placeholders until their milestones (§P4–P5).
  */
 
 import {
@@ -17,8 +17,9 @@ import {
 
 import { useWiki } from "../../hooks/useWiki";
 import { useDirtyGuard } from "./dirtyGuard";
+import { WikiBrowse } from "./wiki/WikiBrowse";
 import { WikiSourcesManager } from "./wiki/WikiSourcesManager";
-import { useWikiTabActions } from "./wiki/WikiTabActions";
+import { useWikiTabActions, type WikiTabActions } from "./wiki/WikiTabActions";
 import {
   summarizeWikiStatus,
   type WikiFetchScope,
@@ -26,13 +27,13 @@ import {
 } from "./wiki/WikiTabData";
 import type { WikiMode } from "./wiki/WikiTabModel";
 import {
-  loadLastPage,
   loadStoredMode,
   loadStoredTopic,
   storeLastPage,
   storeMode,
   storeTopic,
   useWikiNav,
+  type WikiNav,
 } from "./wiki/WikiTabState";
 import { WikiDegradedBanner, WikiTabToolbar } from "./wiki/WikiTabToolbar";
 
@@ -52,7 +53,27 @@ const noop = () => {};
 const ghostButton =
   "rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground";
 
-function ModeBody({ mode, summary }: { mode: WikiMode; summary: WikiStatusSummary }) {
+interface ModeBodyProps {
+  mode: WikiMode;
+  summary: WikiStatusSummary;
+  scope: WikiFetchScope;
+  nav: WikiNav;
+  search: string;
+  wide: boolean;
+  actions: WikiTabActions;
+  onOpenGraph: () => void;
+}
+
+function ModeBody({
+  mode,
+  summary,
+  scope,
+  nav,
+  search,
+  wide,
+  actions,
+  onOpenGraph,
+}: ModeBodyProps) {
   const offline = summary.state === "unavailable";
   if (mode === "ask" || mode === "research") {
     const isAsk = mode === "ask";
@@ -75,20 +96,16 @@ function ModeBody({ mode, summary }: { mode: WikiMode; summary: WikiStatusSummar
       </div>
     );
   }
-  const lastPage = loadLastPage(mode);
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-start gap-2 px-4 py-6">
-      <h3 className="text-sm font-semibold text-foreground">
-        {mode === "code" ? "Code wiki" : "Wiki"}
-      </h3>
-      <p className="max-w-[65ch] text-sm text-muted-foreground">
-        The page tree and reader land with the browse milestone. Refresh, compile, audit,
-        attach, and ingest are live now from the actions menu.
-      </p>
-      {lastPage ? (
-        <p className="font-mono text-xs text-muted-foreground">Last page: {lastPage}</p>
-      ) : null}
-    </div>
+    <WikiBrowse
+      mode={mode}
+      scope={scope}
+      nav={nav}
+      search={search}
+      wide={wide}
+      actions={actions}
+      onOpenGraph={onOpenGraph}
+    />
   );
 }
 
@@ -315,7 +332,16 @@ export const WikiTab = memo(function WikiTab({
         </p>
       ) : null}
 
-      <ModeBody mode={mode} summary={summary} />
+      <ModeBody
+        mode={mode}
+        summary={summary}
+        scope={scope}
+        nav={nav}
+        search={search}
+        wide={wide}
+        actions={actions}
+        onOpenGraph={handleOpenGraph}
+      />
 
       <input
         ref={fileInputRef}
