@@ -15,6 +15,14 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_entries_to_runtime,
     storage_embedding_config_key_to_runtime_key,
 )
+from gobby.config.voice_secrets import (
+    VOICE_AUDIO_BINDINGS_KEY,
+    contains_voice_audio_bindings,
+    mask_voice_audio_api_keys,
+    resolve_voice_audio_api_keys,
+    restore_masked_voice_audio_api_keys,
+    validate_voice_audio_api_key_references,
+)
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveConfigRequest
@@ -76,7 +84,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
     @router.get("/values")
     async def get_config_values() -> JSONResponse:
         """Return current config as nested dict with secrets masked."""
-        values = context.current_config_values()
+        values = mask_voice_audio_api_keys(context.current_config_values())
 
         config_store = context.get_config_store()
         secret_keys = set(config_store.get_secret_keys())
@@ -98,11 +106,21 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         try:
             config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
+            persisted_voice_config = {}
+            if contains_voice_audio_bindings(request.values):
+                persisted_voice_config[VOICE_AUDIO_BINDINGS_KEY] = config_store.get(
+                    VOICE_AUDIO_BINDINGS_KEY
+                )
+            submitted_values = restore_masked_voice_audio_api_keys(
+                request.values,
+                persisted_voice_config,
+            )
+            validate_voice_audio_api_key_references(submitted_values)
             # Existing DB secret keys are storage-shaped; convert for runtime validation.
             converted_existing_secret_keys = _convert_existing_secret_keys(existing_secret_keys)
             # Incoming partial config is validated in runtime shape.
             runtime_updates = storage_embedding_config_entries_to_runtime(
-                flatten_config(request.values)
+                flatten_config(submitted_values)
             )
             # ConfigStore persists canonical storage keys.
             storage_updates = runtime_embedding_config_entries_to_storage(runtime_updates)
@@ -128,6 +146,13 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             try:
                 for storage_key, value in secret_entries.items():
                     if value not in (None, ""):
+                        if not isinstance(value, str):
+                            runtime_key = runtime_key_by_storage_key[storage_key]
+                            raise HTTPException(
+                                400,
+                                f"Secret '{runtime_key}' must be a string, "
+                                f"got {type(value).__name__}",
+                            )
                         validate_falkordb_secret(storage_key, value)
             except ValueError as e:
                 return falkordb_validation_response(e)
@@ -151,8 +176,21 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 logger.info("Invalid config save request: %s", e)
                 raise HTTPException(status_code=400, detail="Invalid configuration values") from e
 
-            count = 0
             secret_store = context.get_secret_store()
+            resolved_current = context.current_config_values()
+            resolved_updates = unflatten_config(
+                {k: v for k, v in runtime_updates.items() if v != MASKED_SECRET}
+            )
+            if contains_voice_audio_bindings(submitted_values):
+                resolved_updates = resolve_voice_audio_api_keys(resolved_updates, secret_store.get)
+            deep_merge(resolved_current, resolved_updates)
+            try:
+                runtime_config = DaemonConfig(**resolved_current)
+            except (TypeError, ValueError) as e:
+                logger.info("Invalid resolved config after save: %s", e)
+                raise HTTPException(status_code=400, detail="Invalid configuration values") from e
+
+            count = 0
             with config_store.db.transaction():
                 if normal_entries:
                     count = config_store.set_many(normal_entries, source="user")
@@ -171,17 +209,6 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                         count += 1
 
             logger.info("Config saved to DB (%d keys)", count)
-
-            resolved = context.current_config_values()
-            deep_merge(
-                resolved,
-                unflatten_config({k: v for k, v in runtime_updates.items() if v != MASKED_SECRET}),
-            )
-            try:
-                runtime_config = DaemonConfig(**resolved)
-            except (TypeError, ValueError) as e:
-                logger.info("Invalid resolved config after save: %s", e)
-                raise HTTPException(status_code=400, detail="Invalid configuration values") from e
             context.set_runtime_config(runtime_config, propagate_websocket=True)
 
             response: dict[str, Any] = {"ok": True, "requires_restart": True}
@@ -200,8 +227,19 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         """Validate config without saving."""
         try:
             current = context.current_config_values()
+            config_store = context.get_config_store()
+            persisted_voice_config = {}
+            if contains_voice_audio_bindings(request.values):
+                persisted_voice_config[VOICE_AUDIO_BINDINGS_KEY] = config_store.get(
+                    VOICE_AUDIO_BINDINGS_KEY
+                )
+            submitted_values = restore_masked_voice_audio_api_keys(
+                request.values,
+                persisted_voice_config,
+            )
+            validate_voice_audio_api_key_references(submitted_values)
             runtime_updates = storage_embedding_config_entries_to_runtime(
-                flatten_config(request.values)
+                flatten_config(submitted_values)
             )
             unmasked_updates = {
                 key: value for key, value in runtime_updates.items() if value != MASKED_SECRET

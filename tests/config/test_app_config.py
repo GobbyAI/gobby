@@ -705,6 +705,34 @@ class TestLoadConfig:
         assert config.memory.crossref_threshold == 0.73
         assert config.memory.recall_signal_log_path == "/tmp/layer-two.jsonl"
 
+    def test_load_config_resolves_voice_audio_api_key_reference_from_db(
+        self, temp_dir: Path
+    ) -> None:
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "voice.openai_compatible_audio": [
+                        {
+                            "provider": "remote-stt",
+                            "url": "https://audio.example/v1",
+                            "model": "whisper-large-v3",
+                            "api_key": "$secret:REMOTE_STT_API_KEY",
+                        }
+                    ]
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "missing.yaml"),
+            config_store=DummyConfigStore(),
+            secret_resolver=lambda name: "resolved-runtime-key"
+            if name == "REMOTE_STT_API_KEY"
+            else None,
+        )
+
+        binding = config.voice.openai_compatible_audio[0]
+        assert binding.api_key == "resolved-runtime-key"
+        assert binding.model == "whisper-large-v3"
+
     def test_load_config_surfaces_unresolved_layer_two_reference(
         self,
         temp_dir: Path,
@@ -1523,6 +1551,30 @@ class TestSaveConfig:
         assert config_file.exists()
         content = yaml.safe_load(config_file.read_text())
         assert content["daemon_port"] == default_config.daemon_port
+
+    def test_masks_voice_audio_api_keys_without_hiding_binding_fields(self, temp_dir: Path) -> None:
+        config = DaemonConfig(
+            voice={
+                "openai_compatible_audio": [
+                    {
+                        "provider": "remote-stt",
+                        "url": "https://audio.example/v1",
+                        "model": "whisper-large-v3",
+                        "api_key": "resolved-runtime-key",
+                    }
+                ]
+            }
+        )
+        config_file = temp_dir / "voice.yaml"
+
+        export_config_to_yaml(config, str(config_file))
+
+        raw_text = config_file.read_text()
+        binding = yaml.safe_load(raw_text)["voice"]["openai_compatible_audio"][0]
+        assert binding["api_key"] == "********"
+        assert binding["provider"] == "remote-stt"
+        assert binding["model"] == "whisper-large-v3"
+        assert "resolved-runtime-key" not in raw_text
 
     def test_file_permissions(self, temp_dir: Path, default_config: DaemonConfig) -> None:
         """Test saved config has restrictive permissions."""

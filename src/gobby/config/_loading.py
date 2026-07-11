@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from gobby.config.embedding_keys import is_removed_embedding_config_store_key
+from gobby.config.voice_secrets import mask_voice_audio_api_keys
 from gobby.config.wiki_migration import migrate_legacy_wiki_roots
 
 if TYPE_CHECKING:
@@ -511,6 +512,7 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     # Convert config to dict, excluding None values to keep file clean
     # mode="json" ensures Path objects are converted to strings for YAML serialization
     config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
+    config_dict = mask_voice_audio_api_keys(config_dict)
 
     fd, temp_name = tempfile.mkstemp(
         dir=config_path.parent,

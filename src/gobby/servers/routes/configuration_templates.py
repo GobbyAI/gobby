@@ -14,6 +14,14 @@ from gobby.config.embedding_keys import (
     runtime_embedding_config_entries_to_storage,
     storage_embedding_config_entries_to_runtime,
 )
+from gobby.config.voice_secrets import (
+    VOICE_AUDIO_BINDINGS_KEY,
+    contains_voice_audio_bindings,
+    mask_voice_audio_api_keys,
+    resolve_voice_audio_api_keys,
+    restore_masked_voice_audio_api_keys,
+    validate_voice_audio_api_key_references,
+)
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveTemplateRequest
@@ -114,6 +122,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             flat_overrides = storage_embedding_config_entries_to_runtime(config_store.get_all())
             db_overrides = unflatten_config(mask_secret_values(flat_overrides))
             deep_merge(defaults, db_overrides)
+            defaults = mask_voice_audio_api_keys(defaults)
             content = yaml.safe_dump(defaults, default_flow_style=False, sort_keys=False)
             return JSONResponse(content={"content": content})
         except Exception as e:
@@ -130,11 +139,21 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             if not isinstance(parsed, dict):
                 raise ValueError("YAML must be a mapping (dict), not a scalar or list")
 
+            config_store = context.get_config_store()
+            persisted_voice_config = {}
+            if contains_voice_audio_bindings(parsed):
+                persisted_voice_config[VOICE_AUDIO_BINDINGS_KEY] = config_store.get(
+                    VOICE_AUDIO_BINDINGS_KEY
+                )
+            parsed = restore_masked_voice_audio_api_keys(
+                parsed,
+                persisted_voice_config,
+            )
+            validate_voice_audio_api_key_references(parsed)
             defaults_flat = flatten_config(
                 DaemonConfig().model_dump(mode="json", exclude_none=True)
             )
             parsed_flat = flatten_config(parsed)
-            config_store = context.get_config_store()
             existing_secret_keys = set(config_store.get_secret_keys())
             masked_secret_keys = {
                 key
@@ -166,6 +185,13 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
                 return falkordb_validation_response(e)
 
             new_config = DaemonConfig(**unflatten_config(validation_flat))
+            runtime_config = new_config
+            if contains_voice_audio_bindings(parsed):
+                resolved_new_config = resolve_voice_audio_api_keys(
+                    new_config.model_dump(mode="json", exclude_none=True, by_alias=True),
+                    context.get_secret_store().get,
+                )
+                runtime_config = DaemonConfig(**resolved_new_config)
 
             diff = _compute_diff(parsed_flat, defaults_flat, masked_secret_keys)
             (
@@ -183,7 +209,7 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
             )
             logger.info("Template saved: %d non-default keys stored", count)
 
-            context.set_runtime_config(new_config)
+            context.set_runtime_config(runtime_config)
 
             response: dict[str, Any] = {
                 "ok": True,

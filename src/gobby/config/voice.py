@@ -33,7 +33,10 @@ class OpenAICompatibleAudioBindingConfig(BaseModel):
     )
     api_key: str | None = Field(
         default=None,
-        description="Optional bearer token for the compatible endpoint.",
+        description=(
+            "Optional bearer token for the compatible endpoint. Persisted configuration must "
+            "use a $secret:NAME reference; plaintext is only valid after runtime resolution."
+        ),
     )
     transcription_enabled: bool = Field(
         default=True,

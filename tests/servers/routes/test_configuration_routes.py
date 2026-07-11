@@ -229,6 +229,74 @@ class TestSaveConfigValues:
         assert data["ok"] is True
         assert data["requires_restart"] is True
 
+    def test_save_voice_audio_plaintext_api_key_is_rejected_before_storage(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "voice": {
+                        "openai_compatible_audio": [
+                            {
+                                "provider": "remote-stt",
+                                "url": "https://audio.example/v1",
+                                "model": "whisper-large-v3",
+                                "api_key": "plaintext-key",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert "$secret:NAME" in response.json()["detail"]
+        assert ConfigStore(temp_db).get("voice.openai_compatible_audio") is None
+
+    def test_save_voice_audio_secret_reference_persists_resolves_and_masks(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        server: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        SecretStore(temp_db).set("remote_stt_api_key", "resolved-key")
+        binding = {
+            "provider": "remote-stt",
+            "url": "https://audio.example/v1",
+            "model": "whisper-large-v3",
+            "api_key": "$secret:REMOTE_STT_API_KEY",
+        }
+
+        response = client.put(
+            "/api/config/values",
+            json={"values": {"voice": {"openai_compatible_audio": [binding]}}},
+        )
+
+        assert response.status_code == 200
+        stored = ConfigStore(temp_db).get("voice.openai_compatible_audio")
+        assert stored == [binding]
+        runtime_binding = server.services.config.voice.openai_compatible_audio[0]
+        assert runtime_binding.api_key == "resolved-key"
+
+        values = client.get("/api/config/values").json()["values"]
+        exposed_binding = values["voice"]["openai_compatible_audio"][0]
+        assert exposed_binding["api_key"] == MASKED_SECRET
+        assert exposed_binding["url"] == "https://audio.example/v1"
+        assert "resolved-key" not in str(values)
+
+        exposed_binding["model"] = "whisper-v4"
+        round_trip = client.put(
+            "/api/config/values",
+            json={"values": {"voice": {"openai_compatible_audio": [exposed_binding]}}},
+        )
+        assert round_trip.status_code == 200
+        stored_after_round_trip = ConfigStore(temp_db).get("voice.openai_compatible_audio")
+        assert stored_after_round_trip[0]["api_key"] == "$secret:REMOTE_STT_API_KEY"
+        assert stored_after_round_trip[0]["model"] == "whisper-v4"
+        assert server.services.config.voice.openai_compatible_audio[0].api_key == "resolved-key"
+
     def test_save_deep_merge(self, client: TestClient) -> None:
         """Deep merge should merge nested dicts, not replace them."""
         response = client.put(
@@ -356,6 +424,29 @@ class TestValidateConfig:
         assert data["valid"] is True
         assert data["errors"] == []
 
+    def test_voice_audio_plaintext_api_key_is_invalid(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/config/values/validate",
+            json={
+                "values": {
+                    "voice": {
+                        "openai_compatible_audio": [
+                            {
+                                "provider": "remote-stt",
+                                "url": "https://audio.example/v1",
+                                "model": "whisper-large-v3",
+                                "api_key": "plaintext-key",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["valid"] is False
+        assert "$secret:NAME" in response.json()["errors"][0]
+
     def test_invalid_config(self, client: TestClient) -> None:
         response = client.post(
             "/api/config/values/validate",
@@ -436,6 +527,27 @@ class TestGetTemplate:
         assert "daemon_port" in content
         assert isinstance(content, str)
 
+    def test_masks_voice_audio_api_key(self, client: TestClient, temp_db: Any) -> None:
+        ConfigStore(temp_db).set(
+            "voice.openai_compatible_audio",
+            [
+                {
+                    "provider": "remote-stt",
+                    "url": "https://audio.example/v1",
+                    "model": "whisper-large-v3",
+                    "api_key": "$secret:REMOTE_STT_API_KEY",
+                }
+            ],
+        )
+
+        response = client.get("/api/config/template")
+
+        assert response.status_code == 200
+        values = yaml.safe_load(response.json()["content"])
+        binding = values["voice"]["openai_compatible_audio"][0]
+        assert binding["api_key"] == MASKED_SECRET
+        assert binding["url"] == "https://audio.example/v1"
+
     def test_includes_db_overrides(self, client: TestClient, temp_db: Any) -> None:
         """DB overrides are merged into the template."""
         store = ConfigStore(temp_db)
@@ -478,6 +590,27 @@ class TestSaveTemplate:
         # Verify the DB has the non-default value
         store = ConfigStore(temp_db)
         assert store.get("daemon_port") == 9999
+
+    def test_save_template_rejects_voice_audio_plaintext_before_storage(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/template",
+            json={
+                "content": (
+                    "voice:\n"
+                    "  openai_compatible_audio:\n"
+                    "    - provider: remote-stt\n"
+                    "      url: https://audio.example/v1\n"
+                    "      model: whisper-large-v3\n"
+                    "      api_key: plaintext-key\n"
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        assert "$secret:NAME" in response.json()["detail"]
+        assert ConfigStore(temp_db).get("voice.openai_compatible_audio") is None
 
     def test_save_empty_yaml_treated_as_empty_dict(self, client: TestClient) -> None:
         """Empty YAML (parsed as None) is treated as empty dict."""
@@ -1190,6 +1323,36 @@ class TestExportImport:
         assert isinstance(data["prompts"], dict)
         assert isinstance(data["secrets"], list)
 
+    def test_export_config_preserves_voice_audio_refs_and_masks_legacy_plaintext(
+        self, client: TestClient, temp_db: Any, mock_machine_id: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        binding = {
+            "provider": "remote-stt",
+            "url": "https://audio.example/v1",
+            "model": "whisper-large-v3",
+            "api_key": "$secret:REMOTE_STT_API_KEY",
+        }
+        store.set("voice.openai_compatible_audio", [binding])
+
+        safe_export = client.post("/api/config/export")
+
+        assert safe_export.status_code == 200
+        assert safe_export.json()["config_store"]["voice.openai_compatible_audio"] == [binding]
+
+        legacy_binding = {**binding, "api_key": "legacy-plaintext"}
+        store.set("voice.openai_compatible_audio", [legacy_binding])
+
+        defensive_export = client.post("/api/config/export")
+
+        assert defensive_export.status_code == 200
+        exported_binding = defensive_export.json()["config_store"]["voice.openai_compatible_audio"][
+            0
+        ]
+        assert exported_binding["api_key"] == MASKED_SECRET
+        assert exported_binding["model"] == "whisper-large-v3"
+        assert "legacy-plaintext" not in defensive_export.text
+
     def test_export_config_with_prompt_overrides(
         self, client: TestClient, mock_machine_id: Any
     ) -> None:
@@ -1282,6 +1445,56 @@ class TestExportImport:
         # Verify DB
         store = ConfigStore(temp_db)
         assert store.get("daemon_port") == 9999
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {
+                "config_store": {
+                    "daemon_port": 9999,
+                    "voice.openai_compatible_audio": [
+                        {
+                            "provider": "remote-stt",
+                            "url": "https://audio.example/v1",
+                            "model": "whisper-large-v3",
+                            "api_key": "plaintext-key",
+                        }
+                    ],
+                }
+            },
+            {
+                "config": {
+                    "daemon_port": 9999,
+                    "voice": {
+                        "openai_compatible_audio": [
+                            {
+                                "provider": "remote-stt",
+                                "url": "https://audio.example/v1",
+                                "model": "whisper-large-v3",
+                                "api_key": "plaintext-key",
+                            }
+                        ]
+                    },
+                }
+            },
+        ],
+        ids=["config-store", "nested-config"],
+    )
+    def test_import_rejects_voice_audio_plaintext_before_replacing_config(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        response = client.post("/api/config/import", json=payload)
+
+        assert response.status_code == 422
+        assert "$secret:NAME" in response.json()["detail"]
+        assert store.get("daemon_port") == 5555
+        assert store.get("voice.openai_compatible_audio") is None
 
     def test_import_empty_config_store_clears_existing_keys(
         self, client: TestClient, temp_db: Any

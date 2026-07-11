@@ -21,6 +21,10 @@ from gobby.config.embedding_keys import (
     storage_embedding_config_entries_to_runtime,
     storage_embedding_config_key_to_runtime_key,
 )
+from gobby.config.voice_secrets import (
+    mask_voice_audio_api_keys,
+    validate_voice_audio_api_key_references,
+)
 from gobby.prompts.models import parse_frontmatter
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
@@ -241,6 +245,10 @@ def persist_imported_config(
     restart_touched_keys: set[str],
 ) -> int:
     """Persist validated import values into config_store and secret storage."""
+    try:
+        validate_voice_audio_api_key_references(flat_config)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     # Storage exports can contain persisted ai.embeddings keys; validate in runtime shape.
     flat_config = storage_embedding_config_entries_to_runtime(flat_config)
     # Secret markers from import payloads are normalized to runtime keys for partitioning.
@@ -308,7 +316,10 @@ def register_import_export_routes(
     def _export_config_sync() -> JSONResponse:
         try:
             config_store = context.get_config_store()
-            flat_config = config_store.get_all()
+            flat_config = mask_voice_audio_api_keys(
+                config_store.get_all(),
+                preserve_secret_references=True,
+            )
 
             manager = context.get_prompt_manager()
             overrides = manager.list_overrides(project_id=context.server.services.project_id)
