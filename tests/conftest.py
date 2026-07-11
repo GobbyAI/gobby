@@ -153,6 +153,9 @@ class NonLocalHubDatabase:
     def transaction_immediate(self, lock: Any) -> Any:
         return self._inner.transaction_immediate(lock)
 
+    def advisory_lock(self, lock: Any) -> Any:
+        return self._inner.advisory_lock(lock)
+
     def execute(self, sql: str, params: Any = ()) -> Any:
         return self._inner.execute(sql, params)
 

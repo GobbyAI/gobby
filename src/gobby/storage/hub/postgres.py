@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import importlib.resources
 import json
@@ -11,8 +12,8 @@ import re
 import threading
 import uuid
 import weakref
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import ExitStack, contextmanager
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import date, datetime
 from typing import Any, Literal, cast
 
@@ -208,6 +209,60 @@ class PostgresHubDatabase:
     def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
         with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
             yield txn
+
+    @asynccontextmanager
+    async def advisory_lock(self, lock: LockTarget) -> AsyncIterator[None]:
+        """Hold typed PostgreSQL session locks without an idle transaction."""
+        lock_keys = _advisory_lock_keys(lock)
+        connection_context: Any = None
+        conn: psycopg.Connection[Any] | None = None
+
+        while conn is None:
+            candidate_context = self._pool_connection()
+            candidate, cancellation = await _await_task_completion(
+                asyncio.create_task(asyncio.to_thread(candidate_context.__enter__))
+            )
+            candidate_conn = cast(psycopg.Connection[Any], candidate)
+            acquired = False
+            try:
+                acquired_result, lock_cancellation = await _await_task_completion(
+                    asyncio.create_task(
+                        asyncio.to_thread(
+                            _try_session_advisory_locks,
+                            candidate_conn,
+                            lock_keys,
+                        )
+                    )
+                )
+                acquired = bool(acquired_result)
+                cancellation = lock_cancellation or cancellation
+            except BaseException:
+                await _close_advisory_lock_connection(
+                    candidate_context,
+                    candidate_conn,
+                    lock_keys if acquired else (),
+                )
+                raise
+
+            if cancellation is not None:
+                await _close_advisory_lock_connection(
+                    candidate_context,
+                    candidate_conn,
+                    lock_keys if acquired else (),
+                )
+                raise cancellation
+            if acquired:
+                connection_context = candidate_context
+                conn = candidate_conn
+                break
+
+            await _close_advisory_lock_connection(candidate_context, candidate_conn, ())
+            await asyncio.sleep(0.05)
+
+        try:
+            yield
+        finally:
+            await _close_advisory_lock_connection(connection_context, conn, lock_keys)
 
     @contextmanager
     def _native_transaction(
@@ -638,6 +693,81 @@ def _build_safe_update(
 def _validate_identifier(identifier: str) -> None:
     if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
         raise ValueError(f"invalid SQL identifier: {identifier!r}")
+
+
+async def _await_task_completion(
+    task: asyncio.Task[Any],
+) -> tuple[Any, asyncio.CancelledError | None]:
+    """Finish a thread-backed operation before propagating repeated cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return await asyncio.shield(task), cancellation
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+
+
+def _try_session_advisory_locks(
+    conn: psycopg.Connection[Any],
+    lock_keys: tuple[str, ...],
+) -> bool:
+    acquired: list[str] = []
+    try:
+        for lock_key in lock_keys:
+            row = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired",
+                (lock_key,),
+            ).fetchone()
+            if row is not None and bool(row["acquired"]):
+                acquired.append(lock_key)
+                continue
+            if acquired:
+                _release_session_advisory_locks(conn, tuple(acquired))
+            else:
+                conn.commit()
+            return False
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        if acquired:
+            _release_session_advisory_locks(conn, tuple(acquired))
+        raise
+
+
+def _release_session_advisory_locks(
+    conn: psycopg.Connection[Any],
+    lock_keys: tuple[str, ...],
+) -> None:
+    try:
+        for lock_key in reversed(lock_keys):
+            row = conn.execute(
+                "SELECT pg_advisory_unlock(hashtext(%s)) AS released",
+                (lock_key,),
+            ).fetchone()
+            if row is None or not bool(row["released"]):
+                raise RuntimeError(f"PostgreSQL session advisory lock was not held: {lock_key}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+
+
+async def _close_advisory_lock_connection(
+    connection_context: Any,
+    conn: psycopg.Connection[Any],
+    lock_keys: tuple[str, ...],
+) -> None:
+    def close() -> None:
+        try:
+            _release_session_advisory_locks(conn, lock_keys)
+        finally:
+            connection_context.__exit__(None, None, None)
+
+    _, cancellation = await _await_task_completion(asyncio.create_task(asyncio.to_thread(close)))
+    if cancellation is not None:
+        raise cancellation
 
 
 def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:

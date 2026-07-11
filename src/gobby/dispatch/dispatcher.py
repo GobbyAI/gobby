@@ -386,21 +386,20 @@ async def _execute_action_with_agent_cap(
         )
 
     spawn_failure: DispatchSpawnFailed | None = None
-    with db.transaction_immediate(AgentCapAdmission(project_id=None)):
+    async with db.advisory_lock(AgentCapAdmission(project_id=None)):
         if count_active_agents(db) >= cap:
             mutex.release()
             return _AGENT_CAP_REACHED
-
-    try:
-        return await _execute_action(
-            action,
-            mutex=mutex,
-            db=db,
-            context=context,
-            services=services,
-        )
-    except DispatchSpawnFailed as exc:
-        spawn_failure = exc
+        try:
+            return await _execute_action(
+                action,
+                mutex=mutex,
+                db=db,
+                context=context,
+                services=services,
+            )
+        except DispatchSpawnFailed as exc:
+            spawn_failure = exc
 
     await _handle_spawn_failure(
         action,

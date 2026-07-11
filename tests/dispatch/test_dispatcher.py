@@ -856,59 +856,50 @@ async def test_concurrent_project_heartbeats_share_global_agent_cap(
         project_id=other_project.id,
     )
     agents = LocalAgentRunManager(temp_db)
-    agents.create(parent_session_id=first_parent_session.id, provider="codex", prompt="existing")
     parent_sessions = {
         first_task.id: first_parent_session.id,
         second_task.id: second_parent_session.id,
     }
 
-    first_spawn_started = asyncio.Event()
-    second_unlocked_entered = asyncio.Event()
+    first_spawn_admitted = asyncio.Event()
+    second_spawn_admitted = asyncio.Event()
     release_first_spawn = asyncio.Event()
     spawned_task_ids: list[str] = []
     original_count_active_agents = dispatcher.count_active_agents
-    original_run_heartbeat_unlocked = dispatcher._run_heartbeat_unlocked
-
-    async def observed_run_heartbeat_unlocked(
-        **kwargs: Any,
-    ) -> dispatcher.HeartbeatResult:
-        if first_spawn_started.is_set():
-            second_unlocked_entered.set()
-        return await original_run_heartbeat_unlocked(**kwargs)
 
     async def fake_spawn_agent(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned_task_ids.append(action.task_id)
+        is_first_spawn = len(spawned_task_ids) == 1
+        if is_first_spawn:
+            first_spawn_admitted.set()
+            await release_first_spawn.wait()
+        else:
+            second_spawn_admitted.set()
         run = agents.create(
             parent_session_id=parent_sessions[action.task_id],
             provider="codex",
             prompt=action.prompt,
             task_id=action.task_id,
         )
-        spawned_task_ids.append(action.task_id)
-        is_first_spawn = len(spawned_task_ids) == 1
-        if is_first_spawn:
-            first_spawn_started.set()
-        if is_first_spawn:
-            await release_first_spawn.wait()
         return run.id
 
     async def run_dispatch(project_id: str) -> dispatcher.HeartbeatResult:
-        return await dispatcher.run_heartbeat(
+        return await dispatcher._run_heartbeat_unlocked(
             db=temp_db,
             project_id=project_id,
-            max_active_agents=2,
+            max_active_agents=1,
             max_actions=1,
         )
 
-    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", observed_run_heartbeat_unlocked)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
 
     first = asyncio.create_task(run_dispatch(sample_project["id"]))
     second: asyncio.Task[dispatcher.HeartbeatResult] | None = None
     try:
-        await asyncio.wait_for(first_spawn_started.wait(), 5)
+        await asyncio.wait_for(first_spawn_admitted.wait(), 5)
         second = asyncio.create_task(run_dispatch(other_project.id))
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(second_unlocked_entered.wait(), 0.1)
+            await asyncio.wait_for(second_spawn_admitted.wait(), 0.1)
         release_first_spawn.set()
         first_result, second_result = await asyncio.gather(first, second)
     finally:
@@ -921,10 +912,117 @@ async def test_concurrent_project_heartbeats_share_global_agent_cap(
     assert second_result.executed == 0
     assert second_result.cap_reached is True
     assert spawned_task_ids == [first_task.id]
-    assert original_count_active_agents(temp_db) == 2
-    assert original_count_active_agents(temp_db, project_id=sample_project["id"]) == 2
+    assert original_count_active_agents(temp_db) == 1
+    assert original_count_active_agents(temp_db, project_id=sample_project["id"]) == 1
     assert original_count_active_agents(temp_db, project_id=other_project.id) == 0
     assert second_task.id not in spawned_task_ids
+
+
+@pytest.mark.parametrize("first_outcome", ["failure", "cancelled"])
+@pytest.mark.asyncio
+async def test_global_agent_cap_admission_releases_after_interrupted_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    first_outcome: str,
+) -> None:
+    """Failed and cancelled admissions release capacity for the next project."""
+    from gobby.dispatch import dispatcher
+    from gobby.dispatch.actions import SpawnAgentAction
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.sessions import SessionManager
+
+    other_project = LocalProjectManager(temp_db).create(name=f"cap-recovery-{first_outcome}")
+    sessions = SessionManager(temp_db)
+    parent_sessions = {
+        sample_project["id"]: sessions.register(
+            external_id=f"cap-first-{first_outcome}",
+            machine_id="machine-1",
+            source="test",
+            project_id=sample_project["id"],
+        ).id,
+        other_project.id: sessions.register(
+            external_id=f"cap-second-{first_outcome}",
+            machine_id="machine-1",
+            source="test",
+            project_id=other_project.id,
+        ).id,
+    }
+    actions = {
+        project_id: SpawnAgentAction(
+            task_id=f"task-{project_id}",
+            task_ref=f"task-{project_id}",
+            agent_slug="backend-developer",
+            prompt="test",
+        )
+        for project_id in parent_sessions
+    }
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    runs = LocalAgentRunManager(temp_db)
+
+    async def fake_execute_action(
+        action: SpawnAgentAction,
+        **_kwargs: object,
+    ) -> str:
+        project_id = action.task_id.removeprefix("task-")
+        if project_id == sample_project["id"]:
+            first_entered.set()
+            await release_first.wait()
+            raise dispatcher.DispatchSpawnFailed("injected spawn failure")
+        second_entered.set()
+        return runs.create(
+            parent_session_id=parent_sessions[project_id],
+            provider="codex",
+            prompt=action.prompt,
+            task_id=None,
+        ).id
+
+    async def fake_handle_spawn_failure(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(dispatcher, "_execute_action", fake_execute_action)
+    monkeypatch.setattr(dispatcher, "_handle_spawn_failure", fake_handle_spawn_failure)
+
+    async def admit(project_id: str, mutex: MagicMock) -> object | None:
+        return await dispatcher._execute_action_with_agent_cap(
+            actions[project_id],
+            mutex=mutex,
+            db=temp_db,
+            context=object(),
+            services=None,
+            project_id=project_id,
+            cap=1,
+        )
+
+    first = asyncio.create_task(admit(sample_project["id"], MagicMock()))
+    second: asyncio.Task[object | None] | None = None
+    try:
+        await asyncio.wait_for(first_entered.wait(), 5)
+        second = asyncio.create_task(admit(other_project.id, MagicMock()))
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(second_entered.wait(), 0.1)
+
+        if first_outcome == "cancelled":
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+        else:
+            release_first.set()
+            assert await first is None
+
+        second_run_id = await asyncio.wait_for(second, 5)
+    finally:
+        release_first.set()
+        pending = [task for task in (first, second) if task is not None and not task.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    assert isinstance(second_run_id, str)
+    assert runs.get(second_run_id) is not None
+    assert dispatcher.count_active_agents(temp_db) == 1
 
 
 @pytest.mark.asyncio

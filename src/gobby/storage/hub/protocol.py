@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Protocol
 
@@ -277,6 +277,10 @@ class HubDatabase(Protocol):
         lock: LockTarget,
     ) -> AbstractContextManager[Transaction]:
         """Open a write-intent transaction for a typed lock target."""
+        ...
+
+    def advisory_lock(self, lock: LockTarget) -> AbstractAsyncContextManager[None]:
+        """Hold a session advisory lock without keeping a transaction open."""
         ...
 
     def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> Cursor:
