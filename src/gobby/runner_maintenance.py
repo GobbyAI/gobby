@@ -25,7 +25,6 @@ from gobby.shutdown_intent import (
     read_shutdown_intent,
     recover_stale_restart_intent,
 )
-from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.workflows.summary_actions import (
     enforce_window_name_if_unmanaged,
     repair_missing_session_title,
@@ -353,14 +352,14 @@ async def cleanup_zombie_messages_loop(
     interval_seconds = interval_hours * 3600
 
     def _expire_zombies() -> None:
-        updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
-        created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
         expired = db.execute(
             "UPDATE inter_session_messages SET delivered_at = CURRENT_TIMESTAMP "
             "WHERE delivered_at IS NULL AND to_session IN ("
             "  SELECT id FROM sessions WHERE status IN ('closed', 'expired') "
-            f"  AND ({updated_stale_sql}"
-            f"       OR (updated_at IS NULL AND {created_stale_sql}))"
+            "  AND (updated_at < NOW() - (%s::double precision * INTERVAL '1 hour') "
+            "       OR (updated_at IS NULL "
+            "           AND created_at < NOW() "
+            "               - (%s::double precision * INTERVAL '1 hour')))"
             ")",
             (ttl_hours, ttl_hours),
         )
@@ -899,9 +898,10 @@ def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
 
 def _run_git_command(args: list[str]) -> int:
     """Run a git command and return the exit code."""
-    import subprocess
+    # This helper receives shell-free argv assembled by the isolation reaper.
+    import subprocess  # nosec B404
 
-    result = subprocess.run(args, capture_output=True, timeout=30)
+    result = subprocess.run(args, capture_output=True, timeout=30)  # nosec B603
     return result.returncode
 
 
