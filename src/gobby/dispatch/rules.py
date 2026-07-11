@@ -52,7 +52,7 @@ from gobby.dispatch.actions import (
     EscalateAction,
     StartStageAction,
 )
-from gobby.dispatch.audit import audit_marker_text
+from gobby.dispatch.audit import has_audit_marker
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
 from gobby.dispatch.prompts import PROMPT_BUILDERS as PROMPT_BUILDERS
 
@@ -154,11 +154,10 @@ def holistic_descendant_gate_rule(task: object, context: object) -> Action | Non
     stage = _current_stage(task, context)
     if _stage_name(stage) != "holistic_qa" or _stage_state(stage) not in {"ready", "in_progress"}:
         return None
-    body = _holistic_descendant_gate_body(gate)
-    if audit_marker_text(_HOLISTIC_DESCENDANT_GATE_HEADING, body) in (
-        _field(task, "description", "") or ""
-    ):
+    description = _field(task, "description", "") or ""
+    if has_audit_marker(description, _HOLISTIC_DESCENDANT_GATE_HEADING):
         return None
+    body = _holistic_descendant_gate_body(gate)
     return AppendAuditMarkerAction(
         task_id=_task_id(task),
         heading=_HOLISTIC_DESCENDANT_GATE_HEADING,

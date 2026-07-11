@@ -712,13 +712,36 @@ def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
     assert "#2" in action.body
     assert "stage=development:ready" in action.body
 
+    description = f"\n\n### {action.heading}\n\n{action.body}"
     repeated_task = _task_at(
         "holistic_qa",
         "ready",
         task_type="epic",
-        description=f"\n\n### {action.heading}\n\n{action.body}",
+        description=description,
     )
     assert _evaluate(repeated_task, context) is None
+
+    for stage_state in ("in_progress", "needs_review", "review_approved"):
+        changed_gate = SimpleNamespace(
+            blockers=(
+                SimpleNamespace(
+                    task_id="46a005df-b318-5d7b-a5b5-9b843d64909d",
+                    task_ref="#2",
+                    task_path="1.2",
+                    title="Reopened child",
+                    stage_name="development",
+                    stage_state=stage_state,
+                    is_escalated=False,
+                ),
+            )
+        )
+        changed_context = _context(
+            children=[_task(stages=[])],
+            holistic_descendant_gate=changed_gate,
+        )
+        assert _evaluate(repeated_task, changed_context) is None
+
+    assert description.count(f"### {action.heading}") == 1
 
 
 def test_all_leaves_holistic_rule_never_targets_merging_directly() -> None:
