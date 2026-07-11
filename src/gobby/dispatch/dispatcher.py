@@ -100,6 +100,14 @@ _unavailable = dispatch_results.unavailable
 _AGENT_CAP_REACHED = object()
 
 
+def _database_error_aborts_scan(error: psycopg.Error) -> bool:
+    """Return whether a database error means the heartbeat connection is unusable."""
+    sqlstate = error.sqlstate
+    return (sqlstate is None and isinstance(error, psycopg.OperationalError)) or bool(
+        sqlstate and (sqlstate.startswith("08") or sqlstate.startswith("57P0"))
+    )
+
+
 async def run_heartbeat(
     *,
     db: HubDatabase | None = None,
@@ -255,14 +263,16 @@ async def _run_heartbeat_unlocked(
             ):
                 write_set_guard.reserve(action.task_id)
             result = replace(result, executed=result.executed + 1)
-        except (TypeError, AttributeError, psycopg.Error):
-            await run_db(mutex.release)
-            raise
         except DispatchSpawnUnavailable as exc:
             await run_db(mutex.release)
             logger.info("Dispatcher heartbeat unavailable: %s", exc)
             return _unavailable(result, str(exc))
         except Exception as exc:
+            if isinstance(exc, (TypeError, AttributeError)) or (
+                isinstance(exc, psycopg.Error) and _database_error_aborts_scan(exc)
+            ):
+                await run_db(mutex.release)
+                raise
             logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
             try:
                 await append_audit_marker(

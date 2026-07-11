@@ -2842,6 +2842,72 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
 
 
 @pytest.mark.asyncio
+async def test_transient_database_error_releases_and_skips_candidate(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """A candidate-local database error does not starve later candidates."""
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "first")
+    second = _task(temp_db, sample_project, "second")
+    executed: list[str] = []
+
+    def action_for(task, *_args):
+        return _audit_action(task.id)
+
+    async def deadlocking_execute(action, **kwargs):
+        if action.task_id == first.id:
+            raise psycopg.errors.DeadlockDetected("candidate deadlock")
+        executed.append(action.task_id)
+        return await dispatcher.append_audit_marker(
+            kwargs["db"],
+            action.task_id,
+            action.heading,
+            action.body,
+        )
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
+    monkeypatch.setattr(dispatcher, "execute_action", deadlocking_execute)
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert result.skipped == 1
+    assert executed == [second.id]
+    assert "### Dispatch failed" in get_task(temp_db, first.id).description
+    assert _mutex_storage(temp_db).get_mutex(first.id) is None
+
+
+@pytest.mark.asyncio
+async def test_connection_database_error_aborts_candidate_scan(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    """A connection-level database error terminates the heartbeat scan."""
+    from gobby.dispatch import dispatcher
+
+    first = _task(temp_db, sample_project, "first")
+    _task(temp_db, sample_project, "second")
+    attempted: list[str] = []
+
+    def action_for(task, *_args):
+        return _audit_action(task.id)
+
+    async def disconnected_execute(action, **_kwargs):
+        attempted.append(action.task_id)
+        raise psycopg.errors.ConnectionException("connection lost")
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
+    monkeypatch.setattr(dispatcher, "execute_action", disconnected_execute)
+
+    with pytest.raises(psycopg.errors.ConnectionException, match="connection lost"):
+        await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert attempted == [first.id]
+    assert _mutex_storage(temp_db).get_mutex(first.id) is None
+    assert "### Dispatch failed" not in (get_task(temp_db, first.id).description or "")
+
+
+@pytest.mark.asyncio
 async def test_advance_action_releases_lease_immediately(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
