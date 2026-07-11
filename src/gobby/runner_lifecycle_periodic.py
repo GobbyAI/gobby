@@ -24,8 +24,8 @@ DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
 DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
 
 
-def _log_wiki_watcher_failure(task: asyncio.Task[None]) -> None:
-    """Log wiki watcher task failures so a dead watcher is visible in daemon logs."""
+def _log_periodic_task_failure(task: asyncio.Task[None]) -> None:
+    """Log periodic task failures so a dead maintenance job is visible in daemon logs."""
     if task.cancelled():
         return
     try:
@@ -34,7 +34,8 @@ def _log_wiki_watcher_failure(task: asyncio.Task[None]) -> None:
         return
     if error is not None:
         logger.error(
-            "Wiki watcher task failed",
+            "Periodic task %s failed",
+            task.get_name(),
             exc_info=(type(error), error, error.__traceback__),
         )
 
@@ -311,10 +312,9 @@ def start_periodic_tasks(
                 runner._wiki_watcher.run(),
                 name="wiki-watcher",
             )
-            runner._wiki_watcher_task.add_done_callback(_log_wiki_watcher_failure)
 
-    task_count = sum(
-        1
+    periodic_tasks = tuple(
+        task
         for task in (
             runner._metrics_cleanup_task,
             runner._metrics_archive_task,
@@ -335,5 +335,8 @@ def start_periodic_tasks(
         )
         if task is not None
     )
+    for task in periodic_tasks:
+        task.add_done_callback(_log_periodic_task_failure)
+
     if tracker:
-        tracker.schedule(f"Periodic maintenance ({task_count} tasks)")
+        tracker.schedule(f"Periodic maintenance ({len(periodic_tasks)} tasks)")

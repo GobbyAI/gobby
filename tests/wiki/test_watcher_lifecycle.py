@@ -325,6 +325,63 @@ def test_watcher_health_accessor(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_every_periodic_task_registers_failure_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback_tasks: list[asyncio.Task[None]] = []
+
+    def record_callback(task: asyncio.Task[None]) -> None:
+        callback_tasks.append(task)
+
+    monkeypatch.setattr(
+        runner_lifecycle_periodic,
+        "_log_periodic_task_failure",
+        record_callback,
+    )
+    runner = _runner(DaemonConfig())
+
+    start_periodic_tasks(runner, tracker=None, **_loops())
+    periodic_tasks = [
+        task for name, task in vars(runner).items() if name.endswith("_task") and task is not None
+    ]
+    await _cancel_periodic_tasks(runner)
+    await asyncio.sleep(0)
+
+    assert len(callback_tasks) == len(periodic_tasks)
+    assert set(callback_tasks) == set(periodic_tasks)
+
+
+@pytest.mark.asyncio
+async def test_periodic_loop_failure_is_logged_with_task_name(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def failing_metrics_cleanup(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("metrics cleanup exploded")
+
+    runner = _runner(DaemonConfig())
+    loops = _loops()
+    loops["metrics_cleanup_loop"] = failing_metrics_cleanup
+
+    with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle_periodic"):
+        start_periodic_tasks(runner, tracker=None, **loops)
+        try:
+            with pytest.raises(RuntimeError, match="metrics cleanup exploded"):
+                await runner._metrics_cleanup_task
+        finally:
+            await _cancel_periodic_tasks(runner)
+        await asyncio.sleep(0)
+
+    failures = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "Periodic task metrics-cleanup failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None
+    assert "metrics cleanup exploded" in str(failures[0].exc_info[1])
+
+
+@pytest.mark.asyncio
 async def test_watcher_task_failure_is_logged(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -353,7 +410,9 @@ async def test_watcher_task_failure_is_logged(
             await _cancel_periodic_tasks(runner)
 
     failures = [
-        record for record in caplog.records if record.getMessage() == "Wiki watcher task failed"
+        record
+        for record in caplog.records
+        if record.getMessage() == "Periodic task wiki-watcher failed"
     ]
     assert len(failures) == 1
     assert failures[0].exc_info is not None
@@ -365,9 +424,9 @@ async def test_watcher_task_cancellation_is_not_logged_as_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     task = asyncio.create_task(asyncio.Event().wait())
-    task.add_done_callback(runner_lifecycle_periodic._log_wiki_watcher_failure)
+    task.add_done_callback(runner_lifecycle_periodic._log_periodic_task_failure)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert all(record.getMessage() != "Wiki watcher task failed" for record in caplog.records)
+    assert all("Periodic task" not in record.getMessage() for record in caplog.records)
