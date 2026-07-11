@@ -296,6 +296,9 @@ async def _run_heartbeat_unlocked(
             await run_db(mutex.release)
             result = _skipped(result)
             continue
+        finally:
+            if mutex.run_id is None:
+                await run_db(mutex.release)
 
     return result
 

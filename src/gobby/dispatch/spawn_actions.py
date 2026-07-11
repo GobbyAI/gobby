@@ -79,6 +79,15 @@ async def execute_spawn_action(
                 error=f"dispatch_mutex_attach_failed:{exc}",
             )
             return None
+        except BaseException as exc:
+            error = f"spawn attach interrupted: {type(exc).__name__}"
+            if str(exc):
+                error = f"{error}: {exc}"
+            try:
+                await cleanup_unattached_spawned_run(run_id, db=db, error=error)
+            finally:
+                await run_db(mutex.release)
+            raise
         return run_id
     await handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
     return None

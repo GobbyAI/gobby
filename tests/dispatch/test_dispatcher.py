@@ -1044,6 +1044,49 @@ async def test_cancelled_spawn_releases_no_run_mutex(
     assert storage.get_mutex(task.id) is None
 
 
+async def test_cancelled_heartbeat_candidate_releases_mutex_before_next_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Heartbeat cancellation cannot strand a candidate mutex."""
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = _audit_action(task.id)
+    first_attempt_started = asyncio.Event()
+    attempts = 0
+
+    async def cancel_first_action(*_args: object, **_kwargs: object) -> object:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            first_attempt_started.set()
+            await asyncio.Future()
+        return True
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatcher, "execute_action", cancel_first_action)
+
+    heartbeat = asyncio.create_task(
+        dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    )
+    await first_attempt_started.wait()
+    heartbeat.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await heartbeat
+
+    assert storage.get_mutex(task.id) is None
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.executed == 1
+    assert attempts == 2
+    assert storage.get_mutex(task.id) is None
+
+
 @pytest.mark.asyncio
 async def test_mutex_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
@@ -1257,6 +1300,89 @@ async def test_spawn_attach_failure_terminalizes_created_run(
     assert task_manager.stage_states.get(task.id, "development").state == "ready"
     assert updated.dispatch_failure_count == 1
     assert "dispatch_mutex_attach_failed" in updated.description
+
+
+async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    """Cancellation in the spawn-attach window cleans up before redispatch."""
+    from gobby.agents import kill as agent_kill
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+    run_storage = LocalAgentRunManager(temp_db)
+    run_ids = [
+        "570221c9-b7ca-5db8-adb2-4fea57e49b71",
+        "fe8689b8-c8bb-5670-bc26-a655c15147fa",
+    ]
+    spawned: list[str] = []
+    killed: list[str] = []
+    first_attach_started = asyncio.Event()
+    original_run_db = dispatcher.run_db
+    attach_attempts = 0
+
+    def fake_spawn_agent(*_args: object, **_kwargs: object) -> str:
+        run_id = run_ids[len(spawned)]
+        run = run_storage.create(
+            parent_session_id=SYSTEM_SESSION_ID,
+            provider="codex",
+            prompt="go",
+            agent_name="backend-developer",
+            task_id=task.id,
+            run_id=run_id,
+        )
+        run_storage.start(run.id)
+        spawned.append(run.id)
+        return run.id
+
+    async def fake_kill_agent(run, db: HubDatabase, *, close_terminal: bool) -> None:
+        assert db is temp_db
+        assert close_terminal is True
+        killed.append(run.id)
+
+    async def cancel_first_attach(func, *args, **kwargs):
+        nonlocal attach_attempts
+        if getattr(func, "__name__", None) == "attach":
+            attach_attempts += 1
+            if attach_attempts == 1:
+                first_attach_started.set()
+                await asyncio.Future()
+        return await original_run_db(func, *args, **kwargs)
+
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
+    monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
+    monkeypatch.setattr(dispatcher, "run_db", cancel_first_attach)
+
+    heartbeat = asyncio.create_task(
+        dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    )
+    await first_attach_started.wait()
+    heartbeat.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await heartbeat
+
+    first_run = run_storage.get(run_ids[0])
+    assert first_run is not None
+    assert first_run.status == "error"
+    assert killed == [run_ids[0]]
+    assert storage.get_mutex(task.id) is None
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    second_run = run_storage.get(run_ids[1])
+    assert result.executed == 1
+    assert spawned == run_ids
+    assert second_run is not None
+    assert second_run.status == "running"
+    assert storage.get_mutex(task.id).run_id == run_ids[1]
 
 
 @pytest.mark.asyncio
