@@ -33,6 +33,7 @@ from gobby.runner_lifecycle_startup import (
     _refresh_provider_model_catalog,
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
+from gobby.runner_pid_file import PidFileClaim, claim_pid_file
 from gobby.telemetry import shutdown_telemetry
 
 if TYPE_CHECKING:
@@ -88,6 +89,15 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
     start_periodic_tasks(runner, tracker=_startup_tracker, **loops)
 
 
+async def _serve_http(server: uvicorn.Server) -> BaseException | None:
+    """Run uvicorn and return failures so its task cannot terminate the event loop."""
+    try:
+        await server.serve()
+    except BaseException as exc:
+        return exc
+    return None
+
+
 async def run_daemon(runner: GobbyRunner) -> None:
     """Main daemon startup, event loop, and shutdown sequence."""
     from gobby.runner_maintenance import (
@@ -110,6 +120,15 @@ async def run_daemon(runner: GobbyRunner) -> None:
         unmodeled_observation_cleanup_loop,
     )
 
+    pid_claim: PidFileClaim | None = None
+
+    def cleanup_owned_pid_file() -> None:
+        try:
+            cleanup_pid_file()
+        finally:
+            if pid_claim is not None:
+                pid_claim.release()
+
     try:
         global _startup_tracker
         _startup_tracker = StartupTracker()
@@ -123,10 +142,20 @@ async def run_daemon(runner: GobbyRunner) -> None:
 
         pid_file = get_gobby_home() / "gobby.pid"
         try:
-            pid_file.write_text(str(os.getpid()))
-            logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
+            pid_claim = claim_pid_file(pid_file)
         except OSError as e:
-            logger.warning(f"Could not write PID file {pid_file}: {e}")
+            logger.warning(f"Could not claim PID file {pid_file}: {e}")
+        if pid_claim is None:
+            from gobby.runner import _healthy_daemon_running
+
+            if _healthy_daemon_running(runner.http_server.port, runner.config.bind_host):
+                logger.info(
+                    "Another healthy Gobby daemon owns %s; exiting cleanly",
+                    pid_file,
+                )
+                return
+            raise RuntimeError(f"PID file is owned by another live process: {pid_file}")
+        logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
 
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
@@ -147,7 +176,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
             lambda: bool(getattr(runner.http_server.services, "shutdown_in_progress", False))
         )
         try:
-            server_task = asyncio.create_task(server.serve())
+            server_task = asyncio.create_task(_serve_http(server))
 
             runner._subsystem_init_task = asyncio.create_task(
                 _init_subsystems(runner, rebuild_vector_store),
@@ -173,8 +202,12 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 tmux_window_name_repair_loop=tmux_window_name_repair_loop,
             )
 
+            server_failure: BaseException | None = None
             while not runner._shutdown_requested:
-                await asyncio.sleep(0.5)
+                done, _ = await asyncio.wait({server_task}, timeout=0.5)
+                if server_task in done:
+                    server_failure = server_task.result()
+                    runner._shutdown_requested = True
 
             await shutdown_daemon_services(
                 runner,
@@ -186,14 +219,22 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 cancel_active_agent_runs_for_shutdown=_cancel_active_agent_runs_for_shutdown,
                 reap_remaining_child_processes=_reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
-                cleanup_pid_file=cleanup_pid_file,
+                cleanup_pid_file=cleanup_owned_pid_file,
             )
+            if server_failure is not None:
+                from gobby.runner import _healthy_daemon_running
+
+                if _healthy_daemon_running(runner.http_server.port, runner.config.bind_host):
+                    logger.info("Lost the HTTP bind race to a healthy daemon; exiting cleanly")
+                    return
+                logger.error("HTTP server failed during startup: %s", server_failure)
+                raise SystemExit(1) from server_failure
         finally:
             remove_uvicorn_shutdown_filter(shutdown_log_filter)
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-        cleanup_pid_file()
+        cleanup_owned_pid_file()
         sys.exit(1)
     finally:
         clear_app_context()
