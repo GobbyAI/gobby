@@ -165,7 +165,18 @@ def _development_agent(task: object, stage: object, context: object) -> str:
     if _field(task, "category") == "code":
         implementation_domain = _field(task, "implementation_domain")
         if implementation_domain is not None and implementation_domain in IMPLEMENTATION_DOMAINS:
-            return AGENT_BY_IMPLEMENTATION_DOMAIN[str(implementation_domain)]
+            domain_agent = AGENT_BY_IMPLEMENTATION_DOMAIN[str(implementation_domain)]
+            if _agent_dispatchable(context, domain_agent):
+                return domain_agent
+            logger.warning(
+                "Ignoring unavailable implementation-domain development agent; falling back",
+                extra={
+                    "task_id": _task_id(task),
+                    "task_ref": _task_ref(task),
+                    "implementation_domain": str(implementation_domain),
+                    "domain_agent": domain_agent,
+                },
+            )
     if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
         return "tech-writer"
     return _default_agent(stage, context) or "backend-developer"

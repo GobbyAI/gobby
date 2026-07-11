@@ -420,12 +420,58 @@ def test_development_rule_routes_code_by_implementation_domain(
     assert action.agent_slug == agent_slug
 
 
-def test_development_rule_escalates_when_no_dispatchable_fallback_agent() -> None:
+def test_development_rule_falls_back_from_disabled_implementation_domain_agent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="code",
+            assigned_agent=None,
+            implementation_domain="frontend",
+        ),
+        _context(
+            agents=_agents(
+                **{
+                    "frontend-developer": SimpleNamespace(
+                        name="frontend-developer",
+                        enabled=False,
+                    )
+                }
+            )
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+    assert "Ignoring unavailable implementation-domain development agent" in caplog.text
+
+
+def test_development_rule_escalates_when_domain_and_fallback_agents_unavailable() -> None:
     from gobby.dispatch.actions import EscalateAction
 
     action = _evaluate(
-        _task_at("development", "in_progress", assigned_agent="test-architect"),
-        _context(agents=_agents(**{"backend-developer": None})),
+        _task_at(
+            "development",
+            "in_progress",
+            category="code",
+            assigned_agent=None,
+            implementation_domain="frontend",
+        ),
+        _context(
+            agents=_agents(
+                **{
+                    "backend-developer": None,
+                    "frontend-developer": SimpleNamespace(
+                        name="frontend-developer",
+                        enabled=False,
+                    ),
+                }
+            )
+        ),
     )
 
     assert isinstance(action, EscalateAction)
@@ -597,6 +643,32 @@ def test_docs_dev_rule_routes_to_tech_writer_when_available() -> None:
 
     assert isinstance(action, SpawnAgentAction)
     assert action.agent_slug == "tech-writer"
+
+
+def test_docs_dev_rule_falls_back_when_tech_writer_is_disabled() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="docs",
+            assigned_agent=None,
+        ),
+        _context(
+            agents=_agents(
+                **{
+                    "tech-writer": SimpleNamespace(
+                        name="tech-writer",
+                        enabled=False,
+                    )
+                }
+            )
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
 
 
 def test_qa_rule_fires_with_cap() -> None:
