@@ -139,7 +139,17 @@ async def _cleanup_or_quarantine_spawned_run(
     """Finish cleanup or durable quarantine before propagating cancellation."""
 
     async def cleanup() -> bool:
-        terminated = bool(await cleanup_unattached_spawned_run(run_id, db=db, error=error))
+        try:
+            terminated = bool(await cleanup_unattached_spawned_run(run_id, db=db, error=error))
+        except asyncio.CancelledError:
+            await quarantine_unterminated_spawned_run(
+                action,
+                run_id=run_id,
+                mutex=mutex,
+                db=db,
+                error=error,
+            )
+            raise
         if not terminated:
             await quarantine_unterminated_spawned_run(
                 action,
@@ -157,6 +167,8 @@ async def _cleanup_or_quarantine_spawned_run(
             terminated = await asyncio.shield(cleanup_task)
             break
         except asyncio.CancelledError as exc:
+            if cleanup_task.done():
+                raise
             cancellation = exc
     if cancellation is not None:
         raise cancellation

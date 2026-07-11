@@ -3075,6 +3075,52 @@ async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating
 
 
 @pytest.mark.asyncio
+async def test_inner_spawn_cleanup_cancellation_quarantines_without_spinning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation from cleanup itself is quarantined and propagated once."""
+    from gobby.dispatch import spawn_actions
+
+    action = SpawnAgentAction("task-id", "#1", "backend-developer", "go")
+    quarantine_calls: list[str] = []
+    shield_calls = 0
+
+    async def cancelled_cleanup(*_args: object, **_kwargs: object) -> bool:
+        raise asyncio.CancelledError("cleanup cancelled internally")
+
+    async def quarantine(
+        _action: SpawnAgentAction,
+        *,
+        run_id: str,
+        **_kwargs: object,
+    ) -> None:
+        quarantine_calls.append(run_id)
+
+    async def bounded_shield(task: asyncio.Task[bool]) -> bool:
+        nonlocal shield_calls
+        shield_calls += 1
+        if shield_calls > 1:
+            raise AssertionError("cancelled cleanup task was awaited repeatedly")
+        return await task
+
+    monkeypatch.setattr(spawn_actions.asyncio, "shield", bounded_shield)
+
+    with pytest.raises(asyncio.CancelledError, match="cleanup cancelled internally"):
+        await spawn_actions._cleanup_or_quarantine_spawned_run(
+            action,
+            run_id="spawned-run-id",
+            mutex=MagicMock(),
+            db=MagicMock(),
+            error="post-spawn cleanup failed",
+            cleanup_unattached_spawned_run=cancelled_cleanup,
+            quarantine_unterminated_spawned_run=quarantine,
+        )
+
+    assert shield_calls == 1
+    assert quarantine_calls == ["spawned-run-id"]
+
+
+@pytest.mark.asyncio
 async def test_spawn_unavailable_does_not_mark_task_failed(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
