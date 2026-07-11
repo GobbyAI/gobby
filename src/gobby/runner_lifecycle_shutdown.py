@@ -23,6 +23,8 @@ _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
 _HTTP_CONNECTION_GRACE_SECONDS = 0.25
 _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
 _DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5.0
+_GRACEFUL_SHUTDOWN_BUDGET_SECONDS = 14.0
+_OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
 _GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 
@@ -307,7 +309,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.warning(f"Wiki watcher shutdown failed: {e}")
 
-    for attr in (
+    periodic_task_attrs = (
         "_metrics_cleanup_task",
         "_metrics_archive_task",
         "_span_cleanup_task",
@@ -325,23 +327,38 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_recall_drift_task",
         "_tmux_window_repair_task",
         "_wiki_watcher_task",
-    ):
-        await _cancel_runner_task(runner, attr)
+    )
+
+    code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
+    if code_index_shutdown is not None:
+        code_index_shutdown.set()
+
+    sync_worker_shutdown = getattr(runner, "_sync_worker_shutdown", None)
+    if sync_worker_shutdown is not None:
+        sync_worker_shutdown.set()
+
+    cancellations = [(attr, _cancel_runner_task(runner, attr)) for attr in periodic_task_attrs]
+    cancellations.extend(
+        (
+            ("_code_index_task", _cancel_runner_task(runner, "_code_index_task")),
+            (
+                "_sync_worker_task",
+                _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0),
+            ),
+        )
+    )
+    results = await asyncio.gather(
+        *(cancellation for _, cancellation in cancellations),
+        return_exceptions=True,
+    )
+    for (attr, _), result in zip(cancellations, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("Failed to cancel periodic task %s: %r", attr, result)
 
     if hasattr(runner, "_wiki_watcher_task"):
         runner._wiki_watcher_task = None
     if hasattr(runner, "_wiki_watcher"):
         runner._wiki_watcher = None
-
-    code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
-    if code_index_shutdown is not None:
-        code_index_shutdown.set()
-    await _cancel_runner_task(runner, "_code_index_task")
-
-    sync_worker_shutdown = getattr(runner, "_sync_worker_shutdown", None)
-    if sync_worker_shutdown is not None:
-        sync_worker_shutdown.set()
-    await _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0)
 
 
 async def _cleanup_pipeline_background_tasks() -> None:
@@ -485,26 +502,22 @@ async def _shutdown_database_executor(db_executor: Any) -> None:
         logger.warning(f"Database executor shutdown failed: {e}")
 
 
-async def shutdown_daemon_services(
+async def _run_graceful_shutdown_sequence(
     runner: GobbyRunner,
     server: uvicorn.Server,
     server_task: asyncio.Task[Any],
     uvicorn_drain_timeout: int,
     *,
+    shutdown_intent: ShutdownIntent,
     await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
     shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
     cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
     reap_remaining_child_processes: ReapChildProcesses,
-    shutdown_telemetry: Callable[[], None],
-    cleanup_pid_file: Callable[[], None],
 ) -> None:
-    """Run the ordered graceful shutdown sequence."""
-    shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
-    services = getattr(getattr(runner, "http_server", None), "services", None)
-    if services is not None:
-        services.startup_ready = False
-        services.shutdown_in_progress = True
-    await await_critical_stop_hook_grace_window()
+    if shutdown_intent is ShutdownIntent.STOP:
+        await await_critical_stop_hook_grace_window()
+    else:
+        logger.debug("Skipping critical Stop-hook grace during daemon restart")
     logger.debug("Shutdown requested; beginning graceful shutdown")
 
     cleanup_pending_interactions = getattr(
@@ -567,6 +580,14 @@ async def shutdown_daemon_services(
         preserved_agent_pids=preserved_agent_pids,
     )
 
+
+async def _run_async_shutdown_cleanup(
+    runner: GobbyRunner,
+    *,
+    shutdown_telemetry: Callable[[], None],
+) -> None:
+    """Run bounded asynchronous cleanup before the synchronous finalizers."""
+
     try:
         shutdown_telemetry()
     except Exception as e:
@@ -576,16 +597,89 @@ async def shutdown_daemon_services(
     if db_executor is not None:
         await _shutdown_database_executor(db_executor)
 
-    try:
-        runner.database.close()
-    except Exception as e:
-        logger.warning(f"Database close failed: {e}")
 
-    cleanup_pid_file()
+async def shutdown_daemon_services(
+    runner: GobbyRunner,
+    server: uvicorn.Server,
+    server_task: asyncio.Task[Any],
+    uvicorn_drain_timeout: int,
+    *,
+    await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
+    shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
+    cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
+    reap_remaining_child_processes: ReapChildProcesses,
+    shutdown_telemetry: Callable[[], None],
+    cleanup_pid_file: Callable[[], None],
+) -> None:
+    """Run graceful shutdown within the CLI's process-termination deadline."""
+    shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None:
+        services.startup_ready = False
+        services.shutdown_in_progress = True
+
+    loop = asyncio.get_running_loop()
+    overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    graceful_deadline = min(
+        overall_deadline,
+        loop.time() + _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
+    )
+    overall_timeout = asyncio.timeout_at(overall_deadline)
     try:
-        get_shutdown_marker_path().unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
+        try:
+            async with overall_timeout:
+                graceful_timeout = asyncio.timeout_at(graceful_deadline)
+                try:
+                    async with graceful_timeout:
+                        await _run_graceful_shutdown_sequence(
+                            runner,
+                            server,
+                            server_task,
+                            uvicorn_drain_timeout,
+                            shutdown_intent=shutdown_intent,
+                            await_critical_stop_hook_grace_window=(
+                                await_critical_stop_hook_grace_window
+                            ),
+                            shutdown_websocket_server=shutdown_websocket_server,
+                            cancel_active_agent_runs_for_shutdown=(
+                                cancel_active_agent_runs_for_shutdown
+                            ),
+                            reap_remaining_child_processes=reap_remaining_child_processes,
+                        )
+                except TimeoutError:
+                    if not graceful_timeout.expired():
+                        raise
+                    logger.warning(
+                        "Graceful shutdown exceeded %.1fs budget; entering cleanup tail",
+                        _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
+                    )
+
+                await _run_async_shutdown_cleanup(
+                    runner,
+                    shutdown_telemetry=shutdown_telemetry,
+                )
+        except TimeoutError:
+            if not overall_timeout.expired():
+                raise
+            logger.warning(
+                "Async shutdown cleanup exceeded %.1fs overall deadline",
+                _OVERALL_SHUTDOWN_DEADLINE_SECONDS,
+            )
+    finally:
+        try:
+            runner.database.close()
+        except Exception as e:
+            logger.warning(f"Database close failed: {e}")
+
+        try:
+            cleanup_pid_file()
+        except Exception as e:
+            logger.warning("PID file cleanup failed: %s", e)
+        finally:
+            try:
+                get_shutdown_marker_path().unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
     logger.info("Shutdown complete")

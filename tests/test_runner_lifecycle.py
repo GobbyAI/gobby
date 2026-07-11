@@ -751,6 +751,181 @@ class TestShutdownDaemonServices:
         assert marker.exists() is False
 
     @pytest.mark.asyncio
+    async def test_periodic_tasks_cancel_concurrently(self) -> None:
+        all_cancelled = asyncio.Event()
+        cancellation_count = 0
+
+        async def wait_for_peer_cancellations() -> None:
+            nonlocal cancellation_count
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellation_count += 1
+                if cancellation_count == 3:
+                    all_cancelled.set()
+                await all_cancelled.wait()
+                raise
+
+        tasks = [asyncio.create_task(wait_for_peer_cancellations()) for _ in range(3)]
+        runner = SimpleNamespace(
+            _metrics_cleanup_task=tasks[0],
+            _metrics_archive_task=tasks[1],
+            _span_cleanup_task=tasks[2],
+        )
+        await asyncio.sleep(0)
+
+        await asyncio.wait_for(
+            runner_lifecycle_shutdown._cancel_periodic_tasks(runner),
+            timeout=0.5,
+        )
+
+        assert cancellation_count == 3
+        assert all(task.cancelled() for task in tasks)
+
+    @pytest.mark.asyncio
+    async def test_restart_skips_stop_hook_grace(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+        grace_window = AsyncMock()
+
+        async def completed_server() -> None:
+            return None
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=grace_window,
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        grace_window.assert_not_awaited()
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_shutdown_marker_is_removed_when_pid_cleanup_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        def fail_pid_cleanup() -> None:
+            raise OSError("pid file is busy")
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=fail_pid_cleanup,
+        )
+
+        assert "PID file cleanup failed: pid file is busy" in caplog.text
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_degraded_shutdown_deadline_preserves_cleanup_tail(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
+            0.05,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
+            0.15,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+
+        async def degraded_stop() -> None:
+            await asyncio.Event().wait()
+
+        runner.lifecycle_manager.stop = degraded_stop
+        runner.agent_lifecycle_monitor = SimpleNamespace(stop=degraded_stop)
+        runner.cron_scheduler = SimpleNamespace(stop=degraded_stop)
+        runner.message_processor = SimpleNamespace(stop=degraded_stop)
+        cleanup_pid_file = MagicMock()
+        shutdown_telemetry = MagicMock()
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        await asyncio.wait_for(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=shutdown_telemetry,
+                cleanup_pid_file=cleanup_pid_file,
+            ),
+            timeout=0.5,
+        )
+        elapsed = loop.time() - started_at
+
+        assert elapsed < 0.5
+        assert "Graceful shutdown exceeded 0.1s budget" in caplog.text
+        shutdown_telemetry.assert_called_once_with()
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
     async def test_db_executor_shutdown_timeout_does_not_block_database_close(
         self,
         monkeypatch: pytest.MonkeyPatch,
