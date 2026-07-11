@@ -156,6 +156,7 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
         shutdown_in_progress=False,
     )
     loop.set_services(services)
+    loop._running = True
     monkeypatch.setattr("gobby.app_context._current_container", services)
 
     real_dispatch_project_once = loop.dispatch_project_once

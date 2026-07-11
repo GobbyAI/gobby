@@ -127,6 +127,7 @@ class MiniBuildHarness:
             shutdown_in_progress=False,
         )
         self.loop.set_services(self.services)
+        self.loop._running = True
         self.monkeypatch.setattr("gobby.app_context._current_container", self.services)
         self.monkeypatch.setattr(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",

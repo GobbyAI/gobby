@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -315,6 +317,7 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
         return object()
 
     loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    loop._running = True
 
     assert (
         loop.schedule_project_dispatch(
@@ -336,6 +339,64 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
         lambda: calls == ["first", "second"],
         description="follow-up dispatch",
     )
+
+
+async def test_project_dispatch_entrypoints_ignore_requests_after_stop(
+    temp_db: HubDatabase,
+) -> None:
+    event_loop = MagicMock(spec=asyncio.AbstractEventLoop)
+    event_loop.is_closed.return_value = False
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+    loop._event_loop = event_loop
+    loop._running = True
+
+    await loop.stop()
+
+    assert loop.schedule_project_dispatch(project_id="project", reason="stopped") is False
+    loop._schedule_project_dispatch_on_loop("project", "stopped", None, None, None)
+
+    event_loop.call_soon_threadsafe.assert_not_called()
+    assert loop._project_tasks == {}
+
+
+async def test_queued_project_dispatch_callback_does_no_work_after_stop(
+    temp_db: HubDatabase,
+) -> None:
+    queued: tuple[Callable[..., None], tuple[object, ...]] | None = None
+
+    def capture_callback(callback: Callable[..., None], *args: object) -> None:
+        nonlocal queued
+        queued = (callback, args)
+
+    event_loop = MagicMock(spec=asyncio.AbstractEventLoop)
+    event_loop.is_closed.return_value = False
+    event_loop.call_soon_threadsafe.side_effect = capture_callback
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+    dispatch_project_once = AsyncMock()
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    loop._event_loop = event_loop
+    loop._running = True
+
+    assert loop.schedule_project_dispatch(project_id="project", reason="race") is True
+    assert queued is not None
+
+    await loop.stop()
+    callback, args = queued
+    callback(*args)
+
+    assert loop._project_tasks == {}
+    assert loop._pending_project_dispatches == {}
+    dispatch_project_once.assert_not_awaited()
 
 
 @pytest.mark.asyncio

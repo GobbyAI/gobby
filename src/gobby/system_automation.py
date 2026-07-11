@@ -169,6 +169,8 @@ class SystemAutomationLoop:
         max_active_agents: int | None = None,
     ) -> bool:
         """Schedule an in-memory dispatch tick for a project."""
+        if not self._running:
+            return False
         if not project_id:
             return False
         loop = self._event_loop
@@ -395,6 +397,8 @@ class SystemAutomationLoop:
         max_actions: int | None,
         max_active_agents: int | None,
     ) -> None:
+        if not self._running:
+            return
         existing = self._project_tasks.get(project_id)
         if existing is not None and not existing.done():
             self._pending_project_dispatches[project_id] = _PendingProjectDispatch(
