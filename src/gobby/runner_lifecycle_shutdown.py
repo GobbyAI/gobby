@@ -22,6 +22,7 @@ _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
 _HTTP_CONNECTION_GRACE_SECONDS = 0.25
 _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
+_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 _GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 
@@ -457,6 +458,32 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
             logger.warning(f"VectorStore close failed: {e}")
 
 
+async def _shutdown_database_executor(db_executor: Any) -> None:
+    """Bound executor shutdown without blocking the event loop."""
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(db_executor.shutdown, wait=True),
+            timeout=_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Database executor shutdown timed out; cancelling queued work")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    db_executor.shutdown,
+                    wait=False,
+                    cancel_futures=True,
+                ),
+                timeout=_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning("Database executor shutdown fallback timed out")
+        except Exception as e:
+            logger.warning(f"Database executor shutdown fallback failed: {e}")
+    except Exception as e:
+        logger.warning(f"Database executor shutdown failed: {e}")
+
+
 async def shutdown_daemon_services(
     runner: GobbyRunner,
     server: uvicorn.Server,
@@ -546,10 +573,7 @@ async def shutdown_daemon_services(
 
     db_executor = getattr(runner, "db_executor", None)
     if db_executor is not None:
-        try:
-            db_executor.shutdown(wait=True)
-        except Exception as e:
-            logger.warning(f"Database executor shutdown failed: {e}")
+        await _shutdown_database_executor(db_executor)
 
     try:
         runner.database.close()
