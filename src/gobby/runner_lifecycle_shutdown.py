@@ -328,7 +328,11 @@ async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2
         task.cancel()
         try:
             await asyncio.wait_for(task, timeout=timeout)
-        except (asyncio.CancelledError, TimeoutError):
+        except asyncio.CancelledError:
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling():
+                raise
+        except TimeoutError:
             pass
 
 
@@ -598,10 +602,6 @@ async def _run_graceful_shutdown_sequence(
     server.should_exit = True
 
     await _best_effort(
-        lambda: _cancel_runner_task(runner, "_subsystem_init_task"),
-        "Subsystem initialization task cancellation",
-    )
-    await _best_effort(
         lambda: _cancel_runner_task(runner, "_provider_model_refresh_task"),
         "Provider model refresh task cancellation",
     )
@@ -725,6 +725,10 @@ async def shutdown_daemon_services(
     try:
         try:
             async with overall_timeout:
+                await _best_effort(
+                    lambda: _cancel_runner_task(runner, "_subsystem_init_task"),
+                    "Subsystem initialization task cancellation",
+                )
                 graceful_timeout = asyncio.timeout_at(graceful_deadline)
                 try:
                     async with graceful_timeout:

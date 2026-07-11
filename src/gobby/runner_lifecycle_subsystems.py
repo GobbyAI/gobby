@@ -565,13 +565,16 @@ async def init_subsystems(
     await _start_cron_scheduler(runner, tracker)
     _start_code_index_tasks(runner, tracker)
     await _recover_pipelines(runner, tracker)
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
+        logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
+        return
+
     _start_websocket_server(runner, tracker)
     _maybe_start_ui_dev_server(runner)
 
-    services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.startup_ready = True
-        services.shutdown_in_progress = False
     await _start_system_automation_loop(runner, tracker)
     if tracker:
         tracker.finish()

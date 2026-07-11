@@ -15,6 +15,8 @@ import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
+import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
+from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.shutdown_intent import ShutdownIntent
@@ -148,8 +150,11 @@ class TestGobbyRunnerRun:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_with_websocket_server(self, mock_config_with_websocket):
-        """Test run with WebSocket server enabled."""
+    async def test_shutdown_during_subsystem_init_does_not_start_websocket(
+        self,
+        mock_config_with_websocket,
+    ):
+        """Test shutdown blocks WebSocket activation while subsystems initialize."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
         mock_mcp_manager.disconnect_all = AsyncMock()
@@ -186,9 +191,12 @@ class TestGobbyRunnerRun:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run()
 
-            mock_ws_server.start.assert_called()
-            assert mock_ws_server.start.call_count == 1
+            mock_ws_server.start.assert_not_awaited()
             assert runner._shutdown_requested is True
+            assert (
+                spawn_readiness_blocker(runner.http_server.services)
+                == "daemon_shutdown_in_progress"
+            )
 
     @pytest.mark.asyncio
     async def test_run_passes_websocket_to_http(self, mock_config_with_websocket):
@@ -690,6 +698,178 @@ class TestShutdownDaemonServices:
             mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
             database=SimpleNamespace(close=MagicMock()),
         )
+
+    @pytest.mark.asyncio
+    async def test_late_subsystem_init_cannot_activate_after_shutdown_starts(self) -> None:
+        services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
+        runner = SimpleNamespace(http_server=SimpleNamespace(services=services))
+
+        async def begin_shutdown_during_pipeline_recovery(
+            _runner: object,
+            _tracker: object,
+        ) -> None:
+            services.shutdown_in_progress = True
+
+        start_websocket = MagicMock()
+        start_ui = MagicMock()
+        start_automation = AsyncMock()
+        async_noop = AsyncMock()
+
+        with (
+            patch.object(runner_lifecycle_subsystems, "_schedule_provider_model_refresh"),
+            patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_external_services", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
+            patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_start_core_services", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_agent_lifecycle_monitor",
+                async_noop,
+            ),
+            patch.object(runner_lifecycle_subsystems, "_start_cron_scheduler", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_start_code_index_tasks"),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_recover_pipelines",
+                side_effect=begin_shutdown_during_pipeline_recovery,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_websocket_server",
+                start_websocket,
+            ),
+            patch.object(runner_lifecycle_subsystems, "_maybe_start_ui_dev_server", start_ui),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_system_automation_loop",
+                start_automation,
+            ),
+        ):
+            await runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), None)
+
+        assert spawn_readiness_blocker(services) == "daemon_shutdown_in_progress"
+        assert services.startup_ready is False
+        assert services.shutdown_in_progress is True
+        start_websocket.assert_not_called()
+        start_ui.assert_not_called()
+        start_automation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_subsystem_init_before_grace_and_keeps_spawn_blocked(
+        self,
+    ) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        runner.http_server.services.startup_ready = False
+        init_blocked = asyncio.Event()
+        events: list[str] = []
+
+        async def blocked_connect(_runner: object, _tracker: object) -> None:
+            events.append("init-blocked")
+            init_blocked.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("init-cancelled")
+                raise
+            finally:
+                events.append("init-cleanup")
+
+        async def grace_window() -> None:
+            events.append("grace")
+            assert runner._subsystem_init_task.cancelled()
+            assert (
+                spawn_readiness_blocker(runner.http_server.services)
+                == "daemon_shutdown_in_progress"
+            )
+
+        start_core_services = AsyncMock()
+        start_websocket = MagicMock()
+        start_automation = AsyncMock()
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        with (
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_connect_mcp_servers",
+                side_effect=blocked_connect,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_core_services",
+                start_core_services,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_websocket_server",
+                start_websocket,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_system_automation_loop",
+                start_automation,
+            ),
+        ):
+            runner._subsystem_init_task = asyncio.create_task(
+                runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), None)
+            )
+            await init_blocked.wait()
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=grace_window,
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+        assert events == ["init-blocked", "init-cancelled", "init-cleanup", "grace"]
+        assert spawn_readiness_blocker(runner.http_server.services) == (
+            "daemon_shutdown_in_progress"
+        )
+        assert runner.http_server.services.startup_ready is False
+        assert runner.http_server.services.shutdown_in_progress is True
+        start_core_services.assert_not_awaited()
+        start_websocket.assert_not_called()
+        start_automation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_subsystem_task_cancellation_does_not_swallow_shutdown_cancellation(
+        self,
+    ) -> None:
+        init_cancelled = asyncio.Event()
+
+        async def stubborn_init() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                init_cancelled.set()
+                await asyncio.Event().wait()
+
+        subsystem_task = asyncio.create_task(stubborn_init())
+        runner = SimpleNamespace(_subsystem_init_task=subsystem_task)
+        shutdown_task = asyncio.create_task(
+            runner_lifecycle_shutdown._cancel_runner_task(
+                runner,
+                "_subsystem_init_task",
+                timeout=10.0,
+            )
+        )
+        await init_cancelled.wait()
+        shutdown_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown_task
+        assert subsystem_task.cancelled()
 
     @pytest.mark.asyncio
     async def test_shutdown_intent_marker_is_removed_after_cleanup(
