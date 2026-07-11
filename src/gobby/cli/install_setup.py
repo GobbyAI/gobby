@@ -350,7 +350,7 @@ def ensure_daemon_config() -> dict[str, Any]:
     return {"created": True, "path": str(bootstrap_path), "source": "generated"}
 
 
-def run_daemon_setup(project_path: Path) -> None:
+def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> None:
     """Run install setup: DB init, bundled content sync, MCP servers, IDE config.
 
     Called after ensure_daemon_config(). Handles database initialization,
@@ -358,6 +358,7 @@ def run_daemon_setup(project_path: Path) -> None:
 
     Args:
         project_path: The project directory path (used for context only).
+        configure_ide_settings: Whether to mutate detected VS Code-family settings.
     """
     from .installers import install_default_mcp_servers
 
@@ -412,22 +413,32 @@ def run_daemon_setup(project_path: Path) -> None:
     else:
         _run_managed_native_binary_installs()
 
-    try:
-        from .installers.ide_config import configure_vscode_family_terminal_titles
+    if configure_ide_settings:
+        try:
+            from .installers.ide_config import configure_vscode_family_terminal_integration
 
-        ide_results = configure_vscode_family_terminal_titles()
-        configured_ides = [
-            ide_name
-            for ide_name, result in ide_results.items()
-            if result.get("added") or result.get("updated")
-        ]
-        if configured_ides:
-            click.echo(
-                "Configured VS Code-family terminal titles for tmux integration: "
-                f"{', '.join(configured_ides)}"
-            )
-    except (ImportError, OSError, PermissionError, ValueError) as e:
-        click.echo(f"Warning: Failed to configure VS Code-family terminal titles: {e}")
+            ide_results = configure_vscode_family_terminal_integration()
+            configured_ides = [
+                ide_name
+                for ide_name, result in ide_results.items()
+                if result.get("added") or result.get("updated")
+            ]
+            if configured_ides:
+                click.echo(
+                    f"Configured VS Code-family terminal integration: {', '.join(configured_ides)}"
+                )
+            for ide_name, result in ide_results.items():
+                if result.get("warning"):
+                    click.echo(
+                        f"Warning: Skipped {ide_name} terminal integration: {result['warning']}"
+                    )
+                elif result.get("error"):
+                    click.echo(
+                        f"Warning: Failed to configure {ide_name} terminal integration: "
+                        f"{result['error']}"
+                    )
+        except (ImportError, OSError, PermissionError, ValueError) as e:
+            click.echo(f"Warning: Failed to configure VS Code-family terminal integration: {e}")
 
 
 def _run_npm_install(label: str, package: str, project_path: Path) -> None:

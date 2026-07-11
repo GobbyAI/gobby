@@ -19,8 +19,9 @@ import pytest
 from gobby.cli.installers.ide_config import (
     VSCODE_FAMILY_IDE_NAMES,
     _get_ide_config_dir,
-    configure_ide_terminal_title,
-    configure_vscode_family_terminal_titles,
+    configure_ide_terminal_integration,
+    configure_vscode_family_terminal_integration,
+    find_vscode_family_ides_needing_terminal_integration,
 )
 from gobby.cli.installers.mcp_config import (
     configure_mcp_server_json,
@@ -1028,14 +1029,22 @@ class TestGetIdeConfigDir:
         assert path == Path("C:\\Users\\test\\AppData\\Roaming") / "TestIDE"
 
 
-class TestConfigureIdeTerminalTitle:
-    """Tests for configure_ide_terminal_title function."""
+class TestConfigureIdeTerminalIntegration:
+    """Tests for configure_ide_terminal_integration."""
+
+    @pytest.fixture(autouse=True)
+    def supported_tmux(self):
+        with (
+            patch("gobby.cli.installers.ide_config._terminal_platform_key", return_value="osx"),
+            patch("gobby.cli.installers.ide_config.shutil.which", return_value="/usr/bin/tmux"),
+        ):
+            yield
 
     def test_skip_when_ide_not_installed(self, temp_dir: Path) -> None:
         """IDE config dir doesn't exist — skip silently."""
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = temp_dir / "NonExistent"
-            result = configure_ide_terminal_title("NonExistent")
+            result = configure_ide_terminal_integration("NonExistent")
 
         assert result["success"] is True
         assert result["skipped"] is True
@@ -1048,7 +1057,7 @@ class TestConfigureIdeTerminalTitle:
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("TestIDE")
+            result = configure_ide_terminal_integration("TestIDE")
 
         assert result["success"] is True
         assert result["added"] is True
@@ -1057,6 +1066,11 @@ class TestConfigureIdeTerminalTitle:
         settings_path = config_dir / "User" / "settings.json"
         assert settings_path.exists()
         settings = json.loads(settings_path.read_text())
+        assert settings["terminal.integrated.profiles.osx"]["tmux"] == {
+            "path": "/usr/bin/tmux",
+            "args": ["new-session"],
+        }
+        assert settings["terminal.integrated.defaultProfile.osx"] == "tmux"
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
 
     def test_add_to_existing_settings(self, temp_dir: Path) -> None:
@@ -1069,7 +1083,7 @@ class TestConfigureIdeTerminalTitle:
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("TestIDE2")
+            result = configure_ide_terminal_integration("TestIDE2")
 
         assert result["success"] is True
         assert result["added"] is True
@@ -1077,6 +1091,7 @@ class TestConfigureIdeTerminalTitle:
 
         settings = json.loads(settings_path.read_text())
         assert settings["editor.fontSize"] == 14
+        assert settings["terminal.integrated.defaultProfile.osx"] == "tmux"
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
         assert "terminal.integrated.tabs.hideCondition" not in settings
 
@@ -1091,12 +1106,20 @@ class TestConfigureIdeTerminalTitle:
         user_dir.mkdir(parents=True)
         settings_path = user_dir / "settings.json"
         settings_path.write_text(
-            json.dumps({"terminal.integrated.tabs.title": "${process} - ${sequence}"})
+            json.dumps(
+                {
+                    "terminal.integrated.profiles.osx": {
+                        "tmux": {"path": "/custom/tmux", "args": ["attach"]}
+                    },
+                    "terminal.integrated.defaultProfile.osx": "tmux",
+                    "terminal.integrated.tabs.title": "${process} - ${sequence}",
+                }
+            )
         )
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("TestIDE3")
+            result = configure_ide_terminal_integration("TestIDE3")
 
         assert result["success"] is True
         assert result["already_configured"] is True
@@ -1109,11 +1132,19 @@ class TestConfigureIdeTerminalTitle:
         user_dir = config_dir / "User"
         user_dir.mkdir(parents=True)
         settings_path = user_dir / "settings.json"
-        settings_path.write_text(json.dumps({"terminal.integrated.tabs.title": "${process}"}))
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "terminal.integrated.profiles.osx": {"tmux": {"path": "/custom/tmux"}},
+                    "terminal.integrated.defaultProfile.osx": "tmux",
+                    "terminal.integrated.tabs.title": "${process}",
+                }
+            )
+        )
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("TestIDE6")
+            result = configure_ide_terminal_integration("TestIDE6")
 
         assert result["success"] is True
         assert result["added"] is False
@@ -1133,6 +1164,8 @@ class TestConfigureIdeTerminalTitle:
         settings_path.write_text(
             json.dumps(
                 {
+                    "terminal.integrated.profiles.osx": {"tmux": {"path": "/custom/tmux"}},
+                    "terminal.integrated.defaultProfile.osx": "tmux",
                     "terminal.integrated.tabs.title": "${sequence}",
                     "terminal.integrated.tabs.hideCondition": "singleTerminal",
                 }
@@ -1141,7 +1174,7 @@ class TestConfigureIdeTerminalTitle:
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("Antigravity")
+            result = configure_ide_terminal_integration("Antigravity")
 
         assert result["success"] is True
         assert result["added"] is False
@@ -1161,7 +1194,7 @@ class TestConfigureIdeTerminalTitle:
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("TestIDE4")
+            result = configure_ide_terminal_integration("TestIDE4")
 
         assert result["success"] is False
         assert result["error"] is not None
@@ -1176,11 +1209,11 @@ class TestConfigureIdeTerminalTitle:
 
         with (
             patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir,
-            patch("gobby.cli.installers.ide_config.copy2") as mock_copy,
+            patch("gobby.cli.installers.ide_config.shutil.copy2") as mock_copy,
         ):
             mock_dir.return_value = config_dir
             mock_copy.side_effect = OSError("Disk full")
-            result = configure_ide_terminal_title("TestIDE5")
+            result = configure_ide_terminal_integration("TestIDE5")
 
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
@@ -1192,11 +1225,13 @@ class TestConfigureIdeTerminalTitle:
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("Cursor")
+            result = configure_ide_terminal_integration("Cursor")
 
         assert result["success"] is True
         assert result["added"] is True
         settings = json.loads((config_dir / "User" / "settings.json").read_text())
+        assert settings["terminal.integrated.profiles.osx"]["tmux"]["path"] == "/usr/bin/tmux"
+        assert settings["terminal.integrated.defaultProfile.osx"] == "tmux"
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
         assert "terminal.integrated.tabs.hideCondition" not in settings
 
@@ -1207,23 +1242,112 @@ class TestConfigureIdeTerminalTitle:
 
         with patch("gobby.cli.installers.ide_config._get_ide_config_dir") as mock_dir:
             mock_dir.return_value = config_dir
-            result = configure_ide_terminal_title("Antigravity IDE")
+            result = configure_ide_terminal_integration("Antigravity IDE")
 
         assert result["success"] is True
         assert result["added"] is True
         settings = json.loads((config_dir / "User" / "settings.json").read_text())
+        assert settings["terminal.integrated.profiles.osx"]["tmux"]["args"] == ["new-session"]
+        assert settings["terminal.integrated.defaultProfile.osx"] == "tmux"
         assert settings["terminal.integrated.tabs.title"] == "${sequence}"
         assert settings["terminal.integrated.tabs.hideCondition"] == "never"
 
+    def test_preserves_unrelated_and_custom_tmux_profiles(self, temp_dir: Path) -> None:
+        config_dir = temp_dir / "Cursor"
+        user_dir = config_dir / "User"
+        user_dir.mkdir(parents=True)
+        settings_path = user_dir / "settings.json"
+        custom_tmux = {"path": "/custom/tmux", "args": ["attach-session", "-t", "work"]}
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "editor.fontSize": 15,
+                    "terminal.integrated.profiles.osx": {
+                        "zsh": {"path": "/bin/zsh"},
+                        "tmux": custom_tmux,
+                    },
+                }
+            )
+        )
 
-class TestConfigureVsCodeFamilyTerminalTitles:
+        with patch("gobby.cli.installers.ide_config._get_ide_config_dir", return_value=config_dir):
+            result = configure_ide_terminal_integration("Cursor")
+
+        assert result["success"] is True
+        settings = json.loads(settings_path.read_text())
+        assert settings["editor.fontSize"] == 15
+        assert settings["terminal.integrated.profiles.osx"]["zsh"] == {"path": "/bin/zsh"}
+        assert settings["terminal.integrated.profiles.osx"]["tmux"] == custom_tmux
+
+    def test_linux_profile_key(self, temp_dir: Path) -> None:
+        config_dir = temp_dir / "Code"
+        config_dir.mkdir()
+
+        with (
+            patch("gobby.cli.installers.ide_config._get_ide_config_dir", return_value=config_dir),
+            patch("gobby.cli.installers.ide_config._terminal_platform_key", return_value="linux"),
+        ):
+            result = configure_ide_terminal_integration("Code")
+
+        assert result["success"] is True
+        settings = json.loads((config_dir / "User" / "settings.json").read_text())
+        assert settings["terminal.integrated.profiles.linux"]["tmux"]["path"] == "/usr/bin/tmux"
+        assert settings["terminal.integrated.defaultProfile.linux"] == "tmux"
+
+    def test_missing_tmux_warns_without_writing(self, temp_dir: Path) -> None:
+        config_dir = temp_dir / "Code"
+        config_dir.mkdir()
+
+        with (
+            patch("gobby.cli.installers.ide_config._get_ide_config_dir", return_value=config_dir),
+            patch("gobby.cli.installers.ide_config.shutil.which", return_value=None),
+        ):
+            result = configure_ide_terminal_integration("Code")
+
+        assert result["success"] is True
+        assert result["skipped"] is True
+        assert result["warning"] == "tmux executable was not found on PATH"
+        assert not (config_dir / "User" / "settings.json").exists()
+
+    def test_unsupported_platform_warns_without_writing(self, temp_dir: Path) -> None:
+        config_dir = temp_dir / "Code"
+        config_dir.mkdir()
+
+        with (
+            patch("gobby.cli.installers.ide_config._get_ide_config_dir", return_value=config_dir),
+            patch("gobby.cli.installers.ide_config._terminal_platform_key", return_value=None),
+            patch("gobby.cli.installers.ide_config.sys.platform", "win32"),
+        ):
+            result = configure_ide_terminal_integration("Code")
+
+        assert result["success"] is True
+        assert result["skipped"] is True
+        assert result["warning"] == "unsupported platform 'win32'"
+        assert not (config_dir / "User" / "settings.json").exists()
+
+    def test_idempotent_rerun_does_not_replace_settings(self, temp_dir: Path) -> None:
+        config_dir = temp_dir / "Cursor"
+        config_dir.mkdir()
+        with patch("gobby.cli.installers.ide_config._get_ide_config_dir", return_value=config_dir):
+            first_result = configure_ide_terminal_integration("Cursor")
+            with patch("gobby.cli.installers.ide_config.os.replace") as mock_replace:
+                second_result = configure_ide_terminal_integration("Cursor")
+
+        assert first_result["success"] is True
+        assert second_result["already_configured"] is True
+        mock_replace.assert_not_called()
+
+
+class TestConfigureVsCodeFamilyTerminalIntegration:
     """Tests for configuring known VS Code-family roots."""
 
     def test_attempts_all_known_ide_roots(self) -> None:
-        with patch("gobby.cli.installers.ide_config.configure_ide_terminal_title") as mock_config:
+        with patch(
+            "gobby.cli.installers.ide_config.configure_ide_terminal_integration"
+        ) as mock_config:
             mock_config.return_value = {"success": True, "skipped": True}
 
-            results = configure_vscode_family_terminal_titles()
+            results = configure_vscode_family_terminal_integration()
 
         assert tuple(results) == VSCODE_FAMILY_IDE_NAMES
         assert [call.args[0] for call in mock_config.call_args_list] == list(
@@ -1240,7 +1364,7 @@ class TestConfigureVsCodeFamilyTerminalTitles:
         with patch(
             "gobby.cli.installers.ide_config._get_ide_config_dir", side_effect=fake_config_dir
         ):
-            results = configure_vscode_family_terminal_titles(("Code", "Cursor"))
+            results = configure_vscode_family_terminal_integration(("Code", "Cursor"))
 
         assert results["Code"]["success"] is True
         assert results["Code"]["skipped"] is True
@@ -1248,3 +1372,33 @@ class TestConfigureVsCodeFamilyTerminalTitles:
         assert results["Cursor"]["success"] is True
         assert results["Cursor"]["added"] is True
         assert (existing_root / "User" / "settings.json").exists()
+
+
+class TestFindVsCodeFamilyIdesNeedingTerminalIntegration:
+    def test_returns_only_detected_ide_with_incomplete_settings(self, temp_dir: Path) -> None:
+        code_root = temp_dir / "Code"
+        cursor_root = temp_dir / "Cursor"
+        code_root.mkdir()
+        (cursor_root / "User").mkdir(parents=True)
+        (cursor_root / "User" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "terminal.integrated.profiles.osx": {"tmux": {"path": "/custom/tmux"}},
+                    "terminal.integrated.defaultProfile.osx": "tmux",
+                    "terminal.integrated.tabs.title": "${sequence}",
+                }
+            )
+        )
+
+        def fake_config_dir(ide_name: str) -> Path:
+            return {"Code": code_root, "Cursor": cursor_root}[ide_name]
+
+        with (
+            patch(
+                "gobby.cli.installers.ide_config._get_ide_config_dir", side_effect=fake_config_dir
+            ),
+            patch("gobby.cli.installers.ide_config._terminal_platform_key", return_value="osx"),
+        ):
+            detected = find_vscode_family_ides_needing_terminal_integration(("Code", "Cursor"))
+
+        assert detected == ["Code"]

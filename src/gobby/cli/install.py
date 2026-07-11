@@ -280,6 +280,31 @@ def _set_bootstrap_auth_mode(path: Path, auth_mode: str) -> None:
     update_bootstrap_yaml(path, apply_auth_mode)
 
 
+def _resolve_ide_settings_consent(
+    ide_settings: bool | None,
+    *,
+    no_interactive: bool,
+) -> bool:
+    """Resolve explicit or interactive consent for VS Code-family settings changes."""
+    if ide_settings is not None:
+        return ide_settings
+    if no_interactive:
+        return False
+
+    from .installers.ide_config import find_vscode_family_ides_needing_terminal_integration
+
+    detected_ides = find_vscode_family_ides_needing_terminal_integration()
+    if not detected_ides:
+        return False
+    click.echo(
+        f"Detected VS Code-family IDEs needing terminal integration: {', '.join(detected_ides)}"
+    )
+    return click.confirm(
+        "Configure detected VS Code-family IDE terminals to use tmux and Gobby session titles?",
+        default=True,
+    )
+
+
 @click.command("install")
 @click.option(
     "--claude",
@@ -425,6 +450,12 @@ def _set_bootstrap_auth_mode(path: Path, auth_mode: str) -> None:
     help="Daemon API authentication mode to persist in bootstrap.yaml.",
 )
 @click.option(
+    "--ide-settings/--no-ide-settings",
+    "ide_settings_flag",
+    default=None,
+    help="Configure detected VS Code-family terminals for tmux and Gobby session titles.",
+)
+@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
@@ -458,6 +489,7 @@ def install(
     embedding_dim: int | None,
     secret_kek_posture: str,
     auth_mode: str | None,
+    ide_settings_flag: bool | None,
     no_interactive_flag: bool,
     working_dir: Path | None,
 ) -> None:
@@ -594,7 +626,11 @@ def install(
     if auth_mode is not None:
         _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
         click.echo(f"Daemon API authentication mode: {auth_mode}")
-    run_daemon_setup(project_path)
+    configure_ide_settings = _resolve_ide_settings_consent(
+        ide_settings_flag,
+        no_interactive=no_interactive_flag,
+    )
+    run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)
 

@@ -20,6 +20,7 @@ from gobby.cli.install import (
     _is_codex_cli_installed,
     _is_droid_cli_installed,
     _is_qwen_cli_installed,
+    _resolve_ide_settings_consent,
     uninstall,
 )
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, ensure_local_api_token, hash_token
@@ -319,6 +320,80 @@ class TestInstallCommand:
         assert "LM Studio-compatible defaults" in result.output
         assert "openai-compatible uses generic OpenAI-" in result.output
         assert "compatible embedding APIs" in result.output
+        assert "--ide-settings" in result.output
+        assert "--no-ide-settings" in result.output
+
+    def test_install_ide_settings_option_is_tri_state(self) -> None:
+        install_command = cli.commands["install"]
+        ide_option = next(
+            parameter
+            for parameter in install_command.params
+            if parameter.name == "ide_settings_flag"
+        )
+
+        assert ide_option.default is None
+
+    @pytest.mark.parametrize("explicit_value", [True, False])
+    def test_explicit_ide_settings_choice_skips_detection(self, explicit_value: bool) -> None:
+        with (
+            patch(
+                "gobby.cli.installers.ide_config."
+                "find_vscode_family_ides_needing_terminal_integration"
+            ) as mock_detect,
+            patch("gobby.cli.install.click.confirm") as mock_confirm,
+        ):
+            result = _resolve_ide_settings_consent(explicit_value, no_interactive=False)
+
+        assert result is explicit_value
+        mock_detect.assert_not_called()
+        mock_confirm.assert_not_called()
+
+    def test_no_interactive_skips_unspecified_ide_settings(self) -> None:
+        with patch(
+            "gobby.cli.installers.ide_config.find_vscode_family_ides_needing_terminal_integration"
+        ) as mock_detect:
+            result = _resolve_ide_settings_consent(None, no_interactive=True)
+
+        assert result is False
+        mock_detect.assert_not_called()
+
+    @pytest.mark.parametrize(("confirmed", "expected"), [(True, True), (False, False)])
+    def test_interactive_ide_settings_prompt(
+        self,
+        confirmed: bool,
+        expected: bool,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with (
+            patch(
+                "gobby.cli.installers.ide_config."
+                "find_vscode_family_ides_needing_terminal_integration",
+                return_value=["Cursor", "Antigravity"],
+            ),
+            patch("gobby.cli.install.click.confirm", return_value=confirmed) as mock_confirm,
+        ):
+            result = _resolve_ide_settings_consent(None, no_interactive=False)
+
+        assert result is expected
+        assert "Cursor, Antigravity" in capsys.readouterr().out
+        mock_confirm.assert_called_once_with(
+            "Configure detected VS Code-family IDE terminals to use tmux and Gobby session titles?",
+            default=True,
+        )
+
+    def test_already_configured_ides_do_not_prompt(self) -> None:
+        with (
+            patch(
+                "gobby.cli.installers.ide_config."
+                "find_vscode_family_ides_needing_terminal_integration",
+                return_value=[],
+            ),
+            patch("gobby.cli.install.click.confirm") as mock_confirm,
+        ):
+            result = _resolve_ide_settings_consent(None, no_interactive=False)
+
+        assert result is False
+        mock_confirm.assert_not_called()
 
     @pytest.mark.parametrize("embedding_dim", ["0", "-1"])
     def test_install_rejects_non_positive_embedding_dim(
@@ -354,7 +429,7 @@ class TestInstallCommand:
         }
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(cli, ["install", "--qwen"])
+            result = runner.invoke(cli, ["install", "--qwen", "--no-interactive"])
 
         assert result.exit_code == 0
         assert "Qwen CLI" in result.output
@@ -387,7 +462,7 @@ class TestInstallCommand:
         }
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(cli, ["install", "--droid"])
+            result = runner.invoke(cli, ["install", "--droid", "--no-interactive"])
 
         assert result.exit_code == 0
         assert "Droid CLI" in result.output
@@ -418,7 +493,7 @@ class TestInstallCommand:
         }
 
         with runner.isolated_filesystem(temp_dir=str(temp_dir)):
-            result = runner.invoke(cli, ["install", "--agy"])
+            result = runner.invoke(cli, ["install", "--agy", "--no-interactive"])
 
         assert result.exit_code == 0
         assert "AGY CLI" in result.output

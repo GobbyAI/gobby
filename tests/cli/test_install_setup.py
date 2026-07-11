@@ -107,7 +107,7 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_success(
         self,
         mock_ide,
@@ -118,6 +118,7 @@ class TestRunDaemonSetup:
         mock_sync,
         mock_init,
         tmp_path,
+        capsys: pytest.CaptureFixture[str],
     ):
         mock_db = MagicMock()
         mock_init.return_value = mock_db
@@ -125,11 +126,15 @@ class TestRunDaemonSetup:
         mock_mcp.return_value = {"success": True, "servers_added": ["gh"], "servers_skipped": []}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
-        mock_ide.return_value = {"Code": {"added": True}}
+        mock_ide.return_value = {
+            "Code": {"added": True},
+            "Cursor": {"warning": "tmux executable was not found on PATH"},
+            "Antigravity": {"error": "Failed to parse settings.json"},
+        }
 
         mock_run.return_value = MagicMock(returncode=0)
 
-        run_daemon_setup(tmp_path)
+        run_daemon_setup(tmp_path, configure_ide_settings=True)
 
         mock_init.assert_called_once()
         assert mock_init.call_count == 1
@@ -152,6 +157,15 @@ class TestRunDaemonSetup:
         mock_ide.assert_called_once()
         assert mock_ide.call_count == 1
         assert mock_ide.call_args is not None
+        output = capsys.readouterr().out
+        assert "Configured VS Code-family terminal integration: Code" in output
+        assert (
+            "Warning: Skipped Cursor terminal integration: tmux executable was not found on PATH"
+        ) in output
+        assert (
+            "Warning: Failed to configure Antigravity terminal integration: "
+            "Failed to parse settings.json"
+        ) in output
 
     @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
@@ -159,7 +173,7 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
         mock_ide,
@@ -193,7 +207,7 @@ class TestRunDaemonSetup:
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.utils.native_bin.Path.home", return_value=tmp_path),
         ):
-            run_daemon_setup(tmp_path)
+            run_daemon_setup(tmp_path, configure_ide_settings=True)
             command = build_hook_command("codex", "SessionStart", tmp_path / ".gobby" / "hooks")
 
         assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
@@ -205,7 +219,7 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
+    @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     @patch("gobby.cli.install_setup.verify_homebrew_managed_bins")
     def test_homebrew_mode_skips_npm_and_managed_helper_installs(
         self,
@@ -238,7 +252,7 @@ class TestRunDaemonSetup:
             for name in ("gcode", "ghook", "gwiki")
         ]
 
-        run_daemon_setup(tmp_path)
+        run_daemon_setup(tmp_path, configure_ide_settings=False)
 
         assert mock_sync.return_value == {"total_synced": 0, "errors": []}
         assert mock_mcp.return_value["success"] is True
@@ -246,6 +260,7 @@ class TestRunDaemonSetup:
         mock_run.assert_not_called()
         mock_gcode.assert_not_called()
         mock_ghook.assert_not_called()
+        mock_ide.assert_not_called()
 
 
 class TestRunNpmInstall:
