@@ -1531,6 +1531,34 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
         assert variables["verification_evidence"][-1]["success"] is False
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "pytest || echo ok",
+            "pytest; true",
+            "bash -lc 'pytest || echo ok'",
+            "bash -lc 'echo ok; pytest'",
+            "pytest -k nonexistent",
+        ],
+    )
+    def test_ambiguous_validation_success_does_not_record_readiness(
+        self,
+        variables,
+        command: str,
+    ) -> None:
+        variables["verification_evidence_recorded"] = True
+        event = _make_bash_event("passed", command=command)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is False
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["success"] is False
+        if "nonexistent" in command:
+            assert evidence["evidence_requires_confirmation"] is True
+        else:
+            assert evidence["segment_count"] == 2
+
     def test_non_validation_command_is_ignored(self, variables) -> None:
         event = _make_bash_event("ok", command="git status")
 
