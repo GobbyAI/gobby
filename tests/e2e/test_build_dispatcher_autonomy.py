@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, call
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -310,7 +311,7 @@ class MiniBuildHarness:
             project_id=self.project_id,
             agent_depth=1,
         )
-        run_id = f"run-mini-{len(self.spawned) + 1}"
+        run_id = str(uuid5(NAMESPACE_URL, f"gobby:test:mini-build-run:{len(self.spawned) + 1}"))
         run = self.run_manager.create(
             parent_session_id=str(kwargs["parent_session_id"]),
             child_session_id=child.id,
