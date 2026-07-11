@@ -24,6 +24,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_API_KEY_SECRET_NAME,
 )
 from gobby.prompts.sync import sync_bundled_prompts
+from gobby.servers.auth_service import AuthService
 from gobby.servers.routes.configuration_import_export import _prompt_export_key
 from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
@@ -31,6 +32,13 @@ from gobby.servers.routes.configuration_secrets import MASKED_SECRET
 from gobby.servers.routes.configuration_ui_settings import UI_SETTINGS_KEYS
 from gobby.servers.routes.configuration_values import register_value_routes
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
+from gobby.storage.auth import (
+    LOCAL_API_TOKEN_HASH_KEY,
+    PASSWORD_HASH_KEY,
+    USERNAME_KEY,
+    hash_password,
+    hash_token,
+)
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
@@ -42,6 +50,7 @@ pytestmark = pytest.mark.unit
 
 FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 FALKOR_RESTART_HINT_FRAGMENT = "FalkorDB password"
+LOCAL_RUNTIME_TOKEN = "configuration-route-test-token"
 
 
 # ---------------------------------------------------------------------------
@@ -66,18 +75,32 @@ def task_manager(temp_db: Any) -> Any:
 
 
 @pytest.fixture
-def server(temp_db: Any, real_config: Any, task_manager: Any) -> Any:
+def server(temp_db: Any, real_config: Any, task_manager: Any, tmp_path: Any) -> Any:
     """Create an HTTPServer with real config and database."""
-    return create_http_server(
+    ConfigStore(temp_db).set(
+        LOCAL_API_TOKEN_HASH_KEY,
+        hash_token(LOCAL_RUNTIME_TOKEN),
+        source="system",
+    )
+    http_server = create_http_server(
         config=real_config,
         database=temp_db,
         task_manager=task_manager,
     )
+    http_server.auth_service = AuthService(
+        lambda: temp_db,
+        mode="disabled",
+        token_file=tmp_path / "local_cli_token",
+    )
+    return http_server
 
 
 @pytest.fixture
 def client(server: Any) -> TestClient:
-    return TestClient(server.app)
+    return TestClient(
+        server.app,
+        headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+    )
 
 
 @pytest.fixture
@@ -699,6 +722,94 @@ class TestValidationDetectionPreview:
 
 
 class TestSecretsEndpoints:
+    def test_mutations_require_local_token_when_web_login_is_unconfigured(
+        self, server: Any, mock_machine_id: Any
+    ) -> None:
+        assert server.auth_service.enabled is False
+        assert server.services.config.bind_host == "localhost"
+        assert server.auth_service.credentials_configured is False
+        unauthenticated = TestClient(server.app)
+
+        create_response = unauthenticated.post(
+            "/api/config/secrets",
+            json={"name": "PROTECTED", "value": "secret"},
+        )
+        invalid_response = unauthenticated.delete(
+            "/api/config/secrets/PROTECTED",
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+        authorized_create = unauthenticated.post(
+            "/api/config/secrets",
+            headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+            json={"name": "PROTECTED", "value": "secret"},
+        )
+        authorized_delete = unauthenticated.delete(
+            "/api/config/secrets/PROTECTED",
+            headers={"Authorization": f"Bearer {LOCAL_RUNTIME_TOKEN}"},
+        )
+
+        assert create_response.status_code == 401
+        assert invalid_response.status_code == 401
+        assert authorized_create.status_code == 200
+        assert authorized_delete.status_code == 200
+
+    def test_mutations_accept_configured_web_session(
+        self, server: Any, temp_db: Any, tmp_path: Any, mock_machine_id: Any
+    ) -> None:
+        ConfigStore(temp_db).set_many(
+            {
+                USERNAME_KEY: "admin",
+                PASSWORD_HASH_KEY: hash_password("correct horse battery staple"),
+            },
+            source="system",
+        )
+        server.auth_service = AuthService(
+            lambda: temp_db,
+            mode="required",
+            token_file=tmp_path / "configured_auth_token",
+        )
+        assert server.auth_service.enabled is True
+        assert server.auth_service.credentials_configured is True
+        browser = TestClient(server.app)
+
+        login_response = browser.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "correct horse battery staple"},
+        )
+        create_response = browser.post(
+            "/api/config/secrets",
+            json={"name": "SESSION_PROTECTED", "value": "secret"},
+        )
+        delete_response = browser.delete("/api/config/secrets/SESSION_PROTECTED")
+
+        assert login_response.status_code == 200
+        assert create_response.status_code == 200
+        assert delete_response.status_code == 200
+
+    def test_non_loopback_bind_refuses_unauthenticated_mutation(
+        self, temp_db: Any, task_manager: Any, tmp_path: Any
+    ) -> None:
+        http_server = create_http_server(
+            config=DaemonConfig(bind_host="0.0.0.0", auth_mode="disabled"),
+            database=temp_db,
+            task_manager=task_manager,
+            auth_mode="disabled",
+        )
+        http_server.auth_service = AuthService(
+            lambda: temp_db,
+            mode="disabled",
+            token_file=tmp_path / "non_loopback_token",
+        )
+        assert http_server.auth_service.enabled is False
+        assert http_server.services.config.bind_host == "0.0.0.0"
+
+        response = TestClient(http_server.app).post(
+            "/api/config/secrets",
+            json={"name": "REMOTE_WRITE", "value": "secret"},
+        )
+
+        assert response.status_code == 401
+
     def test_list_secrets_empty(self, client: TestClient) -> None:
         with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
             mock_store = MagicMock(spec=SecretStore)
@@ -739,14 +850,27 @@ class TestSecretsEndpoints:
         assert data["secret"]["name"] == "test_secret"
 
     def test_secret_routes_accept_hub_database_protocol(
-        self, non_local_hub_db: Any, real_config: Any, mock_machine_id: Any
+        self, non_local_hub_db: Any, real_config: Any, tmp_path: Any, mock_machine_id: Any
     ) -> None:
+        ConfigStore(non_local_hub_db).set(
+            LOCAL_API_TOKEN_HASH_KEY,
+            hash_token(LOCAL_RUNTIME_TOKEN),
+            source="system",
+        )
         server = create_http_server(
             config=real_config,
             database=non_local_hub_db,
             task_manager=LocalTaskManager(non_local_hub_db),
         )
-        c = TestClient(server.app)
+        server.auth_service = AuthService(
+            lambda: non_local_hub_db,
+            mode="disabled",
+            token_file=tmp_path / "non_local_token",
+        )
+        c = TestClient(
+            server.app,
+            headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+        )
 
         create_response = c.post(
             "/api/config/secrets",

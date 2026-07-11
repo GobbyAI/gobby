@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from gobby.config.embedding_keys import runtime_embedding_config_keys_to_storage
 from gobby.config.persistence import validate_falkordb_password
@@ -117,6 +117,18 @@ def validation_flat_for_secret_entries(
 def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register secret management routes."""
 
+    async def require_mutation_auth(request: Request) -> None:
+        """Protect secret mutations independently of the global auth mode."""
+        if context.server.auth_service.is_request_authenticated(request):
+            return
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Authentication required. Supply the local runtime token or log in with "
+                "configured web credentials."
+            ),
+        )
+
     @router.get("/secrets")
     async def list_secrets() -> JSONResponse:
         """List all secrets (metadata only, never values)."""
@@ -135,7 +147,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
             logger.error("Failed to list secrets: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.post("/secrets")
+    @router.post("/secrets", dependencies=[Depends(require_mutation_auth)])
     async def save_secret(request: SaveSecretRequest) -> JSONResponse:
         """Create or update a secret."""
         try:
@@ -155,7 +167,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
             logger.error("Failed to save secret: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.delete("/secrets/{name}")
+    @router.delete("/secrets/{name}", dependencies=[Depends(require_mutation_auth)])
     async def delete_secret(name: str) -> JSONResponse:
         """Delete a secret by name."""
         try:
