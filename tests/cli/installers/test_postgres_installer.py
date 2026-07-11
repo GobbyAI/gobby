@@ -50,11 +50,13 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
 ) -> None:
     installer = _import_installer()
     subprocess_calls: list[list[str]] = []
+    subprocess_envs: list[dict[str, str]] = []
     helper_calls: list[str] = []
     bootstrap_payloads: list[dict[str, Any]] = []
 
-    def _run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         subprocess_calls.append(args)
+        subprocess_envs.append(kwargs.get("env", {}))
         return _completed_process(args)
 
     def _write_bootstrap_defaults(*args: Any, **kwargs: Any) -> None:
@@ -62,16 +64,12 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
 
     monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(installer.subprocess, "run", _run)
+    monkeypatch.delenv("GOBBY_POSTGRES_PASSWORD", raising=False)
+    monkeypatch.setattr(installer.secrets, "token_urlsafe", lambda _size: "generated-password")
     monkeypatch.setattr(
         installer,
         "_sync_postgres_pgsearch_assets",
         lambda **_kwargs: helper_calls.append("sync_assets"),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        installer,
-        "_write_compose_env",
-        lambda **_kwargs: helper_calls.append("write_env"),
         raising=False,
     )
     monkeypatch.setattr(
@@ -98,7 +96,6 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert result["success"] is True
     assert helper_calls == [
         "sync_assets",
-        "write_env",
         "pg_isready",
         "probe:CREATE EXTENSION IF NOT EXISTS pg_search",
         "probe:CREATE EXTENSION IF NOT EXISTS pgaudit",
@@ -111,11 +108,34 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "postgres" in compose_up
     assert "up" in compose_up
     assert "-d" in compose_up
+    assert subprocess_envs[0]["GOBBY_POSTGRES_PASSWORD"] == "generated-password"
+    compose_env = tmp_path / "services" / ".env"
+    assert "GOBBY_POSTGRES_PASSWORD=generated-password" in compose_env.read_text()
+    assert compose_env.stat().st_mode & 0o777 == 0o600
     payload_text = repr(bootstrap_payloads)
     assert "postgresql://" in payload_text
+    assert "generated-password" in payload_text
     assert "localhost:60991" in payload_text
     assert "/gobby" in payload_text
     assert "docker" in payload_text
+
+
+def test_postgres_password_resolution_reuses_persisted_install_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    env_path = tmp_path / "services" / ".env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text("GOBBY_POSTGRES_PASSWORD=persisted-password\n")
+    monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "transient-password")
+    monkeypatch.setattr(
+        installer.secrets,
+        "token_urlsafe",
+        lambda _size: pytest.fail("persisted installs must not generate a new password"),
+    )
+
+    assert installer._resolve_postgres_password(gobby_home=tmp_path) == "persisted-password"
 
 
 def test_postgres_install_refreshes_stale_unified_compose(
