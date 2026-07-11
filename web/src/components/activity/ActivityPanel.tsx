@@ -349,7 +349,13 @@ export function ActivityPanel({
       case "integrations":
         return <IntegrationsTab />;
       case "wiki":
-        return <WikiTab projectId={projectId} />;
+        return (
+          <WikiTab
+            projectId={projectId}
+            requestPanelOverride={requestPanelOverride}
+            releasePanelOverride={releasePanelOverride}
+          />
+        );
       case "rules":
         return <RulesTab projectId={projectId} />;
       case "tasks":

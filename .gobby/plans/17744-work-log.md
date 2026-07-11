@@ -799,3 +799,57 @@ Tests (TDD):
 - **Refactor/final green**: replaced two `.at(-1)` uses flagged by `tsc` (lib target); final `npm run type-check` clean, `npm test -- src/components/activity/wiki` → 53 passed, `npx eslint src/components/activity/wiki --max-warnings 0` clean.
 - **Test-quality audit**: `uv run gobby test-quality audit web/src/components/activity/wiki/__tests__ --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 3 files, 44 tests, 0 issues, 0 new ≥ high.
 - Fixtures shaped from live `gwiki pages/read/backlinks/ask/status/health --format json` captures (2026-07-10) and a `wiki/outputs/graph.json` subset carrying all six node kinds; synthesis ask fixture shaped from the representative output pinned in `crates/gwiki/tests/cli_contract.rs`.
+
+## Task #17759 — Mode shell, toolbar, navigation, sources port (plan §2.2)
+
+### Plan (#17759)
+
+**Investigation summary**
+- `WikiTab.tsx` is the intentional blank stub from b03431941 (renders null; tab id already registered). The same commit deleted the legacy sources-table UI and instructs agents to design fresh from the plan + `.impeccable.md`, never the old UI. `useWiki.ts` and `WikiSourceRemovalDialog.tsx` were kept for reuse.
+- `ActivityPanel.tsx` owns `dirtyGuardValue` (a `useDirtyGuardController()`) and wraps tab content in `DirtyGuardProvider`; `useActivityPanel` wraps tab switches in `dirtyGuard.guardedRun`. Children register guards via `useDirtyGuard().registerDirtyGuard` (see `fields/useDetailDraft.ts`). WikiTab therefore consumes the AMBIENT `useDirtyGuard()` for its own mode/nav transitions — future P3 editor registers into the same context, and tests can wrap WikiTab in `DirtyGuardProvider` with a controlled guard.
+- `case "memory"` passes `requestPanelOverride`/`releasePanelOverride` (optional props, default noop in MemoryTab); `case "wiki"` currently passes only `projectId`.
+- `SegmentedControl` (`web/src/components/ui/SegmentedControl.tsx`): `{value, onChange, options, ariaLabel, size?, controlHeight?: 'sm'|'md', disabled?, className?}`.
+- `ActivityPanelSearch`: `{value, onChange, placeholder, ariaLabel?}` memoized input with `activity-panel-search` class.
+- `QuickMenu`: `{items: (action|separator)[], menuLabel, triggerLabel?, disabled?}` — kebab trigger built in; items `{label, icon?, destructive?, disabled?, onSelect}`.
+- `useWiki(options)` returns `{status, health, sources, isLoading, error, refresh, search, read, attach, ingest, compileWiki, audit, checkHealth, removeSource}`; `removeSource({id, dry_run|yes, keep_asset})` drives the kept `WikiSourceRemovalDialog` (`{source, preview, isPreviewLoading, isConfirming, error, onCancel, onConfirm({keep_asset})}`).
+- `summarizeWikiStatus(status, health, error?)` from 2.1 yields `{state: ready|degraded|unavailable, services, degradedServices, brokenLinks, stalePages, uncompiledSources}` — drives the banner + ask/research gating.
+- No shared localStorage hook exists; tabs read/write inline with guards (SkillsTab/PipelinesTab/FilesTab precedent). No global ResizeObserver in jsdom — tests stub it (TaskTree.test.tsx precedent); `useChatInputNarrow` is the observer idiom.
+- Repo bans Tailwind `md:` variants → container width via ResizeObserver (wide ≥560px).
+
+**Changes**
+1. `web/src/components/activity/wiki/WikiTabState.ts` (new, ~170): `WIKI_TAB_KEYS` persistence constants (`gobby:wiki-tab:{mode,topic,tree-width,split,last-page:wiki,last-page:code,graph}` + sessionStorage `gobby:wiki-tab:ask-history`); safe storage read/write helpers; `useWikiNav({guardedRun, onModeChange})` — in-memory history stack (cap 50) with `{current, openPage(path, opts), back(), forward(), canBack, canForward}`; `openPage` derives mode from path (`code/` prefix → code, else wiki), truncates forward history, and every transition runs through `guardedRun`.
+2. `web/src/components/activity/wiki/WikiTabToolbar.tsx` (new, ~200): SegmentedControl (Wiki|Code|Ask|Research, `controlHeight="sm"`), `ActivityPanelSearch`, graph button (wiki+code only), kebab `QuickMenu` (New page, Quick open [disabled until P3 browse], Refresh index, Compile, Audit, Attach file, Ingest URL, Manage sources, Topic scope); exports `WikiDegradedBanner` (slim, info icon + text + services detail, never hue-only) rendered under the toolbar.
+3. `web/src/components/activity/wiki/WikiTabActions.ts` (new, ~200): `useWikiTabActions({scope, wiki, onNavigate?})` orchestration hook over 2.1 fetchers + kept useWiki helpers — `savePageAndRefresh`, `createPageAndNavigate`, `deletePageAndNavigateBack`, `runCompile`, `runAudit`, `refreshIndex`, `attachFile`, `ingestUrl`, `launchResearchRun`; busy/status/error state with one aria-live status line consumed by the shell.
+4. `web/src/components/activity/wiki/WikiSourcesManager.tsx` (new, ~220): fresh in-pane sources view (list + detail, search filter) opened from the kebab; remove flow = dry-run preview → `WikiSourceRemovalDialog` → confirm → refresh. Designed per `.impeccable.md` (no side-stripes, ghost buttons, state never hue-only).
+5. `web/src/components/activity/WikiTab.tsx` (rewrite, ~240): four-mode shell — persisted mode/topic, ambient dirty-guarded mode switch + `useWikiNav`, last-page persistence per mode, `ResizeObserver` wide/narrow, `useWiki` + `summarizeWikiStatus` banner, ask/research composers disabled when unavailable, mode-body placeholders (P3–P5 land later), sources view toggle, `requestPanelOverride`/`releasePanelOverride` props (noop defaults).
+6. `web/src/components/activity/ActivityPanel.tsx`: `case "wiki"` passes the override props (mirrors memory).
+7. `web/src/components/activity/wiki/__tests__/WikiTab.shell.test.tsx` (new): mocked fetch envelopes; asserts four-mode control renders; mode persists to + restores from `gobby:wiki-tab:mode`; dirty guard blocks/allows mode switch and `openPage` nav (DirtyGuardProvider harness); degraded banner renders from degraded status fixture; ask composer disabled when unavailable; kebab opens sources manager.
+8. `web/src/components/activity/wiki/__tests__/WikiTabState.test.ts` (new): useWikiNav history semantics (push/truncate-forward/cap-50/mode derivation) via renderHook; storage helpers tolerate quota/parse failures.
+
+**Test commands**
+- Red/green/final: `cd web && npm test -- src/components/activity/wiki`
+- Final validation: `cd web && npm run type-check && npx eslint src/components/activity/wiki src/components/activity/WikiTab.tsx src/components/activity/ActivityPanel.tsx --report-unused-disable-directives --max-warnings 0`
+- Test-quality audit: `uv run gobby test-quality audit web/src/components/activity/wiki/__tests__ --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high`
+
+**Notes**
+- New page / Quick open kebab items are present but disabled with a "requires browse mode (P3)" title — §3.1/§3.2 own quick-open and create/edit UI; wiring them here would duplicate P3 acceptance work.
+- Working tree carries another session's uncommitted auth changes — stage only wiki paths + ActivityPanel.tsx + this log.
+
+### Implementation notes (#17759)
+
+- `WikiTabState.ts` (196 lines): `WIKI_TAB_KEYS` (all seven localStorage keys + sessionStorage ask-history), guarded `readStoredValue`/`writeStoredValue` (best-effort, quota/private-mode safe), mode/topic/last-page wrappers, `modeForPath`, and `useWikiNav` — history stack capped at 50 with forward-truncation on new opens, same-page no-op, and every transition (open/back/forward) routed through the injected `guardedRun`. A `commit()` helper updates a state ref alongside `setState` (react-hooks/refs bans render-phase ref writes; commit is the only mutation path).
+- `WikiTabToolbar.tsx` (183 lines): SegmentedControl (`ariaLabel="Wiki mode"`, `controlHeight="sm"`), `ActivityPanelSearch`, Graph button (wiki+code only), kebab QuickMenu (`triggerLabel="Wiki actions"`) — New page / Quick open present but disabled until §3.x; Refresh/Compile/Audit/Attach/Ingest disable when the gateway is unavailable; Manage sources / Topic scope always live. `WikiDegradedBanner` uses `bg-info-soft text-info` + info icon (state never hue-only), shows degraded services or offline message plus health counts.
+- `WikiTabActions.ts` (231 lines): `useWikiTabActions({scope, wiki, onRefetch, onNavigate, onNavigateBack})` — one `run()` wrapper drives `{busy, message, error}` status; `savePageAndRefresh` returns the typed conflict result without refetching on 412/409; `createPageAndNavigate` → refetch + `onNavigate(path)`; `deletePageAndNavigateBack` → refetch + back; refresh/compile/audit/attach/ingest wrap the kept useWiki helpers (`ingest` takes `{urls: [url]}` — the request shape is `WikiIngestRequest {path?, paths?, urls?}`, caught by tsc after an initial `{url}` guess); `launchResearchRun` wraps the §2.1 pipeline launcher.
+- `WikiSourcesManager.tsx` (233 lines): fresh in-pane list/detail (no legacy port per b03431941): filterable rows (title + mono detail path/url), expandable string-field detail list, per-row Remove → dry-run preview → kept `WikiSourceRemovalDialog` → confirmed removal → `onRemoved()` refresh. "Back to wiki" returns to the shell.
+- `WikiTab.tsx` (331 lines): four-mode shell — mode/topic persisted via WikiTabState, ambient `useDirtyGuard().guardedRun` wraps mode switches, `useWikiNav` wired to it with last-page persistence per browse mode, `ResizeObserver` wide (≥560px) toggling search placement (no Tailwind `md:`), `summarizeWikiStatus` → banner + gating, inline Topic-scope and Ingest-URL forms under the toolbar, hidden file input for attach, aria-live status/error line, graph view = full-pane placeholder that calls `requestPanelOverride`/`releasePanelOverride` (dirty-guarded open, mirrors MemoryTab), sources view swap, ask/research placeholder composers (disabled; offline note when gateway unreachable).
+- `ActivityPanel.tsx`: `case "wiki"` now passes both override props (2.2.3).
+- fixtures.ts: added `sourcesEnvelope` (two records matching `sourceRecordsFromEnvelope`'s `payload.sources[].id` contract).
+- All new files well under the 1,000-line cap.
+
+### TDD evidence (#17759)
+
+- **Red**: `cd web && npm test -- src/components/activity/wiki` → `Test Files 2 failed | 2 passed` — both new suites failed on `Failed to resolve import "../WikiTabState"`; then `npm test -- src/components/activity/wiki/__tests__/WikiTabActions.test.ts` → `Test Files 1 failed (1)` (unresolved `../WikiTabActions`) before that module was written.
+- **Green**: `npm test -- src/components/activity/wiki` → `Test Files 5 passed (5), Tests 81 passed (81)` (53 §2.1 + 28 new).
+- **Refactor/final green**: fixed `ingest` request shape (`{urls}`) after tsc TS2322 and removed a render-phase ref write after `react-hooks/refs`; final `npm run type-check` clean, `npx eslint src/components/activity/wiki src/components/activity/WikiTab.tsx src/components/activity/ActivityPanel.tsx --max-warnings 0` clean, suite re-run 81 passed.
+- **Test-quality audit**: `uv run gobby test-quality audit web/src/components/activity/wiki/__tests__ --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 6 files, 72 tests, 0 issues, 0 new ≥ high.
+- Coverage judgment: unit level (vitest/jsdom) — shell behavior (mode persistence/restore, dirty-guard veto/allow, degraded banner, offline composer gating, kebab→sources flow) plus nav-history and actions-orchestration semantics. Remaining gap: QuickMenu positioning and ResizeObserver width switching are visual concerns deferred to the §6.1 polish/verification pass.

@@ -434,3 +434,28 @@ export const writeSuccessEnvelope: EnvelopeFixture = {
     changed_paths: ["knowledge/topics/example.md"],
   },
 };
+
+/** GET /api/wiki/sources — record shape from useWiki's sourceRecordsFromEnvelope. */
+export const sourcesEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "sources",
+  stderr: "",
+  payload: {
+    command: "sources",
+    scope,
+    sources: [
+      {
+        id: "src-0001",
+        title: "Session: 019efb0c",
+        wiki_path: "knowledge/sources/src-0001.md",
+        raw_path: "raw/sessions/019efb0c.jsonl",
+      },
+      {
+        id: "src-0002",
+        title: "Design notes",
+        wiki_path: "knowledge/sources/src-0002.md",
+        url: "https://example.com/design-notes",
+      },
+    ],
+  },
+};
