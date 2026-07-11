@@ -14,7 +14,11 @@ import asyncio
 import httpx
 import pytest
 
-from tests.e2e.conftest import DaemonInstance, MCPTestClient
+from tests.e2e.conftest import (
+    DaemonInstance,
+    MCPTestClient,
+    authenticated_async_daemon_client,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -189,7 +193,7 @@ class TestMCPProxyConcurrency:
     @pytest.mark.asyncio
     async def test_multiple_concurrent_tool_calls(self, daemon_instance: DaemonInstance):
         """Verify multiple concurrent tool calls are handled correctly."""
-        async with httpx.AsyncClient(base_url=daemon_instance.http_url, timeout=30.0) as client:
+        async with authenticated_async_daemon_client(daemon_instance, timeout=30.0) as client:
             # Create multiple concurrent requests
             async_tasks = []
             for _ in range(5):
@@ -221,7 +225,7 @@ class TestMCPProxyConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_calls_to_different_tools(self, daemon_instance: DaemonInstance):
         """Verify concurrent calls to different tools work."""
-        async with httpx.AsyncClient(base_url=daemon_instance.http_url, timeout=30.0) as client:
+        async with authenticated_async_daemon_client(daemon_instance, timeout=30.0) as client:
             # Different tool calls
             tool_calls = [
                 ("gobby-tasks", "list_ready_tasks", {}),

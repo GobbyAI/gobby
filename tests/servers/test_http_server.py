@@ -223,6 +223,7 @@ class TestMCPEndpointsWithManager:
             services=services,
             port=60887,
             test_mode=True,
+            auth_mode="disabled",
         )
 
     @pytest.fixture

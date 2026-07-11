@@ -21,6 +21,7 @@ from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    authenticated_daemon_client_for_home,
     daemon_health_unavailable,
     prepare_daemon_env,
     terminate_process_tree,
@@ -214,7 +215,10 @@ class TestSessionPersistence:
             assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should start"
 
             # Verify sessions endpoint works
-            client = httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0)
+            client = authenticated_daemon_client_for_home(
+                f"http://localhost:{http_port}",
+                gobby_home,
+            )
             try:
                 response = client.get("/api/sessions")
                 assert response.status_code == 200
@@ -246,7 +250,10 @@ class TestSessionPersistence:
                 assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should restart"
 
                 # Verify sessions endpoint still works
-                client = httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0)
+                client = authenticated_daemon_client_for_home(
+                    f"http://localhost:{http_port}",
+                    gobby_home,
+                )
                 try:
                     response = client.get("/api/sessions")
                     assert response.status_code == 200

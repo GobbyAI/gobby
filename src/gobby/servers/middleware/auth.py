@@ -1,24 +1,8 @@
 """Authentication middleware for Gobby web UI.
 
-When auth is configured (username + password set), this middleware
-protects UI routes and their backing API endpoints. It does NOT protect:
-- /api/auth/* (login, logout, status)
-- /api/health* (health checks)
-- /api/hooks/* (CLI agent hooks)
-- /api/comms/webhooks/* (signed external comms webhooks)
-- /api/github/webhooks/* (signed GitHub webhooks)
-- /api/sessions/* (CLI agent session endpoints)
-- /api/local/* (local token-protected runtime endpoints)
-- /api/mcp/* (MCP protocol endpoints)
-- /api/llm/* (AI generation used by installed gcode/gwiki binaries)
-- /api/embeddings (embedding generation used by installed binaries)
-- /api/voice/transcribe (transcription used by installed binaries)
-- /api/workflows/variables/* (MCP proxy session-variable tools)
-- /api/admin/health, /api/admin/status, /api/admin/metrics, /api/admin/config (read-only admin)
-- /assets/* (static assets)
-- WebSocket connections (agents need open access)
-
-When auth is NOT configured, all requests pass through unchanged.
+Required-mode authentication protects daemon API, MCP, and memory routes.
+Only login, health, startup readiness, signature-verified webhooks, and static
+browser assets are public. Other browser routes reach the SPA login shell.
 """
 
 import logging
@@ -35,43 +19,35 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Paths that never require authentication
+# Prefixes that never require daemon authentication. Webhook handlers apply
+# their channel/HMAC signature checks after this middleware.
 _PUBLIC_PREFIXES = (
     "/api/auth/",
-    "/api/health",
-    "/api/hooks/",
     "/api/comms/webhooks/",
     "/api/github/webhooks/",
-    "/api/sessions/",
-    "/api/local/",
-    "/api/mcp/",
-    "/api/mcp",
-    # Machine-local tooling data plane: the installed gcode/gwiki binaries and
-    # the MCP proxy call these directly; UI auth must not sever them. A 401
-    # here previously made `gcode codewiki --ai auto` resolve "no daemon" and
-    # destructively rewrite AI vaults as structural docs (#17777, #17776).
-    "/api/llm/",
-    "/api/embeddings",
-    "/api/voice/transcribe",
-    "/api/workflows/variables/",
-    "/api/admin/health",
-    "/api/admin/status",
-    "/api/admin/metrics",
-    "/api/admin/config",
     "/assets/",
-    "/ws/",
-    "/ws",
-    "/favicon.ico",
-    "/logo.png",
+)
+
+_PUBLIC_PATHS = frozenset(
+    {
+        "/",
+        "/api/health",
+        "/api/admin/health",
+        "/api/admin/startup-progress",
+        "/favicon.ico",
+        "/logo.png",
+    }
+)
+
+_PROTECTED_PREFIXES = (
+    "/api/",
+    "/mcp",
+    "/memory",
 )
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """FastAPI middleware that enforces auth for UI routes.
-
-    Auth is optional — when no credentials are configured, all
-    requests pass through. This preserves the local-first default.
-    """
+    """Enforce the server's configured auth mode at HTTP route boundaries."""
 
     def __init__(self, app: Any, server: "HTTPServer") -> None:
         super().__init__(app)
@@ -80,8 +56,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
-        # Always allow public paths
-        if path == "/" or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
+        if path in _PUBLIC_PATHS or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
             return await call_next(request)
 
         auth_service = self.server.auth_service
@@ -91,9 +66,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if auth_service.is_request_authenticated(request):
             return await call_next(request)
 
-        # Not authenticated
-        if path.startswith("/api/"):
-            # API request — return 401 JSON
+        if path.startswith(_PROTECTED_PREFIXES):
             return JSONResponse(
                 status_code=401,
                 content={
@@ -104,6 +77,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # SPA route — let the frontend handle it (it will show login page)
-        # We still serve index.html so the React app can render the login form
+        # Browser route: serve the SPA shell so React can render login.
         return await call_next(request)

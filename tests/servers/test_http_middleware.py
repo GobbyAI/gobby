@@ -1,14 +1,18 @@
 """HTTP server lifespan and middleware behavior tests."""
 
+import hashlib
+import hmac
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from starlette.responses import JSONResponse, Response
 
 from gobby.app_context import ServiceContainer
+from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
@@ -18,6 +22,126 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+
+def _required_auth_middleware_app() -> FastAPI:
+    server = SimpleNamespace(auth_service=MagicMock(enabled=True))
+    server.auth_service.is_request_authenticated.return_value = False
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware, server=server)
+    return app
+
+
+def _required_auth_app() -> FastAPI:
+    app = _required_auth_middleware_app()
+
+    @app.api_route("/{path:path}", methods=["GET", "POST"])
+    async def echo_path(path: str) -> dict[str, str]:
+        return {"path": path}
+
+    return app
+
+
+def test_required_by_default(temp_db: HubDatabase) -> None:
+    common = {
+        "database": temp_db,
+        "session_manager": MagicMock(),
+        "task_manager": MagicMock(),
+        "text_generation_service": MagicMock(),
+        "tool_chat_service": MagicMock(),
+        "llm_service": MagicMock(),
+    }
+    fallback_server = HTTPServer(ServiceContainer(config=None, **common))
+    configured_server = HTTPServer(
+        ServiceContainer(config=DaemonConfig(auth_mode="disabled"), **common)
+    )
+    explicit_server = HTTPServer(
+        ServiceContainer(config=DaemonConfig(auth_mode="required"), **common),
+        auth_mode="disabled",
+    )
+
+    assert fallback_server.auth_service.enabled is True
+    assert configured_server.auth_service.enabled is False
+    assert explicit_server.auth_service.enabled is False
+
+
+def test_public_prefix_matrix() -> None:
+    client = TestClient(_required_auth_app())
+    public_paths = (
+        "/",
+        "/api/auth/status",
+        "/api/health",
+        "/api/admin/health",
+        "/api/admin/startup-progress",
+        "/api/comms/webhooks/slack",
+        "/api/github/webhooks/triage/project",
+        "/assets/index.js",
+        "/favicon.ico",
+        "/logo.png",
+    )
+    protected_paths = (
+        "/api/health/details",
+        "/api/admin/health/details",
+        "/api/admin/startup-progress/details",
+        "/api/hooks/session-start",
+        "/api/sessions/current",
+        "/api/mcp",
+        "/api/admin/status",
+        "/mcp",
+        "/memory",
+    )
+
+    for path in public_paths:
+        assert client.get(path).status_code == 200, path
+    for path in protected_paths:
+        response = client.get(path)
+        assert response.status_code == 401, path
+        assert "gobby auth token --rotate" in response.json()["error"]
+
+
+def test_public_webhooks_signature_gated() -> None:
+    secret = b"webhook-secret"
+    app = _required_auth_middleware_app()
+
+    @app.post("/api/comms/webhooks/signed")
+    async def comms_webhook(request: Request) -> Response:
+        body = await request.body()
+        expected = hmac.new(secret, body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(request.headers.get("x-comms-signature", ""), expected):
+            return JSONResponse({}, status_code=401)
+        return JSONResponse({"accepted": True})
+
+    @app.post("/api/github/webhooks/signed")
+    async def github_webhook(request: Request) -> Response:
+        body = await request.body()
+        expected = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(request.headers.get("x-hub-signature-256", ""), expected):
+            return JSONResponse({}, status_code=401)
+        return JSONResponse({"accepted": True})
+
+    client = TestClient(app)
+    body = b'{"event":"ping"}'
+    comms_signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
+    github_signature = "sha256=" + comms_signature
+
+    assert client.post("/api/comms/webhooks/signed", content=body).status_code == 401
+    assert (
+        client.post(
+            "/api/comms/webhooks/signed",
+            content=body,
+            headers={"X-Comms-Signature": comms_signature},
+        ).status_code
+        == 200
+    )
+    assert client.post("/api/github/webhooks/signed", content=body).status_code == 401
+    assert (
+        client.post(
+            "/api/github/webhooks/signed",
+            content=body,
+            headers={"X-Hub-Signature-256": github_signature},
+        ).status_code
+        == 200
+    )
 
 
 def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None:

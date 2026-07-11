@@ -22,6 +22,8 @@ from psycopg.rows import dict_row
 
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
+    authenticated_daemon_client_for_home,
+    authenticated_daemon_request,
     daemon_health_unavailable,
     prepare_daemon_env,
     terminate_process_tree,
@@ -69,16 +71,21 @@ def _wait_for_database_ready(database_url: str) -> None:
 
 def _register_test_project(
     http_port: int,
+    gobby_home: Path,
     *,
     project_id: str,
     name: str,
     repo_path: Path,
 ) -> None:
-    with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
+    with authenticated_daemon_client_for_home(
+        f"http://localhost:{http_port}",
+        gobby_home,
+    ) as client:
         response = client.post(
             "/api/admin/test/register-project",
             json={"project_id": project_id, "name": name, "repo_path": str(repo_path)},
         )
+        assert response.is_success, response.text
         response.raise_for_status()
 
         def project_is_visible() -> bool:
@@ -159,7 +166,10 @@ class TestCrashRecovery:
             _wait_for_database_ready(database_url)
 
             # Create some state via API (register a session)
-            with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
+            with authenticated_daemon_client_for_home(
+                f"http://localhost:{http_port}",
+                gobby_home,
+            ) as client:
                 # Just verify daemon is working
                 response = client.get("/api/admin/status")
                 assert response.status_code == 200
@@ -209,7 +219,10 @@ class TestCrashRecovery:
             _wait_for_database_ready(database_url)
 
             # Get initial session count
-            with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
+            with authenticated_daemon_client_for_home(
+                f"http://localhost:{http_port}",
+                gobby_home,
+            ) as client:
                 response = client.get("/api/sessions")
                 assert response.status_code == 200
                 initial_count = response.json().get("count", 0)
@@ -240,7 +253,10 @@ class TestCrashRecovery:
                 _wait_for_database_ready(database_url)
 
                 # Sessions should be accessible (database recovered)
-                with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
+                with authenticated_daemon_client_for_home(
+                    f"http://localhost:{http_port}",
+                    gobby_home,
+                ) as client:
                     response = client.get("/api/sessions")
                     assert response.status_code == 200
                     recovered_count = response.json().get("count", 0)
@@ -325,7 +341,12 @@ class TestStalePIDFile:
             _wait_for_database_ready(_database_url_for_config(config_path))
 
             # Verify it's running
-            response = httpx.get(f"http://localhost:{http_port}/api/admin/status", timeout=5.0)
+            response = authenticated_daemon_request(
+                "GET",
+                f"http://localhost:{http_port}/api/admin/status",
+                gobby_home,
+                timeout=5.0,
+            )
             assert response.status_code == 200
 
         finally:
@@ -370,7 +391,10 @@ class TestClientReconnection:
             _wait_for_database_ready(database_url)
 
             # Create a client and make a request
-            with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
+            with authenticated_daemon_client_for_home(
+                f"http://localhost:{http_port}",
+                gobby_home,
+            ) as client:
                 response1 = client.get("/api/admin/status")
                 assert response1.status_code == 200
 
@@ -403,7 +427,10 @@ class TestClientReconnection:
                 _wait_for_database_ready(database_url)
 
                 # New client should be able to connect
-                with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
+                with authenticated_daemon_client_for_home(
+                    f"http://localhost:{http_port}",
+                    gobby_home,
+                ) as client:
                     response2 = client.get("/api/admin/status")
                     assert response2.status_code == 200
 
@@ -450,13 +477,15 @@ class TestTaskStatePersistence:
         try:
             assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
             _wait_for_database_ready(database_url)
+            project_id = "00000000-0000-4000-8000-000000000001"
             _register_test_project(
                 http_port,
-                project_id="test-project",
+                gobby_home,
+                project_id=project_id,
                 name="Test Project",
                 repo_path=e2e_project_dir,
             )
-            task_id = _create_test_task(database_url, project_id="test-project", title="Test Task")
+            task_id = _create_test_task(database_url, project_id=project_id, title="Test Task")
 
             # Stop daemon gracefully
             os.kill(process1.pid, signal.SIGTERM)
@@ -489,7 +518,7 @@ class TestTaskStatePersistence:
                 # Verify task still exists in database
                 row = _read_task_row(database_url, task_id)
                 assert row is not None, "Task should persist after restart"
-                assert row["project_id"] == "test-project"
+                assert str(row["project_id"]) == project_id
                 assert row["title"] == "Test Task"
                 assert row["closed_at"] is None
 
@@ -532,15 +561,17 @@ class TestTaskStatePersistence:
         try:
             assert wait_for_daemon_health(http_port, timeout=20.0), "Daemon should start"
             _wait_for_database_ready(database_url)
+            project_id = "00000000-0000-4000-8000-000000000002"
             _register_test_project(
                 http_port,
-                project_id="crash-project",
+                gobby_home,
+                project_id=project_id,
                 name="Crash Project",
                 repo_path=e2e_project_dir,
             )
             task_id = _create_test_task(
                 database_url,
-                project_id="crash-project",
+                project_id=project_id,
                 title="Crash Task",
             )
 
@@ -551,7 +582,7 @@ class TestTaskStatePersistence:
             # Verify task survives crash (check database directly)
             row = _read_task_row(database_url, task_id)
             assert row is not None, "Task should survive crash"
-            assert row["project_id"] == "crash-project"
+            assert str(row["project_id"]) == project_id
             assert row["title"] == "Crash Task"
             assert row["closed_at"] is None
 

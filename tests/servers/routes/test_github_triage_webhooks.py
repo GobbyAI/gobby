@@ -62,6 +62,44 @@ def test_github_triage_webhook_persists_delivery_and_returns_202(
     assert delivery.status == "processed"
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {
+            "X-GitHub-Event": "ping",
+            "X-GitHub-Delivery": "delivery-route-bad",
+            "X-Hub-Signature-256": "sha256=invalid",
+        },
+    ],
+)
+def test_github_triage_webhook_rejects_missing_or_bad_signature(
+    temp_db,
+    session_manager,
+    sample_project,
+    headers: dict[str, str],
+) -> None:
+    secret = "route-secret"
+    GitHubTriageStore(temp_db).upsert_config(
+        GitHubTriageConfig(
+            project_id=sample_project["id"],
+            enabled=True,
+            webhook_enabled=True,
+            repositories=("owner/repo",),
+            webhook_secret_ref=secret,
+        )
+    )
+    server = create_http_server(session_manager=session_manager, database=temp_db)
+
+    response = TestClient(server.app).post(
+        f"/api/github/webhooks/triage/{sample_project['id']}",
+        content=b"{}",
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+
+
 class _WebhookRequest:
     headers = {"x-github-event": "issues"}
 

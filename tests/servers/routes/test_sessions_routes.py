@@ -138,6 +138,7 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
         services=services,
         port=60887,
         test_mode=True,
+        auth_mode="disabled",
     )
 
     with TestClient(server.app):
@@ -188,6 +189,7 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
         services=services,
         port=60887,
         test_mode=True,
+        auth_mode="disabled",
     )
 
     with TestClient(server.app):

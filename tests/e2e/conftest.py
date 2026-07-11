@@ -57,6 +57,11 @@ class DaemonInstance:
         """WebSocket URL."""
         return f"ws://localhost:{self.ws_port}"
 
+    @property
+    def gobby_home(self) -> Path:
+        """Isolated daemon home containing bootstrap state and credentials."""
+        return self.config_path.parent
+
     def is_alive(self) -> bool:
         """Check if daemon process is still running."""
         return self.process.poll() is None
@@ -194,7 +199,10 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
-            response = httpx.get(f"http://localhost:{port}/api/admin/status", timeout=2.0)
+            response = httpx.get(
+                f"http://localhost:{port}/api/admin/startup-progress",
+                timeout=2.0,
+            )
             if response.status_code == 200:
                 return True
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
@@ -205,7 +213,10 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
 def daemon_health_unavailable(port: int) -> bool:
     """Return true when the daemon health endpoint is no longer reachable."""
     try:
-        response = httpx.get(f"http://localhost:{port}/api/admin/status", timeout=0.2)
+        response = httpx.get(
+            f"http://localhost:{port}/api/admin/startup-progress",
+            timeout=0.2,
+        )
         return response.status_code != 200
     except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
         return True
@@ -420,6 +431,7 @@ postgres_install_mode: docker
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
+auth_mode: required
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)
@@ -536,7 +548,7 @@ async def async_daemon_instance(
 @pytest.fixture(scope="function")
 def daemon_client(daemon_instance: DaemonInstance) -> Generator[httpx.Client]:
     """HTTP client configured for daemon instance."""
-    with httpx.Client(base_url=daemon_instance.http_url, timeout=10.0) as client:
+    with authenticated_daemon_client(daemon_instance) as client:
         yield client
 
 
@@ -545,8 +557,73 @@ async def async_daemon_client(
     daemon_instance: DaemonInstance,
 ) -> AsyncGenerator[httpx.AsyncClient]:
     """Async HTTP client configured for daemon instance."""
-    async with httpx.AsyncClient(base_url=daemon_instance.http_url, timeout=10.0) as client:
+    async with authenticated_async_daemon_client(daemon_instance) as client:
         yield client
+
+
+def daemon_token(gobby_home: Path) -> str:
+    """Read the isolated daemon's CLI bearer token."""
+    token = (gobby_home / "local_cli_token").read_text().strip()
+    if not token:
+        raise RuntimeError(f"Daemon token is empty: {gobby_home / 'local_cli_token'}")
+    return token
+
+
+def daemon_auth_headers(gobby_home: Path) -> dict[str, str]:
+    """Build bearer headers for an isolated daemon home."""
+    return {"Authorization": f"Bearer {daemon_token(gobby_home)}"}
+
+
+def authenticated_daemon_client(
+    daemon_instance: DaemonInstance,
+    *,
+    timeout: float = 10.0,
+) -> httpx.Client:
+    """Create a bearer-authenticated sync client for an isolated daemon."""
+    return httpx.Client(
+        base_url=daemon_instance.http_url,
+        headers=daemon_auth_headers(daemon_instance.gobby_home),
+        timeout=timeout,
+    )
+
+
+def authenticated_daemon_client_for_home(
+    base_url: str,
+    gobby_home: Path,
+    *,
+    timeout: float = 10.0,
+) -> httpx.Client:
+    """Create a bearer-authenticated client for a manually spawned daemon."""
+    return httpx.Client(
+        base_url=base_url,
+        headers=daemon_auth_headers(gobby_home),
+        timeout=timeout,
+    )
+
+
+def authenticated_daemon_request(
+    method: str,
+    url: str,
+    gobby_home: Path,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Send one bearer-authenticated request to a manually spawned daemon."""
+    headers = dict(kwargs.pop("headers", {}))
+    headers.update(daemon_auth_headers(gobby_home))
+    return httpx.request(method, url, headers=headers, **kwargs)
+
+
+def authenticated_async_daemon_client(
+    daemon_instance: DaemonInstance,
+    *,
+    timeout: float = 10.0,
+) -> httpx.AsyncClient:
+    """Create a bearer-authenticated async client for an isolated daemon."""
+    return httpx.AsyncClient(
+        base_url=daemon_instance.http_url,
+        headers=daemon_auth_headers(daemon_instance.gobby_home),
+        timeout=timeout,
+    )
 
 
 # --- CLI Event Helpers ---
@@ -555,9 +632,13 @@ async def async_daemon_client(
 class CLIEventSimulator:
     """Helper for simulating CLI hook events and session registration."""
 
-    def __init__(self, daemon_url: str):
+    def __init__(self, daemon_url: str, token: str):
         self.daemon_url = daemon_url
-        self.client = httpx.Client(base_url=daemon_url, timeout=10.0)
+        self.client = httpx.Client(
+            base_url=daemon_url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
 
     def close(self) -> None:
         """Close the HTTP client."""
@@ -771,6 +852,7 @@ class CLIEventSimulator:
             payload["repo_path"] = repo_path
 
         response = self.client.post("/api/admin/test/register-project", json=payload)
+        assert response.is_success, response.text
         response.raise_for_status()
         return response.json()
 
@@ -802,7 +884,10 @@ class CLIEventSimulator:
 @pytest.fixture(scope="function")
 def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
     """CLI event simulator for daemon instance."""
-    simulator = CLIEventSimulator(daemon_instance.http_url)
+    simulator = CLIEventSimulator(
+        daemon_instance.http_url,
+        daemon_token(daemon_instance.gobby_home),
+    )
     yield simulator
     simulator.close()
 
@@ -819,9 +904,13 @@ class MCPTestClient:
     now require (session_id was removed from their argument schemas).
     """
 
-    def __init__(self, daemon_url: str):
+    def __init__(self, daemon_url: str, token: str):
         self.daemon_url = daemon_url
-        self.client = httpx.Client(base_url=daemon_url, timeout=30.0)
+        self.client = httpx.Client(
+            base_url=daemon_url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30.0,
+        )
         self.session_id: str | None = None
 
     def close(self) -> None:
@@ -903,7 +992,10 @@ class MCPTestClient:
 @pytest.fixture(scope="function")
 def mcp_client(daemon_instance: DaemonInstance) -> Generator[MCPTestClient]:
     """MCP test client for daemon instance."""
-    client = MCPTestClient(daemon_instance.http_url)
+    client = MCPTestClient(
+        daemon_instance.http_url,
+        daemon_token(daemon_instance.gobby_home),
+    )
     yield client
     client.close()
 
@@ -917,9 +1009,13 @@ class AsyncMCPTestClient:
     See ``MCPTestClient`` for the session-context rationale.
     """
 
-    def __init__(self, daemon_url: str):
+    def __init__(self, daemon_url: str, token: str):
         self.daemon_url = daemon_url
-        self.client = httpx.AsyncClient(base_url=daemon_url, timeout=30.0)
+        self.client = httpx.AsyncClient(
+            base_url=daemon_url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30.0,
+        )
         self.session_id: str | None = None
 
     async def close(self) -> None:
@@ -992,7 +1088,10 @@ async def async_mcp_client(
     daemon_instance: DaemonInstance,
 ) -> AsyncGenerator[AsyncMCPTestClient]:
     """Async MCP test client for daemon instance."""
-    client = AsyncMCPTestClient(daemon_instance.http_url)
+    client = AsyncMCPTestClient(
+        daemon_instance.http_url,
+        daemon_token(daemon_instance.gobby_home),
+    )
     yield client
     await client.close()
 
@@ -1060,7 +1159,7 @@ _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 # A real sandbox escape would also leak db/config files that aren't listed
 # here, so these omissions do not weaken the check.
 _ALWAYS_EXEMPT_BASENAMES = {"shutdown_intent_active.json"}
-_ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/",)
+_ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/", "session_wiki/")
 
 
 def _is_worktree_bytecode_artifact(rel_path: str) -> bool:

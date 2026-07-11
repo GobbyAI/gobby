@@ -19,7 +19,12 @@ import httpx
 import pytest
 
 from tests._timing import wait_for_condition
-from tests.e2e.conftest import DaemonInstance, MCPTestClient
+from tests.e2e.conftest import (
+    DaemonInstance,
+    MCPTestClient,
+    authenticated_daemon_client,
+    authenticated_daemon_request,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -64,8 +69,10 @@ def wait_for_project_registration(daemon_instance: DaemonInstance, project_id: s
 
     def project_is_visible() -> bool:
         try:
-            response = httpx.get(
+            response = authenticated_daemon_request(
+                "GET",
                 f"{daemon_instance.http_url}/api/projects/{project_id}",
+                daemon_instance.gobby_home,
                 timeout=2.0,
             )
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError):
@@ -185,7 +192,7 @@ def git_repo_with_origin(
         capture_output=True,
     )
 
-    project_id = "e2e-test-project"
+    project_id = "00000000-0000-4000-8000-000000000003"
     project_name = e2e_project_dir.name
     cli_events.register_test_project(
         project_id=project_id,
@@ -219,10 +226,8 @@ class TestWorktreeCreation:
         git_repo_with_origin: Path,
     ) -> None:
         """Create a worktree and verify it exists on disk."""
-        import httpx
-
         # Make direct call to capture error response
-        with httpx.Client(base_url=daemon_instance.http_url, timeout=30.0) as client:
+        with authenticated_daemon_client(daemon_instance, timeout=30.0) as client:
             resp = client.post(
                 "/api/mcp/tools/call",
                 json={

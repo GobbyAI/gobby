@@ -216,6 +216,7 @@ class TestSessionEndpoints:
             services=services,
             port=60887,
             test_mode=True,
+            auth_mode="disabled",
         )
         client = TestClient(server.app)
         response = client.get("/api/sessions")
@@ -234,6 +235,7 @@ class TestSessionEndpoints:
             services=services,
             port=60887,
             test_mode=True,
+            auth_mode="disabled",
         )
         client = TestClient(server.app)
         response = client.post(
@@ -632,6 +634,7 @@ class TestStopSignalEndpoints:
             services=services,
             port=60887,
             test_mode=True,
+            auth_mode="disabled",
         )
         # Mock the hook_manager in app state
         server.app.state.hook_manager = FakeHookManager()
@@ -742,6 +745,7 @@ class TestStopSignalEndpoints:
             services=services,
             port=60887,
             test_mode=True,
+            auth_mode="disabled",
         )
         # Set hook_manager without stop_registry
         with TestClient(server.app) as client:

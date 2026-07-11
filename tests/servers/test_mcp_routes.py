@@ -126,6 +126,7 @@ def basic_http_server(session_storage: SessionManager) -> HTTPServer:
         services=services,
         port=60887,
         test_mode=True,
+        auth_mode="disabled",
     )
 
 

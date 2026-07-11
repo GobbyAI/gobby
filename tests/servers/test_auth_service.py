@@ -195,7 +195,7 @@ def test_local_token_refreshes_after_rotation(
     assert service.local_token() == "new-token"
 
 
-def test_phase_default_ignores_config(temp_db: HubDatabase) -> None:
+def test_server_auth_mode_uses_config_then_explicit_override(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
         config=DaemonConfig(auth_mode="required"),
         database=temp_db,
@@ -207,11 +207,11 @@ def test_phase_default_ignores_config(temp_db: HubDatabase) -> None:
     )
 
     default_server = http_module.HTTPServer(services)
-    explicit_server = http_module.HTTPServer(services, auth_mode="required")
+    explicit_server = http_module.HTTPServer(services, auth_mode="disabled")
 
     assert isinstance(default_server.auth_service, AuthService)
-    assert default_server.auth_service.enabled is False
-    assert explicit_server.auth_service.enabled is True
+    assert default_server.auth_service.enabled is True
+    assert explicit_server.auth_service.enabled is False
 
 
 def test_verify_password_uses_scrypt_hash(temp_db: HubDatabase, tmp_path: Path) -> None:

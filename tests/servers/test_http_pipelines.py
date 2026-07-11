@@ -54,6 +54,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
+        auth_mode="disabled",
     )
 
 

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.config.app import DaemonConfig
+from gobby.servers.auth_service import AuthService
 from tests.servers.conftest import create_http_server
 
 
@@ -37,12 +38,12 @@ def comms_manager():
 
 
 @pytest.fixture
-def server(comms_manager):
+def server(comms_manager, temp_db):
     """HTTPServer with mocked comms manager."""
     config = DaemonConfig()
     config.communications.enabled = True
 
-    srv = create_http_server(config=config)
+    srv = create_http_server(config=config, database=temp_db)
     srv.services.communications_manager = comms_manager
     return srv
 
@@ -53,11 +54,12 @@ def client(server):
 
 
 @pytest.fixture
-def ui_auth_client(server: Any, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    auth_service = MagicMock()
-    auth_service.enabled = True
-    auth_service.is_request_authenticated.return_value = False
-    monkeypatch.setattr(server, "auth_service", auth_service)
+def ui_auth_client(server: Any, tmp_path) -> TestClient:
+    server.auth_service = AuthService(
+        lambda: server.services.database,
+        "required",
+        token_file=tmp_path / "missing-local-token",
+    )
     return TestClient(server.app)
 
 
@@ -86,6 +88,15 @@ def test_receive_webhook_bypasses_ui_auth(ui_auth_client, comms_manager):
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "messages": 0}
     comms_manager.handle_inbound.assert_called_once()
+
+
+def test_receive_webhook_rejects_unverified_channel(client, comms_manager):
+    comms_manager.handle_inbound.side_effect = ValueError("invalid webhook signature")
+
+    response = client.post("/api/comms/webhooks/slack", json={"text": "unverified"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid webhook signature"
 
 
 def test_receive_webhook_url_verification(client, comms_manager):

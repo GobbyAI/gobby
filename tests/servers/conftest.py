@@ -42,7 +42,7 @@ def create_http_server(
     database: Any | None = None,
     span_storage: Any | None = None,
     transcript_reader: Any | None = None,
-    auth_mode: str | None = None,
+    auth_mode: str = "disabled",
 ) -> HTTPServer:
     """
     Create an HTTPServer instance with the new ServiceContainer API.
@@ -133,6 +133,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
+        auth_mode="disabled",
     )
 
 

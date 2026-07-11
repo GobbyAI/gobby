@@ -48,8 +48,6 @@ PENDING_INTERACTION_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 _STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS = 2.0
 
-_PHASE_DEFAULT_AUTH_MODE: AuthMode = "disabled"
-
 
 class HTTPServer:
     """
@@ -75,13 +73,20 @@ class HTTPServer:
             port: Server port
             test_mode: Run in test mode (disable features that conflict with testing)
             codex_client: CodexAppServerClient instance for Codex integration
-            auth_mode: Explicit authentication mode for this server phase
+            auth_mode: Explicit authentication mode override
         """
         self.services = services
         self.port = port
         self.test_mode = test_mode
         self.codex_client = codex_client
-        effective_auth_mode = auth_mode if auth_mode is not None else _PHASE_DEFAULT_AUTH_MODE
+        configured_auth_mode = getattr(services.config, "auth_mode", None)
+        effective_auth_mode = (
+            auth_mode
+            if auth_mode is not None
+            else configured_auth_mode
+            if isinstance(configured_auth_mode, str)
+            else "required"
+        )
         if effective_auth_mode not in ("required", "disabled"):
             raise ValueError(f"Unsupported authentication mode: {effective_auth_mode}")
         self.auth_service = AuthService(

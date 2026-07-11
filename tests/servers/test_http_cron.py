@@ -93,7 +93,7 @@ def http_server(
         cron_storage=cron_storage,
         cron_scheduler=cron_scheduler,
     )
-    return HTTPServer(services=services, port=60888, test_mode=True)
+    return HTTPServer(services=services, port=60888, test_mode=True, auth_mode="disabled")
 
 
 @pytest.fixture

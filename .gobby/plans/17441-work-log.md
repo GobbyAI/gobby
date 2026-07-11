@@ -733,3 +733,92 @@ Additional validation:
 Test gap: live daemon/browser authentication remains assigned to dependent task
 #17800. This leaf covers the hook API mapping, failure states, component branch,
 and App integration with deterministic Vitest coverage.
+
+## #17799 — Required-by-default auth and fixture choke points
+
+Plan:
+
+1. Add the three named middleware acceptance tests for mode precedence, exact
+   public routing, and downstream webhook signature gates; capture red output.
+2. Remove the phase default, resolve auth mode through explicit override,
+   daemon config, then required fallback, and shrink the public surface.
+3. Make unit-test server helpers opt out explicitly, replace the communications
+   auth mock with a real `AuthService`, and repair direct constructor stragglers.
+4. Run isolated E2E daemons in required mode, centralize token loading and
+   authenticated clients, and sweep every protected raw HTTP call through them.
+5. Run focused unit/API/E2E regressions, quality gates, source-size checks,
+   commit, record the durable contract, and close the leaf.
+
+Test judgment:
+
+- Unit/API tests directly cover mode precedence and the precise middleware
+  boundary, including `/mcp` and `/memory` JSON 401 remediation.
+- Real communications and GitHub route tests prove public webhook mounts still
+  reject missing or invalid channel/HMAC signatures and accept signed traffic.
+- Isolated-daemon E2E tests cover token provisioning and bearer propagation in
+  fixtures, restart clients, CLI event simulation, MCP clients, and raw calls.
+
+Implemented:
+
+- `HTTPServer` now resolves auth mode as explicit kwarg, configured daemon mode,
+  then `required`; the temporary `_PHASE_DEFAULT_AUTH_MODE` is gone.
+- Middleware public access is limited to login, exact health/readiness paths,
+  signed webhook mounts, and browser assets. Unauthenticated `/api/`, `/mcp`,
+  and `/memory` requests receive JSON 401 remediation while SPA routes fall
+  through to the login shell.
+- Shared unit fixtures explicitly use disabled auth, and affected direct server
+  constructors now declare the same test-only opt-out.
+- E2E bootstrap explicitly selects required auth. `daemon_token()` reads the
+  isolated home token, all shared clients carry its bearer, and protected raw
+  calls use centralized authenticated helpers. Public readiness probes use the
+  startup-progress endpoint so first-install polling remains credential-free.
+- UUID-invalid legacy E2E project IDs encountered during validation were
+  replaced with fixed UUIDs. The external-write guard now exempts only the
+  racy host `session_wiki/` artifacts produced by concurrent real sessions,
+  alongside its existing host-artifact exemptions.
+
+TDD evidence:
+
+- Red: `GOBBY_TEST_PROTECT=1 uv run pytest
+  tests/servers/test_http_middleware.py::test_required_by_default
+  tests/servers/test_http_middleware.py::test_public_prefix_matrix
+  tests/servers/test_http_middleware.py::test_public_webhooks_signature_gated
+  -q` produced 2 expected behavioral failures after the test harness itself was
+  corrected: fallback auth remained disabled and startup progress returned 401;
+  webhook signature gating passed independently.
+- Minimal green: the same exact command passed all 3 tests after the server and
+  middleware changes.
+- Refactor/final green evidence is recorded below after the final validation
+  pass.
+
+Validation in progress:
+
+- The focused auth/middleware/communications set passed 32 tests.
+- The direct-constructor server regression set passed all 437 tests with 4
+  workers after explicit fixture opt-outs.
+- Required-mode smoke behavior passed all 7 tests; the 2 teardown checks that
+  initially detected concurrent host wiki artifacts passed on focused rerun.
+- The raw-call E2E matrix passed 10 unaffected cases, then all 3 cases exposing
+  UUID-invalid legacy project IDs passed after correction.
+
+Final validation:
+
+- Refactor/final green: the exact 3-test acceptance command passed after the
+  final cleanup, including exactness checks for public health/readiness API
+  paths.
+- The focused auth and webhook command passed all 33 tests.
+- The 12-file server regression command passed all 437 tests with 4 workers.
+- The final required-mode E2E matrix passed 6 isolated-daemon restart,
+  lifecycle, full-workflow, session, worktree, and MCP concurrency tests in
+  178.50 seconds. Earlier focused runs passed all remaining raw-call inventory
+  cases and all 7 smoke behaviors.
+- Ruff format/check passed all 22 touched Python files. MyPy passed both touched
+  production modules. `git diff --check` passed.
+- Test-quality audit scanned 19 files and 482 tests with zero issues and zero
+  new high-severity findings.
+- Touched production sources remain under 1,000 lines: `http.py` is 657 and
+  `middleware/auth.py` is 81 after cleanup. No refactor task is required.
+
+Test gap: dependent #17800 owns the live browser/CLI end-to-end authentication
+suite. This leaf validates required-mode daemon HTTP clients and restart paths
+with isolated temporary homes and ports.

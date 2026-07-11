@@ -25,7 +25,9 @@ import pytest
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
+    authenticated_daemon_client_for_home,
     daemon_health_unavailable,
+    daemon_token,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -83,8 +85,14 @@ class TestFullWorkflowIntegration:
             )
 
             # Create client and simulator
-            client = httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0)
-            cli_events = CLIEventSimulator(f"http://localhost:{http_port}")
+            client = authenticated_daemon_client_for_home(
+                f"http://localhost:{http_port}",
+                gobby_home,
+            )
+            cli_events = CLIEventSimulator(
+                f"http://localhost:{http_port}",
+                daemon_token(gobby_home),
+            )
 
             try:
                 # ===== PHASE 2: CLI hook triggers session tracking =====
@@ -185,8 +193,14 @@ class TestFullWorkflowIntegration:
                 )
 
                 # ===== PHASE 6: Session state is recovered =====
-                client2 = httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0)
-                cli_events2 = CLIEventSimulator(f"http://localhost:{http_port}")
+                client2 = authenticated_daemon_client_for_home(
+                    f"http://localhost:{http_port}",
+                    gobby_home,
+                )
+                cli_events2 = CLIEventSimulator(
+                    f"http://localhost:{http_port}",
+                    daemon_token(gobby_home),
+                )
 
                 try:
                     sessions_response2 = client2.get("/api/sessions")
