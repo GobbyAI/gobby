@@ -10,19 +10,27 @@ _VALIDATION_GATE_WORDS = (
     r"(?:required\s+)?(?:validation|verification|quality)\s+(?:gate|check|step)s?|"
     r"(?:required\s+)?checks?|"
     r"(?:test|build|compil(?:e|ation|er)|lint|format|coverage|static\s+analysis)"
-    r"(?:\s+(?:gate|check|step))?s?|"
+    r"(?:\s+(?:gate|check|step|run|suite|command|job))?s?|"
     r"ci(?:\s+(?:gate|check|step))?"
     r")"
 )
 _VALIDATION_FAILURE_WORDS = r"(?:failed|failing|not\s+clean|did\s+not\s+pass|not\s+pass(?:ed|ing)?)"
-_SAME_SENTENCE_PROXIMITY = r"[^.!?]{0,100}"
 _ZERO_FAILURE_TOKEN_RE = re.compile(
     r"\b(?:0\s+fail(?:ed|ures?)|zero\s+failures?|fail(?:ed|ures?)\s*[=:]\s*0)\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _NEGATED_FAILURE_FRAGMENT_RE = re.compile(
-    r"\b(?:no|without)\s+(?:[\w-]+\s+){0,6}"
-    r"(?:criteri(?:on|a)|gates?|checks?|errors?|failures?)\b",
+    r"\b(?:no|without)\s+"
+    r"(?:(?!\b(?:but|however|yet|although|though)\b)[\w-]+\s+){0,6}"
+    r"(?:criteri(?:on|a)|gates?|checks?|tests?|results?|errors?|fail(?:ed|ing|ures?))\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_NEGATED_GATE_FAILURE_PREDICATE_RE = re.compile(
+    # Examples: "tests are not failing" and "the lint check has not failed".
+    rf"\b{_VALIDATION_GATE_WORDS}\b\s+"
+    r"(?:(?:is|are|was|were|has|have|had)\s+)?"
+    r"(?:(?:still|currently|now|again|yet)\s+)?"
+    r"not\s+(?:fail(?:ed|ing)|unmet|unclean|pass(?:ed|ing)?)\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _RESOLVED_REGRESSION_FRAGMENT_RE = re.compile(
@@ -68,6 +76,20 @@ _FAILED_AS_EXPECTED_FRAGMENT_RE = re.compile(
     # Example: "the red test run failed as expected" — an intentional TDD
     # failure description, not an admission.
     r"\bfail(?:ed|ing|s)?\s+as\s+(?:expected|designed|intended)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
+_HISTORICAL_FAILURE_FRAGMENT_RE = re.compile(
+    # Historical/TDD anchors neutralize a nearby failure token or nonzero
+    # count. Sentence, semicolon, and contrastive boundaries preserve a later
+    # current-state admission in the same feedback.
+    r"\b(?:red(?:[-\s]+first)?|pre[-\s]+fix|"
+    r"(?:before|prior\s+to)\s+(?:the\s+)?implementation|as\s+expected)\b"
+    r"(?:(?![.!?;]|\b(?:but|however|yet|although|though)\b).){0,120}?"
+    r"\b(?:(?:[1-9]\d*\s+)?fail(?:ed|ing|ures?)|hard\s+failure)\b"
+    r"|\b(?:(?:[1-9]\d*\s+)?fail(?:ed|ing|ures?)|hard\s+failure)\b"
+    r"(?:(?![.!?;]|\b(?:but|however|yet|although|though)\b).){0,120}?"
+    r"\b(?:red(?:[-\s]+first)?|pre[-\s]+fix|"
+    r"(?:before|prior\s+to)\s+(?:the\s+)?implementation|as\s+expected)\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _QUOTED_FEEDBACK_FRAGMENT_RE = re.compile(
@@ -148,13 +170,20 @@ _FAILURE_THEN_ACCEPTANCE_CRITERIA_RE = re.compile(
     _FAILURE_FEEDBACK_FLAGS,
 )
 _VALIDATION_GATE_THEN_FAILURE_RE = re.compile(
-    # Example: "Required validation gate did not pass."
-    rf"\b{_VALIDATION_GATE_WORDS}\b{_SAME_SENTENCE_PROXIMITY}\b{_VALIDATION_FAILURE_WORDS}\b",
+    # Examples: "tests are still failing" and "lint check failed". The
+    # predicate must directly describe the gate rather than merely occur later
+    # in the sentence.
+    rf"\b{_VALIDATION_GATE_WORDS}\b\s*(?:[:—-]\s*)?"
+    r"(?:(?:is|are|was|were|has|have|had)\s+)?"
+    r"(?:(?:still|currently|now|again|yet)\s+){0,2}"
+    rf"\b{_VALIDATION_FAILURE_WORDS}\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _FAILURE_THEN_VALIDATION_GATE_RE = re.compile(
-    # Example: "Tests are failing in the required validation check."
-    rf"\b{_VALIDATION_FAILURE_WORDS}\b{_SAME_SENTENCE_PROXIMITY}\b{_VALIDATION_GATE_WORDS}\b",
+    # Examples: "failed tests" and "failing in the required check".
+    r"\b(?:failed|failing)\b\s+"
+    r"(?:(?:in|within|during|on|at)\s+(?:the\s+)?)?"
+    rf"\b{_VALIDATION_GATE_WORDS}\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
 _ERRORS_REMAIN_PREDICATE = (
@@ -241,11 +270,13 @@ _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
 def _searchable_feedback(feedback: str) -> str:
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
     normalized_feedback = _NEGATED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
+    normalized_feedback = _NEGATED_GATE_FAILURE_PREDICATE_RE.sub("", normalized_feedback)
     normalized_feedback = _RESOLVED_REGRESSION_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _TDD_RED_PARENTHETICAL_RE.sub("", normalized_feedback)
     normalized_feedback = _TDD_RED_EVIDENCE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _PRE_IMPLEMENTATION_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILED_AS_EXPECTED_FRAGMENT_RE.sub("", normalized_feedback)
+    normalized_feedback = _HISTORICAL_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _STATUS_VALUE_FAILURE_TOKEN_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_BUCKET_DESTINATION_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_COLLECTION_NOUN_RE.sub("", normalized_feedback)

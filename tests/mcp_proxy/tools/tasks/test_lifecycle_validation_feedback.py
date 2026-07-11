@@ -19,6 +19,31 @@ from gobby.tasks.validation import ValidationResult as TaskValidationResult
 
 pytestmark = pytest.mark.unit
 
+_VALIDATION_FEEDBACK_17821 = (
+    "The manifest and diff show a concrete root-cause fix: ensure_personal_project "
+    "(src/gobby/storage/projects.py) now materializes .gobby/project.json with the canonical "
+    "PERSONAL_PROJECT_ID for the personal workspace (write-if-missing, preserve-valid, "
+    "repair-corrupt/wrong-id), which is exactly what daemon wiki routes need to avoid gwiki's "
+    "invalid_scope failure for an uninitialized personal dir. This is covered by new focused "
+    "tests in tests/storage/test_project_manager.py (identity materialization/preserve/repair) "
+    "and a new daemon-route-seam test test_personal_scope_routes_resolve_uninitialized_workspace "
+    "in tests/servers/routes/test_wiki_routes.py that provisions a bare gobby home and asserts "
+    "/api/wiki/status, /pages, /graph all return ok:true for the personal scope, with a "
+    "documented red-first failure against the pre-fix commit. A related second bug (vault-claim "
+    "omission causing fallback-dir poisoning across five gwiki commands) was also fixed with a "
+    "red-first Rust unit test in commands/health.rs described as covering the gwiki-side "
+    "scope-resolution seam, backed by reported clean cargo test/clippy/fmt runs (826 passed). No "
+    "frontend files changed per the manifest, consistent with the claim that the UI already "
+    "degrades/renders correctly based on backend state; UI verification (headless run, "
+    "screenshot, zero offline/degraded banner counts) supports criterion 3 without requiring "
+    "source changes. Full raw diff for the five Rust files was omitted for length, but the "
+    "manifest confirms the files/line-counts changed and the reported test evidence (specific "
+    "failing line, specific passing counts, live e2e checks) is detailed and consistent with the "
+    "narrative, so this omission isn't decision-blocking. All stated gates (mypy, ruff "
+    "check/format, pytest 51 passed, cargo test/clippy/fmt) are reported clean with no "
+    "contradicting or failing results."
+)
+
 
 class _NoBackoffConn:
     """Connection stub where validation backoff lookups always find no row."""
@@ -274,10 +299,34 @@ def test_resolved_regression_summaries_do_not_admit_failure(feedback: str) -> No
         "Red evidence: failing test output captured before implementation.",
         "TDD evidence includes 2 tests failing prior to implementation and a green run after.",
         "The red test run failed as expected; green and final-green runs pass.",
+        "Red-first run: 1 FAILED with a hard failure, followed by green.",
+        "The pre-fix run reported 1 failed; the post-fix run passed.",
     ],
 )
 def test_tdd_red_evidence_does_not_admit_failure(feedback: str) -> None:
     """TDD red-phase descriptions are expected failures, not admissions."""
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
+def test_17821_positive_feedback_does_not_admit_failure() -> None:
+    """The complete rejected #17821 verdict contains only historical failures."""
+    assert matched_required_validation_failure_pattern(_VALIDATION_FEEDBACK_17821) is None
+    assert feedback_admits_required_validation_failure(_VALIDATION_FEEDBACK_17821) is False
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "The reported test evidence (specific failing line, then passing counts) is complete.",
+        "All stated gates are clean with no contradicting or failing results.",
+        "There are no failing tests in the final run.",
+        "The release proceeds without failed checks.",
+        "Tests are not failing in the final run.",
+    ],
+)
+def test_gate_failure_vocabulary_near_misses_do_not_admit_failure(feedback: str) -> None:
+    """Gate nouns and failure words need a current-state predicate relationship."""
     assert matched_required_validation_failure_pattern(feedback) is None
     assert feedback_admits_required_validation_failure(feedback) is False
 
@@ -404,6 +453,8 @@ def test_predicated_errors_remain_still_admits_failure(feedback: str) -> None:
         "Tests are still failing in the required check.",
         "The validation gate did not pass.",
         "The new tests verify the retry path, but the lint check failed.",
+        "Test evidence is complete, but lint check failed.",
+        "Gates are clean; however, CI is still failing.",
         "Two failed tests remain in the required suite.",
         "The build failed under load testing.",
     ],
@@ -576,6 +627,46 @@ async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> No
         "task-1",
         validation_status="valid",
         validation_feedback="tests: 10 passed, 0 failed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_valid_llm_result_with_17821_feedback_remains_valid() -> None:
+    """Positive #17821 feedback remains valid and persists unchanged."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="valid",
+                feedback=_VALIDATION_FEEDBACK_17821,
+                blocking_reasons=[],
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is True
+    update_task.assert_called_once_with(
+        "task-1",
+        validation_status="valid",
+        validation_feedback=_VALIDATION_FEEDBACK_17821,
     )
 
 
