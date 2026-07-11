@@ -276,12 +276,15 @@ def persist_imported_config(
     storage_secret_references = runtime_embedding_config_entries_to_storage(secret_references)
     storage_secret_values = runtime_embedding_config_entries_to_storage(validated_secret_values)
     storage_plain_values = runtime_embedding_config_entries_to_storage(plain_values)
+    secret_store = secret_store_provider()
     with config_store.db.transaction():
-        config_store.delete_all()
+        config_store.delete_all(
+            secret_store,
+            preserved_secret_keys=storage_secret_references,
+        )
         if storage_secret_references:
             count += config_store.set_many(storage_secret_references, source="import")
         if storage_secret_values:
-            secret_store = secret_store_provider()
             for key, value in storage_secret_values.items():
                 if value is None or value == "":
                     config_store.clear_secret(key, secret_store)

@@ -222,7 +222,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         """Reset config to defaults (clear DB config_store)."""
         try:
             config_store = context.get_config_store()
-            deleted = config_store.delete_all()
+            deleted = config_store.delete_all(context.get_secret_store())
             logger.info("Config reset: deleted %d keys from config_store", deleted)
             context.set_runtime_config(DaemonConfig())
             return JSONResponse(content={"ok": True, "requires_restart": True})

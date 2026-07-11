@@ -389,11 +389,19 @@ class TestValidateConfig:
 
 
 class TestResetConfig:
-    def test_reset_success(self, client: TestClient, temp_db: Any) -> None:
-        """Reset clears config_store and sets in-memory config to defaults."""
+    def test_reset_success(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        """Reset clears config rows and only their encrypted secrets."""
         # Seed some config in DB
         store = ConfigStore(temp_db)
         store.set("daemon_port", 9999)
+        secret_store = SecretStore(temp_db)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", secret_store)
+        secret_store.set("independent_token", "keep-me")
         response = client.post("/api/config/values/reset")
         assert response.status_code == 200
         data = response.json()
@@ -401,6 +409,8 @@ class TestResetConfig:
         assert data["requires_restart"] is True
         # Verify DB was cleared
         assert store.get_all() == {}
+        assert secret_store.get("falkordb_password") is None
+        assert secret_store.get("independent_token") == "keep-me"
 
     def test_reset_failure(self, client: TestClient) -> None:
         """Reset failure returns 500."""
