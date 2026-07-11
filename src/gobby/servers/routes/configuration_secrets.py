@@ -13,7 +13,7 @@ from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
-from gobby.storage.secrets import VALID_CATEGORIES
+from gobby.storage.secrets import VALID_CATEGORIES, SecretStore
 
 MASKED_SECRET = "********"
 FALKOR_PASSWORD_KEY = "databases.falkordb.password"
@@ -68,15 +68,24 @@ def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
     )
 
 
-def delete_all_except(config_store: ConfigStore, preserved_keys: set[str]) -> int:
+def delete_all_except(
+    config_store: ConfigStore,
+    secret_store: SecretStore,
+    preserved_keys: set[str],
+) -> int:
+    """Delete unpreserved config rows and their encrypted secrets atomically."""
     preserved_keys = runtime_embedding_config_keys_to_storage(preserved_keys)
     if not preserved_keys:
-        return config_store.delete_all()
-    placeholders = ",".join("%s" for _ in preserved_keys)
-    cursor = config_store.db.execute(
-        f"DELETE FROM config_store WHERE key NOT IN ({placeholders})",
-        tuple(sorted(preserved_keys)),
-    )
+        return config_store.delete_all(secret_store)
+    with config_store.db.transaction():
+        for key in config_store.get_secret_keys():
+            if key not in preserved_keys:
+                config_store.clear_secret(key, secret_store)
+        placeholders = ",".join("%s" for _ in preserved_keys)
+        cursor = config_store.db.execute(
+            f"DELETE FROM config_store WHERE key NOT IN ({placeholders})",
+            tuple(sorted(preserved_keys)),
+        )
     return cursor.rowcount or 0
 
 

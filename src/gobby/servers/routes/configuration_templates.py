@@ -79,13 +79,13 @@ def _apply_transactional_changes(
     storage_secret_value_entries = runtime_embedding_config_entries_to_storage(secret_value_entries)
     storage_plain_entries = runtime_embedding_config_entries_to_storage(plain_entries)
     count = 0
+    secret_store = context.get_secret_store()
     with config_store.db.transaction():
-        deleted_count = delete_all_except(config_store, masked_secret_keys)
+        deleted_count = delete_all_except(config_store, secret_store, masked_secret_keys)
         if storage_secret_reference_entries:
             count += config_store.set_many(storage_secret_reference_entries, source="user")
             mark_secret_keys(config_store, set(storage_secret_reference_entries))
         if storage_secret_value_entries:
-            secret_store = context.get_secret_store()
             for key, value in storage_secret_value_entries.items():
                 if value is None or value == "":
                     config_store.clear_secret(key, secret_store)

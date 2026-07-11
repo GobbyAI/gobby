@@ -725,6 +725,50 @@ class TestValidationDetectionPreview:
         assert _secret_row(postgres_db) == before_secret
         assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
 
+    def test_save_template_removes_only_obsolete_config_backed_secrets(
+        self,
+        postgres_client: TestClient,
+        postgres_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        store = ConfigStore(postgres_db)
+        secret_store = SecretStore(postgres_db)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", secret_store)
+        secret_store.set("independent_token", "keep-me")
+        content = yaml.safe_dump({"daemon_port": 7777})
+
+        response = postgres_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 200
+        assert store.get(FALKOR_PASSWORD_KEY) is None
+        assert secret_store.get("falkordb_password") is None
+        assert secret_store.get("independent_token") == "keep-me"
+
+    def test_save_template_rolls_back_when_config_secret_cleanup_fails(
+        self,
+        postgres_client: TestClient,
+        postgres_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        store = ConfigStore(postgres_db)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", SecretStore(postgres_db))
+        before_config = _config_store_row(postgres_db, FALKOR_PASSWORD_KEY)
+        before_secret = _secret_row(postgres_db)
+        content = yaml.safe_dump({"daemon_port": 7777})
+
+        with patch.object(
+            SecretStore,
+            "delete",
+            side_effect=RuntimeError("injected secret deletion failure"),
+        ):
+            response = postgres_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to save config template"
+        assert _config_store_row(postgres_db, FALKOR_PASSWORD_KEY) == before_config
+        assert _secret_row(postgres_db) == before_secret
+        assert store.get("daemon_port") is None
+
 
 # ---------------------------------------------------------------------------
 # Secrets endpoints  (GET, POST, DELETE /api/config/secrets)
