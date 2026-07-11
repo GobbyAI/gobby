@@ -230,8 +230,11 @@ export function WikiPageReader({
   }, [detail, graph]);
 
   const sourcePath = codePathToSourcePath(path);
-  // code pages read-only: generated code/** pages expose no edit, delete, or
-  // create affordances (the backend rejects such writes anyway).
+  // §4.2 code page reader affordances: mermaid fences render as diagrams and
+  // other fences highlighted (MermaidBlock → CodeBlockInner above), the kebab
+  // gains "Copy source path" from codePathToSourcePath, and generated code/**
+  // pages stay read-only — no edit, delete, or create affordances (the
+  // backend rejects such writes anyway).
   const readOnly = path.startsWith("code/");
   const kebabItems: QuickMenuItem[] = [
     { label: "Open in graph", onSelect: onOpenGraph },

@@ -10,6 +10,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   deletePage,
   launchResearch,
+  requestCodewikiRefresh,
   savePage,
   type WikiFetchScope,
   type WikiResearchLaunch,
@@ -50,6 +51,7 @@ export interface WikiTabActions {
   savePageAndRefresh: (request: WikiSaveRequest) => Promise<WikiSaveResult | null>;
   deletePageAndNavigateBack: (path: string) => Promise<boolean>;
   refreshIndex: () => Promise<void>;
+  refreshCodewiki: () => Promise<void>;
   runCompile: () => Promise<void>;
   runAudit: () => Promise<void>;
   attachFile: (file: File) => Promise<void>;
@@ -139,6 +141,21 @@ export function useWikiTabActions({
     await run("refresh", () => wiki.refresh(), "Wiki index refreshed");
   }, [run, wiki]);
 
+  const refreshCodewiki = useCallback(async () => {
+    await run(
+      "codewiki",
+      async () => {
+        const outcome = await requestCodewikiRefresh(scope);
+        // A not-accepted refresh means nothing will happen — surface the
+        // server reason on the error line instead of a false success.
+        if (!outcome.accepted) {
+          throw new Error(outcome.reason ?? "Codewiki refresh was not scheduled");
+        }
+      },
+      "Codewiki refresh scheduled",
+    );
+  }, [run, scope]);
+
   const runCompile = useCallback(async () => {
     await run("compile", () => wiki.compileWiki(), "Compile started");
   }, [run, wiki]);
@@ -188,6 +205,7 @@ export function useWikiTabActions({
       savePageAndRefresh,
       deletePageAndNavigateBack,
       refreshIndex,
+      refreshCodewiki,
       runCompile,
       runAudit,
       attachFile,
@@ -200,6 +218,7 @@ export function useWikiTabActions({
       deletePageAndNavigateBack,
       ingestUrl,
       launchResearchRun,
+      refreshCodewiki,
       refreshIndex,
       runAudit,
       runCompile,

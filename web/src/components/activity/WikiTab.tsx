@@ -262,6 +262,7 @@ export const WikiTab = memo(function WikiTab({
         actionsDisabled={summary.state === "unavailable"}
         actions={{
           onRefreshIndex: () => void actions.refreshIndex(),
+          onRefreshCodewiki: () => void actions.refreshCodewiki(),
           onCompile: () => void actions.runCompile(),
           onAudit: () => void actions.runAudit(),
           onAttachFile: () => fileInputRef.current?.click(),

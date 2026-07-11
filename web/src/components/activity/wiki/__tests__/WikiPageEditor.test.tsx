@@ -467,7 +467,7 @@ describe("WikiPageEditor delete and read-only pages (3.2.3)", () => {
     await user.click(screen.getByRole("radio", { name: "Code" }));
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
-    await user.click(await within(tree).findByRole("treeitem", { name: /^code$/i }));
+    // §4.2 promotes the mirror's top level to the roots — no "code" wrapper.
     await user.click(await within(tree).findByRole("treeitem", { name: "Architecture Overview" }));
     await screen.findByRole("heading", { name: "Architecture Overview", level: 1 });
 

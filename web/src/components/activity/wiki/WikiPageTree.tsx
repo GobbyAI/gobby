@@ -3,6 +3,12 @@
  * as a folder tree with kind-colored icons, keyboard navigation, a flat
  * search-match list, and a per-row actions kebab. Pure presentation — data
  * arrives from WikiBrowse, navigation flows back through callbacks.
+ *
+ * §4.2 code rootFilter tree: in code mode the `code/` mirror is scoped by
+ * `rootFilter`, its own top level is promoted to the root set via
+ * `promoteRoot`, folders start collapsed so the 1,000+-page `files/**`
+ * mirror never renders unrequested rows, and search switches to the flat
+ * (virtualized at scale) match list.
  */
 
 import { useMemo, useState } from "react";
@@ -90,6 +96,8 @@ export interface WikiPageTreeProps {
   outputs: WikiOutputMeta[];
   /** Wiki mode hides `code/`; code mode shows only `code/`. */
   rootFilter: (path: string) => boolean;
+  /** Wrapper folder whose children become the roots (code mode: "code"). */
+  promoteRoot?: string;
   selectedPath: string | null;
   /** Toolbar search — non-empty switches to the flat match list. */
   search: string;
@@ -125,6 +133,7 @@ export function WikiPageTree({
   pages,
   outputs,
   rootFilter,
+  promoteRoot,
   selectedPath,
   search,
   error,
@@ -142,8 +151,8 @@ export function WikiPageTree({
   const [menuPath, setMenuPath] = useState<string | null>(null);
 
   const roots = useMemo(
-    () => buildPageTree(pages, outputs, rootFilter),
-    [pages, outputs, rootFilter],
+    () => buildPageTree(pages, outputs, rootFilter, promoteRoot),
+    [pages, outputs, promoteRoot, rootFilter],
   );
 
   const rows = useMemo(() => {

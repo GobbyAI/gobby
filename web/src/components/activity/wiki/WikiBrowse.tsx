@@ -12,6 +12,7 @@ import { ResizeHandle } from "../../chat/artifacts/ResizeHandle";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { WikiBacklinks } from "./WikiBacklinks";
+import { WikiCodewikiStatus } from "./WikiCodewikiStatus";
 import { WikiPageEditor, type WikiEditorIntent } from "./WikiPageEditor";
 import { WikiPageTree } from "./WikiPageTree";
 import { WikiPageReader } from "./WikiPageReader";
@@ -206,18 +207,24 @@ export function WikiBrowse({
   );
 
   const tree = (
-    <WikiPageTree
-      pages={pages}
-      outputs={outputs}
-      rootFilter={rootFilter}
-      selectedPath={selectedPath}
-      search={search}
-      error={pagesState.status === "error" ? pagesState.message : null}
-      onRetry={() => setRetrySeq((seq) => seq + 1)}
-      onOpen={openPage}
-      onCreateAt={openCreate}
-      onDelete={handleDelete}
-    />
+    <div className="flex h-full min-h-0 flex-col">
+      {mode === "code" ? <WikiCodewikiStatus /> : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <WikiPageTree
+          pages={pages}
+          outputs={outputs}
+          rootFilter={rootFilter}
+          promoteRoot={mode === "code" ? "code" : undefined}
+          selectedPath={selectedPath}
+          search={search}
+          error={pagesState.status === "error" ? pagesState.message : null}
+          onRetry={() => setRetrySeq((seq) => seq + 1)}
+          onOpen={openPage}
+          onCreateAt={openCreate}
+          onDelete={handleDelete}
+        />
+      </div>
+    </div>
   );
 
   const liveEditorIntent =

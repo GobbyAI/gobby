@@ -631,3 +631,95 @@ export async function launchResearch(
     status: fieldText(record, "status"),
   };
 }
+
+// ── Codewiki freshness (§4.2) ───────────────────────────────────
+
+export interface CodewikiLastRun {
+  outcome: "success" | "error";
+  finishedAt: string | null;
+  changedCount: number | null;
+  error: string | null;
+  rootPath: string | null;
+}
+
+export interface CodewikiStatus {
+  /** A refresh is debounce-queued but not yet running. */
+  pending: boolean;
+  /** A refresh flush is executing right now. */
+  running: boolean;
+  lastRun: CodewikiLastRun | null;
+}
+
+/** `CodewikiRefreshTrigger.status()` snapshot — plain JSON, not an envelope. */
+function normalizeCodewikiStatus(body: unknown): CodewikiStatus {
+  const record = asRecord(body);
+  const rawLastRun = record.last_run;
+  const lastRun = asRecord(rawLastRun);
+  return {
+    pending: asList(record.pending_roots).length > 0,
+    running: asList(record.running_roots).length > 0,
+    lastRun:
+      rawLastRun === null || rawLastRun === undefined
+        ? null
+        : {
+            outcome: fieldText(lastRun, "outcome") === "error" ? "error" : "success",
+            finishedAt: fieldText(lastRun, "finished_at"),
+            changedCount: fieldNumber(lastRun, "changed_count"),
+            error: fieldText(lastRun, "error"),
+            rootPath: fieldText(lastRun, "root_path"),
+          },
+  };
+}
+
+export async function fetchCodewikiStatus(): Promise<CodewikiStatus> {
+  const response = await fetch("/api/code-index/codewiki/status");
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, response.status));
+  }
+  return normalizeCodewikiStatus(body);
+}
+
+export interface CodewikiRefreshOutcome {
+  accepted: boolean;
+  /** Server-side reason when not accepted (e.g. on-commit refresh disabled). */
+  reason: string | null;
+}
+
+/**
+ * The refresh route requires the daemon-side repo root. Resolve it from the
+ * project record when the wiki is project-scoped, falling back to the root
+ * of the last completed refresh.
+ */
+async function resolveCodewikiRoot(scope: WikiFetchScope): Promise<string> {
+  if (scope.projectId) {
+    const response = await fetch(`/api/projects/${encodeURIComponent(scope.projectId)}`);
+    const body = await parseBody(response);
+    if (!response.ok) {
+      throw new Error(errorMessage(body, response.status));
+    }
+    const repoPath = fieldText(asRecord(body), "repo_path");
+    if (repoPath) return repoPath;
+  }
+  const status = await fetchCodewikiStatus();
+  const lastRoot = status.lastRun?.rootPath;
+  if (lastRoot) return lastRoot;
+  throw new Error("No repository root known for a codewiki refresh");
+}
+
+export async function requestCodewikiRefresh(
+  scope: WikiFetchScope,
+): Promise<CodewikiRefreshOutcome> {
+  const rootPath = await resolveCodewikiRoot(scope);
+  const response = await fetch("/api/code-index/codewiki/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_path: rootPath, project_id: scope.projectId ?? null }),
+  });
+  const body = await parseBody(response);
+  if (!response.ok) {
+    throw new Error(errorMessage(body, response.status));
+  }
+  const record = asRecord(body);
+  return { accepted: record.accepted === true, reason: fieldText(record, "reason") };
+}

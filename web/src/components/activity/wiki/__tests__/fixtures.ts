@@ -823,3 +823,26 @@ export const graphViewEnvelope: EnvelopeFixture = {
     },
   },
 };
+
+/** Code page with mermaid + highlighted fences — §4.2 reader affordances. */
+export const browseReadRunnerEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "read",
+  stderr: "",
+  payload: {
+    command: "read",
+    scope,
+    status: "found",
+    requested: { kind: "path", value: "code/files/src/gobby/runner.py.md" },
+    wiki_path: "code/files/src/gobby/runner.py.md",
+    title: "src/gobby/runner.py",
+    content:
+      "# src/gobby/runner.py\n\nDaemon entry point.\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```python\nclass GobbyRunner:\n    pass\n```\n",
+    content_format: "markdown",
+    content_hash: "dd44",
+    byte_len: 130,
+    truncated: false,
+    candidates: [],
+    degradations: [],
+  },
+};

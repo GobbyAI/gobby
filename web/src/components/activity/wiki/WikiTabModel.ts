@@ -165,11 +165,16 @@ function sortLevel(nodes: PageTreeNode[]): void {
  * Group pages and pipeline outputs into a folder tree by path segment.
  * `rootFilter` scopes the tree for a mode (e.g. only `code/` in code mode);
  * the builder is otherwise data-driven and assumes nothing about vault roots.
+ * `promoteRoot` replaces the named wrapper folder with its children (§4.2:
+ * the code mirror's own top level — INDEX, files/, modules/ — becomes the
+ * root set instead of a single collapsed "code" folder). Node paths stay
+ * full vault paths, so navigation and expansion keys are unaffected.
  */
 export function buildPageTree(
   pages: WikiPageMeta[],
   outputs: WikiOutputMeta[],
   rootFilter?: (path: string) => boolean,
+  promoteRoot?: string,
 ): PageTreeNode[] {
   const roots: PageTreeNode[] = [];
   for (const page of pages) {
@@ -181,7 +186,10 @@ export function buildPageTree(
     insertLeaf(roots, { path: output.path, page: null, output });
   }
   sortLevel(roots);
-  return roots;
+  if (!promoteRoot) return roots;
+  return roots.flatMap((node) =>
+    node.kind === "folder" && node.name === promoteRoot ? node.children : [node],
+  );
 }
 
 export interface WikiNodeIndex {

@@ -141,6 +141,15 @@ describe("buildPageTree", () => {
     const wikiTree = buildPageTree(pages, outputs, (path) => !path.startsWith("code/"));
     expect(childNames(wikiTree)).not.toContain("code");
   });
+
+  it("promotes the named wrapper folder's children to roots", () => {
+    const { pages, outputs } = fixturePages();
+    const promoted = buildPageTree(pages, outputs, (path) => path.startsWith("code/"), "code");
+    expect(childNames(promoted)).toEqual(["files", "_architecture"]);
+    // Promotion rewrites the root set only — node paths stay full vault paths.
+    const files = findChild(promoted, "files");
+    expect(files.path).toBe("code/files");
+  });
 });
 
 describe("buildNodeIndex / resolveWikilinkTarget", () => {
