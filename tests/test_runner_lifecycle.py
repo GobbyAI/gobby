@@ -2201,6 +2201,124 @@ class TestShutdownLoop:
                     assert main_loop_slept is True
                     assert runner._shutdown_requested is True
 
+    @pytest.mark.asyncio
+    async def test_server_crash_before_bind_skips_side_effects_and_shuts_down(
+        self,
+        mock_config,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A server that never binds cannot start shared-state background work."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = GobbyRunner()
+
+            server = MagicMock()
+            server.started = False
+            failure = RuntimeError("serve loop crashed before bind")
+
+            async def serve() -> None:
+                raise failure
+
+            server.serve = AsyncMock(side_effect=serve)
+            pid_claim = MagicMock()
+
+            stack.enter_context(patch("uvicorn.Config"))
+            stack.enter_context(patch("uvicorn.Server", return_value=server))
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
+            stack.enter_context(
+                patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
+            )
+            init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
+            start_periodic_tasks = stack.enter_context(
+                patch("gobby.runner_lifecycle._start_periodic_tasks")
+            )
+            shutdown_services = stack.enter_context(
+                patch("gobby.runner_lifecycle.shutdown_daemon_services")
+            )
+            stack.enter_context(patch("gobby.runner._healthy_daemon_running", return_value=False))
+
+            with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+                with pytest.raises(SystemExit) as exc_info:
+                    await asyncio.wait_for(
+                        runner_lifecycle.run_daemon(runner),
+                        timeout=1.0,
+                    )
+
+            assert exc_info.value.code == 1
+            assert runner._shutdown_requested is True
+            init_subsystems.assert_not_awaited()
+            start_periodic_tasks.assert_not_called()
+            shutdown_services.assert_awaited_once()
+            assert "serve loop crashed before bind" in caplog.text
+            assert "requesting daemon shutdown" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_server_crash_after_bind_requests_shutdown(
+        self,
+        mock_config,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The server done-callback stops a daemon whose bound serve loop dies."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = GobbyRunner()
+
+            server = MagicMock()
+            server.started = False
+            side_effects_started = asyncio.Event()
+            failure = RuntimeError("serve loop crashed after bind")
+
+            async def serve() -> None:
+                server.started = True
+                await side_effects_started.wait()
+                raise failure
+
+            server.serve = AsyncMock(side_effect=serve)
+            pid_claim = MagicMock()
+
+            stack.enter_context(patch("uvicorn.Config"))
+            stack.enter_context(patch("uvicorn.Server", return_value=server))
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
+            stack.enter_context(
+                patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
+            )
+            init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
+
+            def start_periodic_tasks(*_args: object, **_kwargs: object) -> None:
+                side_effects_started.set()
+
+            periodic_tasks = stack.enter_context(
+                patch(
+                    "gobby.runner_lifecycle._start_periodic_tasks",
+                    side_effect=start_periodic_tasks,
+                )
+            )
+            shutdown_services = stack.enter_context(
+                patch("gobby.runner_lifecycle.shutdown_daemon_services")
+            )
+            stack.enter_context(patch("gobby.runner._healthy_daemon_running", return_value=False))
+
+            with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+                with pytest.raises(SystemExit) as exc_info:
+                    await asyncio.wait_for(
+                        runner_lifecycle.run_daemon(runner),
+                        timeout=1.0,
+                    )
+
+            assert exc_info.value.code == 1
+            assert runner._shutdown_requested is True
+            init_subsystems.assert_awaited_once()
+            periodic_tasks.assert_called_once()
+            shutdown_services.assert_awaited_once()
+            assert "serve loop crashed after bind" in caplog.text
+            assert "requesting daemon shutdown" in caplog.text
+
 
 class TestMetricsCleanupLoopDetailed:
     """Detailed tests for the metrics cleanup loop."""

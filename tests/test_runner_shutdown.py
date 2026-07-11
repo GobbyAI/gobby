@@ -25,6 +25,7 @@ async def _never_complete() -> None:
 class _ExitAwareServer:
     def __init__(self) -> None:
         self._should_exit = False
+        self.started = True
         self.exit_requested = asyncio.Event()
         self.serve = AsyncMock(side_effect=self._serve)
 
