@@ -160,10 +160,7 @@ pub(crate) fn ensure_hub_with_identity(
     }
 
     let report = provision(&options.service_options).context("failed to provision Gobby hub")?;
-    Ok((
-        default_database_url(options.service_options.postgres_port),
-        Some(report),
-    ))
+    Ok((options.service_options.database_url(), Some(report)))
 }
 
 pub fn resolve_recorded_hub_database_url(

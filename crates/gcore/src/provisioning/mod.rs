@@ -22,7 +22,6 @@ pub const DEFAULT_POSTGRES_HOST: &str = "127.0.0.1";
 pub const DEFAULT_POSTGRES_PORT: u16 = 60891;
 pub const DEFAULT_POSTGRES_DB: &str = "gobby";
 pub const DEFAULT_POSTGRES_USER: &str = "gobby";
-pub const DEFAULT_POSTGRES_PASSWORD: &str = "gobby_dev";
 
 pub const DEFAULT_FALKORDB_HOST: &str = "127.0.0.1";
 pub const DEFAULT_FALKORDB_PORT: u16 = 16379;
@@ -158,11 +157,11 @@ pub fn compose_file_path(gobby_home: &Path) -> PathBuf {
     services_dir(gobby_home).join(COMPOSE_FILENAME)
 }
 
-pub fn default_database_url(port: u16) -> String {
+pub fn default_database_url(port: u16, password: &str) -> String {
     format!(
         "postgresql://{user}:{password}@{host}:{port}/{db}",
         user = DEFAULT_POSTGRES_USER,
-        password = DEFAULT_POSTGRES_PASSWORD,
+        password = password,
         host = DEFAULT_POSTGRES_HOST,
         port = port,
         db = DEFAULT_POSTGRES_DB
