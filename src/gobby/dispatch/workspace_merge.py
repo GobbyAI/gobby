@@ -98,9 +98,17 @@ def _execute_merge_workspace_sync(
                 paths.target_path, source_commit, "target integration workspace"
             )
             if _is_ancestor(paths.target_path, source_commit):
-                _complete_merge_stage(db, action.task_id, source_commit)
+                merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                if action.backend == "clone" and not paths.target_is_local:
+                    _sync_source_repo_branch(
+                        db,
+                        action.task_id,
+                        paths.target_path,
+                        action.target_branch,
+                    )
                 _mark_source_merged(action, db=db, source_id=paths.source_id)
-                return source_commit
+                _complete_merge_stage(db, action.task_id, merge_sha)
+                return merge_sha
 
             merge_ref = source_commit
             if action.backend == "clone":
@@ -615,7 +623,18 @@ def _sync_source_repo_branch(
     target_branch: str,
 ) -> None:
     repo_path = _repo_path_for_task(db, task_id)
+    merge_sha = _git_stdout(target_path, ["rev-parse", target_branch])
+    if _branch_contains(repo_path, target_branch, merge_sha):
+        return
     _git_ok(repo_path, ["fetch", target_path, f"{target_branch}:{target_branch}"])
+    if not _branch_contains(repo_path, target_branch, merge_sha):
+        raise RuntimeError(
+            f"source repo branch {target_branch} does not contain integrated commit {merge_sha}"
+        )
+
+
+def _branch_contains(repo_path: Path, branch: str, commit_sha: str) -> bool:
+    return _git(repo_path, ["merge-base", "--is-ancestor", commit_sha, branch]).returncode == 0
 
 
 def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:

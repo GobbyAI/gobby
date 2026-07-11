@@ -15,8 +15,10 @@ from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.dispatch.workspace_merge import (
     _acquire_integration_mutex,
     _non_gobby_status_lines,
+    _sync_source_repo_branch,
     execute_merge_workspace,
 )
+from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -374,10 +376,196 @@ async def test_execute_merge_workspace_completes_already_merged_worktree(
         db=temp_db,
     )
 
-    assert merge_sha == source_commit
+    assert merge_sha == _git(integration_path, "rev-parse", "HEAD")
+    assert merge_sha != source_commit
     assert task_manager.stage_states.get(leaf.id, "merge").state == "done"
     _assert_worktree_removed(worktrees, source.id, task_path)
     assert task_manager.artifacts.get_artifacts(leaf.id).worktree_id is None
+
+
+async def test_execute_merge_workspace_retries_clone_sync_before_completing_stage(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration-clone"
+    task_path = tmp_path / "task-clone"
+    repo.mkdir()
+    _init_repo(repo)
+    _git(repo, "branch", "integration/root", "main")
+    _git(tmp_path, "clone", "--branch", "integration/root", str(repo), str(integration_path))
+    _git(tmp_path, "clone", "--branch", "integration/root", str(repo), str(task_path))
+    _git(task_path, "checkout", "-b", "task/leaf")
+    _git(task_path, "config", "user.email", "test@example.com")
+    _git(task_path, "config", "user.name", "Test User")
+    _git(integration_path, "config", "user.email", "test@example.com")
+    _git(integration_path, "config", "user.name", "Test User")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    clones = LocalCloneManager(temp_db)
+    clones.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        clone_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = clones.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        clone_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        clone_path=str(task_path),
+        clone_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+    action = MergeWorkspaceAction(
+        task_id=leaf.id,
+        task_ref=f"#{leaf.seq_num}",
+        backend="clone",
+        target_branch="integration/root",
+        source_clone_id=source.id,
+    )
+
+    _git(repo, "checkout", "integration/root")
+    first_result = await execute_merge_workspace(action, db=temp_db)
+
+    integration_sha = _git(integration_path, "rev-parse", "HEAD")
+    failed_task = task_manager.get_task(leaf.id)
+    assert first_result is None
+    assert failed_task is not None
+    assert failed_task.is_escalated is True
+    assert _git(repo, "rev-parse", "integration/root") != integration_sha
+
+    _git(repo, "checkout", "main")
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+    retry_result = await execute_merge_workspace(action, db=temp_db)
+
+    stage = task_manager.stage_states.get(leaf.id, "merge")
+    assert retry_result == integration_sha
+    assert stage is not None
+    assert stage.state == "done"
+    assert stage.completed_commit_sha == integration_sha
+    assert _git(repo, "merge-base", "--is-ancestor", integration_sha, "integration/root") == ""
+    stored_source = clones.get(source.id)
+    assert stored_source is not None
+    assert stored_source.status == "merged"
+
+    _git(repo, "checkout", "integration/root")
+    _sync_source_repo_branch(
+        temp_db,
+        leaf.id,
+        str(integration_path),
+        "integration/root",
+    )
+
+
+async def test_execute_merge_workspace_escalates_non_ff_clone_sync(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    integration_path = tmp_path / "integration-clone"
+    task_path = tmp_path / "task-clone"
+    repo.mkdir()
+    _init_repo(repo)
+    _git(repo, "branch", "integration/root", "main")
+    _git(tmp_path, "clone", "--branch", "integration/root", str(repo), str(integration_path))
+    _git(tmp_path, "clone", "--branch", "integration/root", str(repo), str(task_path))
+    _git(task_path, "checkout", "-b", "task/leaf")
+    for clone_path in (integration_path, task_path):
+        _git(clone_path, "config", "user.email", "test@example.com")
+        _git(clone_path, "config", "user.name", "Test User")
+    (task_path / "feature.txt").write_text("feature\n")
+    _git(task_path, "add", "feature.txt")
+    _git(task_path, "commit", "-m", "feature")
+    _git(repo, "checkout", "integration/root")
+    (repo / "user-change.txt").write_text("user change\n")
+    _git(repo, "add", "user-change.txt")
+    _git(repo, "commit", "-m", "user change")
+    user_branch_sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+
+    project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
+    task_manager = LocalTaskManager(temp_db)
+    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    leaf = task_manager.create_task(
+        project_id=project.id,
+        title="Leaf",
+        parent_task_id=parent.id,
+        category="code",
+        task_type="task",
+    )
+    task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
+    task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
+
+    clones = LocalCloneManager(temp_db)
+    clones.create(
+        project_id=project.id,
+        branch_name="integration/root",
+        clone_path=str(integration_path),
+        base_branch="main",
+        task_id=parent.id,
+        workspace_role="integration",
+    )
+    source = clones.create(
+        project_id=project.id,
+        branch_name="task/leaf",
+        clone_path=str(task_path),
+        base_branch="integration/root",
+        task_id=leaf.id,
+    )
+    task_manager.artifacts.set_artifacts_atomic(
+        leaf.id,
+        clone_path=str(task_path),
+        clone_id=source.id,
+        base_commit_sha=_git(repo, "rev-parse", "main"),
+        target_branch="integration/root",
+    )
+
+    result = await execute_merge_workspace(
+        MergeWorkspaceAction(
+            task_id=leaf.id,
+            task_ref=f"#{leaf.seq_num}",
+            backend="clone",
+            target_branch="integration/root",
+            source_clone_id=source.id,
+        ),
+        db=temp_db,
+    )
+
+    integration_sha = _git(integration_path, "rev-parse", "HEAD")
+    failed_task = task_manager.get_task(leaf.id)
+    stage = task_manager.stage_states.get(leaf.id, "merge")
+    assert result is None
+    assert failed_task is not None
+    assert failed_task.is_escalated is True
+    assert stage is not None
+    assert stage.state == "ready"
+    assert _git(repo, "rev-parse", "integration/root") == user_branch_sha
+    merge_base = _git(repo, "merge-base", integration_sha, "integration/root")
+    assert merge_base != integration_sha
 
 
 async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_branch(
