@@ -521,22 +521,15 @@ async def expire_approval_timeouts_loop(
     Runs every ``interval_seconds``, finds steps in waiting_approval whose
     timeout has elapsed, marks them FAILED and their parent execution CANCELLED.
     """
-    from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
-
     while not is_shutdown_requested():
         try:
             await asyncio.sleep(interval_seconds)
             expired_steps = pipeline_execution_manager.get_expired_approval_steps()
             for step in expired_steps:
                 try:
-                    pipeline_execution_manager.update_step_execution(
+                    pipeline_execution_manager.expire_approval_timeout(
                         step_execution_id=step.id,
-                        status=StepStatus.FAILED,
-                        error="Approval timed out",
-                    )
-                    pipeline_execution_manager.update_execution_status(
                         execution_id=step.execution_id,
-                        status=ExecutionStatus.CANCELLED,
                     )
                     logger.info(
                         f"Approval timed out for step {step.step_id} "
