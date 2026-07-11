@@ -105,6 +105,10 @@ def resolve_secrets_in_config(
     except ImportError as exc:
         logger.debug("Secret resolution skipped for %s: %s", config.name, exc)
         return config
-    except Exception:
-        logger.warning("Secret resolution failed for %s", config.name, exc_info=True)
+    except Exception as exc:
+        logger.warning(
+            "Secret resolution failed for %s (%s)",
+            config.name,
+            type(exc).__name__,
+        )
         raise
