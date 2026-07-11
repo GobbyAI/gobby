@@ -458,9 +458,33 @@ async def _wake_interrupted_pipeline_subscribers(runner: GobbyRunner) -> None:
         logger.warning(f"Failed to wake subscribers of interrupted pipelines: {e}")
 
 
+def _record_websocket_startup_result(
+    task: asyncio.Future[None], tracker: StartupTracker | None
+) -> None:
+    """Report background WebSocket startup failures as soon as they happen."""
+    if task.cancelled():
+        return
+
+    error = task.exception()
+    if error is None:
+        return
+
+    logger.error(
+        "WebSocket server startup failed",
+        exc_info=(type(error), error, error.__traceback__),
+    )
+    if tracker:
+        tracker.error("WebSocket server", str(error))
+
+
 def _start_websocket_server(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     if runner.websocket_server:
-        runner._websocket_task = asyncio.create_task(runner.websocket_server.start())
+        runner._websocket_task = asyncio.create_task(
+            runner.websocket_server.start(), name="websocket-server"
+        )
+        runner._websocket_task.add_done_callback(
+            lambda task: _record_websocket_startup_result(task, tracker)
+        )
         if tracker:
             tracker.schedule("WebSocket server")
 

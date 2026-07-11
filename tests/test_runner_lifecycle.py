@@ -219,6 +219,30 @@ class TestGobbyRunnerRun:
             assert runner.http_server.websocket_server == mock_ws_server
             assert mock_http.websocket_server == mock_ws_server
 
+    async def test_websocket_startup_failure_is_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.runner_lifecycle_startup import StartupTracker
+        from gobby.runner_lifecycle_subsystems import _start_websocket_server
+
+        error = OSError("address already in use")
+        websocket_server = SimpleNamespace(start=AsyncMock(side_effect=error))
+        runner = SimpleNamespace(websocket_server=websocket_server)
+        tracker = StartupTracker()
+
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+            _start_websocket_server(runner, tracker)
+            with pytest.raises(OSError, match="address already in use"):
+                await runner._websocket_task
+            await asyncio.sleep(0)
+
+        assert runner._websocket_task.get_name() == "websocket-server"
+        assert tracker.steps_scheduled == ["WebSocket server"]
+        assert tracker.errors == [
+            {"subsystem": "WebSocket server", "error": "address already in use"}
+        ]
+        assert "WebSocket server startup failed" in caplog.text
+
 
 class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
