@@ -1,6 +1,6 @@
 """Tests for ServiceContainer lazy pipeline executor creation."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,12 +24,18 @@ def _make_container(**overrides):
 class TestGetPipelineExecutor:
     """Tests for ServiceContainer.get_pipeline_executor()."""
 
-    def test_returns_existing_executor(self) -> None:
-        """If pipeline_executor is set at startup, return it directly."""
+    @pytest.mark.parametrize("requested_project_id", [None, "", "proj-a"])
+    def test_returns_existing_executor_for_startup_project(
+        self, requested_project_id: str | None
+    ) -> None:
+        """The startup executor handles implicit and explicit startup-project requests."""
         existing_executor = MagicMock()
-        container = _make_container(pipeline_executor=existing_executor)
+        container = _make_container(
+            pipeline_executor=existing_executor,
+            project_id="proj-a",
+        )
 
-        result = container.get_pipeline_executor()
+        result = container.get_pipeline_executor(requested_project_id)
 
         assert result is existing_executor
 
@@ -167,18 +173,27 @@ class TestGetPipelineExecutor:
         the runner's home project (#17756); the sweep delegates to the
         execution manager's fail_stale_running_executions.
         """
-        execution_manager = MagicMock()
-        execution_manager.fail_stale_running_executions.return_value = 0
+        startup_execution_manager = MagicMock()
+        project_execution_manager = MagicMock()
+        project_execution_manager.fail_stale_running_executions.return_value = 0
         container = _make_container(
             database=MagicMock(),
             workflow_loader=MagicMock(),
-            pipeline_execution_manager=execution_manager,
+            pipeline_execution_manager=startup_execution_manager,
+            project_id="home-project",
         )
 
-        executor = container.get_pipeline_executor(project_id="proj-1")
+        with patch(
+            "gobby.storage.pipelines.LocalPipelineExecutionManager",
+            return_value=project_execution_manager,
+        ):
+            executor = container.get_pipeline_executor(project_id="proj-1")
 
         assert executor is not None
-        execution_manager.fail_stale_running_executions.assert_called_once_with(exclude_ids=set())
+        project_execution_manager.fail_stale_running_executions.assert_called_once_with(
+            exclude_ids=set()
+        )
+        startup_execution_manager.fail_stale_running_executions.assert_not_called()
 
     def test_startup_sweep_failure_does_not_block_lazy_creation(self) -> None:
         """A sweep failure must not make the executor unavailable."""
