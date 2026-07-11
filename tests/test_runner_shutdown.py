@@ -882,6 +882,15 @@ class TestShutdownSessionStatusLifecycle:
 
     async def test_database_closes_after_session_writing_services_stop(self) -> None:
         events: list[str] = []
+        approval_timeout_started = asyncio.Event()
+
+        async def approval_timeout_loop() -> None:
+            approval_timeout_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("approval-timeout-cancel")
+                raise
 
         async def lifecycle_stop() -> None:
             events.append("lifecycle")
@@ -924,12 +933,14 @@ class TestShutdownSessionStatusLifecycle:
             database=SimpleNamespace(
                 close=MagicMock(side_effect=lambda: events.append("database"))
             ),
+            _approval_timeout_task=asyncio.create_task(approval_timeout_loop()),
         )
         server = SimpleNamespace(should_exit=False)
 
         async def server_done() -> None:
             return None
 
+        await approval_timeout_started.wait()
         await runner_lifecycle_shutdown.shutdown_daemon_services(
             runner,
             server,
@@ -943,12 +954,14 @@ class TestShutdownSessionStatusLifecycle:
             cleanup_pid_file=MagicMock(),
         )
 
+        assert runner._approval_timeout_task.cancelled()
         assert events == [
             "sessions",
             "lifecycle",
             "agent-cancel",
             "agent-monitor",
             "message-processor",
+            "approval-timeout-cancel",
             "hook",
             "mcp",
             "database",
@@ -961,6 +974,7 @@ class TestShutdownSessionStatusLifecycle:
             "agent-monitor",
             "message-processor",
             "hook",
+            "approval-timeout-cancel",
             "mcp",
         ):
             assert events.index(event) < database_index
