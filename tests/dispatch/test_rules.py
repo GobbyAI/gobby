@@ -374,6 +374,15 @@ def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
     assert "default.yaml agent" not in action.prompt
 
 
+def test_non_epic_with_stale_children_is_still_a_development_leaf() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    task = _task_at("development", "in_progress")
+    task.children = [SimpleNamespace(id="stale-child")]
+
+    assert isinstance(_evaluate(task), SpawnAgentAction)
+
+
 def test_development_rule_falls_back_from_agent_without_prompt_builder() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
@@ -1013,13 +1022,13 @@ def test_merge_rule_routes_on_merge_stage() -> None:
     assert action.agent_slug == "merge-orchestrator"
 
 
-def test_merge_rule_does_not_advance_lifecycle() -> None:
-    from gobby.dispatch.actions import AdvanceLifecycleAction
+def test_merge_rule_does_not_advance_stage() -> None:
+    from gobby.dispatch.actions import AdvanceStageAction
     from gobby.dispatch.rules import merge_rule
 
     action = merge_rule(_task_at("merge", "in_progress", task_type="epic"), _context())
 
-    assert not isinstance(action, AdvanceLifecycleAction)
+    assert not isinstance(action, AdvanceStageAction)
 
 
 def test_merge_rule_escalates_when_merge_agent_missing() -> None:

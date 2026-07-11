@@ -341,8 +341,7 @@ def pr_work_rule(task: object, context: object) -> Action | None:
 
 
 def pr_review_rule(task: object, context: object) -> Action | None:
-    if _matching_current_stage(task, context, "pr", "needs_review") is None:
-        return None
+    _ = task, context
     return None
 
 

@@ -199,6 +199,53 @@ async def test_sweep_expired_leases_pages_all_active_runs(
     assert storage.get_mutex(stale_task.id) is None
 
 
+async def test_sweep_expired_leases_retains_run_attached_after_candidate_select(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.dispatch.constants import DISPATCH_HOLDER
+    from gobby.dispatch.lease_cleanup import sweep_expired_leases
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID
+
+    storage = _mutex_storage(temp_db)
+    task = _task(temp_db, sample_project, title="Raced mutex")
+    expired_start = datetime.now(UTC) - timedelta(minutes=10)
+    assert storage.acquire_mutex(
+        task.id,
+        holder=DISPATCH_HOLDER,
+        kind="spawn",
+        ttl_seconds=1,
+        now=expired_start,
+    )
+    run_storage = LocalAgentRunManager(temp_db)
+    run = run_storage.create(
+        parent_session_id=SYSTEM_SESSION_ID,
+        provider="codex",
+        prompt="new active owner",
+        run_id=stable_test_uuid("raced-active-run"),
+    )
+    run_storage.start(run.id)
+    original_fetchall = temp_db.fetchall
+
+    def fetch_candidates_then_attach_run(
+        query: str,
+        params: tuple[object, ...] = (),
+    ) -> list[dict[str, Any]]:
+        rows = original_fetchall(query, params)
+        temp_db.execute(
+            "UPDATE task_dispatch_mutex SET run_id = %s WHERE task_id = %s",
+            (run.id, task.id),
+        )
+        return rows
+
+    monkeypatch.setattr(temp_db, "fetchall", fetch_candidates_then_attach_run)
+
+    assert await sweep_expired_leases(storage) == 0
+    assert storage.get_mutex(task.id).run_id == run.id
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

@@ -228,7 +228,7 @@ def _children(task: object, context: object) -> Sequence[object]:
 
 
 def _is_leaf(task: object) -> bool:
-    return str(_field(task, "task_type", "")) != "epic" and not bool(_field(task, "children", ()))
+    return str(_field(task, "task_type", "")) != "epic"
 
 
 def _is_epic(task: object) -> bool:
@@ -248,12 +248,6 @@ def _isolation(task: object) -> str:
 
 def _task_has_label(task: object, label: str) -> bool:
     return label in set(_field(task, "labels", ()) or ())
-
-
-def _has_isolation_pair(artifacts: object, isolation: str) -> bool:
-    if isolation == "clone":
-        return bool(_field(artifacts, "clone_path")) and bool(_field(artifacts, "clone_id"))
-    return bool(_field(artifacts, "worktree_path")) and bool(_field(artifacts, "worktree_id"))
 
 
 def _stages(task: object) -> Sequence[object]:
@@ -326,7 +320,6 @@ __all__ = [
     "_development_agent",
     "_field",
     "_has_agent",
-    "_has_isolation_pair",
     "_has_merge_agent",
     "_holistic_descendant_gate",
     "_holistic_descendant_gate_body",

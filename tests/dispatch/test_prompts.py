@@ -181,6 +181,19 @@ def test_developer_prompt_builder_registered() -> None:
     assert "developer" in PROMPT_BUILDERS
 
 
+def test_failure_context_is_capped_with_truncation_marker() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    task = SimpleNamespace(ref="#42", title="Follow-up")
+    prompt = PROMPT_BUILDERS["developer"](task, {"failure_context": "x" * 2500})
+    rendered_context = prompt.split(
+        "Previous failure context for this follow-up work:\n", maxsplit=1
+    )[1]
+
+    assert len(rendered_context) == 2000
+    assert rendered_context.endswith("\n[truncated]")
+
+
 def test_merge_orchestrator_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
