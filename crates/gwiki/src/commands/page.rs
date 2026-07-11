@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::paths::{PathViolation, normalize_requested_path};
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
-use crate::{CommandOutcome, PageWriteMode, ScopeIdentity, ScopeSelection, WikiError};
+use crate::{CommandOutcome, PageWriteMode, ScopeIdentity, ScopeSelection, WikiError, vault};
 
 /// The only vault prefix `gwiki page` may mutate; `code/**`, `outputs/**`,
 /// `raw/**`, `meta/**`, and `.obsidian/**` stay generated/derived surfaces.
@@ -19,6 +19,10 @@ pub(crate) fn execute_write(
     expected_hash: Option<String>,
 ) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
+    // Writing a page scaffolds knowledge/** under the vault root, so claim
+    // the vault first — an unclaimed write poisons the dir as a non-vault
+    // collision for the next resolution.
+    vault::initialize(&scope)?;
     let output_scope = resolved_scope_identity(&scope);
     let content = read_stdin_content()?;
     write_page(

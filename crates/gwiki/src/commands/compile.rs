@@ -9,7 +9,7 @@ use crate::sources::SourceManifest;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{
     CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, compile as wiki_compile, daemon,
-    session, synthesis,
+    session, synthesis, vault,
 };
 
 use super::lanes::{
@@ -31,6 +31,10 @@ pub(crate) fn execute(
     scope: ScopeSelection,
 ) -> Result<CommandOutcome, WikiError> {
     let resolved_scope = resolve_command_scope(&scope)?;
+    // compile writes checkpoints (_gwiki/), raw/, outputs/, and pages under
+    // the vault root, so claim the vault first — an unclaimed write poisons
+    // the dir as a non-vault collision.
+    vault::initialize(&resolved_scope)?;
     let research_scope = session::ResearchScope::from(&resolved_scope);
     validate_target_topic_identity(topic.as_deref(), &research_scope, target_page.as_deref())?;
     let topic_seed = compile_topic_seed(topic.as_deref(), &research_scope);

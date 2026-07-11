@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
@@ -18,7 +20,11 @@ from gobby.gwiki_gateway import (
 )
 from gobby.servers.routes import wiki as wiki_routes
 from gobby.servers.routes.wiki import _stage_upload, create_wiki_router
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import (
+    PERSONAL_PROJECT_ID,
+    LocalProjectManager,
+    ensure_personal_project,
+)
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -351,6 +357,36 @@ def test_project_scope_resolves_to_repo_path(temp_db: Any, tmp_path: Path) -> No
 
     assert response.status_code == 200
     assert FakeGateway.instances[-1].project == str(tmp_path.resolve())
+
+
+def test_personal_scope_routes_resolve_uninitialized_workspace(
+    temp_db: Any, tmp_path: Path
+) -> None:
+    """Regression: personal scope hard-failed with invalid_scope (#17821).
+
+    Starting from a gobby home with no personal folder at all, provisioning
+    must leave status/pages/graph resolvable AND materialize the on-disk
+    identity file gwiki reads at the exact subprocess boundary the routes
+    hand the workspace to (``--project <root>``).
+    """
+    ensure_personal_project(temp_db, gobby_home=tmp_path)
+
+    app = FastAPI()
+    server = SimpleNamespace(
+        services=SimpleNamespace(config=SimpleNamespace(), database=temp_db, project_id=None)
+    )
+    app.include_router(create_wiki_router(server))
+    client = TestClient(app)
+
+    personal_root = (tmp_path / "personal").resolve()
+    for route in ("/api/wiki/status", "/api/wiki/pages", "/api/wiki/graph"):
+        response = client.get(route, params={"project": PERSONAL_PROJECT_ID})
+        assert response.status_code == 200, route
+        assert response.json()["ok"] is True, route
+        assert FakeGateway.instances[-1].project == str(personal_root), route
+
+    identity = json.loads((personal_root / ".gobby" / "project.json").read_text())
+    assert identity["id"] == PERSONAL_PROJECT_ID
 
 
 def test_backlinks_health_and_sources_passthrough(client: TestClient) -> None:
@@ -837,9 +873,9 @@ async def test_stage_upload_unlinks_temp_file_on_read_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created_paths: list[Path] = []
-    original_named_temporary_file = wiki_routes.tempfile.NamedTemporaryFile
+    original_named_temporary_file = tempfile.NamedTemporaryFile
 
-    def named_temporary_file(*args: Any, **kwargs: Any):
+    def named_temporary_file(*args: Any, **kwargs: Any) -> Any:
         kwargs["dir"] = tmp_path
         staged = original_named_temporary_file(*args, **kwargs)
         created_paths.append(Path(staged.name))
@@ -857,10 +893,10 @@ async def test_stage_upload_unlinks_temp_file_on_read_error(
                 return b"partial"
             raise RuntimeError("upload read failed")
 
-    monkeypatch.setattr(wiki_routes.tempfile, "NamedTemporaryFile", named_temporary_file)
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", named_temporary_file)
 
     with pytest.raises(RuntimeError, match="upload read failed"):
-        await _stage_upload(FailingUpload())
+        await _stage_upload(cast(UploadFile, FailingUpload()))
 
     assert created_paths
     assert created_paths[0].exists() is False

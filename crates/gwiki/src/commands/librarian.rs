@@ -3,7 +3,7 @@ use gobby_core::config::AiRouting;
 
 use crate::support::scope::resolve_selection_context;
 use crate::support::services;
-use crate::{CommandOutcome, ScopeSelection, WikiError, librarian};
+use crate::{CommandOutcome, ScopeSelection, WikiError, librarian, vault};
 
 /// Librarian patch suggestions operate page-by-page, matching the module
 /// generation tier used by `ask`.
@@ -14,6 +14,10 @@ pub(crate) fn execute(
     ai: AiRouting,
 ) -> Result<CommandOutcome, WikiError> {
     let context = resolve_selection_context(&selection)?;
+    // librarian persists its proposals report under the vault root, so claim
+    // the vault first — an unclaimed write poisons the dir as a non-vault
+    // collision.
+    vault::initialize(&context.scope)?;
     let runtime_services = services::probe_runtime_services("gwiki librarian")?;
     let model_available =
         services::text_generation_available("gwiki librarian", ai, LIBRARIAN_TIER);

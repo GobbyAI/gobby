@@ -11,7 +11,7 @@ use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
 use crate::{
-    CommandOutcome, GraphCommandOptions, ScopeIdentity, ScopeSelection, WikiError, exports,
+    CommandOutcome, GraphCommandOptions, ScopeIdentity, ScopeSelection, WikiError, exports, vault,
 };
 
 pub(crate) fn execute(
@@ -19,6 +19,9 @@ pub(crate) fn execute(
     options: GraphCommandOptions,
 ) -> Result<CommandOutcome, WikiError> {
     let resolved = resolve_selection_context(&selection)?;
+    // graph exports outputs/ under the vault root, so claim the vault first —
+    // an unclaimed write poisons the dir as a non-vault collision.
+    vault::initialize(&resolved.scope)?;
     let database_url = database_url_for("gwiki graph")?.ok_or_else(|| WikiError::Config {
         detail: "gwiki graph requires PostgreSQL index configuration".to_string(),
     })?;
