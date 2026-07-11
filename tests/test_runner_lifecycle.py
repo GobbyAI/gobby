@@ -234,7 +234,6 @@ class TestGobbyRunnerRun:
             _start_websocket_server(runner, tracker)
             with pytest.raises(OSError, match="address already in use"):
                 await runner._websocket_task
-            await asyncio.sleep(0)
 
         assert runner._websocket_task.get_name() == "websocket-server"
         assert tracker.steps_scheduled == ["WebSocket server"]
@@ -753,10 +752,15 @@ class TestShutdownDaemonServices:
     @pytest.mark.asyncio
     async def test_periodic_tasks_cancel_concurrently(self) -> None:
         all_cancelled = asyncio.Event()
+        all_started = asyncio.Event()
         cancellation_count = 0
+        started_count = 0
 
         async def wait_for_peer_cancellations() -> None:
-            nonlocal cancellation_count
+            nonlocal cancellation_count, started_count
+            started_count += 1
+            if started_count == 3:
+                all_started.set()
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -772,7 +776,7 @@ class TestShutdownDaemonServices:
             _metrics_archive_task=tasks[1],
             _span_cleanup_task=tasks[2],
         )
-        await asyncio.sleep(0)
+        await asyncio.wait_for(all_started.wait(), timeout=0.5)
 
         await asyncio.wait_for(
             runner_lifecycle_shutdown._cancel_periodic_tasks(runner),
@@ -816,6 +820,7 @@ class TestShutdownDaemonServices:
         )
 
         grace_window.assert_not_awaited()
+        assert server.should_exit is True
         assert marker.exists() is False
 
     @pytest.mark.asyncio
@@ -976,6 +981,7 @@ class TestShutdownDaemonServices:
             (executor_shutdown, (), {"wait": True}),
             (executor_shutdown, (), {"wait": False, "cancel_futures": True}),
         ]
+        assert server.should_exit is True
         runner.database.close.assert_called_once_with()
         cleanup_pid_file.assert_called_once_with()
 
