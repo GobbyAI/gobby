@@ -356,8 +356,9 @@ fn validate_and_plan(live_out: &Path, stage_out: &Path) -> anyhow::Result<Public
 }
 
 fn code_wikilinks(content: &str) -> anyhow::Result<BTreeSet<String>> {
+    let masked = mask_code_regions(content);
     let mut targets = BTreeSet::new();
-    let mut rest = content;
+    let mut rest = masked.as_str();
     while let Some(start) = rest.find("[[") {
         rest = &rest[start + 2..];
         let Some(end) = rest.find("]]") else {
@@ -385,6 +386,103 @@ fn code_wikilinks(content: &str) -> anyhow::Result<BTreeSet<String>> {
         targets.insert(target);
     }
     Ok(targets)
+}
+
+/// Mask fenced code blocks and inline code spans with spaces so wikilink
+/// extraction only sees prose. Generated pages legitimately quote wikilink
+/// syntax inside code — e.g. the modules.rs doc page describing the
+/// `Module: [[code/modules/<file.module>]]` line it renders — and a quoted
+/// example is not a link, so it must not fail publish validation (#17823).
+fn mask_code_regions(content: &str) -> String {
+    let mut fenced_masked = String::with_capacity(content.len());
+    let mut open_fence: Option<(char, usize)> = None;
+    for line in content.split_inclusive('\n') {
+        let fence = fence_marker(line);
+        let inside = match (open_fence, fence) {
+            (None, Some(opened)) => {
+                open_fence = Some(opened);
+                true
+            }
+            (Some((ch, len)), Some((close_ch, close_len)))
+                if close_ch == ch && close_len >= len =>
+            {
+                open_fence = None;
+                true
+            }
+            (Some(_), _) => true,
+            (None, None) => false,
+        };
+        if inside {
+            mask_into(&mut fenced_masked, line.chars());
+        } else {
+            fenced_masked.push_str(line);
+        }
+    }
+    mask_inline_code(&fenced_masked)
+}
+
+/// A line opening or closing a fenced code block: at least three backticks or
+/// tildes after optional indentation, per CommonMark.
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let trimmed = line.trim_start_matches(' ');
+    ['`', '~'].into_iter().find_map(|ch| {
+        let count = trimmed.chars().take_while(|c| *c == ch).count();
+        (count >= 3).then_some((ch, count))
+    })
+}
+
+/// Mask inline code spans: a run of N backticks closes only on the next run of
+/// exactly N backticks (CommonMark); an unmatched run stays literal text.
+fn mask_inline_code(content: &str) -> String {
+    let chars: Vec<char> = content.chars().collect();
+    let mut masked = String::with_capacity(content.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '`' {
+            masked.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let open = i;
+        while i < chars.len() && chars[i] == '`' {
+            i += 1;
+        }
+        match find_backtick_run(&chars, i, i - open) {
+            Some(close) => {
+                let span_end = close + (i - open);
+                mask_into(&mut masked, chars[open..span_end].iter().copied());
+                i = span_end;
+            }
+            None => masked.extend(&chars[open..i]),
+        }
+    }
+    masked
+}
+
+/// Start of the next backtick run of exactly `len` characters at or after
+/// `from`, if any.
+fn find_backtick_run(chars: &[char], from: usize, len: usize) -> Option<usize> {
+    let mut i = from;
+    while i < chars.len() {
+        if chars[i] != '`' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i] == '`' {
+            i += 1;
+        }
+        if i - start == len {
+            return Some(start);
+        }
+    }
+    None
+}
+
+/// Append `chars` to `out` with every character except newlines replaced by a
+/// space, preserving line structure for later passes.
+fn mask_into(out: &mut String, chars: impl Iterator<Item = char>) {
+    out.extend(chars.map(|c| if c == '\n' { '\n' } else { ' ' }));
 }
 
 fn collect_markdown_pages(root: &Path) -> anyhow::Result<Vec<String>> {

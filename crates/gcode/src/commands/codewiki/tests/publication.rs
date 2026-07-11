@@ -281,3 +281,68 @@ fn interrupted_publication_has_resolving_placeholders_and_recovers_journal() {
     let changed = recovered.publish().expect("stable republish");
     assert!(changed.contains(&"code/a.md".to_string()));
 }
+
+#[test]
+fn publish_ignores_wikilinks_quoted_in_code_spans_and_fences() {
+    // A generated page may QUOTE wikilink syntax when documenting the link
+    // renderer itself (#17823); quoted examples are not links and must not
+    // fail validation, while real links keep resolving.
+    let (_temp, project, live) = fixture();
+    let publication =
+        CodewikiPublication::prepare(&live, &fingerprint(&project, &[])).expect("prepare stage");
+    write_file(
+        publication.stage_out(),
+        "code/renderer.md",
+        "# Renderer\n\n\
+         Renders a `Module: [[code/modules/<file.module>]]` link per file.\n\n\
+         ``inline [[code/double-quoted|X]] span``\n\n\
+         ```rust\n\
+         let link = \"[[code/fenced-example]]\";\n\
+         ```\n\n\
+         ~~~\n\
+         [[code/tilde-fenced]]\n\
+         ~~~\n\n\
+         Real link: [[code/real|Real]]\n",
+    );
+    write_file(publication.stage_out(), "code/real.md", "# Real\n");
+    write_meta(
+        publication.stage_out(),
+        &["code/renderer.md", "code/real.md"],
+        "staged",
+    );
+
+    let changed = publication
+        .publish()
+        .expect("quoted wikilinks in code spans must not block publish");
+
+    assert!(changed.contains(&"code/renderer.md".to_string()));
+    assert!(live.join("code/real.md").is_file());
+    assert!(
+        !live.join("code/modules").exists(),
+        "no placeholder may be created for a quoted example link"
+    );
+}
+
+#[test]
+fn publish_still_fails_on_real_broken_link_after_unmatched_backtick() {
+    // An unmatched backtick run is literal text, so extraction must continue
+    // past it and still catch genuinely broken links later in the page.
+    let (_temp, project, live) = fixture();
+    let publication =
+        CodewikiPublication::prepare(&live, &fingerprint(&project, &[])).expect("prepare stage");
+    write_file(
+        publication.stage_out(),
+        "code/page.md",
+        "# Page\n\nstray ` backtick\n\n[[code/missing|Missing]]\n",
+    );
+    write_meta(publication.stage_out(), &["code/page.md"], "staged");
+
+    let error = publication
+        .publish()
+        .expect_err("real broken link must still fail publish");
+    assert!(
+        error
+            .to_string()
+            .contains("has no staged target code/missing.md")
+    );
+}
