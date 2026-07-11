@@ -10,13 +10,25 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from random import SystemRandom
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.runner_tmux_repair import (
+    TmuxRepairSessionManager,
+)
+from gobby.runner_tmux_repair import (
+    _select_tmux_repair_sessions as _select_tmux_repair_sessions,
+)
+from gobby.runner_tmux_repair import (
+    _tmux_repair_candidate_score as _tmux_repair_candidate_score,
+)
+from gobby.runner_tmux_repair import (
+    _tmux_repair_pane_key as _tmux_repair_pane_key,
+)
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.shutdown_intent import (
     ShutdownIntent,
@@ -41,10 +53,6 @@ _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
 
 
-class _TmuxRepairSessionManager(Protocol):
-    def list(self, *, statuses: list[str], limit: int) -> Sequence[Any]: ...
-
-
 def _positive_int_or_default(value: Any, default: int) -> int:
     if not isinstance(value, int):
         return default
@@ -60,62 +68,6 @@ async def _run_db(
     if runner is None:
         return await asyncio.to_thread(func, *args, **kwargs)
     return await runner(func, *args, **kwargs)
-
-
-def _tmux_repair_pane_key(session: Any) -> tuple[str, str] | None:
-    tc = getattr(session, "terminal_context", None)
-    if not isinstance(tc, dict):
-        return None
-
-    pane = tc.get("tmux_pane")
-    if not isinstance(pane, str) or not pane:
-        return None
-
-    socket = ""
-    for key in ("tmux_socket_path", "tmux_socket_name", "tmux_socket"):
-        value = tc.get(key)
-        if isinstance(value, str) and value:
-            socket = value
-            break
-    else:
-        agent_depth = getattr(session, "agent_depth", 0)
-        if isinstance(agent_depth, int) and agent_depth > 0:
-            socket = "gobby"
-        else:
-            session_id = getattr(session, "id", None)
-            socket = (
-                f"session:{session_id}" if isinstance(session_id, str) else f"object:{id(session)}"
-            )
-
-    return socket, pane
-
-
-def _tmux_repair_candidate_score(session: Any) -> tuple[int, int]:
-    external_id = str(getattr(session, "external_id", "") or "").strip()
-    has_identity = int(bool(external_id))
-    has_activity = int(
-        bool(str(getattr(session, "transcript_path", "") or "").strip())
-        or bool(getattr(session, "message_count", 0))
-        or bool(getattr(session, "turn_count", 0))
-        or bool(getattr(session, "tool_call_count", 0))
-    )
-    return has_identity, has_activity
-
-
-def _select_tmux_repair_sessions(sessions: Sequence[Any]) -> list[Any]:
-    selected: dict[tuple[str, str], tuple[tuple[int, int], Any]] = {}
-
-    for session in sessions:
-        key = _tmux_repair_pane_key(session)
-        if key is None:
-            continue
-
-        score = _tmux_repair_candidate_score(session)
-        current = selected.get(key)
-        if current is None or score > current[0]:
-            selected[key] = (score, session)
-
-    return [session for _, session in selected.values()]
 
 
 async def _sleep_until_next_bin_freshness_cycle(
@@ -383,7 +335,7 @@ async def cleanup_zombie_messages_loop(
 
 
 async def tmux_window_name_repair_loop(
-    session_manager: _TmuxRepairSessionManager | None,
+    session_manager: TmuxRepairSessionManager | None,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 120,
     session_list_limit: int = 200,
