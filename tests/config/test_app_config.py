@@ -724,15 +724,13 @@ class TestLoadConfig:
         with pytest.raises(ValueError, match="Configuration validation failed"):
             load_config(config_file=str(bootstrap_file))
 
-    def test_load_config_invalid_type_falls_back_to_defaults(self, temp_dir: Path) -> None:
-        """Test load_config falls back to defaults when bootstrap has invalid type."""
+    def test_load_config_rejects_invalid_bootstrap_scalar(self, temp_dir: Path) -> None:
+        """Test load_config surfaces invalid bootstrap scalar values."""
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        # Write string instead of int for port — bootstrap silently falls back
         write_secure_bootstrap(bootstrap_file, "daemon_port: not_a_number")
 
-        config = load_config(config_file=str(bootstrap_file))
-        # Bootstrap swallows the int() conversion error and returns defaults
-        assert config.daemon_port == 60887
+        with pytest.raises(BootstrapConfigError, match="daemon_port"):
+            load_config(config_file=str(bootstrap_file))
 
     def test_load_config_rejects_legacy_session_title_db_keys(self, temp_dir: Path) -> None:
         """Legacy session_title DB config now fails loudly instead of being migrated."""

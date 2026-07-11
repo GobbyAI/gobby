@@ -48,7 +48,7 @@ HUB_BACKEND_DATABASE_URL_REQUIRED = (
 
 
 class BootstrapConfigError(Exception):
-    """Raised when bootstrap.yaml contains an invalid backend selection."""
+    """Raised when bootstrap.yaml contains an invalid setting."""
 
 
 @dataclass(frozen=True)
@@ -134,10 +134,14 @@ def load_bootstrap(
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 
         return BootstrapConfig(
-            daemon_port=int(data.get("daemon_port", BootstrapConfig.daemon_port)),
-            bind_host=str(data.get("bind_host", BootstrapConfig.bind_host)),
-            websocket_port=int(data.get("websocket_port", BootstrapConfig.websocket_port)),
-            ui_port=int(data.get("ui_port", BootstrapConfig.ui_port)),
+            daemon_port=_parse_int(
+                data.get("daemon_port", BootstrapConfig.daemon_port), "daemon_port"
+            ),
+            bind_host=_parse_str(data.get("bind_host", BootstrapConfig.bind_host), "bind_host"),
+            websocket_port=_parse_int(
+                data.get("websocket_port", BootstrapConfig.websocket_port), "websocket_port"
+            ),
+            ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
             falkordb_password=_load_falkordb_password(data),
             auth_mode=auth_mode,
             hub_backend=hub_backend,
@@ -155,7 +159,7 @@ def load_bootstrap(
 def _load_falkordb_password(data: dict[str, Any]) -> str:
     """Load the FalkorDB bootstrap password from the current key or env fallback."""
     if "falkordb_password" in data:
-        return str(data["falkordb_password"])
+        return _parse_str(data["falkordb_password"], "falkordb_password")
 
     return os.environ.get("GOBBY_FALKORDB_PASSWORD", BootstrapConfig.falkordb_password)
 
@@ -184,21 +188,29 @@ def _parse_postgres_install_mode(value: object) -> PostgresInstallMode | None:
     raise BootstrapConfigError("postgres_install_mode must be: docker")
 
 
+def _parse_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BootstrapConfigError(f"{field_name} must be an integer")
+    return value
+
+
+def _parse_str(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise BootstrapConfigError(f"{field_name} must be a string")
+    return value
+
+
 def _parse_optional_str(value: object, field_name: str) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str):
-        raise BootstrapConfigError(f"{field_name} must be a string")
-    text = str(value)
+    text = _parse_str(value, field_name)
     return text if text.strip() else None
 
 
 def _parse_optional_daemon_url(value: object) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str):
-        raise BootstrapConfigError("daemon_url must be a string")
-    return str(value)
+    return _parse_str(value, "daemon_url")
 
 
 def _validate_bootstrap_file_permissions(path: Path) -> None:
