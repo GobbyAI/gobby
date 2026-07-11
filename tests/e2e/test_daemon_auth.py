@@ -94,7 +94,7 @@ def _protected_requests(session_id: str) -> list[tuple[str, str, dict[str, objec
         ("GET", "/api/admin/config", None),
         ("GET", f"/api/sessions/{session_id}", None),
         ("POST", "/api/hooks/execute", _hook_payload()),
-        ("POST", "/mcp/mcp", _MCP_INITIALIZE),
+        ("POST", "/mcp", _MCP_INITIALIZE),
         ("POST", "/memory/dream", {"dry_run": True, "wait": True}),
     ]
 
@@ -281,6 +281,7 @@ def test_http_auth_matrix(daemon_instance: DaemonInstance) -> None:
         follow_redirects=True,
     ) as authenticated:
         _assert_authenticated_http_matrix(authenticated, daemon_instance)
+        assert _request(authenticated, "POST", "/mcp/mcp", _MCP_INITIALIZE).status_code == 404
 
 
 @pytest.mark.asyncio

@@ -124,8 +124,8 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 curl -fsS -H "X-Gobby-Local-Token: $TOKEN" \
   "$BASE/api/admin/status" >/dev/null
 
-# FastMCP is mounted at /mcp; its current transport endpoint is /mcp/mcp.
-curl -fsS "$BASE/mcp/mcp" \
+# FastMCP's streamable HTTP endpoint is /mcp.
+curl -fsS "$BASE/mcp" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \

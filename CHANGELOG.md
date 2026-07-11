@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web UI passwords are stored as salted scrypt hashes. Daemon startup
   automatically migrates a decryptable legacy encrypted `auth.password` value
   and removes the legacy entry.
+- Streamable HTTP MCP clients now connect directly to `/mcp`; the accidental
+  nested `/mcp/mcp` route has been removed.
 
 Set `auth_mode: disabled` in `bootstrap.yaml`, or run `gobby install --auth-mode
 disabled`, only for an explicitly trusted isolated environment.

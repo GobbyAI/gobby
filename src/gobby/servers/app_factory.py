@@ -13,6 +13,8 @@ import httpx as httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.applications import Starlette
+from starlette.routing import Route
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.hook_manager import HookManager
@@ -59,6 +61,11 @@ __all__ = [
     "httpx",
     "logger",
 ]
+
+
+def _register_mcp_http_route(app: FastAPI, mcp_app: Starlette) -> None:
+    """Register the FastMCP sub-application at its canonical external path."""
+    app.router.routes.append(Route("/mcp", endpoint=mcp_app, name="mcp", include_in_schema=False))
 
 
 def create_app(server: "HTTPServer") -> FastAPI:
@@ -131,8 +138,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
     _register_routes(app, server)
 
     if mcp_app is not None:
-        app.mount("/mcp", mcp_app)
-        logger.debug("MCP server mounted at /mcp")
+        _register_mcp_http_route(app, mcp_app)
+        logger.debug("MCP server registered at /mcp")
 
     _mount_ws_proxy(app, server)
 

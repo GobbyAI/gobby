@@ -4,7 +4,7 @@ This guide is the HTTP reference for the Gobby 0.5.0 daemon. The daemon exposes
 three HTTP-facing surfaces:
 
 - JSON REST endpoints under `/api/*`
-- FastMCP HTTP transport mounted at `/mcp`
+- FastMCP HTTP transport available at `/mcp`
 - WebSocket proxy routes mounted at `/ws`
 
 The route source of truth is `src/gobby/servers/app_factory.py` plus the router
@@ -52,7 +52,7 @@ credentials, in precedence order:
 
 The plaintext token lives at `$GOBBY_HOME/local_cli_token` (default
 `~/.gobby/local_cli_token`) with mode `0600`. External streamable-HTTP MCP
-clients must send the bearer header to the `/mcp` mount. Gobby CLI, hook,
+clients must send the bearer header to the `/mcp` endpoint. Gobby CLI, hook,
 stdio-proxy, and daemon-aware Rust clients read the token file automatically.
 
 The complete unauthenticated HTTP surface is:
@@ -87,7 +87,7 @@ Unauthenticated protected API requests return `401` with:
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/mcp` | MCP HTTP transport | FastMCP protocol mount. External clients send the local-token bearer header. |
+| `/mcp` | MCP HTTP transport | FastMCP protocol endpoint. External clients send the local-token bearer header. |
 | `/ws` | WebSocket | Cookie-authenticated proxy to the standalone WebSocket server. |
 | `/ws/{path}` | WebSocket | Cookie-authenticated proxy subpaths to the standalone WebSocket server. |
 | `/assets/*` | `GET` | Production UI assets, mounted only when production UI mode is enabled and assets exist. |
@@ -243,7 +243,7 @@ Returns `{ "session": null }` when no matching session exists.
 
 ## MCP Proxy
 
-The REST MCP proxy is under `/api/mcp`. The raw FastMCP protocol mount remains
+The REST MCP proxy is under `/api/mcp`. The raw FastMCP protocol endpoint remains
 available at `/mcp`.
 
 | Method | Route | Purpose |
