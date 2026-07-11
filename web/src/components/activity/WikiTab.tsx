@@ -83,7 +83,9 @@ function ModeBody({
   onOpenGraph,
   onSearchVault,
 }: ModeBodyProps) {
-  const offline = summary.state === "unavailable";
+  // Loading counts as offline for composers: asks/launches stay disabled
+  // until the gateway's state is actually known.
+  const offline = summary.state === "unavailable" || summary.state === "loading";
   if (mode === "ask") {
     return (
       <WikiAskMode scope={scope} nav={nav} offline={offline} onSearchVault={onSearchVault} />
@@ -137,8 +139,8 @@ export const WikiTab = memo(function WikiTab({
   const wiki = useWiki({ projectId, topic });
   const scope = useMemo<WikiFetchScope>(() => ({ projectId, topic }), [projectId, topic]);
   const summary = useMemo(
-    () => summarizeWikiStatus(wiki.status, wiki.health, wiki.error),
-    [wiki.error, wiki.health, wiki.status],
+    () => summarizeWikiStatus(wiki.status, wiki.health, wiki.error, wiki.isLoading),
+    [wiki.error, wiki.health, wiki.isLoading, wiki.status],
   );
 
   useEffect(() => {
@@ -270,7 +272,7 @@ export const WikiTab = memo(function WikiTab({
         onSearchChange={setSearch}
         wide={wide}
         onOpenGraph={handleOpenGraph}
-        actionsDisabled={summary.state === "unavailable"}
+        actionsDisabled={summary.state === "unavailable" || summary.state === "loading"}
         actions={{
           onRefreshIndex: () => void actions.refreshIndex(),
           onRefreshCodewiki: () => void actions.refreshCodewiki(),

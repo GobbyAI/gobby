@@ -8,12 +8,21 @@ interface ArtifactContextValue {
 
 export const ArtifactContext = createContext<ArtifactContextValue | null>(null)
 
+// Provider-less consumers are legitimate (the wiki reader renders chat code
+// blocks with the no-op fallback), so the dev diagnostic fires once — a wiki
+// page full of code fences must not flood the console.
+let warnedMissingProvider = false
+
+function warnMissingProviderOnce() {
+  if (process.env.NODE_ENV !== 'development' || warnedMissingProvider) return
+  warnedMissingProvider = true
+  console.warn('useArtifactContext: no ArtifactContext provider found, using no-op fallback')
+}
+
 export function useArtifactContext() {
   const ctx = useContext(ArtifactContext)
   if (!ctx) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('useArtifactContext: no ArtifactContext provider found, using no-op fallback')
-    }
+    warnMissingProviderOnce()
     return { openCodeAsArtifact: () => {}, openFileAsArtifact: () => {} }
   }
   return ctx

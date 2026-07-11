@@ -235,16 +235,17 @@ export function resolveWikilinkTarget(index: WikiNodeIndex, target: string): str
 }
 
 /**
- * Graph node kind → design token var. Deutan-safe per .impeccable.md: state
- * is never hue-only (the graph view pairs color with node labels/shape), and
- * unresolved targets use the muted text token rather than a hue.
+ * Graph node kind → design token var. Deutan-safe per .impeccable.md: the
+ * dedicated --wiki-node-* tokens form a lightness ladder so kinds stay
+ * distinguishable in grayscale (canvas dots carry no label), and unresolved
+ * targets use the muted text token plus the hollow-ring shape.
  */
 export const WIKI_NODE_COLOR_VARS: Record<string, string> = {
-  wiki_page: "--accent",
-  code: "--color-info",
-  document: "--color-success-foreground",
-  source: "--color-warning-foreground",
-  citation: "--color-review",
+  wiki_page: "--wiki-node-page",
+  code: "--wiki-node-code",
+  document: "--wiki-node-document",
+  source: "--wiki-node-source",
+  citation: "--wiki-node-citation",
   unresolved_target: "--text-muted",
 };
 

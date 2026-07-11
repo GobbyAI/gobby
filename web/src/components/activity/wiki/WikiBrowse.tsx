@@ -195,6 +195,8 @@ export function WikiBrowse({
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
+      // Claim the shortcut before the window-level app palette sees it.
+      event.stopPropagation();
       setQuickOpenVisible(true);
     }
   };

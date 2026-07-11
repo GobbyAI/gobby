@@ -134,6 +134,25 @@ describe("QuickMenu (#17016)", () => {
     expect(screen.queryByRole("menu", { name: "Row actions" })).toBeNull();
   });
 
+  it("returns focus to the trigger when the menu closes on Escape", () => {
+    render(
+      <QuickMenu
+        triggerLabel="Open row actions"
+        menuLabel="Row actions"
+        items={[{ label: "First", onSelect: vi.fn() }]}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Open row actions" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("menu", { name: "Row actions" }), {
+      key: "Escape",
+    });
+
+    expect(screen.queryByRole("menu", { name: "Row actions" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("renders destructive items with an icon so hue is not the only signal", () => {
     render(
       <QuickMenu

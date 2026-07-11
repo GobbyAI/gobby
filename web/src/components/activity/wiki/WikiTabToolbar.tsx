@@ -136,7 +136,9 @@ export function WikiTabToolbar({
           <QuickMenu items={menuItems} menuLabel="Wiki actions" triggerLabel="Wiki actions" />
         </div>
       </div>
-      {!wide ? searchInput : null}
+      {/* Row wrapper: the shared input is flex:1 1 9rem, which grows
+          vertically if dropped straight into this column container. */}
+      {!wide ? <div className="flex">{searchInput}</div> : null}
     </div>
   );
 }
@@ -156,7 +158,8 @@ function InfoIcon() {
  * banner informs rather than blocks.
  */
 export function WikiDegradedBanner({ summary }: { summary: WikiStatusSummary }) {
-  if (summary.state === "ready") return null;
+  // "loading" is the first fetch in flight — not an outage; stay quiet.
+  if (summary.state === "ready" || summary.state === "loading") return null;
   const offline = summary.state === "unavailable";
   const label = offline
     ? `Wiki gateway offline${summary.message ? ` — ${summary.message}` : ""}`

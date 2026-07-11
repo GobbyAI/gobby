@@ -333,6 +333,32 @@ describe("WikiGraphView shell (4.1.2)", () => {
     expect(capturedRef.current?.graphData.nodes).toHaveLength(MAX_GRAPH_NODES);
     expect(screen.getByText(/top 1,500 of 1,600/i)).toBeInTheDocument();
   });
+
+  it("shows a teaching empty state instead of a bare canvas when the graph has no nodes", async () => {
+    stubGraphFetch({
+      graph: () =>
+        jsonResponse({
+          ok: true,
+          command: "graph",
+          stderr: "",
+          payload: {
+            command: "graph",
+            degraded: false,
+            degraded_sources: [],
+            nodes: [],
+            edges: { links: [], imports: [], calls: [], callers: [], trust: [], audit: [] },
+            analytics: null,
+          },
+        }),
+    });
+    const user = userEvent.setup();
+    render(<WikiHarness />);
+
+    await user.click(await screen.findByRole("button", { name: "Open graph" }));
+
+    expect(await screen.findByText("Nothing to graph")).toBeInTheDocument();
+    expect(screen.queryByTestId("force-graph-2d")).not.toBeInTheDocument();
+  });
 });
 
 describe("WikiForceGraph interactions (4.1.1, 4.1.4)", () => {

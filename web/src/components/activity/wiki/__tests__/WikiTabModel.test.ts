@@ -205,11 +205,14 @@ describe("buildNodeIndex / resolveWikilinkTarget", () => {
 });
 
 describe("graph display mapping", () => {
-  it("maps every graph node kind to a design token var", () => {
-    expect(wikiNodeColorVar("wiki_page")).toBe("--accent");
-    for (const kind of ["source", "citation", "code", "document", "unresolved_target"]) {
-      expect(wikiNodeColorVar(kind)).toMatch(/^--/);
-    }
+  it("maps every graph node kind to a dedicated wiki node token", () => {
+    // Kinds separate by lightness alone (grayscale/deutan §6.1), so each gets
+    // its own ladder token instead of borrowing clustered semantic colors.
+    expect(wikiNodeColorVar("wiki_page")).toBe("--wiki-node-page");
+    expect(wikiNodeColorVar("code")).toBe("--wiki-node-code");
+    expect(wikiNodeColorVar("document")).toBe("--wiki-node-document");
+    expect(wikiNodeColorVar("source")).toBe("--wiki-node-source");
+    expect(wikiNodeColorVar("citation")).toBe("--wiki-node-citation");
   });
 
   it("falls back to muted for unknown kinds", () => {

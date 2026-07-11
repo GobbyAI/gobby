@@ -87,7 +87,7 @@ async function parseBody(response: Response): Promise<unknown> {
 
 function errorMessage(body: unknown, status: number): string {
   const detail = asRecord(body).detail;
-  if (typeof detail === "string") return detail;
+  if (typeof detail === "string") return humanizeWikiError(detail);
   const detailRecord = asRecord(detail);
   const message = fieldText(asRecord(detailRecord.error), "message") ?? fieldText(detailRecord, "stderr");
   return message ?? `HTTP ${status}`;
@@ -134,7 +134,10 @@ function normalizeGraphEdge(value: unknown, kind: string): WikiGraphEdge | null 
 }
 
 export function normalizeGraph(payload: unknown): WikiGraphPayload {
-  const record = asRecord(payload);
+  const outer = asRecord(payload);
+  // Live gwiki envelopes nest everything under payload.graph (nodes, edges,
+  // analytics, degraded flags); flat payloads carry the fields directly.
+  const record = outer.graph === undefined ? outer : asRecord(outer.graph);
   const nodes = asList(record.nodes)
     .map(normalizeGraphNode)
     .filter((node): node is WikiGraphNode => node !== null);
@@ -424,13 +427,31 @@ export interface WikiServiceState {
 }
 
 export interface WikiStatusSummary {
-  state: "ready" | "degraded" | "unavailable";
+  state: "loading" | "ready" | "degraded" | "unavailable";
   message: string | null;
   services: WikiServiceState[];
   degradedServices: string[];
   brokenLinks: number;
   stalePages: number;
   uncompiledSources: number;
+}
+
+/** Gateway failures arrive as raw bodies like `Error: {"code":…,"message":…}`;
+ * banner copy wants the human `message` field, not the machine envelope. */
+function humanizeWikiError(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return text;
+  try {
+    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+    if (parsed && typeof parsed === "object") {
+      const message = (parsed as Record<string, unknown>).message;
+      if (typeof message === "string" && message.trim()) return message;
+    }
+  } catch {
+    // Not an embedded JSON envelope — keep the original text.
+  }
+  return text;
 }
 
 /**
@@ -441,11 +462,20 @@ export function summarizeWikiStatus(
   status: WikiEnvelope | null,
   health: WikiEnvelope | null,
   error?: string | null,
+  isLoading = false,
 ): WikiStatusSummary {
   if (error || !status) {
+    // No envelope and no failure yet means the first fetch is still in
+    // flight — that's "loading", not an outage banner. A real error wins
+    // even while a retry is in flight.
+    const loading = isLoading && !error;
     return {
-      state: "unavailable",
-      message: error ?? "Wiki status unavailable",
+      state: loading ? "loading" : "unavailable",
+      message: loading
+        ? "Checking wiki status…"
+        : error
+          ? humanizeWikiError(error)
+          : "Wiki status unavailable",
       services: [],
       degradedServices: [],
       brokenLinks: 0,

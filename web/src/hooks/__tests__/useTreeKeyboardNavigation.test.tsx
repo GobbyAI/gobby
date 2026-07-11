@@ -127,6 +127,21 @@ describe("useTreeKeyboardNavigation", () => {
     expect(screen.getByTestId("row-a")).toHaveAttribute("tabindex", "0");
   });
 
+  it("jumps to the first and last visible rows with Home and End", () => {
+    const onSelect = vi.fn();
+    render(<Harness onSelect={onSelect} />);
+    // Expand "a" so the visible list is a, a1, a2, b.
+    fireEvent.keyDown(screen.getByTestId("row-a"), { key: "ArrowRight" });
+
+    fireEvent.keyDown(screen.getByTestId("row-a"), { key: "End" });
+    expect(screen.getByTestId("row-b")).toHaveAttribute("tabindex", "0");
+    expect(onSelect).toHaveBeenLastCalledWith("b");
+
+    fireEvent.keyDown(screen.getByTestId("row-b"), { key: "Home" });
+    expect(screen.getByTestId("row-a")).toHaveAttribute("tabindex", "0");
+    expect(onSelect).toHaveBeenLastCalledWith("a");
+  });
+
   it("selects on Enter and Space", () => {
     const onSelect = vi.fn();
     render(<Harness onSelect={onSelect} />);

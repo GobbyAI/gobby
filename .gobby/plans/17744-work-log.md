@@ -1173,3 +1173,54 @@ First `close_task` attempt returned `validation_failed` while the LLM verdict's 
 - **Refactor/final green**: purity/compiler-lint refactor (tick-counting stall detection, `useSyncExternalStore`, memo drop) then `(cd web && npm test -- src/components/activity/wiki src/hooks/__tests__/usePipelineExecutions.test.ts src/hooks/__tests__/useWebSocketEvent.test.ts src/components/activity/__tests__/useActivityPanel.test.tsx)` → `Test Files 16 passed`, `Tests 223 passed (223)` (run twice); plus `src/components/activity/__tests__ src/components/shared` → 365 passed; `npm run type-check` clean; scoped `npx eslint … --max-warnings 0` clean.
 - **Test-quality audit**: `uv run gobby test-quality audit <5 touched test paths> --baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity high` → 65 tests scanned, 0 issues, 0 new ≥ high.
 - Coverage judgment: browser/UI level (vitest/jsdom over the full WikiTab harness with stubbed `/api/pipelines/*`, `/api/providers/models`, and wiki routes) for the mode itself; hook level for the new infra (`pipelineName` seeding, `useWebSocketConnected` open/close/reconnect via the existing fresh-module WS harness, `gobby:show-activity-tab` tab switching incl. unknown-tab rejection). Gaps: elapsed-label ticking (cosmetic, `useNow` already covered elsewhere) and the WS-reconnect + poll interaction end-to-end (each half covered separately); visual verification in both themes lands with §6.1.
+
+## #17768 — Polish and accessibility pass (§6.1)
+
+**Baseline (§7 command gates)**: all clean before any edits — `npm run type-check` ✓, `npx vitest run src/components/activity/wiki` 173/173 ✓, `lint:js` / `lint:css` / `lint:tokens` ✓. The work is keyboard gaps, the 6.1.2 `WikiA11y.test.tsx` sweep, and DevTools walkthrough findings.
+
+**Keyboard seam survey** (all four modes):
+
+- Mode switcher: shared `SegmentedControl` already `role="radiogroup"` with roving tabIndex + arrow handling.
+- Browse/code tree: `useTreeKeyboardNavigation` covers arrows + Enter/Space; **Home/End missing** (plan requires "tree arrows/Home/End"). Consumers: `WikiPageTree`, `TasksTabList` — additive fix in the shared hook.
+- Quick-open: combobox pattern complete (Esc `preventDefault`+`stopPropagation`, arrows, Enter, `aria-activedescendant`).
+- Editor: Cmd+S via shared `useDetailDraft` (covered by existing editor tests).
+- Graph: `WikiForceGraph` `role="application"` tabIndex=0 with +/- zoom and arrow pan; `WikiGraphView` window-level Escape guarded by `event.defaultPrevented`; reduced-motion already threaded (0ms transitions, warmup/cooldown swap).
+- Kebabs: shared `QuickMenu` menu pattern (arrows/Home/End/Enter/Esc, auto-focus first item, clamped fixed positioning). **Defect: Escape closes the menu but never restores focus to the trigger** — the focused menuitem unmounts and focus drops to `document.body`, stranding keyboard users (APG menu-button pattern requires focus return).
+- Esc chain (quick-open → graph → kebab): quick-open stops propagation + prevents default; kebab prevents default; graph's window listener skips `defaultPrevented` events — each Esc peels exactly one layer. Correct as built.
+
+**Fix list (TDD red-first):**
+
+1. `useTreeKeyboardNavigation`: Home → first visible row, End → last visible row (selection follows focus). Unit tests in `useTreeKeyboardNavigation.test.tsx` + browse coverage in `WikiA11y.test.tsx`.
+2. `QuickMenu`: Escape restores focus to the trigger button (no-op for anchor-positioned menus, which have no trigger). Unit test in `QuickMenu.test.tsx` + wiki kebab coverage in `WikiA11y.test.tsx`.
+3. NEW `wiki/__tests__/WikiA11y.test.tsx` (acceptance 6.1.2): keyboard-only sweep — mode radiogroup arrows across all four modes, tree Home/End, kebab Esc focus-restore, code-mode tree operation, ask citation chips reachable/activatable, research options disclosure + switch keyboard toggles. Existing files already pin: tree arrows+Enter, Cmd+K open/Esc close, graph Esc/zoom, ask Enter submit, editor Cmd+S.
+
+**Then**: DevTools walkthrough per recipe §7 — dark + light (ask mode both themes was explicitly deferred here from #17766), grayscale state legibility (dirty dot, run status, unresolved links, graph kinds), AA contrast spot-checks on wiki token usages, 390×844 + 360px-split reachability, reduced-motion, empty/loading/error/degraded per mode. Fixes land as found; any new color goes through `tokens.css`.
+
+### Implementation notes (#17768)
+
+Keyboard fixes (all red-first):
+
+- `hooks/useTreeKeyboardNavigation.ts`: Home/End jump to the first/last visible row (`NavKey` union + `navigate` cases); consumers WikiPageTree + TasksTabList inherit. Also replaced the `requestAnimationFrame`-gated DOM focus with a `useLayoutEffect` keyed on a focus sequence — browsers suspend rAF in occluded windows, so queued focus moves either died silently or fired all at once on the next paint; the layout effect lands post-commit deterministically (proved live in a non-painting headless window where the rAF version demonstrably never moved focus). External selection sync still never steals DOM focus (only `focusRow` arms the pending ref).
+- `activity/QuickMenu.tsx`: Escape now returns focus to the trigger (the focused menuitem unmounts, so focus was dropping to `<body>`); anchor-mode menus no-op (no trigger).
+- Cmd+K conflict: inside the wiki pane the shortcut opened BOTH the wiki quick-open and the app command palette stacked. `WikiBrowse.handleKeyDown` now `stopPropagation()`s its claim, and `app/useAppKeyboardShortcuts.ts` gained a systemic `e.defaultPrevented` guard so any scoped surface that claims a key wins.
+- NEW `wiki/__tests__/WikiA11y.test.tsx` (acceptance 6.1.2, 8 tests): mode radiogroup arrows/Home/End across all four modes, browse + code tree Home/End, quick-open keyboard select, Cmd+K claim (no window leak), kebab rove + Escape focus-restore, ask history reopen + citation chip activation by key, research disclosure/switch/launch by key. Existing files already pin tree arrows+Enter, Cmd+K open/Esc, graph Esc + zoom keys, ask Enter submit, editor Cmd+S.
+
+Walkthrough findings fixed (each red-first where testable):
+
+- **Graph parsed live data as permanently empty**: `normalizeGraph` read `payload.nodes`, but the real daemon envelope nests everything under `payload.graph.{nodes,edges,analytics,degraded,…}` (verified via authed curl: 1,243 knowledge / 3,638 all nodes). Normalizer now unwraps `payload.graph` when present; regression test pins the live shape. Post-fix the live graph renders 1,500 capped nodes with the cap chip.
+- **Grayscale collapse of graph node kinds**: kinds borrowed clustered semantic tokens (L70–82 dark). New dedicated `--wiki-node-{page,source,code,citation,document}` tokens in `tokens.css` (both themes) form a ≥10–14pt lightness ladder so canvas dots separate without hue; `WIKI_NODE_COLOR_VARS` remapped. Grayscale screenshot now clearly separates kinds, legend included.
+- **Empty graph rendered a bare canvas**: 0-node scenes now render `ActivityPanelEmpty` ("Nothing to graph") with a Refresh action, matching the fetch-error treatment.
+- **Offline banner during normal load**: `summarizeWikiStatus` treated the in-flight first status fetch as an outage ("Browse, ask, and research are unavailable") on every mount. Added a `loading` summary state (`isLoading` threaded from `useWiki`); the banner stays quiet while loading, composers/actions stay disabled until status is known, and a real error still wins during retries.
+- **Raw JSON in error copy**: gateway failures render `detail`'s embedded JSON envelope verbatim (`Error: {"code":…,"message":…}`). `humanizeWikiError` extracts the `message` field at the `errorMessage` throw funnel + the summarize fallback; tree/banner copy now reads the human message.
+- **Narrow toolbar search grew vertically**: shared `.activity-panel-search` is `flex: 1 1 9rem`; the wiki toolbar's narrow branch dropped it directly into a column flex container (~200px-tall input on mobile + narrow desktop panels). Wrapped in a row.
+- **Dev console flood**: provider-less `useArtifactContext` consumers (every code fence in the wiki reader) each warned; now warns once per load via a module function (React Compiler forbids global reassignment inside hook bodies).
+- **Dead dev event socket**: `web/vite.config.ts` proxied `/ws` to the raw WebSocket port, which requires a Bearer header browsers can't send under 0.5.0 required auth — every `npm run dev` session had a permanent reconnect loop. Proxy now targets the daemon's HTTP `/ws` route, which authenticates the session cookie and injects the token itself.
+
+### Verification evidence (#17768)
+
+- **Red**: WikiA11y + hook/QuickMenu additions → `6 failed` (tree Home/End ×3, kebab focus-restore ×2, + selector fix); Cmd+K conflict tests → `2 failed`; graph empty-state → red; nested-envelope, loading-state, humanize-error, warn-once → red each before their fix.
+- **Green/final**: `npx vitest run` over all 23 touched suites → `239 passed (239)` (run twice); `npm run type-check`, `lint:js --max-warnings 0`, `lint:css`, `lint:tokens` all clean.
+- **Test-quality audit**: 8 touched test files, 95 tests, 0 issues, 0 new ≥ high.
+- **Live keyboard walkthrough** (Chrome DevTools MCP against the dev server, real daemon data): tree arrows/Home/End move real DOM focus (incl. in a non-painting window post-fix), tree Enter opens pages, Cmd+K opens only the wiki quick-open, quick-open type→Enter navigates, kebab Enter/arrows/Escape with focus returning to the trigger, graph +/− zoom & arrow pan on the `role=application` canvas, Escape peels exactly one layer (kebab → quick-open → graph), `gobby:show-activity-tab` escape hatch verified switching real tabs.
+- **Headless visual sweep** (playwright-core + Chrome for Testing, screenshots in session scratchpad): dark + light × browse/graph/ask/research (ask both themes closes the #17766 deferral); grayscale browse + graph (kind ladder separates); AA spot-checks via canvas-normalized sRGB (light: tree 16.4, muted 7.73, mode radio 17.4; dark: tree 15.5, muted 6.8 — all ≥ 4.5); 390×844 + 360px: no horizontal scroll, mode radios/graph button reachable, stacked tree/reader usable, breadcrumbs render (44px touch targets ship via `pointer-coarse:` variants); reduced-motion context renders a settled graph; empty (graph "Nothing to graph", browse ⌘K hint, ask teaching copy), degraded/offline (personal-vault project: humanized banner), and loading (no phantom outage banner) audited. Console: no errors; one intentional dev-only warning per load.
+- Environment notes: the walkthrough authenticated with a short-lived minted `gobby_session` row (2h expiry); wiki requests were pinned to the populated project via an injected fetch wrapper — a data-scoping harness, not a product change.

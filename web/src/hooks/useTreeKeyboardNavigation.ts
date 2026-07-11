@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 /**
@@ -13,7 +13,7 @@ export interface TreeNavItem {
   isExpanded: boolean;
 }
 
-type ArrowKey = "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight";
+type NavKey = "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight" | "Home" | "End";
 
 interface UseTreeKeyboardNavigationOptions {
   /** Flattened visible rows, in DOM order. */
@@ -44,7 +44,8 @@ export interface TreeKeyboardNavigation {
  *
  * Keyboard model: ArrowUp/Down move between visible rows; ArrowRight expands a
  * collapsed parent or steps into its first child; ArrowLeft collapses an open
- * parent or steps to the parent row; Enter/Space activate (select) the row.
+ * parent or steps to the parent row; Home/End jump to the first/last visible
+ * row; Enter/Space activate (select) the row.
  */
 export function useTreeKeyboardNavigation({
   items,
@@ -72,10 +73,26 @@ export function useTreeKeyboardNavigation({
     else rowRefs.current.delete(id);
   }, []);
 
+  // Keyboard-initiated focus moves land in a layout effect after the commit
+  // (not requestAnimationFrame, which browsers suspend in occluded windows —
+  // queued focus moves would then fire all at once on the next paint). Only
+  // focusRow arms this; external selection sync never steals DOM focus.
+  const [focusSeq, setFocusSeq] = useState(0);
+  const pendingFocusRef = useRef<string | null>(null);
+
   const focusRow = useCallback((id: string) => {
     setFocusedId(id);
-    requestAnimationFrame(() => rowRefs.current.get(id)?.focus());
+    pendingFocusRef.current = id;
+    setFocusSeq((seq) => seq + 1);
   }, []);
+
+  useLayoutEffect(() => {
+    if (focusSeq === 0) return;
+    const id = pendingFocusRef.current;
+    if (id === null) return;
+    pendingFocusRef.current = null;
+    rowRefs.current.get(id)?.focus();
+  }, [focusSeq]);
 
   // Move focus to another row, also selecting it when selection follows focus.
   const moveTo = useCallback(
@@ -87,10 +104,22 @@ export function useTreeKeyboardNavigation({
   );
 
   const navigate = useCallback(
-    (id: string, key: ArrowKey) => {
+    (id: string, key: NavKey) => {
       const index = items.findIndex((item) => item.id === id);
       if (index === -1) return;
       const item = items[index];
+
+      if (key === "Home") {
+        const first = items[0];
+        if (first && first.id !== id) moveTo(first.id);
+        return;
+      }
+
+      if (key === "End") {
+        const last = items[items.length - 1];
+        if (last && last.id !== id) moveTo(last.id);
+        return;
+      }
 
       if (key === "ArrowDown") {
         const next = items[index + 1];
@@ -153,7 +182,9 @@ export function useTreeKeyboardNavigation({
         event.key === "ArrowDown" ||
         event.key === "ArrowUp" ||
         event.key === "ArrowLeft" ||
-        event.key === "ArrowRight"
+        event.key === "ArrowRight" ||
+        event.key === "Home" ||
+        event.key === "End"
       ) {
         event.preventDefault();
         navigate(id, event.key);

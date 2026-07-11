@@ -243,6 +243,33 @@ describe("summarizeWikiStatus", () => {
     expect(summary.message).toBe("HTTP 503");
     expect(summary.services).toEqual([]);
   });
+
+  it("surfaces the message field instead of a raw JSON gateway error", () => {
+    const summary = summarizeWikiStatus(
+      null,
+      null,
+      'Error: { "code": "invalid_scope", "message": "failed to read project identity from /Users/x/.gobby/personal (invalid_scope)" }',
+    );
+    expect(summary.state).toBe("unavailable");
+    expect(summary.message).toBe(
+      "failed to read project identity from /Users/x/.gobby/personal (invalid_scope)",
+    );
+  });
+
+  it("keeps non-JSON error text verbatim", () => {
+    const summary = summarizeWikiStatus(null, null, "Wiki gateway timed out { after 5s");
+    expect(summary.message).toBe("Wiki gateway timed out { after 5s");
+  });
+
+  it("reports loading (not an outage) while the first status fetch is in flight", () => {
+    const summary = summarizeWikiStatus(null, null, null, true);
+    expect(summary.state).toBe("loading");
+  });
+
+  it("still reports unavailable when a refresh is in flight after a real error", () => {
+    const summary = summarizeWikiStatus(null, null, "HTTP 503", true);
+    expect(summary.state).toBe("unavailable");
+  });
 });
 
 describe("fetchers", () => {
@@ -257,6 +284,52 @@ describe("fetchers", () => {
     expect(graph.nodes).toHaveLength(6);
   });
 
+  it("fetchGraph unwraps the live daemon envelope that nests under payload.graph", async () => {
+    // Live `gwiki graph` responses (verified against the running daemon) carry
+    // payload.{command, scope, graph:{nodes, edges, analytics, degraded, …}}.
+    mockFetch({
+      ok: true,
+      command: "graph",
+      stderr: "",
+      payload: {
+        command: "graph",
+        scope: { id: "p1", kind: "project" },
+        graph: {
+          command: "graph",
+          degraded: true,
+          degraded_sources: ["falkordb"],
+          analytics: null,
+          nodes: [
+            {
+              id: "document-knowledge-concepts-gobby-md-aa01",
+              kind: "wiki_page",
+              path: "knowledge/concepts/gobby.md",
+              title: "Gobby",
+            },
+          ],
+          edges: {
+            links: [
+              {
+                source: "document-knowledge-concepts-gobby-md-aa01",
+                target: "document-knowledge-concepts-gwiki-md-aa02",
+              },
+            ],
+            imports: [],
+            calls: [],
+            callers: [],
+            trust: [],
+            audit: [],
+          },
+        },
+      },
+    });
+    const graph = await fetchGraph({ projectId: "p1" }, "knowledge");
+    expect(graph.nodes).toHaveLength(1);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.degraded).toBe(true);
+    expect(graph.degradedSources).toEqual(["falkordb"]);
+  });
+
   it("fetchPages passes prefix and topic scope", async () => {
     const mock = mockFetch(pagesEnvelope);
     const { pages } = await fetchPages({ topic: "auth" }, "knowledge/");
@@ -265,6 +338,18 @@ describe("fetchers", () => {
     expect(url).toContain("topic=auth");
     expect(url).toContain("prefix=knowledge%2F");
     expect(pages).toHaveLength(9);
+  });
+
+  it("rejects with the human message when the gateway detail is a JSON error blob", async () => {
+    mockFetch(
+      { detail: 'Error: { "code": "invalid_scope", "message": "failed to read project identity" }' },
+      503,
+    );
+    // Exact match — the raw blob also contains this substring, so toThrow's
+    // substring semantics would pass without the humanizing fix.
+    await expect(fetchPages({}, undefined)).rejects.toMatchObject({
+      message: "failed to read project identity",
+    });
   });
 
   it("fetchAsk posts nothing — it reads /api/wiki/ask with llm and signal", async () => {
