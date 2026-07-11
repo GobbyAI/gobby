@@ -10,6 +10,7 @@ import { load as loadYaml } from "js-yaml";
 import type { WikiEnvelope, WikiJson } from "../../../hooks/useWiki";
 import type {
   WikiGraphEdge,
+  WikiGraphInclude,
   WikiGraphNode,
   WikiGraphPayload,
   WikiOutputMeta,
@@ -475,7 +476,7 @@ export function summarizeWikiStatus(
 
 export async function fetchGraph(
   scope: WikiFetchScope,
-  include: "all" | "wiki" | "code" = "all",
+  include: WikiGraphInclude = "all",
 ): Promise<WikiGraphPayload> {
   const envelope = await readEnvelope(`/api/wiki/graph${wikiQuery(scope, { include })}`);
   return normalizeGraph(envelopePayload(envelope));

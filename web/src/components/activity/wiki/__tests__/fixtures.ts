@@ -661,3 +661,165 @@ export const browseReadCodeEnvelope: EnvelopeFixture = {
     degradations: [],
   },
 };
+
+/**
+ * Full-kind graph for the §4.1 graph view: wiki pages, code pages, a
+ * source/citation pair, an unresolved target, every edge layer (including a
+ * `callers` edge the scene must always drop), centrality degrees, and two
+ * communities.
+ */
+export const graphViewEnvelope: EnvelopeFixture = {
+  ok: true,
+  command: "graph",
+  stderr: "",
+  payload: {
+    command: "graph",
+    degraded: false,
+    degraded_sources: [],
+    nodes: [
+      {
+        id: "document-knowledge-concepts-gobby-md-aa01",
+        kind: "wiki_page",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: "knowledge/concepts/gobby.md",
+        title: "Gobby",
+      },
+      {
+        id: "document-knowledge-concepts-gwiki-md-aa02",
+        kind: "wiki_page",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: "knowledge/concepts/gwiki.md",
+        title: "Gwiki",
+      },
+      {
+        id: "document-code-files-src-gobby-runner-py-md-aa03",
+        kind: "code",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: "code/files/src/gobby/runner.py.md",
+        title: "src/gobby/runner.py",
+      },
+      {
+        id: "document-code-files-src-gobby-watcher-py-md-aa04",
+        kind: "code",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: "code/files/src/gobby/watcher.py.md",
+        title: "src/gobby/watcher.py",
+      },
+      {
+        id: "source-src-8218-aa05",
+        kind: "source",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: "knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
+        title: "Session: c1c0c073",
+      },
+      {
+        id: "citation-runner-aa06",
+        kind: "citation",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: null,
+        title: null,
+      },
+      {
+        id: "unresolved-code-modules-src-gobby-aa07",
+        kind: "unresolved_target",
+        scope_kind: "project",
+        scope_id: scope.id,
+        path: null,
+        title: "code/modules/src/gobby",
+      },
+    ],
+    edges: {
+      links: [
+        {
+          source: "document-knowledge-concepts-gobby-md-aa01",
+          target: "document-knowledge-concepts-gwiki-md-aa02",
+          kind: "links",
+          raw_target: "knowledge/concepts/gwiki",
+        },
+        {
+          source: "document-knowledge-concepts-gwiki-md-aa02",
+          target: "unresolved-code-modules-src-gobby-aa07",
+          kind: "links",
+          raw_target: "code/modules/src/gobby",
+        },
+      ],
+      imports: [
+        {
+          source: "document-code-files-src-gobby-runner-py-md-aa03",
+          target: "document-code-files-src-gobby-watcher-py-md-aa04",
+          kind: "imports",
+        },
+      ],
+      calls: [
+        {
+          source: "document-code-files-src-gobby-runner-py-md-aa03",
+          target: "document-code-files-src-gobby-watcher-py-md-aa04",
+          kind: "calls",
+        },
+      ],
+      callers: [
+        {
+          source: "document-code-files-src-gobby-watcher-py-md-aa04",
+          target: "document-code-files-src-gobby-runner-py-md-aa03",
+          kind: "callers",
+        },
+      ],
+      trust: [
+        {
+          source: "document-knowledge-concepts-gobby-md-aa01",
+          target: "source-src-8218-aa05",
+          kind: "trust",
+        },
+      ],
+      audit: [
+        {
+          source: "citation-runner-aa06",
+          target: "document-code-files-src-gobby-runner-py-md-aa03",
+          kind: "audit",
+        },
+      ],
+    },
+    analytics: {
+      bridges: [],
+      centrality: [
+        {
+          node: { id: "document-knowledge-concepts-gobby-md-aa01", kind: "wiki_page" },
+          degree: 5,
+          score: 0.5,
+        },
+        {
+          node: { id: "document-knowledge-concepts-gwiki-md-aa02", kind: "wiki_page" },
+          degree: 2,
+          score: 0.2,
+        },
+      ],
+      communities: [
+        {
+          id: "community-1",
+          nodes: [
+            { id: "document-knowledge-concepts-gobby-md-aa01", kind: "wiki_page" },
+            { id: "document-knowledge-concepts-gwiki-md-aa02", kind: "wiki_page" },
+          ],
+          weight: 2.0,
+        },
+        {
+          id: "community-2",
+          nodes: [
+            { id: "document-code-files-src-gobby-runner-py-md-aa03", kind: "code" },
+            { id: "document-code-files-src-gobby-watcher-py-md-aa04", kind: "code" },
+          ],
+          weight: 1.0,
+        },
+      ],
+      god_nodes: [],
+      hotspots: [],
+      unexpected_links: [],
+    },
+  },
+};

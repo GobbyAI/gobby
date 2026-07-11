@@ -6,7 +6,7 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import type { WikiMode } from "./WikiTabModel";
+import type { WikiGraphInclude, WikiMode } from "./WikiTabModel";
 
 export const WIKI_TAB_KEYS = {
   mode: "gobby:wiki-tab:mode",
@@ -90,6 +90,59 @@ export function storeLastPage(mode: WikiBrowseMode, path: string): void {
 /** Pages under code/ belong to code mode; everything else browses in wiki mode. */
 export function modeForPath(path: string): WikiMode {
   return path.startsWith("code/") ? "code" : "wiki";
+}
+
+/** §4.1 graph view settings, persisted as one JSON blob. */
+export interface WikiGraphSettings {
+  include: WikiGraphInclude;
+  sources: boolean;
+  unresolved: boolean;
+  orphans: boolean;
+  trust: boolean;
+  audit: boolean;
+  codeEdges: boolean;
+  communities: boolean;
+}
+
+export const DEFAULT_WIKI_GRAPH_SETTINGS: WikiGraphSettings = {
+  include: "all",
+  sources: false,
+  unresolved: false,
+  orphans: true,
+  trust: true,
+  audit: false,
+  codeEdges: true,
+  communities: false,
+};
+
+function boolOr(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function loadGraphSettings(): WikiGraphSettings {
+  const raw = readStoredValue(WIKI_TAB_KEYS.graph);
+  if (!raw) return { ...DEFAULT_WIKI_GRAPH_SETTINGS };
+  try {
+    const parsed = JSON.parse(raw) as Partial<WikiGraphSettings>;
+    const defaults = DEFAULT_WIKI_GRAPH_SETTINGS;
+    return {
+      include:
+        parsed.include === "knowledge" || parsed.include === "code" ? parsed.include : "all",
+      sources: boolOr(parsed.sources, defaults.sources),
+      unresolved: boolOr(parsed.unresolved, defaults.unresolved),
+      orphans: boolOr(parsed.orphans, defaults.orphans),
+      trust: boolOr(parsed.trust, defaults.trust),
+      audit: boolOr(parsed.audit, defaults.audit),
+      codeEdges: boolOr(parsed.codeEdges, defaults.codeEdges),
+      communities: boolOr(parsed.communities, defaults.communities),
+    };
+  } catch {
+    return { ...DEFAULT_WIKI_GRAPH_SETTINGS };
+  }
+}
+
+export function storeGraphSettings(settings: WikiGraphSettings): void {
+  writeStoredValue(WIKI_TAB_KEYS.graph, JSON.stringify(settings));
 }
 
 export const WIKI_NAV_HISTORY_CAP = 50;

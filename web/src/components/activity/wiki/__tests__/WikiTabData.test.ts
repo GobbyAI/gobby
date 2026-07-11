@@ -248,11 +248,12 @@ describe("summarizeWikiStatus", () => {
 describe("fetchers", () => {
   it("fetchGraph composes scope and include parameters", async () => {
     const mock = mockFetch(graphEnvelope);
-    const graph = await fetchGraph({ projectId: "p1" }, "wiki");
+    // "knowledge" matches the route enum (_GRAPH_INCLUDE_VALUES); "wiki" 400s.
+    const graph = await fetchGraph({ projectId: "p1" }, "knowledge");
     const url = String(mock.mock.calls[0][0]);
     expect(url).toContain("/api/wiki/graph?");
     expect(url).toContain("project=p1");
-    expect(url).toContain("include=wiki");
+    expect(url).toContain("include=knowledge");
     expect(graph.nodes).toHaveLength(6);
   });
 

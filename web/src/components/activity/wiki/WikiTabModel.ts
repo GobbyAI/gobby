@@ -46,6 +46,9 @@ export interface WikiGraphPayload {
   analytics: Record<string, unknown> | null;
 }
 
+/** Server-side graph scope filter (`_GRAPH_INCLUDE_VALUES` in wiki.py). */
+export type WikiGraphInclude = "all" | "knowledge" | "code";
+
 export type WikiPageKind =
   | "concept"
   | "topic"

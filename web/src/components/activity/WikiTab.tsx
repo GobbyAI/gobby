@@ -18,6 +18,7 @@ import {
 import { useWiki } from "../../hooks/useWiki";
 import { useDirtyGuard } from "./dirtyGuard";
 import { WikiBrowse } from "./wiki/WikiBrowse";
+import { WikiGraphView } from "./wiki/WikiGraphView";
 import { WikiSourcesManager } from "./wiki/WikiSourcesManager";
 import { useWikiTabActions, type WikiTabActions } from "./wiki/WikiTabActions";
 import {
@@ -191,11 +192,6 @@ export const WikiTab = memo(function WikiTab({
     });
   }, [dirtyGuard, requestPanelOverride]);
 
-  const handleCloseGraph = useCallback(() => {
-    setView("main");
-    releasePanelOverride();
-  }, [releasePanelOverride]);
-
   const handleTopicSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -241,18 +237,16 @@ export const WikiTab = memo(function WikiTab({
 
   if (view === "graph") {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-          <h3 className="text-sm font-semibold text-foreground">Wiki graph</h3>
-          <button type="button" onClick={handleCloseGraph} className={`ml-auto ${ghostButton}`}>
-            Close graph
-          </button>
-        </div>
-        <p className="max-w-[65ch] px-4 py-6 text-sm text-muted-foreground">
-          The interactive graph lands with the graph milestone. This view already takes the
-          full activity panel via the panel override.
-        </p>
-      </div>
+      <WikiGraphView
+        scope={scope}
+        initialInclude={mode === "code" ? "code" : null}
+        onOpenPage={(path) => {
+          setView("main");
+          void nav.openPage(path);
+        }}
+        onClose={() => setView("main")}
+        releasePanelOverride={releasePanelOverride}
+      />
     );
   }
 
