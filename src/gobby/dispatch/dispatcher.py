@@ -281,7 +281,8 @@ async def _run_heartbeat_unlocked(
             if isinstance(exc, (TypeError, AttributeError)) or (
                 isinstance(exc, psycopg.Error) and _database_error_aborts_scan(exc)
             ):
-                await run_db(mutex.release)
+                if mutex.run_id is None:
+                    await run_db(mutex.release)
                 raise
             logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
             try:
@@ -293,7 +294,8 @@ async def _run_heartbeat_unlocked(
                 )
             except Exception:
                 logger.debug("Failed to append dispatch failure audit marker", exc_info=True)
-            await run_db(mutex.release)
+            if mutex.run_id is None:
+                await run_db(mutex.release)
             result = _skipped(result)
             continue
         finally:
@@ -429,6 +431,7 @@ async def _execute_spawn_action(
         spawn_agent=spawn_agent,
         handle_spawn_failure=_handle_spawn_failure,
         cleanup_unattached_spawned_run=_cleanup_unattached_spawned_run,
+        quarantine_unterminated_spawned_run=_quarantine_unterminated_spawned_run,
         try_resume_daemon_stop_run=try_resume_daemon_stop_run,
     )
 
@@ -438,8 +441,28 @@ async def _cleanup_unattached_spawned_run(
     *,
     db: HubDatabase,
     error: str,
+) -> bool:
+    return await _spawn_actions.cleanup_unattached_spawned_run(run_id, db=db, error=error)
+
+
+async def _quarantine_unterminated_spawned_run(
+    action: SpawnAgentAction,
+    *,
+    run_id: str,
+    mutex: RuntimeDispatchMutex,
+    db: HubDatabase,
+    error: str,
 ) -> None:
-    await _spawn_actions.cleanup_unattached_spawned_run(run_id, db=db, error=error)
+    await _spawn_actions.quarantine_unterminated_spawned_run(
+        action,
+        run_id=run_id,
+        mutex=mutex,
+        db=db,
+        error=error,
+        run_db=run_db,
+        append_audit_marker=append_audit_marker,
+        escalate_task=escalate_task,
+    )
 
 
 async def execute_action(

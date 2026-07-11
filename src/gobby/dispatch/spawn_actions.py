@@ -38,6 +38,7 @@ async def execute_spawn_action(
     spawn_agent: Callable[..., object],
     handle_spawn_failure: AsyncCallback,
     cleanup_unattached_spawned_run: AsyncCallback,
+    quarantine_unterminated_spawned_run: AsyncCallback,
     try_resume_daemon_stop_run: AsyncCallback,
 ) -> str | None:
     resume_result = await try_resume_daemon_stop_run(
@@ -61,11 +62,20 @@ async def execute_spawn_action(
             raw_run_id = await cast(Awaitable[str | None], raw_run_id)
     except DispatchSpawnFailed as exc:
         if exc.spawned_run_id is not None:
-            await cleanup_unattached_spawned_run(
+            terminated = await cleanup_unattached_spawned_run(
                 exc.spawned_run_id,
                 db=db,
                 error=f"artifact persistence failed after spawn: {exc}",
             )
+            if not terminated:
+                await quarantine_unterminated_spawned_run(
+                    action,
+                    run_id=exc.spawned_run_id,
+                    mutex=mutex,
+                    db=db,
+                    error=f"artifact persistence failed after spawn: {exc}",
+                )
+                return exc.spawned_run_id
         raise
     except DispatchSpawnUnavailable:
         raise
@@ -78,7 +88,16 @@ async def execute_spawn_action(
         try:
             await run_db(mutex.attach, run_id)
         except RuntimeDispatchMutexError as exc:
-            await cleanup_unattached_spawned_run(run_id, db=db, error=str(exc))
+            terminated = await cleanup_unattached_spawned_run(run_id, db=db, error=str(exc))
+            if not terminated:
+                await quarantine_unterminated_spawned_run(
+                    action,
+                    run_id=run_id,
+                    mutex=mutex,
+                    db=db,
+                    error=f"dispatch mutex attach failed: {exc}",
+                )
+                return run_id
             await handle_spawn_failure(
                 action,
                 mutex=mutex,
@@ -91,10 +110,17 @@ async def execute_spawn_action(
             error = f"spawn attach interrupted: {type(exc).__name__}"
             if str(exc):
                 error = f"{error}: {exc}"
-            try:
-                await cleanup_unattached_spawned_run(run_id, db=db, error=error)
-            finally:
+            terminated = await cleanup_unattached_spawned_run(run_id, db=db, error=error)
+            if terminated:
                 await run_db(mutex.release)
+            else:
+                await quarantine_unterminated_spawned_run(
+                    action,
+                    run_id=run_id,
+                    mutex=mutex,
+                    db=db,
+                    error=error,
+                )
             raise
         return run_id
     await handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
@@ -106,29 +132,82 @@ async def cleanup_unattached_spawned_run(
     *,
     db: HubDatabase,
     error: str,
-) -> None:
+) -> bool:
     run_storage = LocalAgentRunManager(db)
     run = run_storage.get(run_id)
     if run is None or run.status not in ("pending", "running"):
-        return
+        return True
 
     try:
         from gobby.agents.kill import kill_agent
 
-        await kill_agent(run, db, close_terminal=True)
+        result = await kill_agent(run, db, close_terminal=True)
     except Exception:
-        logger.warning(
-            "Failed to kill unattached spawned agent run %s after mutex attach failure",
+        logger.error(
+            "Failed to terminate unattached spawned agent run %s",
             run_id,
             exc_info=True,
         )
+        return False
+    if not bool(result.get("success")):
+        logger.error(
+            "Could not confirm termination of unattached spawned agent run %s: %s",
+            run_id,
+            result.get("error") or result,
+        )
+        return False
 
-    failed = run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
+    try:
+        failed = run_storage.fail(run_id, error=f"dispatch spawn cleanup: {error}")
+    except Exception:
+        logger.error(
+            "Terminated unattached spawned agent run %s but failed to persist terminal status",
+            run_id,
+            exc_info=True,
+        )
+        return False
     if failed is None:
         logger.debug(
-            "Unattached spawned agent run %s was already terminal during attach-failure cleanup",
+            "Unattached spawned agent run %s was already terminal during cleanup",
             run_id,
         )
+    return True
+
+
+async def quarantine_unterminated_spawned_run(
+    action: SpawnAgentAction,
+    *,
+    run_id: str,
+    mutex: RuntimeDispatchMutex,
+    db: HubDatabase,
+    error: str,
+    run_db: RunDb,
+    append_audit_marker: AsyncCallback,
+    escalate_task: Callable[..., bool],
+) -> None:
+    """Preserve ownership and stop automation when process termination is unconfirmed."""
+    attach_error: str | None = None
+    if mutex.run_id is None:
+        try:
+            await run_db(mutex.attach, run_id)
+        except RuntimeDispatchMutexError as exc:
+            attach_error = str(exc)
+            logger.error(
+                "Could not attach unterminated spawned run %s to task mutex %s",
+                run_id,
+                action.task_id,
+                exc_info=True,
+            )
+    detail = f"{error}; spawned run {run_id} could not be confirmed terminated"
+    if attach_error:
+        detail = f"{detail}; mutex attach failed: {attach_error}"
+    await append_audit_marker(db, action.task_id, "Dispatch spawn quarantined", detail)
+    await run_db(
+        escalate_task,
+        db=db,
+        task_id=action.task_id,
+        reason=f"dispatch_spawn_cleanup_unconfirmed:{run_id}",
+    )
 
 
 async def handle_spawn_failure(

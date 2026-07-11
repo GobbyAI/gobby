@@ -1310,11 +1310,12 @@ async def test_spawn_attach_failure_terminalizes_created_run(
         *,
         db: HubDatabase,
         error: str,
-    ) -> None:
+    ) -> bool:
         killed.append(run_id)
         assert db is temp_db
         assert "disappeared before attach" in error
         run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
+        return True
 
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
@@ -1388,10 +1389,11 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
         spawned.append(run.id)
         return run.id
 
-    async def fake_kill_agent(run, db: HubDatabase, *, close_terminal: bool) -> None:
+    async def fake_kill_agent(run, db: HubDatabase, *, close_terminal: bool) -> dict[str, bool]:
         assert db is temp_db
         assert close_terminal is True
         killed.append(run.id)
+        return {"success": True}
 
     async def cancel_first_attach(func, *args, **kwargs):
         nonlocal attach_attempts
@@ -2730,10 +2732,12 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     assert LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263") is None
 
 
-async def test_artifact_persistence_failure_terminalizes_spawned_run_before_redispatch(
+@pytest.mark.parametrize("kill_outcome", ["success", "returned_failure", "raised"])
+async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_redispatch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    kill_outcome: str,
 ) -> None:
     """Post-spawn artifact failures cannot leave an active orphaned run."""
     from gobby.agents import kill as agent_kill
@@ -2779,10 +2783,18 @@ async def test_artifact_persistence_failure_terminalizes_spawned_run_before_redi
     def fail_set_artifacts_atomic(*_args: object, **_kwargs: object) -> None:
         raise ValueError("injected artifact persistence failure")
 
-    async def fake_kill_agent(run: Any, db: HubDatabase, *, close_terminal: bool) -> None:
+    async def fake_kill_agent(
+        run: Any, db: HubDatabase, *, close_terminal: bool
+    ) -> dict[str, object]:
         assert db is temp_db
         assert close_terminal is True
         killed.append(str(run.id))
+        if kill_outcome == "raised":
+            raise RuntimeError("injected kill failure")
+        return {
+            "success": kill_outcome == "success",
+            "error": "injected unconfirmed termination",
+        }
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -2808,10 +2820,20 @@ async def test_artifact_persistence_failure_terminalizes_spawned_run_before_redi
     first_run = run_storage.get(run_ids[0])
     assert first_result.executed == 1
     assert first_run is not None
-    assert first_run.status == "error"
     assert killed == [run_ids[0]]
-    assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    if kill_outcome == "success":
+        assert first_run.status == "error"
+        assert storage.get_mutex(task.id) is None
+        assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    else:
+        assert first_run.status == "running"
+        assert storage.get_mutex(task.id).run_id == run_ids[0]
+        assert task_manager.stage_states.get(task.id, "development").state == "in_progress"
+        quarantined_task = task_manager.get_task(task.id)
+        assert quarantined_task.is_escalated is True
+        assert quarantined_task.escalation_reason == (
+            f"dispatch_spawn_cleanup_unconfirmed:{run_ids[0]}"
+        )
 
     second_result = await dispatcher.run_heartbeat(
         db=temp_db,
@@ -2820,12 +2842,17 @@ async def test_artifact_persistence_failure_terminalizes_spawned_run_before_redi
         max_actions=1,
     )
 
-    second_run = run_storage.get(run_ids[1])
-    assert second_result.executed == 1
-    assert spawned == run_ids
-    assert second_run is not None
-    assert second_run.status == "running"
-    assert storage.get_mutex(task.id).run_id == run_ids[1]
+    if kill_outcome == "success":
+        second_run = run_storage.get(run_ids[1])
+        assert second_result.executed == 1
+        assert spawned == run_ids
+        assert second_run is not None
+        assert second_run.status == "running"
+        assert storage.get_mutex(task.id).run_id == run_ids[1]
+    else:
+        assert second_result.executed == 0
+        assert spawned == [run_ids[0]]
+        assert run_storage.get(run_ids[1]) is None
 
 
 @pytest.mark.asyncio
