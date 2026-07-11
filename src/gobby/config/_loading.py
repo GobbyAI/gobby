@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -511,13 +512,33 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     # mode="json" ensures Path objects are converted to strings for YAML serialization
     config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
 
-    # Write with owner-only permissions before any data is emitted.
-    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, temp_name = tempfile.mkstemp(
+        dir=config_path.parent,
+        prefix=f".{config_path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temp_path = Path(temp_name)
     try:
         os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = -1
             yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, config_path)
+
+        directory_fd = os.open(
+            config_path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     finally:
         if fd != -1:
             os.close(fd)

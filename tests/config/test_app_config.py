@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import stat
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from unittest.mock import patch
@@ -1538,6 +1539,59 @@ class TestSaveConfig:
         export_config_to_yaml(default_config, str(config_file))
 
         assert config_file.exists()
+
+    def test_partial_serialization_failure_preserves_existing_export(
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+    ) -> None:
+        config_file = temp_dir / "saved.yaml"
+        original = b"daemon_port: 12345\n"
+        config_file.write_bytes(original)
+
+        def fail_after_partial_write(*args: object, **kwargs: object) -> None:
+            stream = args[1]
+            assert hasattr(stream, "write")
+            stream.write("partial: true\n")
+            raise OSError("forced serialization failure")
+
+        with (
+            patch("gobby.config._loading.yaml.safe_dump", side_effect=fail_after_partial_write),
+            pytest.raises(OSError, match="forced serialization failure"),
+        ):
+            export_config_to_yaml(default_config, str(config_file))
+
+        assert config_file.read_bytes() == original
+        assert list(temp_dir.glob(f".{config_file.name}.*.tmp")) == []
+
+    def test_successful_export_fsyncs_file_then_replacement_directory(
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+    ) -> None:
+        config_file = temp_dir / "saved.yaml"
+        config_file.write_text("old: true\n")
+        real_fsync = os.fsync
+        real_replace = os.replace
+        events: list[tuple[str, bool]] = []
+
+        def record_fsync(fd: int) -> None:
+            events.append(("fsync", stat.S_ISDIR(os.fstat(fd).st_mode)))
+            real_fsync(fd)
+
+        def record_replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+            events.append(("replace", False))
+            real_replace(source, target)
+
+        with (
+            patch("gobby.config._loading.os.fsync", side_effect=record_fsync),
+            patch("gobby.config._loading.os.replace", side_effect=record_replace),
+        ):
+            export_config_to_yaml(default_config, str(config_file))
+
+        assert events == [("fsync", False), ("replace", False), ("fsync", True)]
+        assert yaml.safe_load(config_file.read_text())["daemon_port"] == default_config.daemon_port
+        assert list(temp_dir.glob(f".{config_file.name}.*.tmp")) == []
 
     def test_export_config_to_yaml_with_none_path_uses_default(
         self,
