@@ -7,6 +7,7 @@ Tests cover:
 - Constants (ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID, SYSTEM_PROJECT_NAMES)
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,73 @@ class TestPersonalProjectEnsure:
         assert project.name == "_personal"
         assert project.repo_path == str(tmp_path / "personal")
         assert project.deleted_at is None
+
+    def test_ensure_personal_project_materializes_on_disk_identity(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        """gwiki/gcode read identity from .gobby/project.json, not the DB."""
+        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        project_file = tmp_path / "personal" / ".gobby" / "project.json"
+        assert project_file.is_file()
+        data = json.loads(project_file.read_text())
+        assert data["id"] == PERSONAL_PROJECT_ID
+        assert data["name"] == "_personal"
+        assert data["created_at"]
+
+    def test_ensure_personal_project_preserves_valid_identity_file(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        gobby_dir = tmp_path / "personal" / ".gobby"
+        gobby_dir.mkdir(parents=True)
+        existing = {
+            "id": PERSONAL_PROJECT_ID,
+            "name": "_personal",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "hooks_disabled": True,
+        }
+        project_file = gobby_dir / "project.json"
+        project_file.write_text(json.dumps(existing, indent=2) + "\n")
+        before = project_file.read_text()
+
+        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        assert project_file.read_text() == before
+
+    def test_ensure_personal_project_repairs_corrupt_identity_file(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        gobby_dir = tmp_path / "personal" / ".gobby"
+        gobby_dir.mkdir(parents=True)
+        project_file = gobby_dir / "project.json"
+        project_file.write_text("{not json")
+
+        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        data = json.loads(project_file.read_text())
+        assert data["id"] == PERSONAL_PROJECT_ID
+
+    def test_ensure_personal_project_repairs_wrong_identity_file(
+        self,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        gobby_dir = tmp_path / "personal" / ".gobby"
+        gobby_dir.mkdir(parents=True)
+        project_file = gobby_dir / "project.json"
+        project_file.write_text(json.dumps({"id": "some-other-project"}) + "\n")
+
+        ensure_personal_project(project_manager.db, gobby_home=tmp_path)
+
+        data = json.loads(project_file.read_text())
+        assert data["id"] == PERSONAL_PROJECT_ID
+        assert data["name"] == "_personal"
 
 
 class TestSoftDelete:

@@ -1224,3 +1224,29 @@ Walkthrough findings fixed (each red-first where testable):
 - **Live keyboard walkthrough** (Chrome DevTools MCP against the dev server, real daemon data): tree arrows/Home/End move real DOM focus (incl. in a non-painting window post-fix), tree Enter opens pages, Cmd+K opens only the wiki quick-open, quick-open type→Enter navigates, kebab Enter/arrows/Escape with focus returning to the trigger, graph +/− zoom & arrow pan on the `role=application` canvas, Escape peels exactly one layer (kebab → quick-open → graph), `gobby:show-activity-tab` escape hatch verified switching real tabs.
 - **Headless visual sweep** (playwright-core + Chrome for Testing, screenshots in session scratchpad): dark + light × browse/graph/ask/research (ask both themes closes the #17766 deferral); grayscale browse + graph (kind ladder separates); AA spot-checks via canvas-normalized sRGB (light: tree 16.4, muted 7.73, mode radio 17.4; dark: tree 15.5, muted 6.8 — all ≥ 4.5); 390×844 + 360px: no horizontal scroll, mode radios/graph button reachable, stacked tree/reader usable, breadcrumbs render (44px touch targets ship via `pointer-coarse:` variants); reduced-motion context renders a settled graph; empty (graph "Nothing to graph", browse ⌘K hint, ask teaching copy), degraded/offline (personal-vault project: humanized banner), and loading (no phantom outage banner) audited. Console: no errors; one intentional dev-only warning per load.
 - Environment notes: the walkthrough authenticated with a short-lived minted `gobby_session` row (2h expiry); wiki requests were pinned to the populated project via an injected fetch wrapper — a data-scoping harness, not a product change.
+
+---
+
+## #17821 — Fix wiki invalid_scope hard failure for uninitialized personal workspace (2026-07-11)
+
+### Provenance
+
+Filed during the goal step-3 verification pass after #17768 closed: daemon restarted clean (04:28:43, healthy), chrome-devtools visual verification passed, logs clean for 3+ minutes (zero real ERROR/WARNING lines across all five logs). The one bug found: selecting the Personal workspace put every wiki surface offline — `gwiki` hard-failed with `invalid_scope: "failed to read project identity from /Users/josh/.gobby/personal: failed to read /Users/josh/.gobby/personal/.gobby/gcode.json"`. The frontend degraded correctly (that behavior shipped in #17768); the backend scope resolution was the bug.
+
+### Root cause
+
+`ensure_personal_project` (`src/gobby/storage/projects.py`) provisions `~/.gobby/personal` as a bare directory plus a DB row (`PERSONAL_PROJECT_ID`), but never materializes the identity on disk. The wiki chain is: daemon route → `resolve_wiki_scope` → repo_path from DB → `gwiki <cmd> --project ~/.gobby/personal` → `resolve_project_from_root` (`crates/gwiki/src/scope.rs`) → `gobby_core::project::read_project_id`, which requires `.gobby/project.json` (or fallback `gcode.json`) with an `"id"` field. Neither existed → hard `invalid_scope` on every wiki call for the personal scope, across HTTP, MCP, and CLI (all funnel through the same gateway).
+
+### Decision: (a) materialize identity at provisioning, in Python
+
+The task offered (a) auto-init identity/vault on first wiki access or (b) an identity-less empty-vault envelope in gwiki. Chose **(a), at provisioning time** — option (b) is structurally wrong: gwiki scopes all `gwiki_documents` rows by project id, so an identity-less envelope would leave the personal wiki permanently unwritable, and gwiki cannot invent the id (the canonical `PERSONAL_PROJECT_ID` lives in the daemon DB). Empirically validated before implementing: a root containing only `.gobby/project.json` gets well-formed `status`/`pages`/`graph` envelopes from gwiki, with the vault skeleton (`wiki/outputs/`) bootstrapped lazily — identity was the only missing piece. `ensure_personal_project` runs on every runtime hub DB open (daemon startup), so existing installs self-heal without migration.
+
+### Change
+
+`src/gobby/storage/projects.py`: `ensure_personal_project` now calls new `_ensure_personal_identity_file(path, created_at)` after the DB upsert — writes `.gobby/project.json` (`id`/`name`/`created_at`, matching the `gobby init` schema) if missing, leaves a valid file untouched, and repairs corrupt JSON or a wrong `id` with a warning log. Write failures log a warning without blocking daemon boot (matches the adjacent chmod tolerance). `created_at` comes from the DB row, preserving the original provisioning stamp.
+
+### Verification evidence
+
+- **Red first**: 3 new tests failed pre-fix (identity file materialized, corrupt-file repair, wrong-id repair); the preserve-valid-file test guarded against clobbering.
+- **Green**: `tests/storage/test_project_manager.py` 25/25 (5 new); adjacent `tests/wiki/` 115/115; `tests/servers/routes/test_wiki_routes.py` 25/25. `mypy` clean, `ruff check` + `format --check` clean. Test-quality audit: 0 new issues ≥ high.
+- **Live e2e on the real machine**: pre-fix `gwiki status --project ~/.gobby/personal` reproduced the exact `invalid_scope` error against the truly empty dir; after running the provisioning path (same code daemon startup executes), `~/.gobby/personal/.gobby/project.json` exists with the canonical id and the DB row's original `created_at` (2026-02-10), and `gwiki status` (datastore-ready), `pages` (`[]`), and authed daemon routes `/api/wiki/{status,pages,graph}?project=<personal>` all return `ok:true` well-formed empty-vault envelopes. No daemon restart required — routes spawn gwiki per call.

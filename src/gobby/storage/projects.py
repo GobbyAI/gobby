@@ -1,5 +1,6 @@
 """Local project storage manager."""
 
+import json
 import logging
 import uuid
 from collections.abc import Mapping
@@ -53,7 +54,38 @@ def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) 
     project = project_manager.get(PERSONAL_PROJECT_ID)
     if project is None:
         raise RuntimeError("Personal project not found after transactional upsert")
+    _ensure_personal_identity_file(path, project.created_at or now)
     return project
+
+
+def _ensure_personal_identity_file(path: Path, created_at: datetime) -> None:
+    """Materialize `.gobby/project.json` so on-disk consumers (gwiki, gcode)
+    can resolve the personal workspace identity without DB access."""
+    project_file = path / ".gobby" / "project.json"
+    if project_file.exists():
+        try:
+            data = json.loads(project_file.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Rewriting corrupt personal project.json %s: %s", project_file, exc)
+            data = None
+        if isinstance(data, dict) and data.get("id") == PERSONAL_PROJECT_ID:
+            return
+        if data is not None:
+            logger.warning(
+                "Repairing personal project.json %s: expected id %s",
+                project_file,
+                PERSONAL_PROJECT_ID,
+            )
+    payload = {
+        "id": PERSONAL_PROJECT_ID,
+        "name": "_personal",
+        "created_at": created_at.isoformat(),
+    }
+    try:
+        project_file.parent.mkdir(parents=True, exist_ok=True)
+        project_file.write_text(json.dumps(payload, indent=2) + "\n")
+    except OSError as exc:
+        logger.warning("Failed to write personal project.json %s: %s", project_file, exc)
 
 
 @normalize_datetime_model(
