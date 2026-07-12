@@ -39,9 +39,10 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         description="Clone mutation, sync, and merge tools",
     )
 
-    async def delete_clone(
+    async def _delete_clone_impl(
         clone_id: str,
         force: bool = False,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Delete a clone.
@@ -66,6 +67,9 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         clone_path = clone.clone_path
         previous_status = clone.status
+
+        if cancellation_requested is not None and cancellation_requested.is_set():
+            raise asyncio.CancelledError
 
         try:
             ctx.clone_storage.update(clone_id, status=CloneStatus.DELETING.value)
@@ -103,6 +107,16 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         return {"success": True, "message": f"Deleted clone {clone_id}"}
 
+    async def delete_clone(
+        clone_id: str,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _delete_clone_impl(clone_id, force, cancellation_requested),
+            on_cancel=cancellation_requested.set,
+        )
+
     registry.register(
         name="delete_clone",
         description="Delete a clone and its files",
@@ -124,9 +138,10 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         func=delete_clone,
     )
 
-    async def sync_clone(
+    async def _sync_clone_impl(
         clone_id: str,
         direction: Literal["pull", "push", "both"] = "pull",
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Sync a clone with its remote.
@@ -148,6 +163,9 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         clone = ctx.clone_storage.get(clone_id)
         if not clone:
             return {"success": False, "error": f"Clone not found: {clone_id}"}
+
+        if cancellation_requested is not None and cancellation_requested.is_set():
+            raise asyncio.CancelledError
 
         # Mark as syncing
         ctx.clone_storage.mark_syncing(clone_id)
@@ -176,6 +194,16 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             clone = ctx.clone_storage.get(clone_id)
             if clone and clone.status == "syncing":
                 ctx.clone_storage.update(clone_id, status="active")
+
+    async def sync_clone(
+        clone_id: str,
+        direction: Literal["pull", "push", "both"] = "pull",
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _sync_clone_impl(clone_id, direction, cancellation_requested),
+            on_cancel=cancellation_requested.set,
+        )
 
     registry.register(
         name="sync_clone",

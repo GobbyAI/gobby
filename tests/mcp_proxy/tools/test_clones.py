@@ -686,6 +686,42 @@ class TestDeleteClone:
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/test", force=False)
         mock_clone_storage.delete.assert_called_once_with("clone-123")
 
+    @pytest.mark.asyncio
+    async def test_delete_clone_cancellation_waits_for_record_delete(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Cancellation cannot abandon an in-flight filesystem deletion."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.delete_clone.side_effect = blocking_delete
+        operation = asyncio.create_task(registry.call("delete_clone", {"clone_id": "clone-123"}))
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+        mock_clone_storage.delete.assert_not_called()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.delete.assert_called_once_with("clone-123")
+
 
 class TestSyncClone:
     """Tests for sync_clone tool."""
@@ -778,6 +814,46 @@ class TestSyncClone:
         result = await registry.call("sync_clone", {"clone_id": "clone-123", "direction": "pull"})
 
         assert result["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_sync_clone_cancellation_waits_for_status_commit(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Cancellation cannot reset clone status before sync work finishes."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_sync(**_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.sync_clone.side_effect = blocking_sync
+        operation = asyncio.create_task(
+            registry.call("sync_clone", {"clone_id": "clone-123", "direction": "pull"})
+        )
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+        mock_clone_storage.record_sync.assert_not_called()
+        mock_clone_storage.update.assert_not_called()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.record_sync.assert_called_once_with("clone-123")
+        mock_clone_storage.update.assert_called_once_with("clone-123", status="active")
 
 
 class TestMergeCloneToTarget:
