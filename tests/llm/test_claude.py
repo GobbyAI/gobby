@@ -519,6 +519,21 @@ class TestGenerateText:
         assert captured_kwargs[0]["allowed_tools"] == []
 
     @pytest.mark.asyncio
+    async def test_generate_text_sdk_does_not_slice_complete_result_by_character_estimate(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage("complete reply")
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider.generate_text_result("Generate text", max_tokens=1)
+
+        assert result.text == "complete reply"
+
+    @pytest.mark.asyncio
     async def test_generate_text_retry_discards_failed_attempt_usage(
         self, claude_config: DaemonConfig
     ) -> None:

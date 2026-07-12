@@ -136,8 +136,6 @@ class ClaudeSDKClient:
             if not result.strip():
                 raise LLMProviderError(f"Claude {operation} returned blank content")
 
-        if max_tokens and len(result) > max_tokens * 4:
-            result = result[: max_tokens * 4]
         return LLMTextResult(
             text=result,
             usage=captured_usage,
