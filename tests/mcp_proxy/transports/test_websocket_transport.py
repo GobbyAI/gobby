@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
-from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection
+from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection, websocket_client
 
 pytestmark = pytest.mark.unit
 
@@ -74,17 +74,6 @@ class TestWebSocketInit:
     def test_config_stored(self, conn: WebSocketTransportConnection) -> None:
         assert conn.config.name == "test-ws"
         assert conn.config.url == "ws://localhost:9090/ws"
-
-    def test_auth_token_default_none(self, conn: WebSocketTransportConnection) -> None:
-        assert conn._auth_token is None
-
-    def test_auth_token_and_callback(self, config: MCPServerConfig) -> None:
-        async def refresh() -> str:
-            return "refreshed"
-
-        c = WebSocketTransportConnection(config, auth_token="tok", token_refresh_callback=refresh)
-        assert c._auth_token == "tok"
-        assert c._token_refresh_callback is refresh
 
 
 # ===========================================================================
@@ -147,7 +136,7 @@ class TestWebSocketConnectSuccess:
         mock_client_session_cls: MagicMock,
         conn: WebSocketTransportConnection,
     ) -> None:
-        """Verify url from config is passed to websocket_client."""
+        """Verify URL and empty headers from config are passed to websocket_client."""
         mock_transport_ctx = AsyncMock()
         mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
         mock_ws_client.return_value = mock_transport_ctx
@@ -159,9 +148,46 @@ class TestWebSocketConnectSuccess:
 
         await conn.connect()
 
-        mock_ws_client.assert_called_once_with("ws://localhost:9090/ws")
+        mock_ws_client.assert_called_once_with("ws://localhost:9090/ws", None)
         assert mock_ws_client.call_count == 1
         assert mock_ws_client.call_args is not None
+
+    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
+    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
+    async def test_connect_passes_config_headers(
+        self,
+        mock_ws_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+    ) -> None:
+        headers = {"Authorization": "Bearer secret", "X-Tenant": "acme"}
+        conn = WebSocketTransportConnection(_make_config(headers=headers))
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_ws_client.return_value = mock_transport_ctx
+        mock_session = _mock_session()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        result = await conn.connect()
+
+        mock_ws_client.assert_called_once_with("ws://localhost:9090/ws", headers)
+        assert result is mock_session
+        assert conn.state == ConnectionState.CONNECTED
+
+
+class TestWebSocketClientHeaders:
+    @patch("gobby.mcp_proxy.transports.websocket.ws_connect")
+    async def test_forwards_additional_headers(self, mock_ws_connect: MagicMock) -> None:
+        websocket = AsyncMock()
+        websocket.__aiter__.return_value = iter(())
+        websocket_context = AsyncMock()
+        websocket_context.__aenter__.return_value = websocket
+        mock_ws_connect.return_value = websocket_context
+        headers = {"Authorization": "Bearer secret"}
+
+        async with websocket_client("ws://localhost:9090/ws", headers):
+            assert mock_ws_connect.call_args.kwargs["additional_headers"] == headers
 
 
 # ===========================================================================
@@ -651,10 +677,6 @@ class TestWebSocketBaseProperties:
 
         conn._state = ConnectionState.CONNECTED
         assert conn.is_connected is True
-
-    def test_set_auth_token(self, conn: WebSocketTransportConnection) -> None:
-        conn.set_auth_token("new-token")
-        assert conn._auth_token == "new-token"
 
     async def test_health_check_not_connected(self, conn: WebSocketTransportConnection) -> None:
         result = await conn.health_check()

@@ -417,8 +417,6 @@ class TestMCPClientManagerConnections:
         connection.connect.assert_awaited_once()
         mock_factory.assert_called_once_with(
             config,
-            None,
-            None,
             stdio_errlog_path="/tmp/mcp-client.log",
         )
 

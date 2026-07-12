@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from typing import Any, cast
 
 from mcp import ClientSession
@@ -20,10 +20,7 @@ from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import ConnectionState, MCPConnectionHealth, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
-CreateConnection = Callable[
-    [MCPServerConfig, str | None, Callable[[], Coroutine[Any, Any, str]] | None],
-    BaseTransportConnection,
-]
+CreateConnection = Callable[[MCPServerConfig], BaseTransportConnection]
 
 
 def _dedupe_configs_by_name(configs: list[MCPServerConfig]) -> list[MCPServerConfig]:
@@ -144,11 +141,7 @@ async def connect_server(
         resolved_config = manager._resolve_secrets_in_config(config)
 
         if config.name not in manager._connections:
-            connection = create_connection(
-                resolved_config,
-                manager._auth_token,
-                manager._token_refresh_callback,
-            )
+            connection = create_connection(resolved_config)
             manager._connections[config.name] = connection
 
         connection = manager._connections[config.name]

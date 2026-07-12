@@ -9,7 +9,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from gobby.mcp_proxy.models import ConnectionState, MCPError
+from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
 logger = logging.getLogger("gobby.mcp.client")
@@ -24,8 +24,8 @@ class HTTPTransportConnection(BaseTransportConnection):
 
     _OWNER_TASK_SHUTDOWN_TIMEOUT = 2.0
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, config: MCPServerConfig) -> None:
+        super().__init__(config)
         self._owner_task: asyncio.Task[None] | None = None
         self._disconnect_event: asyncio.Event | None = None
         self._session_ready: asyncio.Event | None = None
