@@ -23,6 +23,8 @@ class HTTPTransportConnection(BaseTransportConnection):
     """
 
     _OWNER_TASK_SHUTDOWN_TIMEOUT = 2.0
+    _TRANSPORT_LABEL = "HTTP"
+    _OWNER_TASK_PREFIX = "http"
 
     def __init__(self, config: MCPServerConfig) -> None:
         super().__init__(config)
@@ -50,7 +52,7 @@ class HTTPTransportConnection(BaseTransportConnection):
 
         # Start owner task that manages the connection lifecycle
         self._owner_task = asyncio.create_task(
-            self._run_connection(), name=f"http-conn-{self.config.name}"
+            self._run_connection(), name=f"{self._OWNER_TASK_PREFIX}-conn-{self.config.name}"
         )
 
         # Wait for connection to be ready or fail
@@ -72,25 +74,30 @@ class HTTPTransportConnection(BaseTransportConnection):
 
         return self._session
 
+    async def _open_streams(self, stack: AsyncExitStack) -> tuple[Any, Any]:
+        """Enter the streamable HTTP client and return its read/write streams."""
+        assert self.config.url is not None
+        http_client = create_mcp_http_client(headers=self.config.headers)
+        managed_client = await stack.enter_async_context(http_client)
+        read_stream, write_stream, _ = await stack.enter_async_context(
+            streamable_http_client(
+                self.config.url,
+                http_client=managed_client,
+            )
+        )
+        return read_stream, write_stream
+
     async def _run_connection(self) -> None:
-        """Background task that owns the streamable_http_client lifecycle."""
+        """Background task that owns the transport and session lifecycle."""
         if self._disconnect_event is None or self._session_ready is None:
             raise RuntimeError("Connection events not initialized")
 
         try:
-            # URL is required for HTTP transport
             if not self.config.url:
-                raise ValueError("URL is required for HTTP transport")
+                raise ValueError(f"URL is required for {self._TRANSPORT_LABEL} transport")
 
             async with AsyncExitStack() as stack:
-                http_client = create_mcp_http_client(headers=self.config.headers)
-                managed_client = await stack.enter_async_context(http_client)
-                read_stream, write_stream, _ = await stack.enter_async_context(
-                    streamable_http_client(
-                        self.config.url,
-                        http_client=managed_client,
-                    )
-                )
+                read_stream, write_stream = await self._open_streams(stack)
                 self._session_context = ClientSession(read_stream, write_stream)
                 async with self._session_context as session:
                     self._session = session
@@ -98,7 +105,11 @@ class HTTPTransportConnection(BaseTransportConnection):
 
                     self._state = ConnectionState.CONNECTED
                     self._consecutive_failures = 0
-                    logger.debug(f"Connected to HTTP MCP server: {self.config.name}")
+                    logger.debug(
+                        "Connected to %s MCP server: %s",
+                        self._TRANSPORT_LABEL,
+                        self.config.name,
+                    )
 
                     # Signal that connection is ready
                     self._session_ready.set()
@@ -110,12 +121,19 @@ class HTTPTransportConnection(BaseTransportConnection):
 
         except Exception as e:
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
-            logger.error(f"Failed to connect to HTTP server '{self.config.name}': {error_msg}")
+            logger.error(
+                "Failed to connect to %s server '%s': %s",
+                self._TRANSPORT_LABEL,
+                self.config.name,
+                error_msg,
+            )
 
             if isinstance(e, MCPError):
                 self._connection_error = e
             else:
-                self._connection_error = MCPError(f"HTTP connection failed: {error_msg}")
+                self._connection_error = MCPError(
+                    f"{self._TRANSPORT_LABEL} connection failed: {error_msg}"
+                )
 
             self._session_ready.set()  # Unblock waiter with error
 

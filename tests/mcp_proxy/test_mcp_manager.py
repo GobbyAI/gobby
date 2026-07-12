@@ -277,6 +277,47 @@ class TestCreateTransportConnection:
         assert connection.state == ConnectionState.DISCONNECTED
         assert not hasattr(connection, "_stdio_errlog_path")
 
+    def test_create_sse_connection(self) -> None:
+        """Test creating SSE transport connection."""
+        config = MCPServerConfig(
+            name="sse-server",
+            project_id="test-project-uuid",
+            transport="sse",
+            url="https://localhost:8080/sse",
+        )
+
+        config.validate()
+        connection = _create_transport_connection(config)
+
+        assert connection.config == config
+        assert connection.state == ConnectionState.DISCONNECTED
+
+    @pytest.mark.parametrize(
+        ("transport", "options"),
+        [
+            ("http", {"url": "https://localhost/mcp"}),
+            ("sse", {"url": "https://localhost/sse"}),
+            ("stdio", {"command": "server"}),
+            ("websocket", {"url": "wss://localhost/mcp"}),
+        ],
+    )
+    def test_factory_covers_every_valid_transport(
+        self,
+        transport: str,
+        options: dict[str, str],
+    ) -> None:
+        """Every transport accepted by config validation has a factory implementation."""
+        config = MCPServerConfig(
+            name=f"{transport}-server",
+            project_id="test-project-uuid",
+            transport=transport,
+            **options,
+        )
+
+        config.validate()
+
+        assert _create_transport_connection(config).config is config
+
     def test_create_unsupported_transport_raises(self) -> None:
         """Test unsupported transport raises error."""
         config = MCPServerConfig(

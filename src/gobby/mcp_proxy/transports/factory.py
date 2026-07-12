@@ -3,6 +3,7 @@
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 from gobby.mcp_proxy.transports.http import HTTPTransportConnection
+from gobby.mcp_proxy.transports.sse import SSETransportConnection
 from gobby.mcp_proxy.transports.stdio import StdioTransportConnection
 from gobby.mcp_proxy.transports.websocket import WebSocketTransportConnection
 
@@ -26,6 +27,7 @@ def create_transport_connection(
     """
     transport_map: dict[str, type[BaseTransportConnection]] = {
         "http": HTTPTransportConnection,
+        "sse": SSETransportConnection,
         "stdio": StdioTransportConnection,
         "websocket": WebSocketTransportConnection,
     }
