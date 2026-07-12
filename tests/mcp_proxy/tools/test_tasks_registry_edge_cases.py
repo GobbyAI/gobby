@@ -7,9 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import SKIP_REASONS, create_task_registry
+from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def task_ops_registry(mock_task_manager: Any, mock_sync_manager: Any) -> Any:
+    return create_task_ops_registry(mock_task_manager, mock_sync_manager)
 
 
 class TestSkipReasons:
@@ -295,16 +301,16 @@ class TestRegistryIntegration:
 
         assert "reopen_task" in tool_names
 
-    def test_stage_mutation_tools_have_precise_output_schema(self, task_registry: Any) -> None:
+    def test_stage_mutation_tools_have_precise_output_schema(self, task_ops_registry: Any) -> None:
         for name in ("update_stage", "restore_stage", "delete_stage"):
-            schema_info = task_registry.get_schema(name)
+            schema_info = task_ops_registry.get_schema(name)
             assert schema_info is not None
             schema = schema_info["outputSchema"]
             assert schema["required"] == ["ok", "stage"]
             assert set(schema["properties"]) == {"ok", "stage"}
 
-    def test_set_task_type_defaults_rejects_invalid_payload(self, task_registry: Any) -> None:
-        tool = task_registry.get_tool("set_task_type_defaults")
+    def test_set_task_type_defaults_rejects_invalid_payload(self, task_ops_registry: Any) -> None:
+        tool = task_ops_registry.get_tool("set_task_type_defaults")
         assert tool is not None
 
         result = tool(task_type="task", stages=[{"position": 1}])
