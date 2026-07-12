@@ -1,7 +1,7 @@
 ---
 name: restraint
-description: "Authoring-side discipline against over-engineering. A decision ladder — YAGNI, reuse, stdlib, native, installed deps, minimal code — applied among complete solutions only. Three levels: lite, full, ultra."
-version: "1.0.0"
+description: "Authoring-side discipline against over-engineering. A decision ladder — YAGNI, reuse, stdlib, native, installed deps, minimal code — applied among complete solutions only. Three levels: lite, normal, max."
+version: "1.1.0"
 category: optimization
 triggers:
   - restraint
@@ -14,6 +14,8 @@ triggers:
 metadata:
   gobby:
     audience: all
+    levels: [lite, normal, max]
+    default_level: normal
 ---
 
 # Restraint
@@ -67,16 +69,20 @@ task system is the ledger.
 
 ## Levels
 
+Select a level at load time: `get_skill(name="restraint", level="max")`.
+Omitting `level` loads the default (`normal`). The active level persists in
+session state until changed or the session ends.
+
 ### Lite
 Build what was asked as specified. If a lazier complete alternative exists,
 note it in one line.
 
-### Full (default)
+### Normal (default)
 The ladder enforced. Ship the shortest complete diff and stop.
 
-### Ultra
+### Max
 Challenge the requirements themselves — ask whether the feature is needed
-before building it. Still never ship an incomplete fix. Ultra is summoned
+before building it. Still never ship an incomplete fix. Max is summoned
 only, never a default.
 
 ## Output Style
@@ -87,5 +93,5 @@ explanation.
 
 ## Escape
 
-"stop restraint" / "normal mode" disables restraint for the session. The
-level persists until changed or the session ends.
+"stop restraint" disables restraint for the session. The level persists
+until changed or the session ends.

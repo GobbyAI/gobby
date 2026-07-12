@@ -8,7 +8,7 @@ rules:
     priority: 19
     when: >
       ((event.data.get('prompt') or event.data.get('user_prompt') or '').strip().lower())
-      in ('stop restraint', 'normal mode')
+      == 'stop restraint'
     effects:
       - type: set_variable
         variable: restraint_disabled
@@ -36,4 +36,4 @@ rules:
     when: "skill_loaded('restraint') and not variables.get('restraint_disabled')"
     effects:
       - type: inject_context
-        template: "Restraint reminder: least mechanism that fully solves the problem; ladder before new code."
+        template: "Restraint reminder ({{ restraint_level }}): least mechanism that fully solves the problem; ladder before new code."
