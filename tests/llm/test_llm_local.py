@@ -4,13 +4,29 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from openai import BadRequestError
 
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import LLMProviderError
 from gobby.llm.local import _CLOUD_MODEL_ALIASES, LocalLLMProvider
 
 pytestmark = pytest.mark.unit
+
+
+def _assert_bounded_openai_client(mock_cls: MagicMock, *, api_key: str) -> None:
+    mock_cls.assert_called_once()
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs["base_url"] == "http://localhost:1234/v1"
+    assert kwargs["api_key"] == api_key
+    assert kwargs["max_retries"] == 0
+    timeout = kwargs["timeout"]
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.connect == 5.0
+    assert timeout.read == 120.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 5.0
 
 
 # ─── Fixtures ───
@@ -83,10 +99,7 @@ class TestLocalLLMProviderInit:
         assert p.provider_name == "local:lm-studio"
         assert p._default_model == "qwen-coder"
         assert p._url == "http://localhost:1234/v1"
-        mock_cls.assert_called_once_with(
-            base_url="http://localhost:1234/v1",
-            api_key="test-key",
-        )
+        _assert_bounded_openai_client(mock_cls, api_key="test-key")
 
     def test_unknown_named_generation_endpoint_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown local generation endpoint"):
@@ -103,12 +116,7 @@ class TestLocalLLMProviderInit:
     def test_api_key_defaults_to_not_needed(self, daemon_config: DaemonConfig) -> None:
         with patch("openai.AsyncOpenAI") as mock_cls:
             LocalLLMProvider(daemon_config, endpoint_name="lm-studio")
-        mock_cls.assert_called_once_with(
-            base_url="http://localhost:1234/v1",
-            api_key="not-needed",
-        )
-        assert mock_cls.call_count == 1
-        assert mock_cls.call_args is not None
+        _assert_bounded_openai_client(mock_cls, api_key="not-needed")
 
     def test_api_key_passthrough(self) -> None:
         config = DaemonConfig(
@@ -128,12 +136,7 @@ class TestLocalLLMProviderInit:
         )
         with patch("openai.AsyncOpenAI") as mock_cls:
             LocalLLMProvider(config, endpoint_name="lm-studio")
-        mock_cls.assert_called_once_with(
-            base_url="http://localhost:1234/v1",
-            api_key="my-secret-key",
-        )
-        assert mock_cls.call_count == 1
-        assert mock_cls.call_args is not None
+        _assert_bounded_openai_client(mock_cls, api_key="my-secret-key")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -273,14 +276,22 @@ class TestGenerateJson:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = '{"ok": true}'
+        json_mode_error = BadRequestError(
+            message="response_format json_object not supported",
+            response=httpx.Response(
+                400,
+                request=httpx.Request("POST", "http://test"),
+            ),
+            body=None,
+        )
 
         call_count = 0
 
-        async def side_effect(**kwargs):
+        async def side_effect(**kwargs: object) -> MagicMock:
             nonlocal call_count
             call_count += 1
             if call_count == 1 and "response_format" in kwargs:
-                raise Exception("response_format not supported")
+                raise json_mode_error
             return mock_response
 
         provider._client.chat.completions.create = AsyncMock(side_effect=side_effect)
@@ -288,6 +299,8 @@ class TestGenerateJson:
         result = await provider.generate_json("Give me JSON")
         assert result == {"ok": True}
         assert call_count == 2
+        second_request = provider._client.chat.completions.create.call_args_list[1].kwargs
+        assert "response_format" not in second_request
 
     @pytest.mark.asyncio
     async def test_invalid_json_raises(self, provider: LocalLLMProvider) -> None:
