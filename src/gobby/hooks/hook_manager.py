@@ -9,10 +9,8 @@ import concurrent.futures
 import copy
 import json
 import logging
-import os
 import threading
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
@@ -32,6 +30,7 @@ from gobby.hooks.session_ref_resolution import (
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
+from gobby.paths import get_gobby_home
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.telemetry.tracing import create_span
@@ -82,8 +81,7 @@ class HookManager:
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
         self.daemon_url = f"http://{daemon_host}:{daemon_port}"
-        gobby_home = os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby"))
-        self.log_file = log_file or str(Path(gobby_home) / "logs" / "hook-manager.log")
+        self.log_file = log_file or str(get_gobby_home() / "logs" / "hook-manager.log")
         self.log_max_bytes = log_max_bytes
         self.log_backup_count = log_backup_count
         self.broadcaster = broadcaster

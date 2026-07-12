@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from gobby.paths import get_gobby_home
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 
 logger = logging.getLogger(__name__)
@@ -133,8 +134,6 @@ def resolve_session_wiki_path(session: Any) -> Path:
     Always ``<gobby_home>/session_wiki/{external_id}.md`` — one machine-global
     directory the daemon owns and gwiki ingests.
     """
-    from gobby.cli.utils_config import get_gobby_home
-
     return get_gobby_home() / "session_wiki" / f"{_safe_filename_stem(session)}.md"
 
 

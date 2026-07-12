@@ -11,6 +11,7 @@ import click
 import yaml
 
 from gobby.cli.workflows import common
+from gobby.paths import get_global_workflows_dir
 from gobby.utils.local_token import daemon_auth_headers
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,7 @@ def import_workflow(ctx: click.Context, source: str, name: str | None, is_global
     filename = f"{workflow_name}.yaml"
 
     if is_global:
-        dest_dir = Path.home() / ".gobby" / "workflows"
+        dest_dir = get_global_workflows_dir()
     else:
         project_path = common.get_project_path()
         if not project_path:

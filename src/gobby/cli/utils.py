@@ -20,7 +20,6 @@ import psutil
 
 from gobby.cli.utils_config import (
     _redact_dsn,
-    get_gobby_home,
     get_install_dir,
     get_resources_dir,
     init_local_storage,
@@ -52,6 +51,7 @@ from gobby.cli.utils_ui import (
 from gobby.config.app import DaemonConfig, load_config
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
+from gobby.paths import get_gobby_home
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context

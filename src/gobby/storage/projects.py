@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from gobby.config.bootstrap_io import default_gobby_home
+from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 from gobby.utils.uuid_validation import parse_uuid_reference
@@ -24,7 +24,7 @@ SYSTEM_PROJECT_NAMES = frozenset({"_orphaned", "_migrated", "_personal", "_globa
 
 def personal_project_path(gobby_home: Path | None = None) -> Path:
     """Return the local folder that backs the personal system project."""
-    return (gobby_home or default_gobby_home()) / "personal"
+    return (gobby_home or get_gobby_home()) / "personal"
 
 
 def ensure_personal_project(db: HubDatabase, *, gobby_home: Path | None = None) -> "Project":

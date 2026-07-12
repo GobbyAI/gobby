@@ -13,6 +13,7 @@ import yaml
 from pydantic import ValidationError
 from yaml import YAMLError
 
+from gobby.paths import get_gobby_home
 from gobby.prompts.models import parse_frontmatter
 from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition, WorkflowDefinition
 
@@ -38,7 +39,7 @@ def _get_project_resource_dir(resource_type: str) -> Path:
 def _resolve_target_dir(resource_type: str, to: str | None, global_: bool) -> Path | None:
     """Resolve the target directory for export."""
     if global_:
-        return Path.home() / ".gobby" / RESOURCE_TYPES[resource_type]
+        return get_gobby_home() / RESOURCE_TYPES[resource_type]
     if to:
         return Path(to) / ".gobby" / RESOURCE_TYPES[resource_type]
     return None

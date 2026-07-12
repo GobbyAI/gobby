@@ -7,10 +7,11 @@ and systemd (Linux) backends.
 """
 
 import logging
-import os
 import subprocess  # nosec B404 # subprocess needed for schtasks
 from pathlib import Path
 from typing import Any
+
+from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
 
@@ -20,22 +21,14 @@ WINDOWS_TASK_XML_NAME = "gobby-daemon.task.xml"
 WINDOWS_LAUNCHER_NAME = "gobby-launcher.cmd"
 
 
-def _gobby_home_dir() -> Path:
-    """Return the Gobby home directory (~/.gobby)."""
-    gobby_home = os.environ.get("GOBBY_HOME")
-    if gobby_home:
-        return Path(gobby_home)
-    return Path.home() / ".gobby"
-
-
 def _task_xml_path() -> Path:
     """Return the path to the Task Scheduler XML file."""
-    return _gobby_home_dir() / WINDOWS_TASK_XML_NAME
+    return get_gobby_home() / WINDOWS_TASK_XML_NAME
 
 
 def _launcher_script_path() -> Path:
     """Return the path to the launcher batch script."""
-    return _gobby_home_dir() / WINDOWS_LAUNCHER_NAME
+    return get_gobby_home() / WINDOWS_LAUNCHER_NAME
 
 
 def _run_schtasks(args: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
@@ -72,7 +65,7 @@ def install_service_windows(*, verbose: bool = False) -> dict[str, Any]:
 
     ctx = _resolve_install_context(verbose=verbose)
 
-    gobby_dir = _gobby_home_dir()
+    gobby_dir = get_gobby_home()
     gobby_dir.mkdir(parents=True, exist_ok=True)
 
     # Write launcher batch script

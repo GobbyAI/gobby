@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from gobby.paths import get_gobby_home
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,14 +64,14 @@ def coerce_shutdown_intent(value: str | ShutdownIntent | None) -> ShutdownIntent
 def get_shutdown_marker_path(home: Path | None = None) -> Path:
     """Return the shutdown marker path."""
     if home is None:
-        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
+        home = get_gobby_home()
     return home / "shutdown_intent_active.json"
 
 
 def get_shutdown_source_path(home: Path | None = None) -> Path:
     """Return the persistent last-shutdown source path."""
     if home is None:
-        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
+        home = get_gobby_home()
     return home / "shutdown_source.json"
 
 

@@ -61,7 +61,7 @@ def test_build_frontmatter_emits_flat_keys() -> None:
 
 
 def test_resolve_session_wiki_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     path = swf.resolve_session_wiki_path(_session())
     assert path == tmp_path / "session_wiki" / "019de70c-646f-7bd2-a31d-2e626de30891.md"
 
@@ -69,7 +69,7 @@ def test_resolve_session_wiki_path(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def test_write_session_wiki_page_writes_redacted_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     summary = "## Current State\nShipped the fix. Leaked sk-ABCDEFGHIJKLMNOPQRSTUV here."
 
     result = swf.write_session_wiki_page(_session(), summary)
@@ -87,7 +87,7 @@ def test_write_session_wiki_page_writes_redacted_file(
 def test_write_session_wiki_page_skips_invalid_summary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     result = swf.write_session_wiki_page(_session(), "   ")
     assert result == {"written": False, "skipped": "invalid_summary"}
     assert not (tmp_path / "session_wiki").exists()
@@ -96,7 +96,7 @@ def test_write_session_wiki_page_skips_invalid_summary(
 def test_write_session_wiki_page_reports_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr(swf, "_write_file", lambda _path, _content: False)
 
     result = swf.write_session_wiki_page(_session(), "## Current State\nwork")
@@ -108,7 +108,7 @@ def test_write_session_wiki_page_reports_write_failure(
 def test_write_session_wiki_page_skips_subagent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     result = swf.write_session_wiki_page(_session(agent_depth=1), "## Current State\nwork")
     assert result == {"written": False, "skipped": "subagent"}
 
@@ -117,7 +117,7 @@ def test_write_session_wiki_page_skips_subagent(
 def test_write_session_wiki_page_skips_ephemeral_source(
     source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     result = swf.write_session_wiki_page(_session(source=source), "## Current State\nwork")
     assert result == {"written": False, "skipped": f"ephemeral_source:{source}"}
 
@@ -125,7 +125,7 @@ def test_write_session_wiki_page_skips_ephemeral_source(
 def test_session_wiki_path_exists_tracks_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     session = _session()
     assert swf.session_wiki_path_exists(session) is False  # missing → restore needed
     swf.write_session_wiki_page(session, "## Current State\nwork")
@@ -135,7 +135,7 @@ def test_session_wiki_path_exists_tracks_file(
 def test_session_wiki_path_is_fresh_uses_summary_generated_at(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     session = _session(summary_generated_at="2026-05-02T12:00:00+00:00")
     path = swf.resolve_session_wiki_path(session)
     path.parent.mkdir(parents=True)
@@ -154,7 +154,7 @@ def test_session_wiki_path_is_fresh_uses_summary_generated_at(
 def test_session_wiki_path_is_fresh_allows_same_second_filesystem_mtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     session = _session(summary_generated_at="2026-05-02T12:00:00.750000+00:00")
     path = swf.resolve_session_wiki_path(session)
     path.parent.mkdir(parents=True)

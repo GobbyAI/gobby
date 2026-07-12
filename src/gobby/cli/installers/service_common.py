@@ -14,6 +14,8 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from gobby.paths import get_gobby_home
+
 # Template directory
 _TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "install" / "shared" / "services"
 _XML_TEMPLATE_SUFFIXES = (".plist.j2", ".xml.j2")
@@ -111,8 +113,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
     log_file = str(Path(config.telemetry.log_file).expanduser())
     error_log_file = str(Path(config.telemetry.log_file_error).expanduser())
 
-    # Resolve GOBBY_HOME only if explicitly set
-    gobby_home = os.environ.get("GOBBY_HOME", "")
+    gobby_home = str(get_gobby_home())
 
     if _is_dev_mode():
         # Dev mode: use the project .venv python, not the global one.
