@@ -1685,6 +1685,83 @@ class TestHookManagerWebhookDispatch:
         assert len(result) == 1
         assert result[0].success is True
 
+    def test_consecutive_sync_webhooks_use_loop_local_clients(
+        self, hook_manager_with_mocks: HookManager
+    ) -> None:
+        """Each sync bridge owns and closes its client inside that event loop."""
+        import asyncio
+
+        import httpx
+
+        from gobby.config.extensions import WebhookEndpointConfig
+
+        manager = hook_manager_with_mocks
+        endpoint = WebhookEndpointConfig(
+            name="blocking-webhook",
+            url="https://example.com/webhook",
+            events=["before_tool"],
+            can_block=True,
+            retry_count=0,
+            enabled=True,
+        )
+        manager._webhook_dispatcher.config.enabled = True
+        manager._webhook_dispatcher.config.endpoints = [endpoint]
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="webhook-test",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={},
+            machine_id="test-machine-id",
+        )
+
+        post_count = 0
+
+        class LoopBoundClient:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                self.loop: asyncio.AbstractEventLoop | None = None
+                self.closed = False
+                created_clients.append(self)
+
+            async def __aenter__(self) -> "LoopBoundClient":
+                return self
+
+            async def __aexit__(
+                self,
+                _exc_type: object,
+                _exc: object,
+                _traceback: object,
+            ) -> None:
+                await self.aclose()
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+            async def post(
+                self,
+                _url: str,
+                **_kwargs: object,
+            ) -> httpx.Response:
+                nonlocal post_count
+                current_loop = asyncio.get_running_loop()
+                if self.loop is None:
+                    self.loop = current_loop
+                elif self.loop is not current_loop:
+                    raise RuntimeError("client reused across event loops")
+                post_count += 1
+                decision = "allow" if post_count == 1 else "deny"
+                return httpx.Response(200, json={"decision": decision})
+
+        created_clients: list[LoopBoundClient] = []
+        with patch("gobby.hooks.webhooks.httpx.AsyncClient", LoopBoundClient):
+            first = manager._dispatch_webhooks_sync(event, blocking_only=True)
+            second = manager._dispatch_webhooks_sync(event, blocking_only=True)
+
+        assert manager._webhook_dispatcher.get_blocking_decision(first)[0] == "allow"
+        assert manager._webhook_dispatcher.get_blocking_decision(second)[0] == "block"
+        assert len(created_clients) == 2
+        assert all(client.closed for client in created_clients)
+
     def test_dispatch_webhooks_async_disabled(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:

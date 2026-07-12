@@ -77,6 +77,13 @@ class WebhookDispatcher:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
+    def _new_client(self) -> httpx.AsyncClient:
+        """Create an HTTP client owned by the caller's event loop."""
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(self.config.default_timeout),
+            follow_redirects=False,
+        )
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client.
 
@@ -87,10 +94,7 @@ class WebhookDispatcher:
             async with self._client_lock:
                 # Double-check after acquiring lock
                 if self._client is None:
-                    self._client = httpx.AsyncClient(
-                        timeout=httpx.Timeout(self.config.default_timeout),
-                        follow_redirects=False,
-                    )
+                    self._client = self._new_client()
         return self._client
 
     async def close(self) -> None:
@@ -153,6 +157,8 @@ class WebhookDispatcher:
         self,
         endpoint: WebhookEndpointConfig,
         payload: dict[str, Any],
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> WebhookResult:
         """Dispatch a webhook to a single endpoint with retry logic.
 
@@ -163,7 +169,8 @@ class WebhookDispatcher:
         Returns:
             WebhookResult with success/failure info.
         """
-        client = await self._get_client()
+        if client is None:
+            client = await self._get_client()
         start_time = datetime.now()
         attempts = 0
         last_error: str | None = None
@@ -292,6 +299,8 @@ class WebhookDispatcher:
         endpoint: WebhookEndpointConfig,
         payload: dict[str, Any],
         deadline: float,
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> WebhookResult:
         """Dispatch one blocking endpoint within the shared hook deadline."""
         remaining = remaining_blocking_effect_seconds(
@@ -302,7 +311,7 @@ class WebhookDispatcher:
             return self._blocking_deadline_result(endpoint)
         try:
             async with asyncio.timeout(remaining):
-                return await self._dispatch_single(endpoint, payload)
+                return await self._dispatch_single(endpoint, payload, client=client)
         except TimeoutError:
             logger.error("Blocking webhook %s exceeded aggregate deadline", endpoint.name)
             return self._blocking_deadline_result(endpoint)

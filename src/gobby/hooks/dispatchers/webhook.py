@@ -126,14 +126,22 @@ def dispatch_webhooks_sync(
     # Run async dispatch in sync context
     async def dispatch_all() -> list[WebhookResult]:
         results: list[WebhookResult] = []
-        for endpoint in matching_endpoints:
-            if endpoint.can_block:
-                result = await webhook_dispatcher._dispatch_blocking(
-                    endpoint, payload, blocking_deadline
-                )
-            else:
-                result = await webhook_dispatcher._dispatch_single(endpoint, payload)
-            results.append(result)
+        async with webhook_dispatcher._new_client() as client:
+            for endpoint in matching_endpoints:
+                if endpoint.can_block:
+                    result = await webhook_dispatcher._dispatch_blocking(
+                        endpoint,
+                        payload,
+                        blocking_deadline,
+                        client=client,
+                    )
+                else:
+                    result = await webhook_dispatcher._dispatch_single(
+                        endpoint,
+                        payload,
+                        client=client,
+                    )
+                results.append(result)
         return results
 
     # Execute in event loop
