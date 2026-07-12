@@ -207,7 +207,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     ctx.session_task_manager.link_task(resolved_session_id, task.id, "claimed")
                 except Exception as e:
                     logger.warning(f"Failed to link claimed task {task.id}: {e}")
-                    pass  # nosec B110 # best-effort linking
+                    pass
 
             # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
             # This mirrors claim_task behavior in _lifecycle.py
