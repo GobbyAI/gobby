@@ -30,6 +30,54 @@ class WebSocketTransportConnection(BaseTransportConnection):
         super().__init__(config, auth_token, token_refresh_callback)
         self._session_context: ClientSession | None = None
 
+    async def _cleanup_connect_attempt(
+        self,
+        *,
+        session_entered: bool,
+        transport_entered: bool,
+    ) -> None:
+        """Release partially entered contexts after failed or cancelled startup."""
+        session_ctx = self._session_context
+        transport_ctx = self._transport_context
+        self._session = None
+        self._session_context = None
+        self._transport_context = None
+        self._state = ConnectionState.DISCONNECTED
+        cancelled_error: asyncio.CancelledError | None = None
+
+        if session_entered and session_ctx is not None:
+            try:
+                await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
+            except TimeoutError:
+                logger.warning("Session cleanup timed out for %s", self.config.name)
+            except asyncio.CancelledError as exc:
+                logger.warning("Session cleanup cancelled for %s", self.config.name)
+                cancelled_error = exc
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Error during session cleanup for %s: %s",
+                    self.config.name,
+                    cleanup_error,
+                )
+
+        if transport_entered and transport_ctx is not None:
+            try:
+                await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
+            except TimeoutError:
+                logger.warning("Transport cleanup timed out for %s", self.config.name)
+            except asyncio.CancelledError as exc:
+                logger.warning("Transport cleanup cancelled for %s", self.config.name)
+                cancelled_error = cancelled_error or exc
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Error during transport cleanup for %s: %s",
+                    self.config.name,
+                    cleanup_error,
+                )
+
+        if cancelled_error is not None:
+            raise cancelled_error
+
     async def connect(self) -> Any:
         """Connect via WebSocket transport."""
         if self._state == ConnectionState.CONNECTED:
@@ -66,32 +114,21 @@ class WebSocketTransportConnection(BaseTransportConnection):
 
             return self._session
 
+        except asyncio.CancelledError:
+            await self._cleanup_connect_attempt(
+                session_entered=session_entered,
+                transport_entered=transport_entered,
+            )
+            raise
         except Exception as e:
-            # Handle exceptions with empty str() (EndOfStream, ClosedResourceError, CancelledError)
+            # Handle exceptions with empty str() (EndOfStream, ClosedResourceError)
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
             logger.error(f"Failed to connect to WebSocket server '{self.config.name}': {error_msg}")
 
-            # Cleanup in reverse order - session first, then transport
-            if session_entered and self._session_context is not None:
-                try:
-                    await self._session_context.__aexit__(None, None, None)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Error during session cleanup for {self.config.name}: {cleanup_error}"
-                    )
-
-            if transport_entered and self._transport_context is not None:
-                try:
-                    await self._transport_context.__aexit__(None, None, None)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Error during transport cleanup for {self.config.name}: {cleanup_error}"
-                    )
-
-            # Reset state before raising
-            self._session = None
-            self._session_context = None
-            self._transport_context = None
+            await self._cleanup_connect_attempt(
+                session_entered=session_entered,
+                transport_entered=transport_entered,
+            )
             self._state = ConnectionState.FAILED
 
             # Re-raise wrapped in MCPError (don't double-wrap)

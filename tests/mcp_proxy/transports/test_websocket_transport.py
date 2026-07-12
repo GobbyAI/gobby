@@ -6,6 +6,7 @@ websocket_client and ClientSession are mocked (external I/O).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -275,6 +276,51 @@ class TestWebSocketConnectInitializeFailure:
 # ===========================================================================
 # connect() — cleanup errors during failure are suppressed
 # ===========================================================================
+
+
+class TestWebSocketConnectCancellation:
+    """Cancellation during startup releases all entered resources."""
+
+    @patch("gobby.mcp_proxy.transports.websocket.ClientSession")
+    @patch("gobby.mcp_proxy.transports.websocket.websocket_client")
+    async def test_initialize_cancellation_cleans_both_and_propagates(
+        self,
+        mock_ws_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+        conn: WebSocketTransportConnection,
+    ) -> None:
+        initialize_started = asyncio.Event()
+
+        async def wait_for_cancellation() -> None:
+            initialize_started.set()
+            await asyncio.Future()
+
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_ws_client.return_value = mock_transport_ctx
+
+        mock_session = _mock_session()
+        mock_session.initialize = AsyncMock(side_effect=wait_for_cancellation)
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        connect_task = asyncio.create_task(conn.connect())
+        await initialize_started.wait()
+        connect_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await connect_task
+
+        mock_session_ctx.__aexit__.assert_awaited_once()
+        mock_transport_ctx.__aexit__.assert_awaited_once()
+        assert conn.state == ConnectionState.DISCONNECTED
+        assert conn.is_connected is False
+        assert conn._session is None
+        assert conn._session_context is None
+        assert conn._transport_context is None
 
 
 class TestWebSocketConnectCleanupErrors:
