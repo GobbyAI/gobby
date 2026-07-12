@@ -756,7 +756,7 @@ CREATE TABLE memories (
     memory_type TEXT NOT NULL,
     content TEXT NOT NULL,
     source_type TEXT,
-    source_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
+    source_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
 tags JSONB,

@@ -236,6 +236,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "310_github_triage_build_dispatches.sql",
         "311_model_costs_provider_key.sql",
         "312_session_digest_pair_index.sql",
+        "313_memory_source_session_set_null.sql",
     ]
 
 
@@ -277,7 +278,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 312
+    assert module.latest_known_version() == 313
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -765,3 +766,19 @@ def test_model_costs_uses_provider_scoped_primary_key_in_baseline_and_migration(
     assert "PRIMARY KEY (provider, model)" in model_costs
     assert "DROP CONSTRAINT IF EXISTS model_costs_pkey" in migration
     assert "PRIMARY KEY (provider, model)" in migration
+
+
+def test_memory_source_session_fk_sets_null_in_baseline_and_upgrade_migration() -> None:
+    memories = _normalize_sql_whitespace(_table_definition(_baseline_text(), "memories"))
+    migration = _normalize_sql_whitespace(
+        (SRC_ROOT / "storage" / "migrations" / "313_memory_source_session_set_null.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert (
+        "source_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL "
+        "DEFERRABLE INITIALLY IMMEDIATE"
+    ) in memories
+    assert "DROP CONSTRAINT IF EXISTS memories_source_session_id_fkey" in migration
+    assert "FOREIGN KEY (source_session_id) REFERENCES sessions(id) ON DELETE SET NULL" in migration
