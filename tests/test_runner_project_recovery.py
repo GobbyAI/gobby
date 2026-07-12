@@ -58,6 +58,7 @@ async def test_pipeline_recovery_covers_multiple_projects_outside_startup_projec
     loader.load_pipeline.return_value = MagicMock(resume_on_restart=False)
     completion_registry = MagicMock()
     completion_registry.notify = AsyncMock()
+    db_run = AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
     runner = SimpleNamespace(
         database=temp_db,
         workflow_loader=loader,
@@ -68,7 +69,7 @@ async def test_pipeline_recovery_covers_multiple_projects_outside_startup_projec
         _shutdown_requested=False,
         llm_service=MagicMock(),
         session_manager=MagicMock(),
-        db_executor=SimpleNamespace(run=AsyncMock()),
+        db_executor=SimpleNamespace(run=db_run),
     )
     tracker = StartupTracker()
     monkeypatch.setattr(
@@ -90,6 +91,14 @@ async def test_pipeline_recovery_covers_multiple_projects_outside_startup_projec
         "stale-pipeline",
         project_path=projects[0].id,
     )
+    offloaded_operations = {call.args[0].__name__ for call in db_run.await_args_list}
+    assert {
+        "list_recovery_project_ids",
+        "list_executions",
+        "interrupt_stale_running_executions",
+        "get_completion_subscribers",
+        "remove_completion_subscribers",
+    } <= offloaded_operations
 
 
 @pytest.mark.asyncio

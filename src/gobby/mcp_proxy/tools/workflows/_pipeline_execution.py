@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -19,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 # Track background pipeline tasks so they can be awaited on shutdown
 _background_tasks: set[asyncio.Task[None]] = set()
+
+RunDb = Callable[..., Awaitable[Any]]
+
+
+async def _run_sync_db(
+    run_db: RunDb | None,
+    operation: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if run_db is not None:
+        return await run_db(operation, *args, **kwargs)
+    return await asyncio.to_thread(operation, *args, **kwargs)
 
 
 async def cleanup_background_tasks() -> None:
@@ -546,6 +560,8 @@ async def resume_interrupted_pipelines(
     executor: PipelineExecutor,
     execution_manager: PipelineExecutionManager,
     project_id: str | None = None,
+    *,
+    run_db: RunDb | None = None,
 ) -> list[str]:
     """Resume pipelines that were running when the daemon last stopped.
 
@@ -571,7 +587,9 @@ async def resume_interrupted_pipelines(
     offset = 0
     page_size = 100
     while True:
-        running = execution_manager.list_executions(
+        running = await _run_sync_db(
+            run_db,
+            execution_manager.list_executions,
             status=ExecutionStatus.RUNNING,
             limit=page_size,
             offset=offset,

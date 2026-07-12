@@ -35,6 +35,18 @@ _PROJECT_ENUMERATION_PAGE_SIZE = 100
 _PIPELINE_EXECUTION_PAGE_SIZE = 100
 
 
+async def _run_db(
+    runner: GobbyRunner,
+    operation: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        return await db_executor.run(operation, *args, **kwargs)
+    return await asyncio.to_thread(operation, *args, **kwargs)
+
+
 def _schedule_provider_model_refresh(
     runner: GobbyRunner,
     tracker: StartupTracker | None,
@@ -471,7 +483,9 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         after_project_id: str | None = None
         failed_projects = 0
         while True:
-            project_ids = discovery_manager.list_recovery_project_ids(
+            project_ids = await _run_db(
+                runner,
+                discovery_manager.list_recovery_project_ids,
                 limit=_PROJECT_ENUMERATION_PAGE_SIZE,
                 after_project_id=after_project_id,
             )
@@ -499,6 +513,12 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
                         executor=executor,
                         execution_manager=execution_manager,
                         project_id=project_id,
+                        run_db=lambda operation, *args, **kwargs: _run_db(
+                            runner,
+                            operation,
+                            *args,
+                            **kwargs,
+                        ),
                     )
                     if resumed_ids:
                         logger.info(
@@ -508,7 +528,9 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
                             resumed_ids,
                         )
 
-                    stale_count = execution_manager.interrupt_stale_running_executions(
+                    stale_count = await _run_db(
+                        runner,
+                        execution_manager.interrupt_stale_running_executions,
                         exclude_ids=set(resumed_ids),
                     )
                     if stale_count > 0:
@@ -521,6 +543,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
 
                     if runner.completion_registry is not None:
                         await _wake_interrupted_pipeline_subscribers(
+                            runner,
                             execution_manager,
                             runner.completion_registry,
                         )
@@ -547,6 +570,7 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
 
 
 async def _wake_interrupted_pipeline_subscribers(
+    runner: GobbyRunner,
     execution_manager: Any,
     completion_registry: Any,
 ) -> int:
@@ -556,13 +580,19 @@ async def _wake_interrupted_pipeline_subscribers(
         notified = 0
         offset = 0
         while True:
-            interrupted = execution_manager.list_executions(
+            interrupted = await _run_db(
+                runner,
+                execution_manager.list_executions,
                 status=_ES.INTERRUPTED,
                 limit=_PIPELINE_EXECUTION_PAGE_SIZE,
                 offset=offset,
             )
             for exe in interrupted:
-                subs = execution_manager.get_completion_subscribers(exe.id)
+                subs = await _run_db(
+                    runner,
+                    execution_manager.get_completion_subscribers,
+                    exe.id,
+                )
                 if not subs:
                     continue
                 completion_registry.register(exe.id, subscribers=subs)
@@ -580,7 +610,11 @@ async def _wake_interrupted_pipeline_subscribers(
                         f"You may retry with run_pipeline."
                     ),
                 )
-                execution_manager.remove_completion_subscribers(exe.id)
+                await _run_db(
+                    runner,
+                    execution_manager.remove_completion_subscribers,
+                    exe.id,
+                )
                 completion_registry.cleanup(exe.id)
                 notified += 1
             offset += len(interrupted)
