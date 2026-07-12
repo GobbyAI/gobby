@@ -15,6 +15,7 @@ from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
+    _current_agent_dispatch_mutex_run_id,
     _release_current_agent_dispatch_mutex,
 )
 from gobby.mcp_proxy.tools.tasks._dispatcher_tick import schedule_dispatcher_tick
@@ -34,6 +35,19 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import Task
+
+
+def _dispatch_run_kwargs(
+    ctx: RegistryContext,
+    task_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    run_id = _current_agent_dispatch_mutex_run_id(
+        ctx,
+        task_id=task_id,
+        session_id=session_id,
+    )
+    return {"dispatch_run_id": run_id} if run_id is not None else {}
 
 
 def _operation_response(ctx: RegistryContext, task_id: str, stage_name: str) -> dict[str, Any]:
@@ -258,6 +272,20 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        try:
+            updated = ctx.task_manager.submit_for_review(
+                resolved_id,
+                stage_name,
+                review_notes=review_notes,
+                by_session_id=resolved_session_id,
+                **dispatch_kwargs,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to submit stage {stage_name} on task {task_id} for review"}
+
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -268,20 +296,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             session_id=resolved_session_id,
+            run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-
-        try:
-            updated = ctx.task_manager.submit_for_review(
-                resolved_id,
-                stage_name,
-                review_notes=review_notes,
-                by_session_id=resolved_session_id,
-            )
-        except ValueError as e:
-            return _lifecycle_value_error(str(e))
-        if not updated:
-            return {"error": f"Failed to submit stage {stage_name} on task {task_id} for review"}
-
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
@@ -345,6 +361,20 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        try:
+            updated = ctx.task_manager.approve_review(
+                resolved_id,
+                stage_name,
+                approval_notes=approval_notes,
+                by_session_id=resolved_session_id,
+                **dispatch_kwargs,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to approve review for stage {stage_name} on task {task_id}"}
+
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -355,20 +385,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             session_id=resolved_session_id,
+            run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-
-        try:
-            updated = ctx.task_manager.approve_review(
-                resolved_id,
-                stage_name,
-                approval_notes=approval_notes,
-                by_session_id=resolved_session_id,
-            )
-        except ValueError as e:
-            return _lifecycle_value_error(str(e))
-        if not updated:
-            return {"error": f"Failed to approve review for stage {stage_name} on task {task_id}"}
-
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,
@@ -451,6 +469,21 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        try:
+            updated = ctx.task_manager.reject_review(
+                resolved_id,
+                stage_name,
+                rejection_notes=rejection_notes,
+                round_number=round_number,
+                by_session_id=resolved_session_id,
+                **dispatch_kwargs,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to reject review for stage {stage_name} on task {task_id}"}
+
         _auto_link_session_commits(
             ctx,
             task_id=resolved_id,
@@ -461,21 +494,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             ctx,
             task_id=resolved_id,
             session_id=resolved_session_id,
+            run_id=dispatch_kwargs.get("dispatch_run_id"),
         )
-
-        try:
-            updated = ctx.task_manager.reject_review(
-                resolved_id,
-                stage_name,
-                rejection_notes=rejection_notes,
-                round_number=round_number,
-                by_session_id=resolved_session_id,
-            )
-        except ValueError as e:
-            return _lifecycle_value_error(str(e))
-        if not updated:
-            return {"error": f"Failed to reject review for stage {stage_name} on task {task_id}"}
-
         _clear_prior_claim_session_variables(
             ctx,
             resolved_id,

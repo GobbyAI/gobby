@@ -76,6 +76,7 @@ class StageStateTransitions:
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
         cited_subtasks: Sequence[str] | None = None,
+        dispatch_run_id: str | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         session_uuid = _session_uuid_or_none(by_session_id)
@@ -86,6 +87,7 @@ class StageStateTransitions:
             holder,
             f"{stage_name}:{verb}",
             expected_stage=snapshot,
+            dispatch_run_id=dispatch_run_id,
         ):
             current = self.rows.current_stage(task_id)
             row = self.rows.get(task_id, stage_name)

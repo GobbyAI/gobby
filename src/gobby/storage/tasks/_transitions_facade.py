@@ -245,6 +245,7 @@ class TaskTransitionsMixin:
         review_notes: str | None = None,
         *,
         by_session_id: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> Task:
         """Submit a stage for review and release ownership."""
         task = _submit_for_review(
@@ -253,6 +254,7 @@ class TaskTransitionsMixin:
             stage_name=stage_name,
             review_notes=review_notes,
             by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
         return task
@@ -264,6 +266,7 @@ class TaskTransitionsMixin:
         approval_notes: str | None = None,
         *,
         by_session_id: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> Task:
         """Approve review on a stage and release ownership."""
         task = _approve_review(
@@ -272,6 +275,7 @@ class TaskTransitionsMixin:
             stage_name=stage_name,
             approval_notes=approval_notes,
             by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
         return task
@@ -284,6 +288,7 @@ class TaskTransitionsMixin:
         round_number: int | None = None,
         *,
         by_session_id: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> Task:
         """Reject review on a stage and return it to ready."""
         task = _reject_review(
@@ -293,6 +298,7 @@ class TaskTransitionsMixin:
             rejection_notes=rejection_notes,
             round_number=round_number,
             by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
         return task

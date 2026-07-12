@@ -13,6 +13,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._runtime_mutex import DispatchMutexUnavailableError
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
@@ -126,6 +127,59 @@ def test_complete_stage_releases_current_running_agent_dispatch_mutex(
     assert result["stage"]["state"] == "done"
     assert stage_row(temp_db, task.id, "architecture")["state"] == "done"
     assert mutexes.get_mutex(task.id) is None
+
+
+def test_illegal_complete_keeps_agent_dispatch_mutex_blocking_next_dispatch(
+    temp_db,
+    sample_project,
+) -> None:
+    parent_session_id = _register_session(temp_db, sample_project, "parent-illegal")
+    child_session_id = _register_session(
+        temp_db,
+        sample_project,
+        "child-illegal",
+        agent_depth=1,
+    )
+    task = _in_progress_architecture_task(temp_db, sample_project, session_id=child_session_id)
+    LocalTaskManager(temp_db).stage_states.complete_stage(
+        task.id,
+        "architecture",
+        by_session_id=child_session_id,
+    )
+    run_id = _running_agent_run(
+        temp_db,
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        task_id=task.id,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd4015",
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id,
+        holder="dispatcher",
+        kind="stage_dispatch",
+        ttl_seconds=30,
+        run_id=run_id,
+    )
+
+    with (
+        session_context_for_test(child_session_id),
+        pytest.raises(IllegalStageTransitionError),
+    ):
+        _complete_stage(_ops_context(temp_db))(
+            task_id=task.id,
+            stage_name="architecture",
+        )
+
+    retained = mutexes.get_mutex(task.id)
+    assert retained is not None
+    assert retained.run_id == run_id
+    assert not mutexes.acquire_mutex(
+        task.id,
+        holder="next-dispatcher",
+        kind="stage_dispatch",
+        ttl_seconds=30,
+    )
 
 
 def test_complete_stage_releases_completed_agent_task_claim(

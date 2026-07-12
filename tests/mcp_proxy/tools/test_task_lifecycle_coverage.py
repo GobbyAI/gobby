@@ -1080,12 +1080,22 @@ class TestMarkTaskReviewApproved:
         mock_task_manager.approve_review.return_value = None
         registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "approve_review",
-            {"task_id": task.id, "stage_name": "planning"},
-        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review._auto_link_session_commits"
+            ) as auto_link,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review._release_current_agent_dispatch_mutex"
+            ) as release,
+        ):
+            result = await registry.call(
+                "approve_review",
+                {"task_id": task.id, "stage_name": "planning"},
+            )
         assert "error" in result
         assert "Failed to approve" in result["error"]
+        auto_link.assert_not_called()
+        release.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_approve_clears_claimed_tasks_variable(
@@ -1190,12 +1200,22 @@ class TestMarkTaskNeedsReview:
         mock_task_manager.submit_for_review.return_value = None
         registry = _create_stage_ops_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "submit_for_review",
-            {"task_id": task.id, "stage_name": "planning"},
-        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review._auto_link_session_commits"
+            ) as auto_link,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review._release_current_agent_dispatch_mutex"
+            ) as release,
+        ):
+            result = await registry.call(
+                "submit_for_review",
+                {"task_id": task.id, "stage_name": "planning"},
+            )
         assert "error" in result
         assert "Failed to submit" in result["error"]
+        auto_link.assert_not_called()
+        release.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_mark_needs_review_not_found(self, mock_task_manager, mock_sync_manager):

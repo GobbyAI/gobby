@@ -494,6 +494,7 @@ def submit_for_review(
     *,
     review_notes: str | None = None,
     by_session_id: str | None = None,
+    dispatch_run_id: str | None = None,
 ) -> Task:
     """Submit a stage for review and release ownership."""
     task = get_task(db, task_id)
@@ -508,6 +509,7 @@ def submit_for_review(
         stage_name,
         by_session_id=by_session_id,
         notes=review_notes,
+        dispatch_run_id=dispatch_run_id,
     )
     description: MaybeUnset[str | None] = UNSET
     if review_notes:
@@ -533,6 +535,7 @@ def approve_review(
     *,
     approval_notes: str | None = None,
     by_session_id: str | None = None,
+    dispatch_run_id: str | None = None,
 ) -> Task:
     """Approve review on a stage and release ownership."""
     task = get_task(db, task_id)
@@ -547,6 +550,7 @@ def approve_review(
         stage_name,
         by_session_id=by_session_id,
         notes=approval_notes,
+        dispatch_run_id=dispatch_run_id,
     )
     description: MaybeUnset[str | None] = UNSET
     if approval_notes:
@@ -571,6 +575,7 @@ def reject_review(
     plan_hash: str | None = None,
     cited_subtasks: list[str] | None = None,
     by_session_id: str | None = None,
+    dispatch_run_id: str | None = None,
 ) -> Task:
     """Reject review on a stage and release ownership."""
     task = get_task(db, task_id)
@@ -598,6 +603,7 @@ def reject_review(
         reason=rejection_notes or "review_rejected",
         by_session_id=by_session_id,
         notes=notes,
+        dispatch_run_id=dispatch_run_id,
     )
 
     description: MaybeUnset[str | None] = UNSET
