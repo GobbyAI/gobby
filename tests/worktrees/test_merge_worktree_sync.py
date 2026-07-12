@@ -298,6 +298,46 @@ async def test_merge_worktree_checkout_cancellation_restores_original_branch_bef
     assert ["checkout", "develop"] in commands
 
 
+async def test_merge_worktree_original_branch_restore_failure_is_surfaced_after_cleanup():
+    """A failed checkout restore cannot preserve a successful merge result."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    stash_head_calls = 0
+
+    def failing_branch_restore(args, cwd=None, timeout=30, check=False):
+        nonlocal stash_head_calls
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return _make_git_result(0, stdout="develop")
+        if args == ["checkout", "main"]:
+            return _make_git_result(0)
+        if args == ["checkout", "develop"]:
+            return _make_git_result(1, stderr="restore blocked")
+        if args == ["stash", "list", "-1", "--format=%H"]:
+            stash_head_calls += 1
+            return _make_git_result(
+                0,
+                stdout="" if stash_head_calls == 1 else "stash-ours\n",
+            )
+        if args == ["stash", "list", "--format=%gd%x00%H"]:
+            return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
+        if args == ["stash", "pop", "stash@{0}"]:
+            return _make_git_result(0)
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = failing_branch_restore
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
+
+    with pytest.raises(RuntimeError, match="Failed to restore original branch develop"):
+        await merge_tool("wt-123")
+
+    commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
+    assert ["stash", "pop", "stash@{0}"] in commands
+    assert lock.locked() is False
+
+
 async def test_merge_worktree_stash_cancellation_restores_exact_stash_before_unlock():
     """A cancelled stash push is identified and restored before unlock."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry

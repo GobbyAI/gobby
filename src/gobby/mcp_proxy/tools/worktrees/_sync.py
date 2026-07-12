@@ -670,6 +670,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["auto_resolved"] = auto_resolved
             return result
         finally:
+            branch_restore_error: RuntimeError | None = None
             try:
                 if checked_out_target and original_branch != merge_target:
                     restore_branch = await run_thread_to_completion(
@@ -679,12 +680,19 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         timeout=30,
                     )
                     if restore_branch.returncode != 0:
-                        logger.warning(
-                            "Failed to restore original branch %s after merge_worktree: %s",
-                            original_branch,
-                            restore_branch.stderr or restore_branch.stdout,
+                        detail = (
+                            restore_branch.stderr
+                            or restore_branch.stdout
+                            or f"git exited with status {restore_branch.returncode}"
                         )
+                        branch_restore_error = RuntimeError(
+                            f"Failed to restore original branch {original_branch} "
+                            f"after merge_worktree: {detail}"
+                        )
+                        logger.error("%s", branch_restore_error)
                 await _restore_stash()
+                if branch_restore_error is not None:
+                    raise branch_restore_error
             finally:
                 mutation_lock.release()
 
