@@ -317,8 +317,21 @@ class TestResolveContextWindow:
         """Claude family keys stay scoped to Claude-compatible providers."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
             assert resolve_context_window("claude-opus-4-8", provider="openai") is None
+            assert resolve_context_window("claude-sonnet-4-6", provider="openai") is None
             assert resolve_context_window("fable", provider="local") is None
             assert resolve_context_window("claude-fable-5", provider="openai") is None
+
+    def test_empty_override_key_is_ignored(self) -> None:
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            result = resolve_context_window_with_source(
+                "grok-composer-2.5-fast",
+                overrides={"": 123_000},
+                provider="grok",
+            )
+
+        assert result is not None
+        assert result.value == 200_000
+        assert result.source == "static_default"
 
     def test_family_fallback_ignores_unknown_claude_model(self) -> None:
         """A Claude id with no family token still returns None (no false 200k)."""
@@ -401,13 +414,13 @@ class TestResolveContextWindow:
 
         assert result == 258_400
 
-    def test_catalog_wins_over_registry(self) -> None:
-        """Provider catalog data takes precedence over OpenRouter/model_costs."""
+    def test_legacy_catalog_defers_to_registry(self) -> None:
+        """Source-less legacy catalog data is a fallback, not provider metadata."""
         catalog = _FakeCatalog({("codex", "gpt-4o"): 256_000})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
 
-        assert result == 256_000
+        assert result == 128_000
 
     def test_bare_catalog_int_must_be_positive(self) -> None:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
@@ -437,6 +450,32 @@ class TestResolveContextWindow:
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
 
         assert result == 128_000
+
+    def test_registry_catalog_source_remains_an_eligible_fallback(self) -> None:
+        catalog = _SourceCatalog({("codex", "unknown-model"): (200_000, "registry")})
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            result = resolve_context_window_with_source(
+                "unknown-model",
+                provider="codex",
+                catalog=catalog,
+            )
+
+        assert result is not None
+        assert result.value == 200_000
+        assert result.source == "registry"
+
+    def test_legacy_catalog_value_defers_to_registry(self) -> None:
+        catalog = _FakeCatalog({("codex", "gpt-4o"): 200_000})
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=128_000):
+            result = resolve_context_window_with_source(
+                "gpt-4o",
+                provider="codex",
+                catalog=catalog,
+            )
+
+        assert result is not None
+        assert result.value == 128_000
+        assert result.source == "registry"
 
     def test_provider_catalog_source_wins_over_registry(self) -> None:
         """Provider-owned catalog values outrank generic registry data."""

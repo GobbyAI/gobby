@@ -234,7 +234,7 @@ def normalize_model_lookup_id(value: str) -> str:
 
 def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
     """Avoid letting family aliases leak across unrelated providers."""
-    if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-fable"):
+    if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-"):
         return provider in {None, "claude", "droid"}
     if key.startswith("qwen3-coder"):
         return provider in {None, "qwen"}
@@ -327,7 +327,7 @@ def resolve_context_window_with_source(
     model_lower = model.lower()
     for substr, window in (overrides or {}).items():
         context_window = coerce_context_length(window)
-        if context_window is not None and substr.lower() in model_lower:
+        if substr and context_window is not None and substr.lower() in model_lower:
             return _apply_context_window_marker_floor(
                 ResolvedContextWindow(context_window, "override"), has_one_million_marker
             )
@@ -344,7 +344,7 @@ def resolve_context_window_with_source(
         )
 
     provider_name = provider.strip().lower() if isinstance(provider, str) else None
-    catalog_static: ResolvedContextWindow | None = None
+    catalog_fallback: ResolvedContextWindow | None = None
     catalog_result = _resolve_from_catalog(
         catalog or _get_provider_model_catalog(),
         provider_name,
@@ -352,8 +352,8 @@ def resolve_context_window_with_source(
     )
     if catalog_result and catalog_result.source in _AUTHORITATIVE_CATALOG_SOURCES:
         return _apply_context_window_marker_floor(catalog_result, has_one_million_marker)
-    if catalog_result and catalog_result.source == "static_default":
-        catalog_static = catalog_result
+    if catalog_result and catalog_result.source in {"registry", "static_default"}:
+        catalog_fallback = catalog_result
 
     provider_catalog_value = provider_catalog_context_length_for_model(provider_name, model)
     if provider_catalog_value is not None:
@@ -368,8 +368,8 @@ def resolve_context_window_with_source(
             ResolvedContextWindow(registry_value, "registry"), has_one_million_marker
         )
 
-    if catalog_static is not None:
-        return _apply_context_window_marker_floor(catalog_static, has_one_million_marker)
+    if catalog_fallback is not None:
+        return _apply_context_window_marker_floor(catalog_fallback, has_one_million_marker)
 
     static_value = static_context_length_for_model(provider_name, model)
     if static_value is not None:
@@ -455,7 +455,7 @@ def _resolve_from_catalog(
         value = catalog.get_context_window(provider, model)
         context_window = coerce_context_length(value)
         if context_window is not None:
-            return ResolvedContextWindow(context_window, "provider_reported")
+            return ResolvedContextWindow(context_window, "static_default")
     return None
 
 
