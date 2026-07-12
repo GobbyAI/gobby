@@ -77,7 +77,7 @@ async def test_serve_failure_cleans_up_and_exits_zero_when_winner_is_healthy(
         )
         stack.enter_context(patch("gobby.servers.uvicorn_shutdown.remove_uvicorn_shutdown_filter"))
 
-        server = SimpleNamespace(serve=AsyncMock(side_effect=SystemExit(1)))
+        server = SimpleNamespace(started=False, serve=AsyncMock(side_effect=SystemExit(1)))
         server_class.return_value = server
         runner = GobbyRunner()
 
