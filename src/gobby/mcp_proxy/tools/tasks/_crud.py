@@ -112,10 +112,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # Resolve session_id — needed for project resolution and DB insert
         try:
             resolved_session_id = ctx.resolve_session_id(session_id)
-        except ValueError as e:
+        except Exception as e:
+            logger.warning("Cannot resolve session %s for task creation", session_id, exc_info=True)
             return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
-        # Resolve project: explicit param > session (authoritative) > context > personal
+        # Resolve project: explicit parameter or the authoritative session project.
         if project:
             try:
                 resolved = ctx.resolve_project_filter(project)
@@ -123,7 +124,15 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 return {"error": str(e)}
             project_id: str = resolved or PERSONAL_PROJECT_ID
         else:
-            project_id = ctx.resolve_project_from_session(session_id)
+            try:
+                project_id = ctx.resolve_project_from_session(session_id)
+            except Exception as e:
+                logger.warning(
+                    "Cannot resolve project for session %s during task creation",
+                    session_id,
+                    exc_info=True,
+                )
+                return {"error": f"Cannot resolve project for session '{session_id}': {e}"}
 
         # Resolve parent_task_id if it's a reference format
         if parent_task_id:
@@ -801,7 +810,7 @@ def build_task_tree(
     """
     from gobby.tasks.tree_builder import TaskTreeBuilder
 
-    # Resolve project: explicit param > session (authoritative) > context > personal
+    # Resolve project: explicit param > session (authoritative).
     if project:
         try:
             resolved = ctx.resolve_project_filter(project)
@@ -809,7 +818,20 @@ def build_task_tree(
             return {"success": False, "error": str(e)}
         project_id: str = resolved or PERSONAL_PROJECT_ID
     else:
-        project_id = ctx.resolve_project_from_session(session_id)
+        try:
+            project_id = ctx.resolve_project_from_session(session_id)
+        except Exception as e:
+            logger.warning(
+                "Cannot resolve project for session %s during task-tree creation",
+                session_id,
+                exc_info=True,
+            )
+            return {
+                "success": False,
+                "error": f"Cannot resolve project for session '{session_id}': {e}",
+                "tasks_created": 0,
+                "task_refs": [],
+            }
 
     # Build the tree
     builder = TaskTreeBuilder(
