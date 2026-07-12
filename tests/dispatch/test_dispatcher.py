@@ -2831,7 +2831,7 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
 
 
 @pytest.mark.parametrize("kill_outcome", ["success", "returned_failure", "raised"])
-@pytest.mark.parametrize("artifact_failure_point", ["read", "write"])
+@pytest.mark.parametrize("artifact_failure_point", ["read", "read_runtime", "write"])
 async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_redispatch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
@@ -2893,6 +2893,8 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
         nonlocal artifact_read_failed
         if spawned and not artifact_read_failed:
             artifact_read_failed = True
+            if artifact_failure_point == "read_runtime":
+                raise RuntimeError("injected non-database artifact read failure")
             raise psycopg.errors.SerializationFailure("injected artifact read failure")
         return original_get_artifacts(manager, task_id)
 
@@ -2913,7 +2915,7 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    if artifact_failure_point == "read":
+    if artifact_failure_point.startswith("read"):
         monkeypatch.setattr(
             spawn_artifacts.TaskArtifactManager,
             "get_artifacts",

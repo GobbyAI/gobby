@@ -7,14 +7,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-import psycopg
-
 from gobby.build.workspaces import BuildWorkspaceError, ensure_epic_integration_workspaces
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import (
-    TaskArtifactConstraintError,
     TaskArtifactManager,
     TaskArtifacts,
 )
@@ -704,7 +701,7 @@ def _persist_spawn_artifacts(
             fields["base_commit_sha"] = base_commit_sha
         if fields:
             _set_artifacts_atomic(db, task_id, **fields)
-    except (TaskArtifactConstraintError, ValueError, psycopg.Error) as exc:
+    except Exception as exc:
         logger.error(
             "Failed to persist dispatcher spawn artifacts",
             extra={"task_id": task_id, "fields": fields},
