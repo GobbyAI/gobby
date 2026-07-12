@@ -19,7 +19,7 @@ repos:
       - id: trailing-whitespace
         exclude: ^\.gobby/
       - id: end-of-file-fixer
-        exclude: ^\.gobby/
+        exclude: ^(?:\.gobby/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
       - id: check-yaml
         args: [--unsafe]  # Allow custom tags
       - id: check-json
