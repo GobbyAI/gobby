@@ -34,6 +34,12 @@ def audit_marker_text(heading: str, body: str) -> str:
     return f"\n\n### {heading}\n\n{body}"
 
 
+def has_audit_marker(description: str, heading: str) -> bool:
+    """Return whether a description contains an audit marker with ``heading``."""
+    marker_heading = f"### {heading}"
+    return any(line.rstrip() == marker_heading for line in description.splitlines())
+
+
 async def append_audit_marker(db: HubDatabase, task_id: str, heading: str, body: str) -> bool:
     try:
         task = await asyncio.to_thread(get_task, db, task_id)

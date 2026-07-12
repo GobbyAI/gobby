@@ -121,7 +121,8 @@ def _build_judge_prompt(
     shuffle_seed: str,
 ) -> str:
     entries = list(sibling_ids)
-    random.Random(shuffle_seed).shuffle(entries)
+    # Reproducible presentation order for the judge; no security-sensitive randomness.
+    random.Random(shuffle_seed).shuffle(entries)  # nosec B311
     memory_lines = []
     for memory_id in entries:
         tag = " [TARGET]" if memory_id == target_id else ""

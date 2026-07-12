@@ -11,6 +11,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 
 async def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
+    now = datetime.now(UTC)
     rows = await asyncio.to_thread(
         storage.db.fetchall,
         """
@@ -23,13 +24,66 @@ async def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
            AND mutex.lease_until < %s
            AND run.id IS NULL
         """,
-        (datetime.now(UTC).isoformat(),),
+        (now.isoformat(),),
     )
     cleared = 0
     for row in rows:
-        if await asyncio.to_thread(storage.force_release, row["task_id"]):
+        if await asyncio.to_thread(
+            _release_expired_inactive_lease,
+            storage,
+            task_id=str(row["task_id"]),
+            now=now,
+        ):
             cleared += 1
     return cleared
+
+
+def _release_expired_inactive_lease(
+    storage: TaskDispatchMutexManager,
+    *,
+    task_id: str,
+    now: datetime,
+) -> bool:
+    """Atomically release an expired lease unless a current active run owns it."""
+    with storage.db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM task_dispatch_mutex
+             WHERE task_id = %s
+               AND lease_until IS NOT NULL
+               AND lease_until < %s
+               AND (
+                    run_id IS NULL
+                    OR NOT EXISTS (
+                        SELECT 1
+                          FROM agent_runs run
+                         WHERE run.id = task_dispatch_mutex.run_id
+                           AND run.status IN ('pending', 'running')
+                    )
+               )
+            """,
+            (task_id, now.isoformat()),
+        )
+        return cursor.rowcount > 0
+
+
+def sweep_expired_integration_workspace_leases(
+    db: HubDatabase,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Delete integration-workspace mutexes whose leases have expired."""
+    resolved_now = now or datetime.now(UTC)
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM integration_workspace_mutex
+             WHERE lease_until IS NOT NULL
+               AND lease_until < %s
+            """,
+            (resolved_now.isoformat(),),
+        )
+        return int(cursor.rowcount)
 
 
 def sweep_orphan_no_run_dispatch_mutexes(

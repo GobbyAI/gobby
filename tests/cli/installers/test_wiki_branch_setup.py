@@ -76,7 +76,20 @@ def _make_fake_gobby(tmp_path: Path) -> dict[str, str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     gobby = fake_bin / "gobby"
-    gobby.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    gobby.write_text(
+        """#!/usr/bin/env bash
+if [ "$1" = "hooks" ] && [ "$2" = "resolve-wiki-vault" ]; then
+    for vault_dir in wiki gobby-wiki; do
+        if [ -f "$3/$vault_dir/_gwiki/scope.json" ]; then
+            printf '%s\\n' "$3/$vault_dir"
+            exit 0
+        fi
+    done
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
     gobby.chmod(gobby.stat().st_mode | stat.S_IXUSR)
     return {
         **os.environ,

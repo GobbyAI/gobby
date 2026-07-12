@@ -48,25 +48,19 @@ def test_claim_release_clears_mutex(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls == ["run-claim"]
 
 
-def test_expansion_completion_advances_lifecycle_when_apply_created_children(
+def test_expansion_completion_without_db_returns_none_and_releases_mutex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.hooks.event_handlers import _dispatch
 
     releases: list[str] = []
-    advances: list[tuple[str, str, str]] = []
     monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-    monkeypatch.setattr(
-        _dispatch,
-        "advance_lifecycle",
-        lambda task_id, *, to_lifecycle, to_status, side_effects=None: advances.append(
-            (task_id, to_lifecycle, to_status)
-        ),
+
+    result = _dispatch.on_expansion_run_completed(
+        "task-1", "expansion-1", apply_created_children=True
     )
 
-    _dispatch.on_expansion_run_completed("task-1", "expansion-1", apply_created_children=True)
-
-    assert advances == [("task-1", "in_development", "open")]
+    assert result is None
     assert releases == ["expansion-1"]
 
 
@@ -76,38 +70,27 @@ def test_compile_only_completion_does_not_advance_lifecycle(
     from gobby.hooks.event_handlers import _dispatch
 
     releases: list[str] = []
-    advances: list[object] = []
     monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-    monkeypatch.setattr(
-        _dispatch, "advance_lifecycle", lambda *args, **kwargs: advances.append(args)
+
+    result = _dispatch.on_expansion_run_completed(
+        "task-1", "expansion-1", apply_created_children=False
     )
 
-    _dispatch.on_expansion_run_completed("task-1", "expansion-1", apply_created_children=False)
-
-    assert advances == []
+    assert result is None
     assert releases == ["expansion-1"]
 
 
-def test_expansion_failure_increments_attempts_and_releases_mutex(
+def test_expansion_failure_without_db_returns_none_and_releases_mutex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.hooks.event_handlers import _dispatch
 
     releases: list[str] = []
-    advances: list[tuple[str, str, str, object]] = []
     monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-    monkeypatch.setattr(
-        _dispatch,
-        "advance_lifecycle",
-        lambda task_id, *, to_lifecycle, to_status, side_effects=None: advances.append(
-            (task_id, to_lifecycle, to_status, side_effects)
-        ),
-    )
 
-    _dispatch.on_expansion_run_failed("task-1", "expansion-1", reason="boom")
+    result = _dispatch.on_expansion_run_failed("task-1", "expansion-1", reason="boom")
 
-    assert advances[0][:3] == ("task-1", "expanding", "open")
-    assert "Increment" in type(advances[0][3]).__name__
+    assert result is None
     assert releases == ["expansion-1"]
 
 
@@ -133,35 +116,11 @@ def test_expansion_cancellation_releases_mutex_without_advance(
     from gobby.hooks.event_handlers import _dispatch
 
     releases: list[str] = []
-    advances: list[object] = []
     monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-    monkeypatch.setattr(
-        _dispatch, "advance_lifecycle", lambda *args, **kwargs: advances.append(args)
-    )
 
     _dispatch.on_expansion_run_cancelled("task-1", "expansion-1")
 
-    assert advances == []
     assert releases == ["expansion-1"]
-
-
-def test_expansion_rule_does_not_refire_after_handler_advances(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    advances: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        _dispatch,
-        "advance_lifecycle",
-        lambda task_id, *, to_lifecycle, to_status, side_effects=None: advances.append(
-            (task_id, to_lifecycle, to_status)
-        ),
-    )
-
-    _dispatch.on_expansion_run_completed("task-1", "expansion-1", apply_created_children=True)
-
-    assert advances == [("task-1", "in_development", "open")]
 
 
 def _stage_pipeline_task(

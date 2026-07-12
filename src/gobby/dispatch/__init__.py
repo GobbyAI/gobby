@@ -2,7 +2,6 @@
 
 from gobby.dispatch.actions import (
     Action,
-    AdvanceLifecycleAction,
     AppendAuditMarkerAction,
     CreateIsolationAction,
     EscalateAction,
@@ -12,7 +11,6 @@ from gobby.dispatch.actions import (
 
 __all__ = [
     "Action",
-    "AdvanceLifecycleAction",
     "AppendAuditMarkerAction",
     "CreateIsolationAction",
     "EscalateAction",

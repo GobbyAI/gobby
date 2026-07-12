@@ -108,17 +108,19 @@ def test_action_union_includes_stage_actions() -> None:
     assert "MergeWorkspaceAction" in actions.__all__
 
 
-def test_legacy_action_types_still_present() -> None:
+def test_action_union_includes_supported_legacy_actions() -> None:
     import gobby.dispatch.actions as actions
 
     union_members = _action_union_members(actions.Action)
     legacy_names = {
         "SpawnAgentAction",
         "CreateIsolationAction",
-        "AdvanceLifecycleAction",
         "AppendAuditMarkerAction",
         "EscalateAction",
     }
     for name in legacy_names:
         assert getattr(actions, name) in union_members
         assert name in actions.__all__
+
+    assert not hasattr(actions, "AdvanceLifecycleAction")
+    assert "AdvanceLifecycleAction" not in actions.__all__

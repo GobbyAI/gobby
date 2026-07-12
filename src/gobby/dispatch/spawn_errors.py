@@ -17,8 +17,10 @@ class DispatchSpawnFailed(RuntimeError):
         message: str,
         *,
         stage_failure_cited_subtasks: Sequence[str] | None = None,
+        spawned_run_id: str | None = None,
     ) -> None:
         super().__init__(message)
         self.stage_failure_cited_subtasks: tuple[str, ...] = tuple(
             stage_failure_cited_subtasks or ()
         )
+        self.spawned_run_id = spawned_run_id

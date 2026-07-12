@@ -9,24 +9,6 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-def test_advance_action_carries_status_fields() -> None:
-    from gobby.dispatch.actions import AdvanceLifecycleAction
-
-    action = AdvanceLifecycleAction(
-        task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
-        from_lifecycle="in_development",
-        from_status="needs_review",
-        to_lifecycle="holistic_review",
-        to_status="review_approved",
-        reason="qa-approved",
-    )
-
-    assert action.from_lifecycle == "in_development"
-    assert action.from_status == "needs_review"
-    assert action.to_lifecycle == "holistic_review"
-    assert action.to_status == "review_approved"
-
-
 def test_action_round_trip() -> None:
     from gobby.dispatch.actions import Action, SpawnAgentAction
 

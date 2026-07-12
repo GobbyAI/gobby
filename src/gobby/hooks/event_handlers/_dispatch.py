@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any, cast
 
-from gobby.dispatch.actions import Action, AdvanceLifecycleAction, EscalateAction
+from gobby.dispatch.actions import Action, EscalateAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
@@ -15,13 +14,6 @@ from gobby.storage.tasks import (
     TaskLifecycleEventManager,
 )
 from gobby.storage.tasks._stage_states import StageStatesManager
-
-
-@dataclass(frozen=True)
-class IncrementExpansionAttemptsSideEffect:
-    """Legacy no-DB side effect marker for expansion retry accounting."""
-
-    task_id: str
 
 
 def on_agent_terminal(event: object, storage: TaskDispatchMutexManager | None = None) -> int:
@@ -250,26 +242,6 @@ def _stage_states(db: HubDatabase | None) -> StageStatesManager | None:
     return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
-def advance_lifecycle(
-    task_id: str,
-    *,
-    to_lifecycle: str,
-    to_status: str,
-    side_effects: object | None = None,
-) -> AdvanceLifecycleAction:
-    """Build the legacy lifecycle action used when no DB-backed stage manager is available."""
-    # Kept for API compatibility with older dispatch side-effect hooks.
-    _ = side_effects
-    return AdvanceLifecycleAction(
-        task_id=task_id,
-        from_lifecycle="expanding",
-        from_status="open",
-        to_lifecycle=to_lifecycle,
-        to_status=to_status,
-        reason="hook-dispatch",
-    )
-
-
 def _complete_stage(
     task_id: str,
     *,
@@ -278,11 +250,7 @@ def _complete_stage(
 ) -> object | None:
     manager = _stage_states(db)
     if manager is None:
-        return advance_lifecycle(
-            task_id,
-            to_lifecycle="in_development",
-            to_status="open",
-        )
+        return None
     try:
         return manager.complete_stage(task_id, stage_name, by_session_id=None)
     except IllegalStageTransitionError:
@@ -298,12 +266,7 @@ def _fail_stage(
 ) -> object | None:
     manager = _stage_states(db)
     if manager is None:
-        return advance_lifecycle(
-            task_id,
-            to_lifecycle="expanding",
-            to_status="open",
-            side_effects=IncrementExpansionAttemptsSideEffect(task_id),
-        )
+        return None
     try:
         return manager.fail_stage(task_id, stage_name, reason=reason, by_session_id=None)
     except IllegalStageTransitionError:
@@ -331,9 +294,7 @@ def _event_value(event: object, key: str) -> object | None:
 
 
 __all__ = [
-    "IncrementExpansionAttemptsSideEffect",
     "RuntimeDispatchMutex",
-    "advance_lifecycle",
     "on_agent_crashed",
     "on_agent_end_normal",
     "on_agent_terminal",

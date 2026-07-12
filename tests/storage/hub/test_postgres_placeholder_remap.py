@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -13,6 +14,55 @@ def _postgres_module():
     return importlib.import_module("gobby.storage.hub.postgres")
 
 
+@pytest.mark.asyncio
+async def test_await_task_completion_propagates_inner_cancellation_without_spinning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    shield_calls = 0
+
+    async def cancelled_operation() -> None:
+        raise asyncio.CancelledError("inner operation cancelled")
+
+    async def bounded_shield(task: asyncio.Task[object]) -> object:
+        nonlocal shield_calls
+        shield_calls += 1
+        if shield_calls > 1:
+            raise AssertionError("cancelled inner task was awaited repeatedly")
+        return await task
+
+    monkeypatch.setattr(module.asyncio, "shield", bounded_shield)
+    task = asyncio.create_task(cancelled_operation())
+
+    with pytest.raises(asyncio.CancelledError, match="inner operation cancelled"):
+        await module._await_task_completion(task)
+
+    assert shield_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_advisory_lock_does_not_consume_single_pool_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_database_url: str,
+    postgres_schema: str,
+) -> None:
+    module = _postgres_module()
+    monkeypatch.setenv("PGPOOL_MIN", "1")
+    monkeypatch.setenv("PGPOOL_MAX", "1")
+    monkeypatch.setenv("PGPOOL_TIMEOUT", "0.1")
+    scoped_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    db = module.PostgresHubDatabase(scoped_url)
+
+    try:
+        db.open()
+        async with db.advisory_lock(module.AgentCapAdmission(project_id=None)):
+            row = await asyncio.to_thread(db.fetchone, "SELECT 1 AS value")
+    finally:
+        db.close()
+
+    assert row == {"value": 1}
+
+
 def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
     module = _postgres_module()
 
@@ -23,6 +73,11 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
 
     transaction_immediate = inspect.signature(module.PostgresHubDatabase.transaction_immediate)
     assert list(transaction_immediate.parameters) == ["self", "lock"]
+    assert transaction_immediate.parameters["lock"].default is inspect.Parameter.empty
+
+    advisory_lock = inspect.signature(module.PostgresHubDatabase.advisory_lock)
+    assert list(advisory_lock.parameters) == ["self", "lock"]
+    assert advisory_lock.parameters["lock"].default is inspect.Parameter.empty
 
     for method in (
         "execute",
@@ -32,6 +87,7 @@ def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
         "safe_update",
         "apply_migrations",
         "close",
+        "advisory_lock",
     ):
         assert hasattr(module.PostgresHubDatabase, method), method
 

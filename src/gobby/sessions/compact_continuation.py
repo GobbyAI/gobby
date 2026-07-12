@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.skills.formatting import skill_fetch_batch_directive
+from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 if TYPE_CHECKING:
@@ -348,7 +349,7 @@ def _merge_session_variable(
     value: Any,
 ) -> None:
     now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
         row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
@@ -436,7 +437,7 @@ def _remove_session_variable(db: HubDatabase, session_id: str, name: str) -> Any
 
 def _pop_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
     now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
         row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s",
             (session_id,),
