@@ -44,6 +44,65 @@ async def _acquire_connection_lock(manager: Any, server_name: str) -> asyncio.Lo
     return lock
 
 
+def _require_connection_attempt(manager: Any, server_name: str) -> None:
+    if manager._lazy_connector.can_attempt_connection(server_name):
+        return
+    state = manager._lazy_connector.get_state(server_name)
+    if state and state.circuit_breaker.last_failure_time:
+        elapsed = time.time() - state.circuit_breaker.last_failure_time
+        recovery_in = max(0, state.circuit_breaker.recovery_timeout - elapsed)
+        raise CircuitBreakerOpen(server_name, recovery_in)
+    raise MCPError(f"Circuit breaker open for '{server_name}'")
+
+
+async def _connect_with_retries(
+    manager: Any,
+    server_name: str,
+    config: MCPServerConfig,
+) -> ClientSession:
+    retry_config = manager._lazy_connector.retry_config
+    last_error: Exception | None = None
+
+    for attempt in range(retry_config.max_retries + 1):
+        try:
+            state = manager._lazy_connector.get_state(server_name)
+            if state:
+                state.record_connection_attempt()
+
+            session = await asyncio.wait_for(
+                manager._connect_server(config),
+                timeout=manager.connection_timeout,
+            )
+
+            if session:
+                manager._lazy_connector.mark_connected(server_name)
+                return cast(ClientSession, session)
+            raise MCPError(f"Connection returned no session for '{server_name}'")
+        except TimeoutError:
+            last_error = MCPError(f"Connection timeout after {manager.connection_timeout}s")
+            manager._lazy_connector.mark_failed(server_name, str(last_error))
+        except Exception as exc:
+            last_error = exc
+            manager._lazy_connector.mark_failed(server_name, str(exc))
+
+        if attempt < retry_config.max_retries:
+            delay = retry_config.get_delay(attempt)
+            logging.getLogger("gobby.mcp.manager").warning(
+                "Connection to '%s' failed (attempt %s/%s), retrying in %.1fs: %s",
+                server_name,
+                attempt + 1,
+                retry_config.max_retries + 1,
+                delay,
+                last_error,
+            )
+            await asyncio.sleep(delay)
+
+    raise MCPError(
+        f"Failed to connect to '{server_name}' after "
+        f"{retry_config.max_retries + 1} attempts: {last_error}"
+    ) from last_error
+
+
 async def connect_all(manager: Any, configs: list[MCPServerConfig] | None) -> dict[str, bool]:
     """Connect configured MCP servers according to lazy/eager settings."""
     manager._running = True
@@ -207,13 +266,7 @@ async def ensure_connected(manager: Any, server_name: str) -> ClientSession:
         if connection.is_connected and connection.session:
             return cast(ClientSession, connection.session)
 
-    if not manager._lazy_connector.can_attempt_connection(server_name):
-        state = manager._lazy_connector.get_state(server_name)
-        if state and state.circuit_breaker.last_failure_time:
-            elapsed = time.time() - state.circuit_breaker.last_failure_time
-            recovery_in = max(0, state.circuit_breaker.recovery_timeout - elapsed)
-            raise CircuitBreakerOpen(server_name, recovery_in)
-        raise MCPError(f"Circuit breaker open for '{server_name}'")
+    _require_connection_attempt(manager, server_name)
 
     lock = await _acquire_connection_lock(manager, server_name)
     try:
@@ -222,47 +275,7 @@ async def ensure_connected(manager: Any, server_name: str) -> ClientSession:
             if connection.is_connected and connection.session:
                 return cast(ClientSession, connection.session)
 
-        retry_config = manager._lazy_connector.retry_config
-        last_error: Exception | None = None
-
-        for attempt in range(retry_config.max_retries + 1):
-            try:
-                state = manager._lazy_connector.get_state(server_name)
-                if state:
-                    state.record_connection_attempt()
-
-                session = await asyncio.wait_for(
-                    manager._connect_server(config),
-                    timeout=manager.connection_timeout,
-                )
-
-                if session:
-                    manager._lazy_connector.mark_connected(server_name)
-                    return cast(ClientSession, session)
-                raise MCPError(f"Connection returned no session for '{server_name}'")
-            except TimeoutError:
-                last_error = MCPError(f"Connection timeout after {manager.connection_timeout}s")
-                manager._lazy_connector.mark_failed(server_name, str(last_error))
-            except Exception as exc:
-                last_error = exc
-                manager._lazy_connector.mark_failed(server_name, str(exc))
-
-            if attempt < retry_config.max_retries:
-                delay = retry_config.get_delay(attempt)
-                logging.getLogger("gobby.mcp.manager").warning(
-                    "Connection to '%s' failed (attempt %s/%s), retrying in %.1fs: %s",
-                    server_name,
-                    attempt + 1,
-                    retry_config.max_retries + 1,
-                    delay,
-                    last_error,
-                )
-                await asyncio.sleep(delay)
-
-        raise MCPError(
-            f"Failed to connect to '{server_name}' after "
-            f"{retry_config.max_retries + 1} attempts: {last_error}"
-        ) from last_error
+        return await _connect_with_retries(manager, server_name, config)
     finally:
         lock.release()
 
@@ -277,19 +290,27 @@ async def reconnect(manager: Any, server_name: str, logger: logging.Logger) -> N
     if server_name not in manager._configs:
         return
 
-    manager._tool_schema_cache.pop(server_name, None)
-    old_connection = manager._connections.pop(server_name, None)
-    if old_connection is not None:
-        try:
-            await asyncio.wait_for(old_connection.disconnect(), timeout=5.0)
-        except TimeoutError:
-            logger.warning("Old connection disconnect timed out for %s", server_name)
-        except Exception as exc:
-            logger.warning("Error disconnecting old %s connection: %s", server_name, exc)
-
     try:
-        logger.info("Reconnecting %s...", server_name)
-        await manager.ensure_connected(server_name)
-        logger.info("Successfully reconnected %s", server_name)
+        config = manager._configs[server_name]
+        if not config.enabled:
+            raise MCPError(f"Server '{server_name}' is disabled")
+        _require_connection_attempt(manager, server_name)
+        lock = await _acquire_connection_lock(manager, server_name)
+        try:
+            manager._tool_schema_cache.pop(server_name, None)
+            old_connection = manager._connections.pop(server_name, None)
+            if old_connection is not None:
+                try:
+                    await asyncio.wait_for(old_connection.disconnect(), timeout=5.0)
+                except TimeoutError:
+                    logger.warning("Old connection disconnect timed out for %s", server_name)
+                except Exception as exc:
+                    logger.warning("Error disconnecting old %s connection: %s", server_name, exc)
+
+            logger.info("Reconnecting %s...", server_name)
+            await _connect_with_retries(manager, server_name, config)
+            logger.info("Successfully reconnected %s", server_name)
+        finally:
+            lock.release()
     except Exception as exc:
         logger.error("Reconnection failed for %s: %s", server_name, exc)

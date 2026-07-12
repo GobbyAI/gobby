@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, DEFAULT_EXTERNAL_MCP_SERVERS
+from gobby.mcp_proxy.client_manager import connections
 from gobby.mcp_proxy.client_manager.secrets import resolve_secrets_in_config
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen, CircuitState
 from gobby.mcp_proxy.manager import MCPClientManager, truncate_tool_brief
@@ -1897,20 +1898,19 @@ class TestMCPClientManagerReconnect:
             max_connection_retries=0,
         )
         connect_started = asyncio.Event()
-        both_ensure_calls_started = asyncio.Event()
+        ensure_waiting = asyncio.Event()
         release_connect = asyncio.Event()
         session = MagicMock()
         connect_calls = 0
-        ensure_calls = 0
+        acquire_calls = 0
+        original_acquire_lock = connections._acquire_connection_lock
 
-        original_ensure_connected = manager.ensure_connected
-
-        async def tracked_ensure_connected(server_name: str) -> Any:
-            nonlocal ensure_calls
-            ensure_calls += 1
-            if ensure_calls == 2:
-                both_ensure_calls_started.set()
-            return await original_ensure_connected(server_name)
+        async def tracked_acquire_lock(manager_arg: Any, server_name: str) -> asyncio.Lock:
+            nonlocal acquire_calls
+            acquire_calls += 1
+            if acquire_calls == 2:
+                ensure_waiting.set()
+            return await original_acquire_lock(manager_arg, server_name)
 
         async def controlled_connect(_config: MCPServerConfig) -> Any:
             nonlocal connect_calls
@@ -1924,19 +1924,86 @@ class TestMCPClientManagerReconnect:
             return session
 
         with (
-            patch.object(manager, "ensure_connected", side_effect=tracked_ensure_connected),
+            patch.object(connections, "_acquire_connection_lock", side_effect=tracked_acquire_lock),
             patch.object(manager, "_connect_server", side_effect=controlled_connect),
         ):
             reconnect_task = asyncio.create_task(manager._reconnect("test-server"))
             await connect_started.wait()
             ensure_task = asyncio.create_task(manager.ensure_connected("test-server"))
-            await both_ensure_calls_started.wait()
+            await asyncio.wait_for(ensure_waiting.wait(), timeout=1.0)
+            assert not ensure_task.done()
             release_connect.set()
             reconnect_result, ensure_result = await asyncio.gather(reconnect_task, ensure_task)
 
         assert reconnect_result is None
         assert ensure_result is session
         assert connect_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_reconnect_serializes_teardown_with_ensure_connected(self) -> None:
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(
+            server_configs=[config],
+            connection_timeout=1.0,
+            max_connection_retries=0,
+        )
+        teardown_started = asyncio.Event()
+        ensure_waiting = asyncio.Event()
+        release_teardown = asyncio.Event()
+        old_session = MagicMock()
+        new_session = MagicMock()
+        old_connection = MagicMock()
+        old_connection.is_connected = True
+        old_connection.session = old_session
+
+        async def controlled_disconnect() -> None:
+            teardown_started.set()
+            await release_teardown.wait()
+
+        old_connection.disconnect = AsyncMock(side_effect=controlled_disconnect)
+        manager._connections["test-server"] = old_connection
+        connect_calls = 0
+        acquire_calls = 0
+        original_acquire_lock = connections._acquire_connection_lock
+
+        async def tracked_acquire_lock(manager_arg: Any, server_name: str) -> asyncio.Lock:
+            nonlocal acquire_calls
+            acquire_calls += 1
+            if acquire_calls == 2:
+                ensure_waiting.set()
+            return await original_acquire_lock(manager_arg, server_name)
+
+        async def controlled_connect(_config: MCPServerConfig) -> Any:
+            nonlocal connect_calls
+            connect_calls += 1
+            connection = MagicMock()
+            connection.is_connected = True
+            connection.session = new_session
+            manager._connections["test-server"] = connection
+            return new_session
+
+        with (
+            patch.object(connections, "_acquire_connection_lock", side_effect=tracked_acquire_lock),
+            patch.object(manager, "_connect_server", side_effect=controlled_connect),
+        ):
+            reconnect_task = asyncio.create_task(manager._reconnect("test-server"))
+            await asyncio.wait_for(teardown_started.wait(), timeout=1.0)
+            ensure_task = asyncio.create_task(manager.ensure_connected("test-server"))
+            await asyncio.wait_for(ensure_waiting.wait(), timeout=1.0)
+
+            assert not ensure_task.done()
+            release_teardown.set()
+            ensured_session = await asyncio.wait_for(ensure_task, timeout=1.0)
+            await asyncio.wait_for(reconnect_task, timeout=1.0)
+
+        assert ensured_session is new_session
+        assert connect_calls == 1
+        old_connection.disconnect.assert_awaited_once_with()
 
     @pytest.mark.asyncio
     async def test_reconnect_applies_connection_timeout(self) -> None:
