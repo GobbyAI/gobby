@@ -241,6 +241,24 @@
 - **Minimal fix:** Module-level `set[asyncio.Task]`, `.add(task)` on creation, discard in the done callback (mirror `app_factory`).
 - **Confidence:** low-med — the documented hazard is real; in practice the first scheduling step usually keeps these alive.
 
+### NIT sweep re-audit (2026-07-11)
+
+The NIT entries below are retained as review-at-commit evidence, not as a live backlog. A current-code
+re-audit found that related daemon-core work had already fixed or separately captured the other
+findings; creating another leaf for them would duplicate focused work. Three uncaptured residuals
+remained and were split under coordination epic #17824, then resolved in the daemon-core worktree:
+
+- #17914 removed the last dead, consuming `read_shutdown_source()` compatibility helper. The older
+  `write_stop_intent()` and `write_restart_intent()` examples were already absent.
+- #17915 removed the unreachable daemon-restart cancellation replay, its dead tmux cleanup path and
+  compatibility exports, and the unused `daemon_restart` terminal-reason variant. Planned restarts
+  preserve active runs; daemon stops use `daemon_stop`.
+- #17916 isolated `_dispatch_projects()` failures with `return_exceptions=True`, project-specific
+  traceback logging, successful sibling results, and explicit cancellation propagation.
+
+Use those focused tasks and current symbols for implementation history; do not mint new work directly
+from the historical line references below without another current-code audit.
+
 ### [NIT] Signal-handler installation hard-crashes on Windows while the adjacent fd-limit helper deliberately no-ops there
 
 - **Where:** `src/gobby/runner_maintenance.py:834` (`loop.add_signal_handler`, no fallback); contrast `src/gobby/runner.py:229-232` (`resource` ImportError handled with a "(Windows?)" debug message)
