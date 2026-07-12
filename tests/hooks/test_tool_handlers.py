@@ -429,7 +429,10 @@ class TestSkillToolInterception:
         )
         assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
-        skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
+        skill_manager.resolve_skill_name.assert_called_once_with(
+            "build-coordinator",
+            project_id="",
+        )
 
     def test_skill_tool_with_gobby_prefix(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
@@ -446,7 +449,10 @@ class TestSkillToolInterception:
             'Call get_skill(name="build-coordinator") on gobby-skills through mcp__gobby__ progressive discovery'
             in (response.context or "")
         )
-        skill_manager.resolve_skill_name.assert_called_once_with("build-coordinator")
+        skill_manager.resolve_skill_name.assert_called_once_with(
+            "build-coordinator",
+            project_id="",
+        )
 
     def test_skill_tool_with_args(self, handlers_with_skills: EventHandlers) -> None:
         """Skill tool call with args includes them in context."""
@@ -474,7 +480,10 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "allow"
-        skill_manager.resolve_skill_name.assert_called_once_with("unknown-thing")
+        skill_manager.resolve_skill_name.assert_called_once_with(
+            "unknown-thing",
+            project_id="",
+        )
 
     def test_skill_tool_non_gobby_namespace(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
