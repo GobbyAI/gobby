@@ -17,6 +17,7 @@ from collections.abc import Callable, Coroutine
 from contextvars import Token
 from typing import Any
 
+from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.events import HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.utils.session_context import (
@@ -72,7 +73,7 @@ async def dispatch_mcp_calls(
             arguments["project_path"] = event.metadata["project_path"]
 
         if background:
-            asyncio.create_task(_safe_call(call_tool_fn, server, tool, arguments, logger))
+            create_background_task(_safe_call(call_tool_fn, server, tool, arguments, logger))
         else:
             try:
                 await asyncio.wait_for(

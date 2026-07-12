@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import logging
 
+from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.effect_deadline import new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
@@ -192,7 +193,7 @@ def dispatch_webhooks_async(
     # Fire and forget
     try:
         running_loop = asyncio.get_running_loop()
-        running_loop.create_task(dispatch_all())
+        create_background_task(dispatch_all(), loop=running_loop)
     except RuntimeError:
         # No event loop, try using captured loop
         if loop:

@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.effect_deadline import remaining_blocking_effect_seconds
 from gobby.hooks.events import HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
@@ -596,7 +597,7 @@ def dispatch_mcp_calls(
 
             try:
                 running_loop = asyncio.get_running_loop()
-                task = running_loop.create_task(coro)
+                task = create_background_task(coro, loop=running_loop)
                 task.add_done_callback(_log_bg_error)
             except RuntimeError:
                 if loop and loop.is_running():
