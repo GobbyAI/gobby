@@ -1,6 +1,7 @@
 """Tests for merge_worktree tool in _sync.py — worktree_path returns and auto-resolve."""
 
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -195,6 +196,42 @@ async def test_merge_worktree_waits_for_checkout_mutation_lock(
 
     result = await operation
     assert result["success"] is True
+
+
+async def test_merge_worktree_cancellation_waits_for_git_worker_before_unlock():
+    """Cancellation cannot release the checkout lock around a live Git worker."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def blocking_git(args, cwd=None, timeout=30, check=False):
+        if args and args[0] == "merge":
+            worker_started.set()
+            assert release_worker.wait(timeout=5)
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = blocking_git
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
+    operation = asyncio.create_task(merge_tool("wt-123"))
+
+    assert await asyncio.to_thread(worker_started.wait, 2)
+    operation.cancel()
+    await asyncio.sleep(0)
+    contender = asyncio.create_task(lock.acquire())
+    await asyncio.sleep(0)
+    assert operation.done() is False
+    assert contender.done() is False
+    assert lock.locked() is True
+
+    release_worker.set()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+    await asyncio.wait_for(contender, timeout=2)
+    lock.release()
 
 
 @pytest.mark.asyncio

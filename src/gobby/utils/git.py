@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 import subprocess  # nosec B404 # subprocess needed for git commands
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypedDict
 from weakref import WeakKeyDictionary
@@ -31,6 +32,49 @@ def get_checkout_mutation_lock(checkout_path: str | Path) -> asyncio.Lock:
     loop_locks = _CHECKOUT_MUTATION_LOCKS.setdefault(loop, {})
     key = str(Path(checkout_path).resolve())
     return loop_locks.setdefault(key, asyncio.Lock())
+
+
+async def run_to_completion[T](awaitable: Awaitable[T]) -> T:
+    """Keep work alive through caller cancellation, then propagate cancellation."""
+    worker = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        if worker.done() and worker.cancelled():
+            raise
+
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                if worker.done() and worker.cancelled():
+                    raise
+
+        if not worker.cancelled():
+            try:
+                worker.result()
+            except BaseException as error:
+                logger.warning(
+                    "Offloaded work failed after its caller was cancelled: %s",
+                    error,
+                    exc_info=True,
+                )
+        raise
+
+
+async def run_thread_to_completion[**P, T](
+    func: Callable[P, T],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Run blocking work without abandoning its thread when the caller is cancelled.
+
+    ``asyncio.to_thread`` cannot stop its worker after cancellation. Callers that
+    protect external state with an asyncio lock must therefore wait for the worker
+    to finish before releasing that lock, while still propagating cancellation.
+    """
+    return await run_to_completion(asyncio.to_thread(func, *args, **kwargs))
 
 
 class GitMetadata(TypedDict, total=False):

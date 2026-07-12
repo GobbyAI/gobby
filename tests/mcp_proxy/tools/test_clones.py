@@ -818,6 +818,51 @@ class TestMergeCloneToTarget:
         result = await operation
         assert result["success"] is True
 
+    async def test_merge_clone_cancellation_waits_for_git_worker_before_unlock(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """Cancellation cannot release the checkout lock around a live Git worker."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.return_value = _git_result()
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocking_merge(**_kwargs: object) -> MagicMock:
+            worker_started.set()
+            assert release_worker.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.merge_branch.side_effect = blocking_merge
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+        operation = asyncio.create_task(
+            registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+        )
+
+        assert await asyncio.to_thread(worker_started.wait, 2)
+        operation.cancel()
+        await asyncio.sleep(0)
+        contender = asyncio.create_task(lock.acquire())
+        await asyncio.sleep(0)
+        assert operation.done() is False
+        assert contender.done() is False
+        assert lock.locked() is True
+
+        release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        await asyncio.wait_for(contender, timeout=2)
+        lock.release()
+        mock_clone_storage.update.assert_called_with(
+            "clone-123",
+            status=CloneStatus.ACTIVE.value,
+        )
+
     @pytest.mark.asyncio
     async def test_merge_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Merge fails for nonexistent clone."""

@@ -10,7 +10,7 @@ from typing import Any, Literal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
-from gobby.utils.git import get_checkout_mutation_lock
+from gobby.utils.git import get_checkout_mutation_lock, run_thread_to_completion
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         await mutation_lock.acquire()
         try:
             try:
-                fetch_result = await asyncio.to_thread(
+                fetch_result = await run_thread_to_completion(
                     git_manager.run_git_command,
                     [
                         "fetch",
@@ -276,13 +276,13 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             primary_result: dict[str, Any]
             try:
                 try:
-                    stash_head_before = await asyncio.to_thread(
+                    stash_head_before = await run_thread_to_completion(
                         git_manager.run_git_command,
                         ["rev-parse", "--verify", "-q", "refs/stash"],
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
-                    stash_result = await asyncio.to_thread(
+                    stash_result = await run_thread_to_completion(
                         git_manager.run_git_command,
                         [
                             "stash",
@@ -302,7 +302,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             output=stash_result.stdout,
                             stderr=stash_result.stderr,
                         )
-                    stash_head_after = await asyncio.to_thread(
+                    stash_head_after = await run_thread_to_completion(
                         git_manager.run_git_command,
                         ["rev-parse", "--verify", "-q", "refs/stash"],
                         cwd=git_manager.repo_path,
@@ -334,7 +334,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 else:
                     # Step 3: Merge the fetched ref into target branch.
                     try:
-                        merge_result = await asyncio.to_thread(
+                        merge_result = await run_thread_to_completion(
                             git_manager.merge_branch,
                             source_branch=temp_ref,
                             target_branch=target_branch,
@@ -378,7 +378,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             }
             finally:
                 try:
-                    delete_result = await asyncio.to_thread(
+                    delete_result = await run_thread_to_completion(
                         git_manager.run_git_command,
                         ["branch", "-D", temp_ref],
                         cwd=git_manager.repo_path,
@@ -396,7 +396,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
                 if stash_oid:
                     try:
-                        stash_list_result = await asyncio.to_thread(
+                        stash_list_result = await run_thread_to_completion(
                             git_manager.run_git_command,
                             ["stash", "list", "--format=%gd%x00%H"],
                             cwd=git_manager.repo_path,
@@ -417,7 +417,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         stash_ref = _stash_ref_for_oid(stash_list_result.stdout, stash_oid)
                         if stash_ref is None:
                             raise RuntimeError(f"exact stash {stash_oid} is no longer present")
-                        pop_result = await asyncio.to_thread(
+                        pop_result = await run_thread_to_completion(
                             git_manager.run_git_command,
                             ["stash", "pop", stash_ref],
                             cwd=git_manager.repo_path,
