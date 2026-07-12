@@ -774,6 +774,70 @@ async def test_delete_worktree_path_not_exists(
 
 
 @pytest.mark.asyncio
+async def test_delete_worktree_existing_path_without_git_manager_preserves_record(
+    mock_worktree_storage,
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/tmp/p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    registry = create_worktrees_registry(
+        worktree_storage=mock_worktree_storage,
+        git_manager=None,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+
+    with patch("pathlib.Path.exists", return_value=True):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is False
+    assert "without a resolved git manager" in result["error"]
+    mock_worktree_storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_missing_path_without_git_manager_removes_stale_record(
+    mock_worktree_storage,
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/nonexistent",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_worktree_storage.delete.return_value = True
+    registry = create_worktrees_registry(
+        worktree_storage=mock_worktree_storage,
+        git_manager=None,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+
+    with patch("pathlib.Path.exists", return_value=False):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is True
+    mock_worktree_storage.delete.assert_called_once_with(wt.id)
+
+
+@pytest.mark.asyncio
 async def test_delete_worktree_git_failure(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:

@@ -162,6 +162,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         worktree_exists = Path(worktree.worktree_path).exists()
 
+        if worktree_exists and resolved_git_mgr is None:
+            return {
+                "success": False,
+                "error": (
+                    "Cannot delete an on-disk worktree without a resolved git manager; "
+                    "the worktree record was preserved"
+                ),
+            }
+
         # Check for uncommitted changes if not forcing
         if resolved_git_mgr and worktree_exists:
             status = resolved_git_mgr.get_worktree_status(worktree.worktree_path)
