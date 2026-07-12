@@ -35,6 +35,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from gobby.memory.vectorstore_status import VectorStoreStatus
+
 logger = logging.getLogger(__name__)
 
 _UNINITIALIZED_MESSAGE = "VectorStore not initialized. Call initialize() first."
@@ -160,11 +162,16 @@ class VectorStore:
         self._collection_lifecycle_lock = asyncio.Lock()
         self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
         self._next_retry_at = 0.0
+        self._status = VectorStoreStatus(self._collection_name, self._embedding_dim)
 
     @property
     def collection_name(self) -> str:
         """Return the default collection name configured for this store."""
         return self._collection_name
+
+    def status_snapshot(self) -> dict[str, Any]:
+        """Return structured collection lifecycle and recovery state."""
+        return self._status.snapshot()
 
     async def initialize(self) -> None:
         """Create the Qdrant client and ensure the collection exists."""
@@ -204,6 +211,7 @@ class VectorStore:
                         self._collection_name,
                         self._embedding_dim,
                     )
+                self._status.mark_ready()
             else:
                 # Check for dimension mismatch between config and existing collection.
                 try:
@@ -212,12 +220,13 @@ class VectorStore:
                         self._collection_name,
                     )
                     if existing_dim is not None and existing_dim != self._embedding_dim:
-                        raise VectorStoreCollectionDimensionError(
-                            f"Embedding dimension mismatch for collection '{self._collection_name}': "
-                            f"configured={self._embedding_dim}, existing={existing_dim}. "
-                            f"Either change embedding_dim in config to {existing_dim}, "
-                            f"or run 'gobby memory rebuild' to re-embed with the new model."
+                        await self._prepare_collection_for_rebuild(
+                            client,
+                            recreate_on_mismatch=True,
                         )
+                        self._status.mark_dimension_recreated(existing_dim)
+                    else:
+                        self._status.mark_ready()
                 except VectorStoreCollectionDimensionError:
                     raise
                 except Exception as e:
@@ -838,6 +847,7 @@ class VectorStore:
                 if not collection_reset:
                     await self._delete_stale_ids(client, incoming_ids, batch_size=batch_size)
 
+                self._status.mark_rebuild_complete()
                 logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
 
     async def _delete_stale_ids(

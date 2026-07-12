@@ -565,18 +565,28 @@ async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> 
 
 
 @pytest.mark.asyncio
-async def test_initialize_existing_collection_dimension_mismatch_raises() -> None:
+async def test_initialize_existing_collection_dimension_mismatch_recreates() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
     client.get_collection.return_value = _collection_info(3)
     store._client = client
 
-    with pytest.raises(VectorStoreCollectionDimensionError) as exc_info:
-        await store.initialize()
+    await store.initialize()
 
-    assert "configured=4, existing=3" in str(exc_info.value)
-    client.create_collection.assert_not_called()
+    client.delete_collection.assert_called_once_with(collection_name="mock_memories")
+    assert client.create_collection.call_args.kwargs["vectors_config"].size == 4
+    assert store.status_snapshot() == {
+        "state": "recreated_pending_rebuild",
+        "collection": "mock_memories",
+        "configured_dimension": 4,
+        "rebuild_required": True,
+        "dimension_recovery": {
+            "action": "recreated",
+            "previous_dimension": 3,
+            "configured_dimension": 4,
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -719,8 +729,8 @@ async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> No
 
 
 @pytest.mark.asyncio
-async def test_dimension_mismatch_raises_error(tmp_path) -> None:
-    """initialize() should raise when collection dim mismatches configured dim."""
+async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_path) -> None:
+    """initialize() recreates a mismatched collection and leaves it operational."""
     # Create a collection with dim=4
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -731,17 +741,27 @@ async def test_dimension_mismatch_raises_error(tmp_path) -> None:
     await store.upsert(MEM_1, _make_embedding(1.0, dim=4), {"content": "test"})
     await store.close()
 
-    # Reopen with different dim — should log error
+    # Reopen with a different dimension. Startup recreates the stale collection and
+    # exposes that existing memories still need to be re-embedded.
     store2 = VectorStore(
         path=str(tmp_path / "qdrant"),
         collection_name="dim_test",
         embedding_dim=768,
     )
-    with pytest.raises(
-        VectorStoreCollectionDimensionError,
-        match="configured=768, existing=4",
-    ):
-        await store2.initialize()
+    await store2.initialize()
+
+    assert store2.status_snapshot()["state"] == "recreated_pending_rebuild"
+    assert store2.status_snapshot()["rebuild_required"] is True
+    await store2.upsert(MEM_2, _make_embedding(2.0, dim=768), {"content": "new"})
+    results = await store2.search(_make_embedding(2.0, dim=768))
+    assert [result[0] for result in results] == [MEM_2]
+
+    async def embed_fn(_text: str) -> list[float]:
+        return _make_embedding(2.0, dim=768)
+
+    await store2.rebuild([{"id": MEM_2, "content": "new"}], embed_fn)
+    assert store2.status_snapshot()["state"] == "ready"
+    assert store2.status_snapshot()["rebuild_required"] is False
 
     await store2.close()
 

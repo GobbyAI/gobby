@@ -350,10 +350,17 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                                 exc_info=True,
                             )
                             qdrant_healthy = False
-                memory_stats["qdrant"] = {
+                qdrant_status: dict[str, Any] = {
                     "configured": qdrant_configured,
                     "healthy": qdrant_healthy,
                 }
+                if vector_store is not None:
+                    status_snapshot = getattr(vector_store, "status_snapshot", None)
+                    if callable(status_snapshot):
+                        snapshot = status_snapshot()
+                        if isinstance(snapshot, dict):
+                            qdrant_status.update(snapshot)
+                memory_stats["qdrant"] = qdrant_status
             except Exception as e:
                 logger.warning(
                     "Failed to check Qdrant status: %s: %s",
