@@ -877,11 +877,22 @@ class VectorStore:
             await self.delete_many(stale_ids[index : index + batch_size])
         logger.info("Deleted %s stale points from '%s'", len(stale_ids), self._collection_name)
 
-    async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
-        """Return all point IDs in the collection."""
+    async def scroll_ids(
+        self,
+        batch_size: int = 1000,
+        filters: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Return point IDs in the collection, optionally filtered by payload."""
         client = await self._ensure_initialized()
         all_ids: list[str] = []
         offset = None
+        scroll_filter = None
+        if filters:
+            conditions = [
+                FieldCondition(key=key, match=MatchValue(value=value))
+                for key, value in filters.items()
+            ]
+            scroll_filter = Filter(must=conditions)
 
         while True:
             try:
@@ -890,6 +901,7 @@ class VectorStore:
                     collection_name=self._collection_name,
                     limit=batch_size,
                     offset=offset,
+                    scroll_filter=scroll_filter,
                     with_payload=False,
                     with_vectors=False,
                 )

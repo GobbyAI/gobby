@@ -28,6 +28,7 @@ def _memory(memory_id: str, content: str, project_id: str = "project-1") -> Memo
 class _MemoryStorage:
     def __init__(self, memories: list[Memory]) -> None:
         self.memories = memories
+        self.list_calls: list[tuple[str | None, int | None, int]] = []
         self.db = MagicMock()
         self.db.execute.return_value.rowcount = 0
 
@@ -41,6 +42,7 @@ class _MemoryStorage:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
     ) -> list[Memory]:
+        self.list_calls.append((project_id, limit, offset))
         memories = [
             memory
             for memory in self.memories
@@ -62,10 +64,12 @@ class _MemoryStorage:
 class _VectorStore:
     def __init__(self) -> None:
         self.ids: list[str] = []
+        self.events: list[str] = []
         self.rebuild = AsyncMock(side_effect=self._rebuild)
         self.scroll_ids = AsyncMock(side_effect=self._scroll_ids)
         self.delete = AsyncMock()
-        self.batch_upsert = AsyncMock()
+        self.delete_many = AsyncMock(side_effect=self._delete_many)
+        self.batch_upsert = AsyncMock(side_effect=self._batch_upsert)
         self.delete_collection = AsyncMock()
 
     @property
@@ -79,8 +83,27 @@ class _VectorStore:
     ) -> None:
         self.ids = [str(memory["id"]) for memory in memory_dicts]
 
-    async def _scroll_ids(self) -> list[str]:
+    async def _scroll_ids(
+        self,
+        batch_size: int = 1000,
+        filters: dict[str, str] | None = None,
+    ) -> list[str]:
+        del batch_size, filters
+        self.events.append("scroll")
         return list(self.ids)
+
+    async def _batch_upsert(self, batch: list[tuple[str, list[float], dict[str, Any]]]) -> None:
+        self.events.append("upsert")
+        self.ids.extend(memory_id for memory_id, _embedding, _payload in batch)
+
+    async def _delete_many(
+        self,
+        memory_ids: list[str],
+        collection_name: str | None = None,
+    ) -> None:
+        del collection_name
+        self.events.append("delete")
+        self.ids = [memory_id for memory_id in self.ids if memory_id not in memory_ids]
 
 
 class _SlowVectorStore(_VectorStore):
@@ -108,11 +131,12 @@ def _service(
     storage: _MemoryStorage,
     vector_store: _VectorStore,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    embed_fn: Callable[[str], Awaitable[list[float]]] = _embed_fn,
 ) -> IndexingService:
     return IndexingService(
         storage=storage,
         vector_store=vector_store,
-        embed_fn=_embed_fn,
+        embed_fn=embed_fn,
         kg_service=None,
         crossref_service=MagicMock(),
         kg_rebuilder=AsyncMock(return_value={}),
@@ -144,6 +168,60 @@ async def test_project_reindex_logs_cumulative_batch_progress(
         "Reindex progress: 500/501 vectors",
         "Reindex progress: 501/501 vectors",
     ]
+
+
+@pytest.mark.asyncio
+async def test_project_reindex_pages_all_memories_then_deletes_only_stale_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 2)
+    storage = _MemoryStorage([_memory(f"mem-{index}", f"content {index}") for index in range(5)])
+    vector_store = _VectorStore()
+    vector_store.ids = ["mem-0", "stale-project-vector"]
+    service = _service(storage, vector_store)
+
+    result = await service.reindex_embeddings(project_id="project-1")
+
+    assert result["success"] is True
+    assert result["embeddings_generated"] == 5
+    assert storage.list_calls == [
+        ("project-1", 2, 0),
+        ("project-1", 2, 2),
+        ("project-1", 2, 4),
+    ]
+    vector_store.scroll_ids.assert_awaited_once_with(filters={"project_id": "project-1"})
+    assert [len(call.args[0]) for call in vector_store.batch_upsert.await_args_list] == [2, 2, 1]
+    vector_store.delete_many.assert_awaited_once_with(["stale-project-vector"])
+    assert vector_store.events == ["scroll", "upsert", "upsert", "upsert", "delete"]
+
+
+@pytest.mark.asyncio
+async def test_project_reindex_embed_failure_never_deletes_existing_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.memory.services.indexing.REINDEX_PAGE_SIZE", 1)
+    storage = _MemoryStorage([_memory("mem-1", "first"), _memory("mem-2", "fail")])
+    vector_store = _VectorStore()
+    vector_store.ids = ["mem-1", "mem-2", "stale-project-vector"]
+
+    async def embed_fn(content: str) -> list[float]:
+        if content == "fail":
+            raise RuntimeError("embedding failed")
+        return [0.1, 0.2]
+
+    service = _service(storage, vector_store, embed_fn=embed_fn)
+
+    result = await service.reindex_embeddings(project_id="project-1")
+
+    assert result == {
+        "success": False,
+        "total_memories": 2,
+        "error": "embedding failed",
+    }
+    assert vector_store.batch_upsert.await_count == 1
+    vector_store.delete_many.assert_not_awaited()
+    vector_store.delete.assert_not_awaited()
+    assert vector_store.events == ["scroll", "upsert"]
 
 
 @pytest.mark.asyncio

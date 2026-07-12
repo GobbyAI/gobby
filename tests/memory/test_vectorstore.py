@@ -290,6 +290,16 @@ async def test_search_with_project_id_filter(vector_store: VectorStore) -> None:
     assert results[0][0] == MEM_2
 
 
+@pytest.mark.asyncio
+async def test_scroll_ids_with_project_filter(vector_store: VectorStore) -> None:
+    await vector_store.upsert(MEM_1, _make_embedding(1.0), {"project_id": "proj-A"})
+    await vector_store.upsert(MEM_2, _make_embedding(2.0), {"project_id": "proj-B"})
+
+    result = await vector_store.scroll_ids(filters={"project_id": "proj-A"})
+
+    assert result == [MEM_1]
+
+
 def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads() -> None:
     scope_filter = memory_project_scope_filter("proj-A")
 

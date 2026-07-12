@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_REINDEX_LIMIT = 100_000
+REINDEX_PAGE_SIZE = 500
 GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS = 60.0
 
 
@@ -44,7 +45,11 @@ class VectorStoreProtocol(Protocol):
     @property
     def collection_name(self) -> str: ...
 
-    async def scroll_ids(self, batch_size: int = 1000) -> list[str]: ...
+    async def scroll_ids(
+        self,
+        batch_size: int = 1000,
+        filters: dict[str, str] | None = None,
+    ) -> list[str]: ...
 
     async def delete_many(
         self,
@@ -258,30 +263,32 @@ class IndexingService:
 
         total = 0
         try:
-            memories = await self._run_storage(
-                self._storage.list_memories,
-                project_id=project_id,
-                limit=MAX_REINDEX_LIMIT,
-            )
+            vector_store = self._vector_store
+            embed_fn = self._embed_fn
+            existing_ids = set(await vector_store.scroll_ids(filters={"project_id": project_id}))
+            memories = await self.fetch_all_project_memories(project_id)
             total = len(memories)
             memory_dicts = self._memory_dicts(memories)
-            await self._vector_store.delete(filters={"project_id": project_id})
+            incoming_ids = {str(mem["id"]) for mem in memory_dicts}
             batch: list[tuple[str, list[float], dict[str, Any]]] = []
             processed = 0
             for mem in memory_dicts:
                 mem_id: str = mem["id"]
-                embedding = await self._embed_fn(mem["content"])
+                embedding = await embed_fn(mem["content"])
                 payload = {k: v for k, v in mem.items() if k != "id"}
                 batch.append((mem_id, embedding, payload))
-                if len(batch) >= 500:
-                    await self._vector_store.batch_upsert(batch)
+                if len(batch) >= REINDEX_PAGE_SIZE:
+                    await vector_store.batch_upsert(batch)
                     processed += len(batch)
                     logger.info(f"Reindex progress: {processed}/{total} vectors")
                     batch = []
             if batch:
-                await self._vector_store.batch_upsert(batch)
+                await vector_store.batch_upsert(batch)
                 processed += len(batch)
                 logger.info(f"Reindex progress: {processed}/{total} vectors")
+            stale_ids = sorted(existing_ids - incoming_ids)
+            for index in range(0, len(stale_ids), REINDEX_PAGE_SIZE):
+                await vector_store.delete_many(stale_ids[index : index + REINDEX_PAGE_SIZE])
             generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
@@ -453,19 +460,17 @@ class IndexingService:
         """Fetch all memories for a project using pagination."""
         all_memories: list[Memory] = []
         offset = 0
-        batch_size = 500
         while True:
             batch = await self._run_storage(
                 self._storage.list_memories,
-                project_id,
-                None,
-                batch_size,
-                offset,
+                project_id=project_id,
+                limit=REINDEX_PAGE_SIZE,
+                offset=offset,
             )
             if not batch:
                 break
             all_memories.extend(batch)
-            if len(batch) < batch_size:
+            if len(batch) < REINDEX_PAGE_SIZE:
                 break
-            offset += batch_size
+            offset += len(batch)
         return all_memories
