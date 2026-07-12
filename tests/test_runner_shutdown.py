@@ -25,6 +25,7 @@ async def _never_complete() -> None:
 class _ExitAwareServer:
     def __init__(self) -> None:
         self._should_exit = False
+        self.started = True
         self.exit_requested = asyncio.Event()
         self.serve = AsyncMock(side_effect=self._serve)
 
@@ -474,8 +475,11 @@ class TestGobbyRunnerShutdown:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
+            loop = asyncio.get_running_loop()
+            cleanup_started = asyncio.Event()
 
             def fail_cleanup() -> None:
+                loop.call_soon_threadsafe(cleanup_started.set)
                 runner._shutdown_requested = True
                 raise Exception("Cleanup failed")
 
@@ -483,7 +487,11 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+
+                async def serve_until_cleanup() -> None:
+                    await cleanup_started.wait()
+
+                mock_server.serve = AsyncMock(side_effect=serve_until_cleanup)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -880,8 +888,80 @@ class TestShutdownSessionStatusLifecycle:
         hook_manager.shutdown_async.assert_not_awaited()
         runner.database.close.assert_called_once()
 
+    async def test_http_stop_cannot_downgrade_restart_before_shutdown_capture(
+        self, tmp_path
+    ) -> None:
+        from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
+
+        runner = object.__new__(GobbyRunner)
+        runner._shutdown_requested = False
+        runner._shutdown_intent = ShutdownIntent.STOP
+        runner.http_server = SimpleNamespace(services=None)
+        runner.database = SimpleNamespace(close=MagicMock())
+        server = SimpleNamespace(_runner=runner)
+
+        restart_requested = asyncio.Event()
+
+        async def request_restart() -> None:
+            assert _request_runner_shutdown(server, ShutdownIntent.RESTART) is True
+            restart_requested.set()
+
+        async def request_http_stop() -> None:
+            await restart_requested.wait()
+            assert _request_runner_shutdown(server, ShutdownIntent.STOP) is True
+
+        await asyncio.gather(request_restart(), request_http_stop())
+
+        graceful_shutdown = AsyncMock()
+        async_cleanup = AsyncMock()
+
+        async def server_done() -> None:
+            return None
+
+        with (
+            patch.object(
+                runner_lifecycle_shutdown,
+                "_run_graceful_shutdown_sequence",
+                graceful_shutdown,
+            ),
+            patch.object(
+                runner_lifecycle_shutdown,
+                "_run_async_shutdown_cleanup",
+                async_cleanup,
+            ),
+            patch.object(
+                runner_lifecycle_shutdown,
+                "get_shutdown_marker_path",
+                return_value=tmp_path / "shutdown.json",
+            ),
+        ):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                asyncio.create_task(server_done()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+        assert runner._shutdown_intent is ShutdownIntent.RESTART
+        assert graceful_shutdown.await_args.kwargs["shutdown_intent"] is ShutdownIntent.RESTART
+
     async def test_database_closes_after_session_writing_services_stop(self) -> None:
         events: list[str] = []
+        approval_timeout_started = asyncio.Event()
+
+        async def approval_timeout_loop() -> None:
+            approval_timeout_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("approval-timeout-cancel")
+                raise
 
         async def lifecycle_stop() -> None:
             events.append("lifecycle")
@@ -924,12 +1004,14 @@ class TestShutdownSessionStatusLifecycle:
             database=SimpleNamespace(
                 close=MagicMock(side_effect=lambda: events.append("database"))
             ),
+            _approval_timeout_task=asyncio.create_task(approval_timeout_loop()),
         )
         server = SimpleNamespace(should_exit=False)
 
         async def server_done() -> None:
             return None
 
+        await approval_timeout_started.wait()
         await runner_lifecycle_shutdown.shutdown_daemon_services(
             runner,
             server,
@@ -943,12 +1025,14 @@ class TestShutdownSessionStatusLifecycle:
             cleanup_pid_file=MagicMock(),
         )
 
+        assert runner._approval_timeout_task.cancelled()
         assert events == [
             "sessions",
             "lifecycle",
             "agent-cancel",
             "agent-monitor",
             "message-processor",
+            "approval-timeout-cancel",
             "hook",
             "mcp",
             "database",
@@ -961,6 +1045,7 @@ class TestShutdownSessionStatusLifecycle:
             "agent-monitor",
             "message-processor",
             "hook",
+            "approval-timeout-cancel",
             "mcp",
         ):
             assert events.index(event) < database_index

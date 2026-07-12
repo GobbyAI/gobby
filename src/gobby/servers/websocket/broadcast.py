@@ -6,6 +6,7 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -15,6 +16,9 @@ from websockets.exceptions import ConnectionClosed
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
+
+BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
+BROADCAST_CLOSE_TIMEOUT_SECONDS = 1.0
 
 
 class BroadcastMixin:
@@ -89,6 +93,39 @@ class BroadcastMixin:
 
         return False
 
+    async def _send_broadcast(self, websocket: Any, message: str) -> bool:
+        """Send one broadcast without allowing a stalled client to block fan-out."""
+        try:
+            await asyncio.wait_for(
+                websocket.send(message),
+                timeout=BROADCAST_SEND_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            self.clients.pop(websocket, None)
+            logger.warning(
+                "Broadcast send timed out after %.1fs; dropping client",
+                BROADCAST_SEND_TIMEOUT_SECONDS,
+            )
+            try:
+                await asyncio.wait_for(
+                    websocket.close(code=1011, reason="Broadcast send timed out"),
+                    timeout=BROADCAST_CLOSE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning("Timed-out broadcast client did not close promptly")
+            except ConnectionClosed:
+                pass
+            except Exception as exc:
+                logger.warning("Failed to close timed-out broadcast client: %s", exc)
+            return False
+        except ConnectionClosed:
+            # Client disconnecting, will be cleaned up in handler.
+            return False
+        except Exception as exc:
+            logger.warning("Broadcast failed for client: %s", exc)
+            return False
+        return True
+
     async def broadcast(self, message: dict[str, Any]) -> None:
         """
         Broadcast message to all connected clients.
@@ -102,22 +139,21 @@ class BroadcastMixin:
             return
 
         message_str = json_dumps(message)
-        sent_count = 0
+        recipients = []
         failed_count = 0
-
-        for websocket in list(self.clients.keys()):
+        for websocket in list(self.clients):
             try:
-                if not self._is_subscribed(websocket, message):
-                    continue
+                if self._is_subscribed(websocket, message):
+                    recipients.append(websocket)
+            except Exception as exc:
+                logger.warning("Broadcast subscription check failed for client: %s", exc)
+                failed_count += 1
 
-                await websocket.send(message_str)
-                sent_count += 1
-            except ConnectionClosed:
-                # Client disconnecting, will be cleaned up in handler
-                failed_count += 1
-            except Exception as e:
-                logger.warning(f"Broadcast failed for client: {e}")
-                failed_count += 1
+        results = await asyncio.gather(
+            *(self._send_broadcast(websocket, message_str) for websocket in recipients)
+        )
+        sent_count = sum(results)
+        failed_count += len(results) - sent_count
 
         if sent_count > 0 or failed_count > 0:
             logger.debug(

@@ -45,7 +45,10 @@ class StartupTracker:
         }
 
 
-def _log_subsystem_init_result(task: asyncio.Task[None]) -> None:
+def _log_subsystem_init_result(
+    task: asyncio.Task[None],
+    tracker: StartupTracker | None,
+) -> None:
     """Log background subsystem initialization failures as soon as they happen."""
     if task.cancelled():
         return
@@ -58,6 +61,9 @@ def _log_subsystem_init_result(task: asyncio.Task[None]) -> None:
             "Subsystem initialization failed",
             exc_info=(type(error), error, error.__traceback__),
         )
+        if tracker:
+            tracker.error("Subsystem initialization", str(error) or type(error).__name__)
+            tracker.finish()
 
 
 async def _refresh_provider_model_catalog(

@@ -1132,6 +1132,8 @@ CREATE TABLE gh_triage_deliveries (
     headers_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     raw_body TEXT NOT NULL DEFAULT '',
     error TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1143,6 +1145,9 @@ CREATE INDEX idx_gh_triage_deliveries_project_status
 
 CREATE INDEX idx_gh_triage_deliveries_issue
     ON gh_triage_deliveries(project_id, repository, issue_number);
+
+CREATE INDEX idx_gh_triage_deliveries_retry
+    ON gh_triage_deliveries(project_id, status, next_attempt_at, updated_at);
 
 CREATE TABLE gh_issues_triaged (
     id TEXT PRIMARY KEY,
@@ -1173,6 +1178,15 @@ CREATE INDEX idx_gh_issues_triaged_project_hash
 
 CREATE INDEX idx_gh_issues_triaged_task
     ON gh_issues_triaged(task_id);
+
+CREATE TABLE gh_triage_build_dispatches (
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    dispatched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, repo, issue_number)
+);
 
 CREATE TABLE pipeline_executions (
     id UUID PRIMARY KEY,

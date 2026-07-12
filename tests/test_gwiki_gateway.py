@@ -485,6 +485,14 @@ async def test_health_uses_gateway_scope_args(
         monkeypatch,
         [FakeProcess(stdout=_json_bytes(payload))],
     )
+    real_to_thread = asyncio.to_thread
+    to_thread_calls: list[str] = []
+
+    async def recording_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        to_thread_calls.append(func.__name__)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
     gateway = _gateway()
 
     result = await gateway.health()
@@ -505,7 +513,58 @@ async def test_health_uses_gateway_scope_args(
         "payload": payload,
         "stderr": "",
     }
+    assert to_thread_calls == ["_normalize_health_report_file"]
     assert report_path.read_text() == "# Wiki health report\n\nNo issues\n"
+
+
+async def test_health_ignores_non_utf8_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "health.md"
+    report_path.write_bytes(b"\xff\xfe")
+    payload = {
+        "status": "healthy",
+        "root": str(tmp_path),
+        "text_path": report_path.name,
+    }
+    _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().health()
+
+    assert result["ok"] is True
+    assert result["payload"] == payload
+    assert report_path.read_bytes() == b"\xff\xfe"
+
+
+async def test_health_ignores_report_write_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "health.md"
+    report_path.write_text("Wiki health report\n", encoding="utf-8")
+    payload = {
+        "status": "healthy",
+        "root": str(tmp_path),
+        "text_path": report_path.name,
+    }
+    _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    def fail_write_text(
+        path: Path,
+        _data: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        assert path == report_path
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", fail_write_text)
+
+    result = await _gateway().health()
+
+    assert result["ok"] is True
+    assert result["payload"] == payload
 
 
 async def test_trust_uses_gateway_scope_args(monkeypatch: pytest.MonkeyPatch) -> None:

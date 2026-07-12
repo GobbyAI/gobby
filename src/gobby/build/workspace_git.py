@@ -7,13 +7,13 @@ import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from pathlib import Path
 
 from gobby.build.workspace_common import BuildWorkspaceError
+from gobby.paths import get_gobby_home
 from gobby.utils.git import git_subprocess_env
 
 
 def _workspace_path(kind: str, project_name: str, branch_name: str) -> Path:
     safe_branch = branch_name.replace("/", "-").replace("\\", "-")
-    gobby_home = Path(os.environ.get("GOBBY_HOME", "~/.gobby")).expanduser()
-    return gobby_home / kind / project_name / safe_branch
+    return get_gobby_home() / kind / project_name / safe_branch
 
 
 def _is_git_workspace_dir(path: str | Path) -> bool:
@@ -199,7 +199,8 @@ def _git(
     subprocess_env = git_subprocess_env()
     if env is not None:
         subprocess_env = {**(subprocess_env if subprocess_env is not None else os.environ), **env}
-    return subprocess.run(  # nosec B603 # git args are fixed by callers.
+    # The executable is fixed to Git and subprocess.run never enables a shell.
+    return subprocess.run(  # nosec B603, B607
         ["git", *args],
         cwd=repo_path,
         capture_output=True,

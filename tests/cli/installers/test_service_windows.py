@@ -115,7 +115,7 @@ class TestWindowsInstall:
 
     @patch("gobby.cli.installers.service_windows._run_schtasks")
     @patch("gobby.cli.installers.service._resolve_install_context")
-    @patch("gobby.cli.installers.service_windows._gobby_home_dir")
+    @patch("gobby.cli.installers.service_windows.get_gobby_home")
     def test_install_writes_files_and_creates_task(
         self,
         mock_home: MagicMock,
@@ -149,7 +149,7 @@ class TestWindowsInstall:
 
     @patch("gobby.cli.installers.service_windows._run_schtasks")
     @patch("gobby.cli.installers.service._resolve_install_context")
-    @patch("gobby.cli.installers.service_windows._gobby_home_dir")
+    @patch("gobby.cli.installers.service_windows.get_gobby_home")
     def test_install_fails_on_schtasks_error(
         self,
         mock_home: MagicMock,
@@ -169,7 +169,7 @@ class TestWindowsInstall:
 
     @patch("gobby.cli.installers.service_windows._run_schtasks")
     @patch("gobby.cli.installers.service._resolve_install_context")
-    @patch("gobby.cli.installers.service_windows._gobby_home_dir")
+    @patch("gobby.cli.installers.service_windows.get_gobby_home")
     def test_install_handles_timeout(
         self,
         mock_home: MagicMock,
@@ -197,7 +197,7 @@ class TestWindowsUninstall:
     """Test Windows Task Scheduler uninstallation."""
 
     @patch("gobby.cli.installers.service_windows._run_schtasks")
-    @patch("gobby.cli.installers.service_windows._gobby_home_dir")
+    @patch("gobby.cli.installers.service_windows.get_gobby_home")
     def test_uninstall_deletes_task_and_files(
         self,
         mock_home: MagicMock,
@@ -229,7 +229,7 @@ class TestWindowsUninstall:
         assert "/delete" in delete_call[0][0]
 
     @patch("gobby.cli.installers.service_windows._run_schtasks")
-    @patch("gobby.cli.installers.service_windows._gobby_home_dir")
+    @patch("gobby.cli.installers.service_windows.get_gobby_home")
     def test_uninstall_succeeds_when_task_not_found(
         self,
         mock_home: MagicMock,

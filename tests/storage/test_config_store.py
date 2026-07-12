@@ -2,7 +2,7 @@
 
 from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -37,12 +37,11 @@ def secret_store(
     db: HubDatabase,
     tmp_path: Path,
     mock_machine_id: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> SecretStore:
-    with (
-        patch("gobby.storage.secrets.SALT_FILE", tmp_path / ".secret_salt"),
-        patch("gobby.storage.secrets.KEK_FILE", tmp_path / ".secret_kek"),
-    ):
-        yield SecretStore(db)
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    return SecretStore(db)
 
 
 # =============================================================================

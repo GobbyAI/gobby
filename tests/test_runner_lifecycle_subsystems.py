@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
 from gobby.runner_lifecycle_subsystems import _register_wiki_cron_handlers
 from gobby.wiki import scheduled_jobs
 
@@ -32,12 +33,15 @@ async def test_wiki_cron_registration_uses_canonical_default_scope(
         received.update(kwargs)
         return 7
 
-    monkeypatch.setattr(scheduled_jobs, "register_wiki_cron_jobs", register)
+    async def run_db(*_args: Any, **_kwargs: Any) -> tuple[list[tuple[str, None]], list[Any]]:
+        return ([("project-id", None)], [])
+
+    monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
+    monkeypatch.setattr(scheduled_jobs, "register_wiki_cron_jobs_for_projects", register)
 
     await _register_wiki_cron_handlers(_runner(), tracker=None)
 
-    assert received["project_id"] == "project-id"
-    assert received["scopes"] is None
+    assert received["project_scopes"] == [("project-id", None)]
 
 
 @pytest.mark.asyncio
@@ -48,7 +52,15 @@ async def test_wiki_cron_registration_failure_logs_traceback(
     async def fail_registration(**_kwargs: Any) -> int:
         raise RuntimeError("registration failed")
 
-    monkeypatch.setattr(scheduled_jobs, "register_wiki_cron_jobs", fail_registration)
+    async def run_db(*_args: Any, **_kwargs: Any) -> tuple[list[tuple[str, None]], list[Any]]:
+        return ([("project-id", None)], [])
+
+    monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
+    monkeypatch.setattr(
+        scheduled_jobs,
+        "register_wiki_cron_jobs_for_projects",
+        fail_registration,
+    )
     tracker_error = Mock()
     tracker = SimpleNamespace(error=tracker_error)
 

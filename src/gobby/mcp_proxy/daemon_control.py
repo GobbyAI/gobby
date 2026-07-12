@@ -10,6 +10,8 @@ from typing import Any, Literal
 import httpx
 import psutil
 
+from gobby.paths import get_gobby_home
+
 logger = logging.getLogger("gobby.daemon.control")
 
 DaemonShutdownIntent = Literal["stop", "restart"]
@@ -43,7 +45,7 @@ def get_daemon_pid() -> int | None:
     """
     current_pid = os.getpid()
     test_protect = os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes")
-    home_marker = os.environ.get("GOBBY_HOME") if test_protect else None
+    home_marker = str(get_gobby_home()) if test_protect else None
     config_marker = os.environ.get("GOBBY_CONFIG_FILE") if test_protect else None
 
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):

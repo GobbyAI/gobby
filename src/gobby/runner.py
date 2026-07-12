@@ -195,7 +195,10 @@ class GobbyRunner:
 
     def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
         """Request daemon shutdown and optionally set the semantic intent."""
-        if intent is not None:
+        restart_already_requested = (
+            self._shutdown_requested and self._shutdown_intent is ShutdownIntent.RESTART
+        )
+        if intent is not None and not (restart_already_requested and intent is ShutdownIntent.STOP):
             self._shutdown_intent = intent
         self._shutdown_requested = True
 
@@ -207,11 +210,14 @@ async def run_gobby(config_path: Path | None = None, verbose: bool = False) -> N
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
     """Quick check whether a healthy Gobby daemon is already listening."""
+    import ipaddress
     import urllib.parse
     import urllib.request
 
     # Normalize wildcard addresses to localhost for health check
-    if host in ("0.0.0.0", "::", ""):
+    # These wildcard strings are compared and normalized, never used as bind targets.
+    wildcard_hosts = {str(ipaddress.IPv4Address(0)), str(ipaddress.IPv6Address(0)), ""}
+    if host in wildcard_hosts:
         host = "localhost"
     elif ":" in host and not host.startswith("["):
         host = f"[{host}]"

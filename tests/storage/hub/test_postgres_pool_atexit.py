@@ -26,6 +26,25 @@ def test_new_database_is_tracked_for_atexit_close() -> None:
 
 
 @pytest.mark.unit
+def test_close_caps_pool_worker_wait_within_daemon_shutdown_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = PostgresHubDatabase(_DUMMY_DSN)
+    close_timeouts: list[float] = []
+
+    def close_pool(*, timeout: float) -> None:
+        close_timeouts.append(timeout)
+
+    monkeypatch.setattr(db._pool, "close", close_pool)
+
+    db.close()
+
+    assert close_timeouts == [postgres._POOL_CLOSE_TIMEOUT_SECONDS]
+    assert db._pool_closed is True
+    assert db._pool_opened is False
+
+
+@pytest.mark.unit
 def test_atexit_sweep_closes_open_databases() -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
 

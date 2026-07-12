@@ -7,7 +7,7 @@ import sys
 from typing import Literal, cast
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
-AgentRunTerminalReason = Literal["user_cancelled", "daemon_restart", "daemon_stop"]
+AgentRunTerminalReason = Literal["user_cancelled", "daemon_stop"]
 
 STATUS_PENDING: AgentRunStatus = "pending"
 STATUS_RUNNING: AgentRunStatus = "running"

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +25,28 @@ RunDbHook = Callable[..., Awaitable[Any]] | Callable[..., Any]
 # Module-level reference so broadcast_agent_event can be called directly
 # from spawn and completion paths without going through the registry.
 _agent_event_callback: Any | None = None
+_agent_broadcast_tasks: set[asyncio.Task[None]] = set()
+
+
+def _schedule_agent_broadcast(
+    coroutine: Coroutine[Any, Any, None],
+    *,
+    event_type: str,
+) -> None:
+    """Schedule and retain an agent broadcast until its completion callback runs."""
+    task = asyncio.create_task(coroutine)
+    _agent_broadcast_tasks.add(task)
+
+    def _on_done(completed_task: asyncio.Task[None]) -> None:
+        _agent_broadcast_tasks.discard(completed_task)
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.warning(f"Failed to broadcast agent event {event_type}: {exc}")
+
+    task.add_done_callback(_on_done)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,15 +149,6 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
             )
             return
 
-        def _log_broadcast_exception(task: asyncio.Task[None]) -> None:
-            """Log exceptions from broadcast task to avoid silent failures."""
-            try:
-                task.result()
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.warning(f"Failed to broadcast agent event {event_type}: {e}")
-
         # Handle tmux output reader start for tmux terminal agents
         if event_type == "agent_started":
             tmux_name = data.get("tmux_session_name")
@@ -145,8 +158,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 async def start_tmux_reader() -> None:
                     await tmux_reader.start_reader(run_id, _tmux_name)
 
-                task = asyncio.create_task(start_tmux_reader())
-                task.add_done_callback(_log_broadcast_exception)
+                _schedule_agent_broadcast(start_tmux_reader(), event_type=event_type)
 
                 # Notify Terminals page so it auto-refreshes
                 _ws = websocket_server
@@ -159,8 +171,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                             socket="gobby",
                         )
 
-                task = asyncio.create_task(broadcast_tmux_created())
-                task.add_done_callback(_log_broadcast_exception)
+                _schedule_agent_broadcast(broadcast_tmux_created(), event_type=event_type)
 
         elif event_type in (
             "agent_completed",
@@ -173,16 +184,14 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
             async def stop_pty_reader() -> None:
                 await pty_manager.stop_reader(run_id)
 
-            task = asyncio.create_task(stop_pty_reader())
-            task.add_done_callback(_log_broadcast_exception)
+            _schedule_agent_broadcast(stop_pty_reader(), event_type=event_type)
 
             # Stop tmux reader when agent finishes
 
             async def stop_tmux_reader() -> None:
                 await tmux_reader.stop_reader(run_id)
 
-            task = asyncio.create_task(stop_tmux_reader())
-            task.add_done_callback(_log_broadcast_exception)
+            _schedule_agent_broadcast(stop_tmux_reader(), event_type=event_type)
 
             # Notify Terminals page so it auto-refreshes
             _killed_name = data.get("tmux_session_name")
@@ -196,11 +205,10 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                         socket="gobby",
                     )
 
-                task = asyncio.create_task(broadcast_tmux_killed())
-                task.add_done_callback(_log_broadcast_exception)
+                _schedule_agent_broadcast(broadcast_tmux_killed(), event_type=event_type)
 
         # Create async task to broadcast and attach exception callback
-        task = asyncio.create_task(
+        _schedule_agent_broadcast(
             websocket_server.broadcast_agent_event(
                 event=event_type,
                 run_id=run_id,
@@ -210,9 +218,9 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 provider=data.get("provider"),
                 pid=data.get("pid"),
                 tmux_session_name=data.get("tmux_session_name"),
-            )
+            ),
+            event_type=event_type,
         )
-        task.add_done_callback(_log_broadcast_exception)
 
     # Store module-level reference for direct invocation from spawn/completion paths
     global _agent_event_callback

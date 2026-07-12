@@ -721,6 +721,56 @@ class TestFailStaleRunningExecutions:
 class TestApprovalTimeout:
     """Tests for approval timeout expiry."""
 
+    def test_expiry_rolls_back_partial_failure_and_retries(
+        self,
+        manager: LocalPipelineExecutionManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failure between state changes rolls both back and permits retry."""
+        execution = manager.create_execution(pipeline_name="timeout-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id,
+            status=ExecutionStatus.WAITING_APPROVAL,
+        )
+        step = manager.create_step_execution(execution_id=execution.id, step_id="approval-step")
+        manager.update_step_execution(
+            step_execution_id=step.id,
+            status=StepStatus.WAITING_APPROVAL,
+            approval_timeout_seconds=1,
+        )
+
+        update_execution_status = manager.update_execution_status
+
+        def fail_execution_update(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("injected execution update failure")
+
+        monkeypatch.setattr(manager, "update_execution_status", fail_execution_update)
+        with pytest.raises(RuntimeError, match="injected execution update failure"):
+            manager.expire_approval_timeout(
+                step_execution_id=step.id,
+                execution_id=execution.id,
+            )
+
+        rolled_back_step = manager.get_steps_for_execution(execution.id)[0]
+        rolled_back_execution = manager.get_execution(execution.id)
+        assert rolled_back_step.status == StepStatus.WAITING_APPROVAL
+        assert rolled_back_step.error is None
+        assert rolled_back_execution is not None
+        assert rolled_back_execution.status == ExecutionStatus.WAITING_APPROVAL
+
+        monkeypatch.setattr(manager, "update_execution_status", update_execution_status)
+        manager.expire_approval_timeout(
+            step_execution_id=step.id,
+            execution_id=execution.id,
+        )
+
+        expired_step = manager.get_steps_for_execution(execution.id)[0]
+        expired_execution = manager.get_execution(execution.id)
+        assert expired_step.status == StepStatus.FAILED
+        assert expired_step.error == "Approval timed out"
+        assert expired_execution is not None
+        assert expired_execution.status == ExecutionStatus.CANCELLED
+
     def test_get_expired_approval_steps(self, manager, db) -> None:
         """Steps past their timeout are returned."""
         execution = manager.create_execution(pipeline_name="timeout-pipeline")

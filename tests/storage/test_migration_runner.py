@@ -93,7 +93,7 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
 
 
-def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
+def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
@@ -104,7 +104,9 @@ def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
         (306, "reconcile_live_hub_schema_drift"),
         (307, "cron_run_scheduler_owner"),
         (308, "recall_signal_hub"),
-        (309, "model_costs_provider_key"),
+        (309, "github_triage_delivery_leases"),
+        (310, "github_triage_build_dispatches"),
+        (311, "model_costs_provider_key"),
     ]
 
 

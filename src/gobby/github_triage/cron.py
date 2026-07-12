@@ -90,50 +90,89 @@ def register_github_triage_cron(
     registered = 0
 
     for project in projects:
-        config = store.get_config(project.id, fallback_repo=project.github_repo)
-        handler_name = github_triage_handler_name(project.id)
-        job_name = github_triage_job_name(project.id)
-        existing = cron_storage.get_job_by_name(job_name)
-
-        if not config.enabled or not config.repositories_with_fallback(project.github_repo):
-            if existing and existing.enabled:
-                cron_storage.update_job(existing.id, enabled=False)
-                cron_storage.update_system_job_bookkeeping(existing.id, next_run_at=None)
-                logger.info("Disabled system cron job: %s", job_name)
-            continue
-
-        handler = create_github_triage_handler(
-            db=db,
-            mcp_manager=mcp_manager,
-            task_manager=task_manager,
-            memory_manager=memory_manager,
-            secret_store=secret_store,
-        )
-        cron_executor.register_handler(handler_name, handler)
-        registered += 1
-
-        if existing is None:
-            cron_storage.create_job(
-                project_id=project.id,
-                name=job_name,
-                description=GITHUB_TRIAGE_CRON_DESCRIPTION,
-                schedule_type="interval",
-                interval_seconds=config.reconcile_interval_seconds,
-                action_type="handler",
-                action_config={"handler": handler_name},
-                enabled=True,
-                is_system=True,
+        try:
+            registered += int(
+                _register_project(
+                    project=project,
+                    store=store,
+                    cron_storage=cron_storage,
+                    cron_executor=cron_executor,
+                    db=db,
+                    mcp_manager=mcp_manager,
+                    task_manager=task_manager,
+                    memory_manager=memory_manager,
+                    secret_store=secret_store,
+                )
             )
-            logger.info("Created system cron job: %s", job_name)
-            continue
+        except Exception as exc:
+            logger.error(
+                "GitHub triage cron registration failed for project %s (%s)",
+                project.id,
+                type(exc).__name__,
+            )
 
+    return registered
+
+
+def _register_project(
+    *,
+    project: Project,
+    store: GitHubTriageStore,
+    cron_storage: CronJobStorage,
+    cron_executor: CronRegistrationProtocol,
+    db: HubDatabase,
+    mcp_manager: GitHubMCPCallProtocol | None,
+    task_manager: LocalTaskManager,
+    memory_manager: TriageMemoryProtocol | None,
+    secret_store: SecretResolverProtocol | None,
+) -> bool:
+    config = store.get_config(project.id, fallback_repo=project.github_repo)
+    handler_name = github_triage_handler_name(project.id)
+    job_name = github_triage_job_name(project.id)
+    existing = cron_storage.get_job_by_name(job_name)
+
+    if not config.enabled or not config.repositories_with_fallback(project.github_repo):
+        if existing and existing.enabled:
+            cron_storage.update_job(existing.id, enabled=False)
+            cron_storage.update_system_job_bookkeeping(existing.id, next_run_at=None)
+            logger.info("Disabled system cron job: %s", job_name)
+        return False
+
+    handler = create_github_triage_handler(
+        db=db,
+        mcp_manager=mcp_manager,
+        task_manager=task_manager,
+        memory_manager=memory_manager,
+        secret_store=secret_store,
+    )
+    try:
+        cron_executor.register_handler(handler_name, handler)
+    except Exception:
+        if existing and existing.enabled:
+            cron_storage.update_job(existing.id, enabled=False)
+            cron_storage.update_system_job_bookkeeping(existing.id, next_run_at=None)
+        raise
+
+    if existing is None:
+        cron_storage.create_job(
+            project_id=project.id,
+            name=job_name,
+            description=GITHUB_TRIAGE_CRON_DESCRIPTION,
+            schedule_type="interval",
+            interval_seconds=config.reconcile_interval_seconds,
+            action_type="handler",
+            action_config={"handler": handler_name},
+            enabled=True,
+            is_system=True,
+        )
+        logger.info("Created system cron job: %s", job_name)
+    else:
         if not existing.is_system:
             with cron_storage.db.transaction() as conn:
                 conn.execute(
                     "UPDATE cron_jobs SET is_system = TRUE WHERE id = %s",
                     (existing.id,),
                 )
-
         repaired = cron_storage.reconcile_system_job_definition(
             existing.id,
             action_type="handler",
@@ -141,7 +180,6 @@ def register_github_triage_cron(
         )
         if repaired is None:
             raise RuntimeError(f"GitHub triage cron row disappeared: {existing.id}")
-
         if (
             repaired.schedule_type != "interval"
             or repaired.interval_seconds != config.reconcile_interval_seconds
@@ -156,7 +194,7 @@ def register_github_triage_cron(
                 enabled=True,
             )
 
-    return registered
+    return True
 
 
 def _projects_for_registration(

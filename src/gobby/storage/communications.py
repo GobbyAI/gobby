@@ -337,12 +337,21 @@ class LocalCommunicationsStore:
         rows = self.db.fetchall(sql, tuple(params))
         return [CommsMessage.from_row(dict(row)) for row in rows]
 
-    def delete_messages_before(self, cutoff: datetime) -> int:
+    def delete_messages_before(self, cutoff: datetime, *, limit: int = 500) -> int:
         """Delete messages created before the given cutoff date."""
         cutoff_value = to_aware_utc(cutoff)
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM comms_messages WHERE created_at < %s", (cutoff_value,)
+                """
+DELETE FROM comms_messages
+WHERE id IN (
+    SELECT id FROM comms_messages
+    WHERE created_at < %s
+    ORDER BY created_at ASC
+    LIMIT %s
+)
+""",
+                (cutoff_value, limit),
             )
             return cursor.rowcount
 
