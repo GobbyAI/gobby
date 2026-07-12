@@ -280,8 +280,6 @@ async def reconnect(manager: Any, server_name: str, logger: logging.Logger) -> N
     if server_name not in manager._configs:
         return
 
-    config = manager._configs[server_name]
-
     old_connection = manager._connections.pop(server_name, None)
     if old_connection is not None:
         try:
@@ -293,7 +291,7 @@ async def reconnect(manager: Any, server_name: str, logger: logging.Logger) -> N
 
     try:
         logger.info("Reconnecting %s...", server_name)
-        await manager._connect_server(config)
+        await manager.ensure_connected(server_name)
         logger.info("Successfully reconnected %s", server_name)
     except Exception as exc:
         logger.error("Reconnection failed for %s: %s", server_name, exc)

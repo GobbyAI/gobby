@@ -1630,7 +1630,7 @@ class TestMCPClientManagerReconnect:
             url="http://localhost:8001",
         )
 
-        manager = MCPClientManager(server_configs=[config])
+        manager = MCPClientManager(server_configs=[config], max_connection_retries=0)
 
         with patch.object(
             manager,
@@ -1640,6 +1640,90 @@ class TestMCPClientManagerReconnect:
             result = await manager._reconnect("test-server")
             assert result is None
             assert "test-server" not in manager._connections
+
+    @pytest.mark.asyncio
+    async def test_reconnect_and_ensure_connected_share_one_connect(self):
+        """Concurrent recovery paths serialize connection startup."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(
+            server_configs=[config],
+            connection_timeout=1.0,
+            max_connection_retries=0,
+        )
+        connect_started = asyncio.Event()
+        both_ensure_calls_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        session = MagicMock()
+        connect_calls = 0
+        ensure_calls = 0
+
+        original_ensure_connected = manager.ensure_connected
+
+        async def tracked_ensure_connected(server_name):
+            nonlocal ensure_calls
+            ensure_calls += 1
+            if ensure_calls == 2:
+                both_ensure_calls_started.set()
+            return await original_ensure_connected(server_name)
+
+        async def controlled_connect(_config):
+            nonlocal connect_calls
+            connect_calls += 1
+            connect_started.set()
+            await release_connect.wait()
+            connection = MagicMock()
+            connection.is_connected = True
+            connection.session = session
+            manager._connections["test-server"] = connection
+            return session
+
+        with (
+            patch.object(manager, "ensure_connected", side_effect=tracked_ensure_connected),
+            patch.object(manager, "_connect_server", side_effect=controlled_connect),
+        ):
+            reconnect_task = asyncio.create_task(manager._reconnect("test-server"))
+            await connect_started.wait()
+            ensure_task = asyncio.create_task(manager.ensure_connected("test-server"))
+            await both_ensure_calls_started.wait()
+            release_connect.set()
+            reconnect_result, ensure_result = await asyncio.gather(reconnect_task, ensure_task)
+
+        assert reconnect_result is None
+        assert ensure_result is session
+        assert connect_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_reconnect_applies_connection_timeout(self):
+        """A wedged reconnect returns after the configured connect timeout."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(
+            server_configs=[config],
+            connection_timeout=0.01,
+            max_connection_retries=0,
+        )
+        connect_cancelled = asyncio.Event()
+
+        async def wedged_connect(_config):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                connect_cancelled.set()
+
+        with patch.object(manager, "_connect_server", side_effect=wedged_connect):
+            result = await asyncio.wait_for(manager._reconnect("test-server"), timeout=0.2)
+
+        assert result is None
+        assert connect_cancelled.is_set()
 
 
 class TestMCPClientManagerServerConfig:
