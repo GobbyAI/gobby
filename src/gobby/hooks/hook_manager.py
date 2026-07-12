@@ -390,25 +390,33 @@ class HookManager:
             with create_span("hook.session_start.rules"):
                 workflow_context, blocking_response = self._evaluate_workflow_rules(event)
                 if blocking_response:
-                    return blocking_response
+                    return self._complete_response(
+                        event, blocking_response, workflow_context, preserve_original=True
+                    )
 
             with create_span("hook.session_start.webhooks"):
                 webhook_block = self._evaluate_blocking_webhooks(event)
                 if webhook_block:
-                    return webhook_block
+                    return self._complete_response(
+                        event, webhook_block, workflow_context, preserve_original=True
+                    )
         else:
             if event.event_type in (HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL):
                 reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
             workflow_context, blocking_response = self._evaluate_workflow_rules(event)
             if blocking_response:
-                return blocking_response
+                return self._complete_response(
+                    event, blocking_response, workflow_context, preserve_original=True
+                )
             if event.event_type == HookEventType.BEFORE_AGENT:
                 workflow_context = self._append_memory_recall_context(event, workflow_context)
 
             webhook_block = self._evaluate_blocking_webhooks(event)
             if webhook_block:
-                return webhook_block
+                return self._complete_response(
+                    event, webhook_block, workflow_context, preserve_original=True
+                )
 
             try:
                 response = handler(event)
@@ -416,7 +424,20 @@ class HookManager:
                 self.logger.error(f"Event handler {event.event_type} failed: {e}", exc_info=True)
                 return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
-        # --- Common post-processing ---
+        return self._complete_response(event, response, workflow_context)
+
+    def _complete_response(
+        self,
+        event: HookEvent,
+        response: HookResponse,
+        workflow_context: str | None,
+        *,
+        preserve_original: bool = False,
+    ) -> HookResponse:
+        """Enrich and notify observers, preserving terminal block responses."""
+        observer_response = copy.deepcopy(response) if preserve_original else response
+        original_decision = response.decision
+        original_reason = response.reason
 
         # Stringified call_tool arguments may be normalized for rule evaluation.
         # The MCP proxy validates/coerces the actual target arguments, so this
@@ -425,32 +446,36 @@ class HookManager:
 
         # Propagate rewrite_input from rule evaluation to response (PreToolUse)
         if "_modified_input" in event.metadata:
-            response.modified_input = event.metadata.pop("_modified_input")
-            response.auto_approve = event.metadata.pop("_auto_approve", False)
+            observer_response.modified_input = event.metadata.pop("_modified_input")
+            observer_response.auto_approve = event.metadata.pop("_auto_approve", False)
 
         raw_tool_input = event.metadata.get("raw_tool_input")
         if isinstance(raw_tool_input, dict):
-            response.metadata.setdefault("_raw_tool_input", copy.deepcopy(raw_tool_input))
+            observer_response.metadata.setdefault("_raw_tool_input", copy.deepcopy(raw_tool_input))
 
         normalized_tool_name = (event.data or {}).get("tool_name")
         if isinstance(normalized_tool_name, str):
-            response.metadata.setdefault("_normalized_tool_name", normalized_tool_name)
+            observer_response.metadata.setdefault("_normalized_tool_name", normalized_tool_name)
 
         with create_span("hook.enrich"):
             try:
-                self._enricher.enrich(event, response, workflow_context=workflow_context)
+                self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:
                 self.logger.error(f"Response enrichment failed: {e}", exc_info=True)
 
-        schedule_hook_broadcast(self.broadcaster, event, response, self._loop, self.logger)
+        if preserve_original:
+            observer_response.decision = original_decision
+            observer_response.reason = original_reason
+
+        schedule_hook_broadcast(self.broadcaster, event, observer_response, self._loop, self.logger)
 
         # Dispatch non-blocking webhooks (fire-and-forget)
         try:
-            self._dispatch_webhooks_async(event)
+            self._dispatch_webhooks_async(event, observer_response)
         except Exception as e:
             self.logger.warning(f"Non-blocking webhook dispatch failed: {e}")
 
-        return cast(HookResponse, response)
+        return response if preserve_original else observer_response
 
     def _get_event_handler(self, event_type: HookEventType) -> Any | None:
         """Get the handler method for a HookEventType."""
@@ -685,10 +710,12 @@ class HookManager:
             event, self._webhook_dispatcher, self.logger, blocking_only
         )
 
-    def _dispatch_webhooks_async(self, event: HookEvent) -> None:
+    def _dispatch_webhooks_async(
+        self, event: HookEvent, response: HookResponse | None = None
+    ) -> None:
         """Dispatch non-blocking webhooks asynchronously (fire-and-forget)."""
         webhook_dispatcher.dispatch_webhooks_async(
-            event, self._webhook_dispatcher, self.logger, self._loop
+            event, self._webhook_dispatcher, self.logger, self._loop, response
         )
 
     def _dispatch_mcp_calls(

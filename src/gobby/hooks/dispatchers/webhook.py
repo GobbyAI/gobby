@@ -141,6 +141,7 @@ def dispatch_webhooks_async(
     webhook_dispatcher: WebhookDispatcher,
     logger: logging.Logger,
     loop: asyncio.AbstractEventLoop | None,
+    response: HookResponse | None = None,
 ) -> None:
     """Dispatch non-blocking webhooks asynchronously (fire-and-forget).
 
@@ -149,6 +150,7 @@ def dispatch_webhooks_async(
         webhook_dispatcher: The WebhookDispatcher instance.
         logger: Logger for diagnostics.
         loop: Captured event loop for thread-safe scheduling.
+        response: Enriched hook response to include in the observer payload.
     """
     if not webhook_dispatcher.config.enabled:
         return
@@ -166,7 +168,7 @@ def dispatch_webhooks_async(
         return
 
     # Build payload
-    payload = webhook_dispatcher._build_payload(event)
+    payload = webhook_dispatcher._build_payload(event, response)
 
     async def dispatch_all() -> None:
         tasks = [webhook_dispatcher._dispatch_single(ep, payload) for ep in matching_endpoints]

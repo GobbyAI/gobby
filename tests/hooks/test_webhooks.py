@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
 
 pytestmark = pytest.mark.unit
@@ -170,6 +170,23 @@ class TestWebhookDispatcherPayload:
         assert payload["data"] == {"test": "data"}
         assert payload["machine_id"] == "machine-1"
         assert payload["cwd"] == "/test/path"
+
+    def test_build_payload_includes_enriched_block_response(self, sample_event: HookEvent) -> None:
+        dispatcher = WebhookDispatcher(WebhooksConfig())
+        response = HookResponse(
+            decision="block",
+            reason="Rule denied",
+            metadata={"session_ref": "#42", "enriched": True},
+        )
+
+        payload = dispatcher._build_payload(sample_event, response)
+
+        assert payload["response"]["decision"] == "block"
+        assert payload["response"]["reason"] == "Rule denied"
+        assert payload["response"]["metadata"] == {
+            "session_ref": "#42",
+            "enriched": True,
+        }
 
 
 class TestWebhookDispatcherTrigger:

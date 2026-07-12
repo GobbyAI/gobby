@@ -808,6 +808,160 @@ class TestHookManagerWebhookBlocking:
         assert response.decision == "allow"
 
 
+class TestHookManagerBlockedObservability:
+    """Blocked hooks still reach best-effort observers without changing the denial."""
+
+    def test_rule_block_uses_enriched_observability_tail_once(
+        self, hook_manager_with_mocks: HookManager
+    ) -> None:
+        manager = hook_manager_with_mocks
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-rule-block-observers",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "bash"},
+            machine_id="test-machine-id",
+        )
+        blocked = HookResponse(decision="block", reason="Rule denied", metadata={"origin": "rule"})
+        order: list[str] = []
+        observed: list[HookResponse] = []
+        handler = MagicMock()
+
+        def enrich(_event: HookEvent, response: HookResponse, **_kwargs: Any) -> None:
+            order.append("enrich")
+            response.metadata["enriched"] = True
+
+        def broadcast(*args: Any, **_kwargs: Any) -> None:
+            order.append("broadcast")
+            observed.append(args[2])
+
+        def dispatch(_event: HookEvent, response: HookResponse) -> None:
+            order.append("webhook")
+            observed.append(response)
+
+        with (
+            patch.object(manager._workflow_handler, "handle", return_value=blocked),
+            patch.object(manager, "_get_event_handler", return_value=handler),
+            patch.object(manager, "_evaluate_blocking_webhooks") as blocking_webhooks,
+            patch.object(manager._enricher, "enrich", side_effect=enrich),
+            patch("gobby.hooks.hook_manager.schedule_hook_broadcast", side_effect=broadcast),
+            patch.object(manager, "_dispatch_webhooks_async", side_effect=dispatch),
+        ):
+            response = manager.handle(event)
+
+        assert response is blocked
+        assert response.decision == "block"
+        assert response.reason == "Rule denied"
+        assert response.metadata == {"origin": "rule"}
+        assert order == ["enrich", "broadcast", "webhook"]
+        assert len(observed) == 2
+        assert all(item.decision == "block" for item in observed)
+        assert all(item.metadata["enriched"] is True for item in observed)
+        blocking_webhooks.assert_not_called()
+        handler.assert_not_called()
+
+    def test_blocking_webhook_block_dispatches_nonblocking_observer_after_broadcast(
+        self, hook_manager_with_mocks: HookManager
+    ) -> None:
+        manager = hook_manager_with_mocks
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-webhook-block-observers",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "bash"},
+            machine_id="test-machine-id",
+        )
+        blocked = HookResponse(decision="block", reason="Blocking webhook denied")
+        order: list[str] = []
+        observed: list[HookResponse] = []
+        handler = MagicMock()
+
+        def blocking(_event: HookEvent) -> HookResponse:
+            order.append("blocking")
+            return blocked
+
+        def enrich(_event: HookEvent, response: HookResponse, **_kwargs: Any) -> None:
+            order.append("enrich")
+            response.metadata["enriched"] = True
+
+        def broadcast(*args: Any, **_kwargs: Any) -> None:
+            order.append("broadcast")
+            observed.append(args[2])
+
+        def dispatch(_event: HookEvent, response: HookResponse) -> None:
+            order.append("nonblocking")
+            observed.append(response)
+
+        with (
+            patch.object(manager._workflow_handler, "handle", return_value=HookResponse()),
+            patch.object(manager, "_get_event_handler", return_value=handler),
+            patch.object(
+                manager, "_evaluate_blocking_webhooks", side_effect=blocking
+            ) as blocking_webhooks,
+            patch.object(manager._enricher, "enrich", side_effect=enrich),
+            patch("gobby.hooks.hook_manager.schedule_hook_broadcast", side_effect=broadcast),
+            patch.object(manager, "_dispatch_webhooks_async", side_effect=dispatch),
+        ):
+            response = manager.handle(event)
+
+        assert response is blocked
+        assert response.decision == "block"
+        assert response.reason == "Blocking webhook denied"
+        assert response.metadata == {}
+        assert order == ["blocking", "enrich", "broadcast", "nonblocking"]
+        assert len(observed) == 2
+        assert all(item.decision == "block" for item in observed)
+        assert all(item.metadata["enriched"] is True for item in observed)
+        blocking_webhooks.assert_called_once_with(event)
+        handler.assert_not_called()
+
+    def test_observer_failures_cannot_mutate_original_block(
+        self, hook_manager_with_mocks: HookManager
+    ) -> None:
+        manager = hook_manager_with_mocks
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-block-observer-failures",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "bash"},
+            machine_id="test-machine-id",
+        )
+        blocked = HookResponse(
+            decision="block", reason="Original denial", metadata={"origin": "rule"}
+        )
+        broadcasted: list[tuple[str, str | None]] = []
+
+        def broken_enrich(_event: HookEvent, response: HookResponse, **_kwargs: Any) -> None:
+            response.decision = "allow"
+            response.reason = "mutated"
+            raise RuntimeError("enrichment failed")
+
+        def broadcast(*args: Any, **_kwargs: Any) -> None:
+            response = args[2]
+            broadcasted.append((response.decision, response.reason))
+
+        def broken_dispatch(_event: HookEvent, response: HookResponse) -> None:
+            response.decision = "allow"
+            raise RuntimeError("observer failed")
+
+        with (
+            patch.object(manager._workflow_handler, "handle", return_value=blocked),
+            patch.object(manager._enricher, "enrich", side_effect=broken_enrich),
+            patch("gobby.hooks.hook_manager.schedule_hook_broadcast", side_effect=broadcast),
+            patch.object(manager, "_dispatch_webhooks_async", side_effect=broken_dispatch),
+        ):
+            response = manager.handle(event)
+
+        assert response is blocked
+        assert response.decision == "block"
+        assert response.reason == "Original denial"
+        assert response.metadata == {"origin": "rule"}
+        assert broadcasted == [("block", "Original denial")]
+
+
 class TestHookManagerHandlerErrors:
     """Tests for handler error handling."""
 
@@ -1647,6 +1801,9 @@ class TestHookManagerWebhookDispatch:
         loop_thread = threading.Thread(target=run_loop, daemon=True)
         loop_thread.start()
         dispatched = threading.Event()
+        observer_response = HookResponse(
+            decision="block", reason="Observed denial", metadata={"enriched": True}
+        )
 
         try:
 
@@ -1655,7 +1812,9 @@ class TestHookManagerWebhookDispatch:
                 return None
 
             with (
-                patch.object(manager._webhook_dispatcher, "_build_payload", return_value={}),
+                patch.object(
+                    manager._webhook_dispatcher, "_build_payload", return_value={}
+                ) as mock_build_payload,
                 patch.object(
                     manager._webhook_dispatcher,
                     "_dispatch_single",
@@ -1664,9 +1823,10 @@ class TestHookManagerWebhookDispatch:
                 ) as mock_dispatch_single,
             ):
                 # Should schedule async task
-                manager._dispatch_webhooks_async(event)
+                manager._dispatch_webhooks_async(event, observer_response)
                 assert dispatched.wait(timeout=1), "Async webhook dispatch never ran"
                 assert mock_dispatch_single.await_count == 1
+                mock_build_payload.assert_called_once_with(event, observer_response)
 
                 async def no_op() -> None:
                     return None

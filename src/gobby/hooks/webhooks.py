@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +23,7 @@ from gobby.utils.env import expand_env_mapping, expand_env_variables
 
 if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
-    from gobby.hooks.events import HookEvent
+from gobby.hooks.events import HookEvent, HookResponse
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,9 @@ class WebhookDispatcher:
 
         return False
 
-    def _build_payload(self, event: HookEvent) -> dict[str, Any]:
+    def _build_payload(
+        self, event: HookEvent, response: HookResponse | None = None
+    ) -> dict[str, Any]:
         """Build the webhook payload from a hook event.
 
         Args:
@@ -125,7 +127,7 @@ class WebhookDispatcher:
         Returns:
             Dictionary payload for the webhook POST body.
         """
-        return {
+        payload = {
             "event_type": event.event_type.value,
             "session_id": event.session_id,
             "source": event.source.value,
@@ -137,6 +139,9 @@ class WebhookDispatcher:
             "task_id": event.task_id,
             "metadata": event.metadata,
         }
+        if response is not None:
+            payload["response"] = asdict(response)
+        return payload
 
     async def _dispatch_single(
         self,
