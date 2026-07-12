@@ -2229,6 +2229,7 @@ class TestMetricsCleanupLoop:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_first_cycle,
                 )
             )
@@ -2270,6 +2271,7 @@ class TestMetricsCleanupLoop:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_after_retry,
                 )
             )
@@ -2956,6 +2958,7 @@ class TestMetricsCleanupLoopDetailed:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_first_cycle,
                 )
             )
@@ -2997,6 +3000,7 @@ class TestMetricsCleanupLoopDetailed:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_first_cycle,
                 )
             )
@@ -3047,6 +3051,7 @@ class TestMetricsCleanupLoopDetailed:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_after_retry,
                 )
             )

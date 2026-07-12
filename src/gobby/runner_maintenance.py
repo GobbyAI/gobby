@@ -17,6 +17,18 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.runner_maintenance_recurring import (
+    _wait_for_first_maintenance_cycle,
+)
+from gobby.runner_maintenance_recurring import (
+    memory_reconcile_loop as memory_reconcile_loop,
+)
+from gobby.runner_maintenance_recurring import (
+    metrics_archive_loop as metrics_archive_loop,
+)
+from gobby.runner_maintenance_recurring import (
+    metrics_cleanup_loop as metrics_cleanup_loop,
+)
 from gobby.runner_tmux_repair import (
     TmuxRepairSessionManager,
 )
@@ -43,7 +55,6 @@ from gobby.workflows.summary_actions import (
 )
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -147,48 +158,6 @@ async def drain_hook_inbox_loop(
     )
 
 
-async def metrics_cleanup_loop(
-    metrics_manager: ToolMetricsManager,
-    is_shutdown_requested: Callable[[], bool],
-    *,
-    interval_seconds: int = 24 * 60 * 60,
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-) -> None:
-    """Background loop for periodic metrics cleanup (every 24 hours)."""
-    while not is_shutdown_requested():
-        try:
-            await sleep(interval_seconds)
-            deleted = metrics_manager.cleanup_old_metrics()
-            if deleted > 0:
-                logger.info(f"Periodic metrics cleanup: removed {deleted} old entries")
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Error in metrics cleanup loop: {e}")
-
-
-async def metrics_archive_loop(
-    event_store: Any,
-    is_shutdown_requested: Callable[[], bool],
-    retention_days: int = 30,
-) -> None:
-    """Background loop for archiving old metrics events (every 24 hours)."""
-    interval_seconds = 24 * 60 * 60  # 24 hours
-
-    while not is_shutdown_requested():
-        try:
-            await asyncio.sleep(interval_seconds)
-            archived = event_store.archive_old_events(retention_days=retention_days)
-            if archived > 0:
-                logger.info(
-                    f"Metrics archive: rolled up {archived} events older than {retention_days} days"
-                )
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Error in metrics archive loop: {e}")
-
-
 async def span_cleanup_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
@@ -264,31 +233,6 @@ async def rebuild_vector_store(
         logger.info("VectorStore rebuild cancelled")
     except Exception as e:
         logger.error(f"VectorStore rebuild failed: {e}")
-
-
-async def memory_reconcile_loop(
-    memory_manager: Any,
-    is_shutdown_requested: Callable[[], bool],
-    interval_seconds: int = 24 * 60 * 60,
-) -> None:
-    """Background loop for periodic Qdrant/FalkorDB orphan reconciliation."""
-    while not is_shutdown_requested():
-        try:
-            await asyncio.sleep(interval_seconds)
-            report = await memory_manager.reconcile_stores(dry_run=False)
-            qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
-            falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
-            falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
-            if qdrant_orphans or falkordb_orphans or falkordb_entities:
-                logger.info(
-                    f"Memory reconciliation: {qdrant_orphans} Qdrant orphans, "
-                    f"{falkordb_orphans} FalkorDB memory orphans, "
-                    f"{falkordb_entities} FalkorDB entity orphans cleaned"
-                )
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Error in memory reconcile loop: {e}")
 
 
 async def cleanup_zombie_messages_loop(
@@ -411,18 +355,27 @@ async def cleanup_comms_messages_loop(
     retention_days: int = 30,
     *,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    interval_seconds: int = 24 * 60 * 60,
+    startup_delay_seconds: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
     from gobby.communications.attachments import AttachmentManager
     from gobby.storage.communications import LocalCommunicationsStore
 
-    interval_seconds = 24 * 60 * 60
-
     store = LocalCommunicationsStore(db)
     attachment_manager = AttachmentManager()
+    sleep_fn = sleep or asyncio.sleep
 
-    while not is_shutdown_requested():
+    if not await _wait_for_first_maintenance_cycle(
+        "comms-message-cleanup",
+        is_shutdown_requested,
+        startup_delay_seconds=startup_delay_seconds,
+        sleep=sleep_fn,
+    ):
+        return
+
+    while True:
         try:
-            await asyncio.sleep(interval_seconds)
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
             deleted_messages = await _run_db(
@@ -444,11 +397,16 @@ async def cleanup_comms_messages_loop(
                     "Comms attachment cleanup: removed %s old local files",
                     deleted_attachments,
                 )
-
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Error in comms message cleanup loop: {e}")
+        try:
+            await sleep_fn(interval_seconds)
+        except asyncio.CancelledError:
+            break
+        if is_shutdown_requested():
+            break
 
 
 def _remove_stale_chat_attachment_file(local_path: str) -> bool:

@@ -116,6 +116,7 @@ async def test_comms_cleanup_uses_db_runner_and_thread_with_bounds() -> None:
             MagicMock(),
             lambda: next(shutdown),
             run_db=run_db,
+            startup_delay_seconds=0,
         )
 
     assert run_db.calls[0][0] == store.delete_messages_before
