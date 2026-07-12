@@ -168,7 +168,7 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
 
 
 def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() -> None:
-    skill_text = (SKILLS_DIR / "test-architecture/SKILL.md").read_text(encoding="utf-8")
+    skill_text = (SKILLS_DIR / "architecture/SKILL.md").read_text(encoding="utf-8")
 
     assert "## Test Architecture" in skill_text
     for heading in (
@@ -187,10 +187,11 @@ def test_architect_requires_architecture_and_test_architecture_sections() -> Non
     agent = _agent("architect")
     load_skill = _step(agent, "load_skill")
 
-    assert {"architecture", "test-architecture"}.issubset(set(agent["skills"]["methodology"]))
+    assert "architecture" in set(agent["skills"]["methodology"])
+    assert "test-architecture" not in set(agent["skills"]["methodology"])
     assert "## Architecture Brief" in agent["instructions"]
     assert "## Test Architecture" in agent["instructions"]
-    assert "tool_input.name == 'test-architecture'" in str(load_skill.get("on_mcp_success"))
+    assert "tool_input.name == 'architecture'" in str(load_skill.get("on_mcp_success"))
 
 
 def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
@@ -237,6 +238,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert tool_words.issubset(tool_allowlist)
     assert agent["step_variables"]["required_skills"] == [
         "development-discipline",
+        "restraint",
         "task-transitions",
     ]
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_required)

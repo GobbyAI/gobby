@@ -33,7 +33,7 @@ DISCOVERY_AGENTS = {
     "architect": {
         "stage": "architecture",
         "skill": "architecture",
-        "skills": ["architecture", "test-architecture"],
+        "skills": ["architecture"],
         "section": "Architecture Brief",
     },
     "product-manager": {
