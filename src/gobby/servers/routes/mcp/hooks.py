@@ -283,6 +283,28 @@ def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
     return HOLD_OPEN_HOOK_TYPE_MAP.get(hook_type)
 
 
+def _result_encodes_denial(result: dict[str, Any]) -> bool:
+    """Return whether an adapter result already denies the hook operation."""
+    if result.get("continue") is False:
+        return True
+
+    decision = result.get("decision")
+    if isinstance(decision, str) and decision.casefold() in {"block", "deny"}:
+        return True
+
+    permission_decision = result.get("permissionDecision")
+    if isinstance(permission_decision, str) and permission_decision.casefold() == "deny":
+        return True
+
+    hook_output = result.get("hookSpecificOutput")
+    if isinstance(hook_output, dict):
+        permission_decision = hook_output.get("permissionDecision")
+        if isinstance(permission_decision, str) and permission_decision.casefold() == "deny":
+            return True
+
+    return False
+
+
 def _is_codex_root_context_miss(
     source: str | None,
     payload: dict[str, Any],
@@ -645,6 +667,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     hook_manager,
                     timeout_seconds=hook_timeout,
                 )
+
+                # Rule and adapter denials are final. Never let web-chat approval,
+                # auto-approval, or browser interaction overwrite them.
+                if _result_encodes_denial(result):
+                    return mark_processed_and_return(result)
 
                 # After existing hook processing, check for web chat hold-open.
                 # Terminal sessions pass straight through; only web_chat sessions
