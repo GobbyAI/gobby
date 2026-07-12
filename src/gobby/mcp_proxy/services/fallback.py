@@ -6,6 +6,7 @@ using semantic similarity and success rate weighting.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -161,7 +162,9 @@ class ToolFallbackResolver:
         # Enrich with success rates and compute combined scores
         suggestions = []
         for result in search_results[:top_k]:
-            success_rate = self._get_success_rate(result.server_name, result.tool_name, project_id)
+            success_rate = await asyncio.to_thread(
+                self._get_success_rate, result.server_name, result.tool_name, project_id
+            )
 
             score = self._compute_score(result.similarity, success_rate)
 

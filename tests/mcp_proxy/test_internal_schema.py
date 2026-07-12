@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -286,6 +287,25 @@ async def test_context_param_is_ignored() -> None:
     ctx = {"session_id": "sess-1", "conversation_id": "conv-1"}
     result = await registry.call("simple", {"query": "hello"}, context=ctx)
     assert result["query"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_sync_internal_tool_runs_off_event_loop() -> None:
+    """Synchronous registry tools must run in a worker thread."""
+    registry = InternalToolRegistry(name="test-registry")
+    event_loop_thread = threading.get_ident()
+    tool_threads: list[int] = []
+
+    @registry.tool(name="sync_tool", description="Synchronous tool")
+    def sync_tool() -> dict[str, bool]:
+        tool_threads.append(threading.get_ident())
+        return {"ok": True}
+
+    result = await registry.call("sync_tool", {})
+
+    assert result == {"ok": True}
+    assert tool_threads
+    assert tool_threads[0] != event_loop_thread
 
 
 def test_normalize_internal_success_result_strips_legacy_success() -> None:

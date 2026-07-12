@@ -1,11 +1,13 @@
 """Tests for GobbyDaemonTools handler class in server.py."""
 
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+from gobby.utils.session_context import SeededContextTokens
 
 pytestmark = pytest.mark.unit
 
@@ -235,6 +237,51 @@ class TestGobbyDaemonToolsCallTool:
         # MCP layer strips "success" from successful responses (server.py:140-142)
         assert "success" not in result
         assert result["result"] == "test output"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_resolves_session_context_off_event_loop(self, tools_handler):
+        """A blocked session lookup must not stall another proxy request."""
+        event_loop_thread = threading.get_ident()
+        resolver_threads: list[int] = []
+        lookup_started = threading.Event()
+        release_lookup = threading.Event()
+
+        def slow_resolver(*_args, **kwargs):
+            resolver_threads.append(threading.get_ident())
+            if kwargs.get("session_ref") == "#123":
+                lookup_started.set()
+                release_lookup.wait(timeout=1)
+            return SeededContextTokens()
+
+        tools_handler.tool_proxy.call_tool = AsyncMock(return_value={"success": True})
+
+        with patch(
+            "gobby.mcp_proxy.server.resolve_and_seed_contexts",
+            side_effect=slow_resolver,
+        ):
+            blocked_call = asyncio.create_task(
+                tools_handler.call_tool(
+                    server_name="test-server",
+                    tool_name="blocked-tool",
+                    session_id="#123",
+                )
+            )
+            try:
+                assert await asyncio.to_thread(lookup_started.wait, 0.5)
+                await asyncio.wait_for(
+                    tools_handler.call_tool(
+                        server_name="test-server",
+                        tool_name="responsive-tool",
+                    ),
+                    timeout=0.2,
+                )
+                assert not blocked_call.done()
+            finally:
+                release_lookup.set()
+                await blocked_call
+
+        assert resolver_threads
+        assert all(thread_id != event_loop_thread for thread_id in resolver_threads)
 
     @pytest.mark.asyncio
     async def test_call_tool_passes_arguments_correctly(self, tools_handler):

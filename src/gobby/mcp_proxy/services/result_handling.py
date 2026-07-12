@@ -90,7 +90,7 @@ async def apply_before_tool_enforcement(
     session_id: str | None,
 ) -> tuple[str, str, dict[str, Any], dict[str, Any] | None]:
     """Run workflow before_tool evaluation for direct MCP tool execution."""
-    effective_session_id = service._get_effective_session_id(session_id)
+    effective_session_id = await asyncio.to_thread(service._get_effective_session_id, session_id)
     if not effective_session_id:
         return server_name, tool_name, arguments, None
 
@@ -99,7 +99,8 @@ async def apply_before_tool_enforcement(
     if workflow_handler is None:
         return server_name, tool_name, arguments, None
 
-    event = service._build_before_tool_event(
+    event = await asyncio.to_thread(
+        service._build_before_tool_event,
         effective_session_id=effective_session_id,
         server_name=server_name,
         tool_name=tool_name,
@@ -119,7 +120,9 @@ async def apply_before_tool_enforcement(
     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
     if callable(has_pending_context):
         try:
-            if has_pending_context(event.source, effective_session_id, event.data):
+            if await asyncio.to_thread(
+                has_pending_context, event.source, effective_session_id, event.data
+            ):
                 event.metadata["_mcp_proxy_duplicate_before_tool"] = True
         except Exception as exc:
             logger.debug(
@@ -197,7 +200,7 @@ async def apply_after_tool_workflow(
     tool_output: Any,
 ) -> None:
     """Run workflow after_tool processing for direct MCP tool execution."""
-    effective_session_id = service._get_effective_session_id(session_id)
+    effective_session_id = await asyncio.to_thread(service._get_effective_session_id, session_id)
     if not effective_session_id:
         return
 
@@ -206,7 +209,8 @@ async def apply_after_tool_workflow(
     if workflow_handler is None:
         return
 
-    event = build_after_tool_event(
+    event = await asyncio.to_thread(
+        build_after_tool_event,
         service=service,
         effective_session_id=effective_session_id,
         server_name=server_name,

@@ -11,6 +11,7 @@ Focuses on MCP client management operations including:
 
 import asyncio
 import logging
+import threading
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -470,6 +471,9 @@ class TestMCPClientManagerAddServer:
     async def test_add_server_persists_to_database(self) -> None:
         """Test add_server persists config to database."""
         mock_db = MagicMock()
+        event_loop_thread = threading.get_ident()
+        db_threads: list[int] = []
+        mock_db.upsert.side_effect = lambda **_kwargs: db_threads.append(threading.get_ident())
         manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
 
         config = MCPServerConfig(
@@ -486,6 +490,8 @@ class TestMCPClientManagerAddServer:
         call_kwargs = mock_db.upsert.call_args[1]
         assert call_kwargs["name"] == "new-server"
         assert call_kwargs["project_id"] == "test-project"
+        assert len(db_threads) == 1
+        assert db_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
     async def test_add_server_canonicalizes_bundled_server_scope(self) -> None:
@@ -520,7 +526,13 @@ class TestMCPClientManagerAddServer:
     @pytest.mark.asyncio
     async def test_add_server_connects_and_lists_tools(self) -> None:
         """Test add_server connects and lists tools for enabled server."""
-        manager = MCPClientManager(server_configs=[])
+        mock_db = MagicMock()
+        event_loop_thread = threading.get_ident()
+        cache_threads: list[int] = []
+        mock_db.cache_tools.side_effect = lambda *_args, **_kwargs: cache_threads.append(
+            threading.get_ident()
+        )
+        manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
 
         config = MCPServerConfig(
             name="new-server",
@@ -545,6 +557,9 @@ class TestMCPClientManagerAddServer:
         assert result["connected"] is True
         assert len(result["full_tool_schemas"]) == 1
         assert result["full_tool_schemas"][0]["name"] == "test-tool"
+        mock_db.cache_tools.assert_called_once()
+        assert len(cache_threads) == 1
+        assert cache_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
     async def test_add_server_keeps_config_when_initial_connection_fails(self) -> None:
@@ -1092,15 +1107,26 @@ class TestMCPClientManagerConnectServer:
         mock_session = MagicMock()
         mock_connection = AsyncMock()
         mock_connection.connect.return_value = mock_session
+        event_loop_thread = threading.get_ident()
+        secret_threads: list[int] = []
 
-        with patch(
-            "gobby.mcp_proxy.manager.create_transport_connection",
-            return_value=mock_connection,
+        def resolve_secrets(server_config: MCPServerConfig) -> MCPServerConfig:
+            secret_threads.append(threading.get_ident())
+            return server_config
+
+        with (
+            patch(
+                "gobby.mcp_proxy.manager.create_transport_connection",
+                return_value=mock_connection,
+            ),
+            patch.object(manager, "_resolve_secrets_in_config", side_effect=resolve_secrets),
         ):
             result = await manager._connect_server(config)
 
         assert result is mock_session
         assert manager.health["test-server"].state == ConnectionState.CONNECTED
+        assert len(secret_threads) == 1
+        assert secret_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
     async def test_connect_server_failure(self) -> None:
@@ -1282,6 +1308,13 @@ class TestMCPClientManagerCallTool:
         )
 
         mock_metrics = MagicMock()
+        event_loop_thread = threading.get_ident()
+        metrics_threads: list[int] = []
+
+        def record_call(**_kwargs: Any) -> None:
+            metrics_threads.append(threading.get_ident())
+
+        mock_metrics.record_call.side_effect = record_call
         manager = MCPClientManager(
             server_configs=[config],
             metrics_manager=mock_metrics,
@@ -1303,6 +1336,8 @@ class TestMCPClientManagerCallTool:
         assert call_kwargs["server_name"] == "test-server"
         assert call_kwargs["tool_name"] == "test-tool"
         assert call_kwargs["success"] is True
+        assert len(metrics_threads) == 1
+        assert metrics_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
     async def test_call_tool_records_failure_metrics(self) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Protocol
 
@@ -82,7 +83,7 @@ async def list_tools_for_server(
 
     if server_name in manager.health:
         manager.health[server_name].record_success()
-    manager.cache_discovered_tools(server_name, tool_list)
+    await asyncio.to_thread(manager.cache_discovered_tools, server_name, tool_list)
     return tool_list
 
 
@@ -116,7 +117,7 @@ async def retry_list_tools_after_failure(
 
     if server_name in manager.health:
         manager.health[server_name].record_success()
-    manager.cache_discovered_tools(server_name, tool_list)
+    await asyncio.to_thread(manager.cache_discovered_tools, server_name, tool_list)
     return tool_list
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from typing import Any, Protocol, cast
@@ -169,7 +170,7 @@ async def _discover_and_cache_tools(
         return []
 
     if tool_schemas:
-        manager.cache_discovered_tools(config.name, tool_schemas)
+        await asyncio.to_thread(manager.cache_discovered_tools, config.name, tool_schemas)
     return tool_schemas
 
 
@@ -184,7 +185,8 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
 
     if manager.mcp_db_manager and config.project_id:
         try:
-            manager.mcp_db_manager.upsert(
+            await asyncio.to_thread(
+                manager.mcp_db_manager.upsert,
                 name=config.name,
                 transport=config.transport,
                 project_id=config.project_id,
@@ -252,7 +254,7 @@ async def remove_server(
     manager._lazy_connector.unregister_server(name)
 
     if manager.mcp_db_manager and effective_project_id:
-        manager.mcp_db_manager.remove_server(name, effective_project_id)
+        await asyncio.to_thread(manager.mcp_db_manager.remove_server, name, effective_project_id)
 
     return {"success": True, "name": name}
 
@@ -296,7 +298,8 @@ async def update_server(
         manager._lazy_connector.register_server(name)
 
     if manager.mcp_db_manager and effective_project_id:
-        manager.mcp_db_manager.update_server(
+        await asyncio.to_thread(
+            manager.mcp_db_manager.update_server,
             name,
             effective_project_id,
             transport=config.transport,
@@ -346,7 +349,12 @@ async def set_server_enabled(
         await _discover_and_cache_tools(manager, config, session)
         if manager.mcp_db_manager and effective_project_id:
             try:
-                manager.mcp_db_manager.update_server(name, effective_project_id, enabled=True)
+                await asyncio.to_thread(
+                    manager.mcp_db_manager.update_server,
+                    name,
+                    effective_project_id,
+                    enabled=True,
+                )
             except Exception:
                 try:
                     if name in manager._connections:
@@ -365,7 +373,12 @@ async def set_server_enabled(
         manager._lazy_connector.register_server(name)
     else:
         if manager.mcp_db_manager and effective_project_id:
-            manager.mcp_db_manager.update_server(name, effective_project_id, enabled=False)
+            await asyncio.to_thread(
+                manager.mcp_db_manager.update_server,
+                name,
+                effective_project_id,
+                enabled=False,
+            )
         config.enabled = False
         if name in manager._connections:
             await manager._connections[name].disconnect()

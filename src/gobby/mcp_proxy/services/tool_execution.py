@@ -1,5 +1,6 @@
 """Tool and schema execution operations for the tool proxy service."""
 
+import asyncio
 import logging
 from typing import Any, cast
 
@@ -93,7 +94,9 @@ async def list_tools(
                     )
                     brief_tools.append({"name": name, "brief": safe_truncate(desc)})
             if service._tool_filter and session_id:
-                brief_tools = service._tool_filter.filter_tools(brief_tools, session_id)
+                brief_tools = await asyncio.to_thread(
+                    service._tool_filter.filter_tools, brief_tools, session_id
+                )
             return {"success": True, "tools": brief_tools, "tool_count": len(brief_tools)}
         return {"success": True, "tools": [], "tool_count": 0}
 
@@ -102,8 +105,12 @@ async def list_tools(
         if registry:
             tools = registry.list_tools()
             if service._tool_filter and session_id:
-                tools = service._tool_filter.filter_tools(tools, session_id)
-            service.record_listed_server(server_name, session_id=session_id)
+                tools = await asyncio.to_thread(
+                    service._tool_filter.filter_tools, tools, session_id
+                )
+            await asyncio.to_thread(
+                service.record_listed_server, server_name, session_id=session_id
+            )
             return {"success": True, "tools": tools, "tool_count": len(tools)}
         error_msg = f"Internal server '{server_name}' not found"
         suggestion = service._get_server_suggestion(server_name)
@@ -142,8 +149,10 @@ async def list_tools(
                     }
                 )
         if service._tool_filter and session_id:
-            ext_brief_tools = service._tool_filter.filter_tools(ext_brief_tools, session_id)
-        service.record_listed_server(server_name, session_id=session_id)
+            ext_brief_tools = await asyncio.to_thread(
+                service._tool_filter.filter_tools, ext_brief_tools, session_id
+            )
+        await asyncio.to_thread(service.record_listed_server, server_name, session_id=session_id)
         return {"success": True, "tools": ext_brief_tools, "tool_count": len(ext_brief_tools)}
 
     error_msg = f"Server '{server_name}' not found"
@@ -177,7 +186,8 @@ async def call_tool(
                 input_schema = schema_result.get("tool", {}).get("inputSchema", {})
         except Exception as schema_error:
             logger.debug("Could not fetch schema for argument preparation error: %s", schema_error)
-        return build_invalid_arguments_response(
+        return await asyncio.to_thread(
+            build_invalid_arguments_response,
             service,
             server_name=server_name,
             tool_name=tool_name,
@@ -198,7 +208,8 @@ async def call_tool(
     if project_id is None:
         manager_project_id = getattr(getattr(service, "_mcp_manager", None), "project_id", None)
         project_id = manager_project_id if isinstance(manager_project_id, str) else None
-    try_resolve_session_field(
+    await asyncio.to_thread(
+        try_resolve_session_field,
         arguments,
         "session_id",
         session_manager=session_manager,
@@ -244,10 +255,12 @@ async def call_tool(
             return workflow_error
         arguments = cast("dict[str, Any]", arguments)
 
-    effective_session_id = service._get_effective_session_id(session_id)
+    effective_session_id = await asyncio.to_thread(service._get_effective_session_id, session_id)
 
     if service._tool_filter and effective_session_id:
-        allowed, reason = service._tool_filter.is_tool_allowed(tool_name, effective_session_id)
+        allowed, reason = await asyncio.to_thread(
+            service._tool_filter.is_tool_allowed, tool_name, effective_session_id
+        )
         if not allowed:
             return {
                 "success": False,
@@ -286,7 +299,8 @@ async def call_tool(
                         missing = [r for r in required if r not in arguments]
                         if missing:
                             error_message = f"Missing required parameters: {missing}"
-                    return build_invalid_arguments_response(
+                    return await asyncio.to_thread(
+                        build_invalid_arguments_response,
                         service,
                         server_name=server_name,
                         tool_name=tool_name,
@@ -392,7 +406,8 @@ async def _execute_tool(
                     input_schema = schema_result.get("tool", {}).get("inputSchema", {})
             except Exception as schema_error:
                 logger.debug(f"Could not fetch schema for error enrichment: {schema_error}")
-            response = build_invalid_arguments_response(
+            response = await asyncio.to_thread(
+                build_invalid_arguments_response,
                 service,
                 server_name=server_name,
                 tool_name=tool_name,

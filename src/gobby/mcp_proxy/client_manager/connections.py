@@ -138,7 +138,7 @@ async def connect_server(
         )
 
     try:
-        resolved_config = manager._resolve_secrets_in_config(config)
+        resolved_config = await asyncio.to_thread(manager._resolve_secrets_in_config, config)
 
         if config.name not in manager._connections:
             connection = create_connection(resolved_config)

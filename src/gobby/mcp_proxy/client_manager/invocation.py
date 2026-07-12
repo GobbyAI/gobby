@@ -119,7 +119,8 @@ async def call_tool(
                 )
                 if metrics_project_id:
                     try:
-                        manager.metrics_manager.record_call(
+                        await asyncio.to_thread(
+                            manager.metrics_manager.record_call,
                             server_name=server_name,
                             tool_name=tool_name,
                             project_id=metrics_project_id,

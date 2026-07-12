@@ -9,6 +9,7 @@ This enables progressive discovery for internal tools and reduces the
 number of tools exposed on the main MCP server.
 """
 
+import asyncio
 import inspect
 import json
 import logging
@@ -280,7 +281,7 @@ class InternalToolRegistry:
         # Call the function (handle both sync and async)
         if inspect.iscoroutinefunction(tool.func):
             return await tool.func(**coerced_arguments)
-        return tool.func(**coerced_arguments)
+        return await asyncio.to_thread(tool.func, **coerced_arguments)
 
     def call_sync(
         self, name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None
