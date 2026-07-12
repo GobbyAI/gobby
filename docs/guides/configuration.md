@@ -70,6 +70,11 @@ available:
 hub_backend: postgres
 database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
 postgres_install_mode: docker
+postgres_pool:
+  min_size: 2
+  max_size: 20
+  acquire_timeout_seconds: 5.0
+  open_timeout_seconds: 30.0
 daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
@@ -82,6 +87,11 @@ falkordb_password: "gobbyfalkor"
 the only runtime hub. Startup fails when the PostgreSQL DSN is missing, so do not
 remove `database_url` or use `gobby postgres uninstall` as a runtime recovery
 path.
+
+`postgres_pool` configures the daemon's PostgreSQL client pool. All four values
+must be positive, and `min_size` cannot exceed `max_size`. These bootstrap values
+are resolved before `config_store` is available and are not overridden by
+config-store rows or `PGPOOL_*` environment variables.
 
 Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.
 `bootstrap.yaml` is written with mode `0600`; keep that permission so the DSN
@@ -439,7 +449,8 @@ hook_extensions:
 ```
 
 Webhook endpoints support custom headers, retries, and blocking behavior through
-the `can_block` flag.
+the `can_block` flag. Failures remain fail-open by default; set `fail_closed: true`
+on a blocking endpoint when transport or HTTP failures must block the action.
 
 ### Tool Approval And Chat
 

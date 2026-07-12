@@ -40,6 +40,7 @@ hook_extensions:
         retry_count: 3
         retry_delay: 1.0
         can_block: false
+        fail_closed: false
         enabled: true
 ```
 
@@ -62,6 +63,7 @@ warning).
 | `retry_count` | int | `3` | Retries after the first attempt, 0 to 10 |
 | `retry_delay` | float | `1.0` | Initial retry delay, doubled after each retry |
 | `can_block` | bool | `false` | Allows a webhook response to block the hook action |
+| `fail_closed` | bool | `false` | Blocks when a blocking webhook request fails |
 | `enabled` | bool | `true` | Per-endpoint toggle |
 
 The dispatcher adds these headers:
@@ -138,9 +140,11 @@ with a 2xx JSON response:
 ```
 
 `decision: "deny"` is also treated as a block. If the response omits `reason`,
-Gobby supplies a fallback reason in logs and hook output. Webhook transport
-errors fail open so that an unavailable external service does not break local
-agent operation.
+Gobby supplies a fallback reason in logs and hook output. Webhook failures are
+fail-open by default, preserving local operation when an external service is
+unavailable. Set `fail_closed: true` together with `can_block: true` for security
+gates that must block after a client error, timeout, connection error, server
+error, or retry exhaustion. `fail_closed` has no effect on non-blocking endpoints.
 
 ### CLI And HTTP Management
 

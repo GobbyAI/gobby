@@ -24,6 +24,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_API_KEY_SECRET_NAME,
 )
 from gobby.prompts.sync import sync_bundled_prompts
+from gobby.servers.auth_service import AuthService
 from gobby.servers.routes.configuration_import_export import _prompt_export_key
 from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
@@ -31,6 +32,13 @@ from gobby.servers.routes.configuration_secrets import MASKED_SECRET
 from gobby.servers.routes.configuration_ui_settings import UI_SETTINGS_KEYS
 from gobby.servers.routes.configuration_values import register_value_routes
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
+from gobby.storage.auth import (
+    LOCAL_API_TOKEN_HASH_KEY,
+    PASSWORD_HASH_KEY,
+    USERNAME_KEY,
+    hash_password,
+    hash_token,
+)
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
@@ -42,6 +50,7 @@ pytestmark = pytest.mark.unit
 
 FALKOR_PASSWORD_KEY = "databases.falkordb.password"
 FALKOR_RESTART_HINT_FRAGMENT = "FalkorDB password"
+LOCAL_RUNTIME_TOKEN = "configuration-route-test-token"
 
 
 # ---------------------------------------------------------------------------
@@ -66,18 +75,32 @@ def task_manager(temp_db: Any) -> Any:
 
 
 @pytest.fixture
-def server(temp_db: Any, real_config: Any, task_manager: Any) -> Any:
+def server(temp_db: Any, real_config: Any, task_manager: Any, tmp_path: Any) -> Any:
     """Create an HTTPServer with real config and database."""
-    return create_http_server(
+    ConfigStore(temp_db).set(
+        LOCAL_API_TOKEN_HASH_KEY,
+        hash_token(LOCAL_RUNTIME_TOKEN),
+        source="system",
+    )
+    http_server = create_http_server(
         config=real_config,
         database=temp_db,
         task_manager=task_manager,
     )
+    http_server.auth_service = AuthService(
+        lambda: temp_db,
+        mode="disabled",
+        token_file=tmp_path / "local_cli_token",
+    )
+    return http_server
 
 
 @pytest.fixture
 def client(server: Any) -> TestClient:
-    return TestClient(server.app)
+    return TestClient(
+        server.app,
+        headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+    )
 
 
 @pytest.fixture
@@ -206,6 +229,74 @@ class TestSaveConfigValues:
         assert data["ok"] is True
         assert data["requires_restart"] is True
 
+    def test_save_voice_audio_plaintext_api_key_is_rejected_before_storage(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "voice": {
+                        "openai_compatible_audio": [
+                            {
+                                "provider": "remote-stt",
+                                "url": "https://audio.example/v1",
+                                "model": "whisper-large-v3",
+                                "api_key": "plaintext-key",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert "$secret:NAME" in response.json()["detail"]
+        assert ConfigStore(temp_db).get("voice.openai_compatible_audio") is None
+
+    def test_save_voice_audio_secret_reference_persists_resolves_and_masks(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        server: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        SecretStore(temp_db).set("remote_stt_api_key", "resolved-key")
+        binding = {
+            "provider": "remote-stt",
+            "url": "https://audio.example/v1",
+            "model": "whisper-large-v3",
+            "api_key": "$secret:REMOTE_STT_API_KEY",
+        }
+
+        response = client.put(
+            "/api/config/values",
+            json={"values": {"voice": {"openai_compatible_audio": [binding]}}},
+        )
+
+        assert response.status_code == 200
+        stored = ConfigStore(temp_db).get("voice.openai_compatible_audio")
+        assert stored == [binding]
+        runtime_binding = server.services.config.voice.openai_compatible_audio[0]
+        assert runtime_binding.api_key == "resolved-key"
+
+        values = client.get("/api/config/values").json()["values"]
+        exposed_binding = values["voice"]["openai_compatible_audio"][0]
+        assert exposed_binding["api_key"] == MASKED_SECRET
+        assert exposed_binding["url"] == "https://audio.example/v1"
+        assert "resolved-key" not in str(values)
+
+        exposed_binding["model"] = "whisper-v4"
+        round_trip = client.put(
+            "/api/config/values",
+            json={"values": {"voice": {"openai_compatible_audio": [exposed_binding]}}},
+        )
+        assert round_trip.status_code == 200
+        stored_after_round_trip = ConfigStore(temp_db).get("voice.openai_compatible_audio")
+        assert stored_after_round_trip[0]["api_key"] == "$secret:REMOTE_STT_API_KEY"
+        assert stored_after_round_trip[0]["model"] == "whisper-v4"
+        assert server.services.config.voice.openai_compatible_audio[0].api_key == "resolved-key"
+
     def test_save_deep_merge(self, client: TestClient) -> None:
         """Deep merge should merge nested dicts, not replace them."""
         response = client.put(
@@ -333,6 +424,29 @@ class TestValidateConfig:
         assert data["valid"] is True
         assert data["errors"] == []
 
+    def test_voice_audio_plaintext_api_key_is_invalid(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/config/values/validate",
+            json={
+                "values": {
+                    "voice": {
+                        "openai_compatible_audio": [
+                            {
+                                "provider": "remote-stt",
+                                "url": "https://audio.example/v1",
+                                "model": "whisper-large-v3",
+                                "api_key": "plaintext-key",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["valid"] is False
+        assert "$secret:NAME" in response.json()["errors"][0]
+
     def test_invalid_config(self, client: TestClient) -> None:
         response = client.post(
             "/api/config/values/validate",
@@ -366,11 +480,19 @@ class TestValidateConfig:
 
 
 class TestResetConfig:
-    def test_reset_success(self, client: TestClient, temp_db: Any) -> None:
-        """Reset clears config_store and sets in-memory config to defaults."""
+    def test_reset_success(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        """Reset clears config rows and only their encrypted secrets."""
         # Seed some config in DB
         store = ConfigStore(temp_db)
         store.set("daemon_port", 9999)
+        secret_store = SecretStore(temp_db)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", secret_store)
+        secret_store.set("independent_token", "keep-me")
         response = client.post("/api/config/values/reset")
         assert response.status_code == 200
         data = response.json()
@@ -378,6 +500,8 @@ class TestResetConfig:
         assert data["requires_restart"] is True
         # Verify DB was cleared
         assert store.get_all() == {}
+        assert secret_store.get("falkordb_password") is None
+        assert secret_store.get("independent_token") == "keep-me"
 
     def test_reset_failure(self, client: TestClient) -> None:
         """Reset failure returns 500."""
@@ -402,6 +526,27 @@ class TestGetTemplate:
         content = response.json()["content"]
         assert "daemon_port" in content
         assert isinstance(content, str)
+
+    def test_masks_voice_audio_api_key(self, client: TestClient, temp_db: Any) -> None:
+        ConfigStore(temp_db).set(
+            "voice.openai_compatible_audio",
+            [
+                {
+                    "provider": "remote-stt",
+                    "url": "https://audio.example/v1",
+                    "model": "whisper-large-v3",
+                    "api_key": "$secret:REMOTE_STT_API_KEY",
+                }
+            ],
+        )
+
+        response = client.get("/api/config/template")
+
+        assert response.status_code == 200
+        values = yaml.safe_load(response.json()["content"])
+        binding = values["voice"]["openai_compatible_audio"][0]
+        assert binding["api_key"] == MASKED_SECRET
+        assert binding["url"] == "https://audio.example/v1"
 
     def test_includes_db_overrides(self, client: TestClient, temp_db: Any) -> None:
         """DB overrides are merged into the template."""
@@ -445,6 +590,27 @@ class TestSaveTemplate:
         # Verify the DB has the non-default value
         store = ConfigStore(temp_db)
         assert store.get("daemon_port") == 9999
+
+    def test_save_template_rejects_voice_audio_plaintext_before_storage(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/template",
+            json={
+                "content": (
+                    "voice:\n"
+                    "  openai_compatible_audio:\n"
+                    "    - provider: remote-stt\n"
+                    "      url: https://audio.example/v1\n"
+                    "      model: whisper-large-v3\n"
+                    "      api_key: plaintext-key\n"
+                )
+            },
+        )
+
+        assert response.status_code == 400
+        assert "$secret:NAME" in response.json()["detail"]
+        assert ConfigStore(temp_db).get("voice.openai_compatible_audio") is None
 
     def test_save_empty_yaml_treated_as_empty_dict(self, client: TestClient) -> None:
         """Empty YAML (parsed as None) is treated as empty dict."""
@@ -692,6 +858,50 @@ class TestValidationDetectionPreview:
         assert _secret_row(postgres_db) == before_secret
         assert SecretStore(postgres_db).get("falkordb_password") == "Valid-123"
 
+    def test_save_template_removes_only_obsolete_config_backed_secrets(
+        self,
+        postgres_client: TestClient,
+        postgres_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        store = ConfigStore(postgres_db)
+        secret_store = SecretStore(postgres_db)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", secret_store)
+        secret_store.set("independent_token", "keep-me")
+        content = yaml.safe_dump({"daemon_port": 7777})
+
+        response = postgres_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 200
+        assert store.get(FALKOR_PASSWORD_KEY) is None
+        assert secret_store.get("falkordb_password") is None
+        assert secret_store.get("independent_token") == "keep-me"
+
+    def test_save_template_rolls_back_when_config_secret_cleanup_fails(
+        self,
+        postgres_client: TestClient,
+        postgres_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        store = ConfigStore(postgres_db)
+        store.set_secret(FALKOR_PASSWORD_KEY, "Valid-123", SecretStore(postgres_db))
+        before_config = _config_store_row(postgres_db, FALKOR_PASSWORD_KEY)
+        before_secret = _secret_row(postgres_db)
+        content = yaml.safe_dump({"daemon_port": 7777})
+
+        with patch.object(
+            SecretStore,
+            "delete",
+            side_effect=RuntimeError("injected secret deletion failure"),
+        ):
+            response = postgres_client.put("/api/config/template", json={"content": content})
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to save config template"
+        assert _config_store_row(postgres_db, FALKOR_PASSWORD_KEY) == before_config
+        assert _secret_row(postgres_db) == before_secret
+        assert store.get("daemon_port") is None
+
 
 # ---------------------------------------------------------------------------
 # Secrets endpoints  (GET, POST, DELETE /api/config/secrets)
@@ -699,6 +909,94 @@ class TestValidationDetectionPreview:
 
 
 class TestSecretsEndpoints:
+    def test_mutations_require_local_token_when_web_login_is_unconfigured(
+        self, server: Any, mock_machine_id: Any
+    ) -> None:
+        assert server.auth_service.enabled is False
+        assert server.services.config.bind_host == "localhost"
+        assert server.auth_service.credentials_configured is False
+        unauthenticated = TestClient(server.app)
+
+        create_response = unauthenticated.post(
+            "/api/config/secrets",
+            json={"name": "PROTECTED", "value": "secret"},
+        )
+        invalid_response = unauthenticated.delete(
+            "/api/config/secrets/PROTECTED",
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+        authorized_create = unauthenticated.post(
+            "/api/config/secrets",
+            headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+            json={"name": "PROTECTED", "value": "secret"},
+        )
+        authorized_delete = unauthenticated.delete(
+            "/api/config/secrets/PROTECTED",
+            headers={"Authorization": f"Bearer {LOCAL_RUNTIME_TOKEN}"},
+        )
+
+        assert create_response.status_code == 401
+        assert invalid_response.status_code == 401
+        assert authorized_create.status_code == 200
+        assert authorized_delete.status_code == 200
+
+    def test_mutations_accept_configured_web_session(
+        self, server: Any, temp_db: Any, tmp_path: Any, mock_machine_id: Any
+    ) -> None:
+        ConfigStore(temp_db).set_many(
+            {
+                USERNAME_KEY: "admin",
+                PASSWORD_HASH_KEY: hash_password("correct horse battery staple"),
+            },
+            source="system",
+        )
+        server.auth_service = AuthService(
+            lambda: temp_db,
+            mode="required",
+            token_file=tmp_path / "configured_auth_token",
+        )
+        assert server.auth_service.enabled is True
+        assert server.auth_service.credentials_configured is True
+        browser = TestClient(server.app)
+
+        login_response = browser.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "correct horse battery staple"},
+        )
+        create_response = browser.post(
+            "/api/config/secrets",
+            json={"name": "SESSION_PROTECTED", "value": "secret"},
+        )
+        delete_response = browser.delete("/api/config/secrets/SESSION_PROTECTED")
+
+        assert login_response.status_code == 200
+        assert create_response.status_code == 200
+        assert delete_response.status_code == 200
+
+    def test_non_loopback_bind_refuses_unauthenticated_mutation(
+        self, temp_db: Any, task_manager: Any, tmp_path: Any
+    ) -> None:
+        http_server = create_http_server(
+            config=DaemonConfig(bind_host="0.0.0.0", auth_mode="disabled"),
+            database=temp_db,
+            task_manager=task_manager,
+            auth_mode="disabled",
+        )
+        http_server.auth_service = AuthService(
+            lambda: temp_db,
+            mode="disabled",
+            token_file=tmp_path / "non_loopback_token",
+        )
+        assert http_server.auth_service.enabled is False
+        assert http_server.services.config.bind_host == "0.0.0.0"
+
+        response = TestClient(http_server.app).post(
+            "/api/config/secrets",
+            json={"name": "REMOTE_WRITE", "value": "secret"},
+        )
+
+        assert response.status_code == 401
+
     def test_list_secrets_empty(self, client: TestClient) -> None:
         with patch("gobby.servers.routes.configuration_context.SecretStore") as mock_cls:
             mock_store = MagicMock(spec=SecretStore)
@@ -739,14 +1037,27 @@ class TestSecretsEndpoints:
         assert data["secret"]["name"] == "test_secret"
 
     def test_secret_routes_accept_hub_database_protocol(
-        self, non_local_hub_db: Any, real_config: Any, mock_machine_id: Any
+        self, non_local_hub_db: Any, real_config: Any, tmp_path: Any, mock_machine_id: Any
     ) -> None:
+        ConfigStore(non_local_hub_db).set(
+            LOCAL_API_TOKEN_HASH_KEY,
+            hash_token(LOCAL_RUNTIME_TOKEN),
+            source="system",
+        )
         server = create_http_server(
             config=real_config,
             database=non_local_hub_db,
             task_manager=LocalTaskManager(non_local_hub_db),
         )
-        c = TestClient(server.app)
+        server.auth_service = AuthService(
+            lambda: non_local_hub_db,
+            mode="disabled",
+            token_file=tmp_path / "non_local_token",
+        )
+        c = TestClient(
+            server.app,
+            headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
+        )
 
         create_response = c.post(
             "/api/config/secrets",
@@ -1012,6 +1323,36 @@ class TestExportImport:
         assert isinstance(data["prompts"], dict)
         assert isinstance(data["secrets"], list)
 
+    def test_export_config_preserves_voice_audio_refs_and_masks_legacy_plaintext(
+        self, client: TestClient, temp_db: Any, mock_machine_id: Any
+    ) -> None:
+        store = ConfigStore(temp_db)
+        binding = {
+            "provider": "remote-stt",
+            "url": "https://audio.example/v1",
+            "model": "whisper-large-v3",
+            "api_key": "$secret:REMOTE_STT_API_KEY",
+        }
+        store.set("voice.openai_compatible_audio", [binding])
+
+        safe_export = client.post("/api/config/export")
+
+        assert safe_export.status_code == 200
+        assert safe_export.json()["config_store"]["voice.openai_compatible_audio"] == [binding]
+
+        legacy_binding = {**binding, "api_key": "legacy-plaintext"}
+        store.set("voice.openai_compatible_audio", [legacy_binding])
+
+        defensive_export = client.post("/api/config/export")
+
+        assert defensive_export.status_code == 200
+        exported_binding = defensive_export.json()["config_store"]["voice.openai_compatible_audio"][
+            0
+        ]
+        assert exported_binding["api_key"] == MASKED_SECRET
+        assert exported_binding["model"] == "whisper-large-v3"
+        assert "legacy-plaintext" not in defensive_export.text
+
     def test_export_config_with_prompt_overrides(
         self, client: TestClient, mock_machine_id: Any
     ) -> None:
@@ -1104,6 +1445,56 @@ class TestExportImport:
         # Verify DB
         store = ConfigStore(temp_db)
         assert store.get("daemon_port") == 9999
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {
+                "config_store": {
+                    "daemon_port": 9999,
+                    "voice.openai_compatible_audio": [
+                        {
+                            "provider": "remote-stt",
+                            "url": "https://audio.example/v1",
+                            "model": "whisper-large-v3",
+                            "api_key": "plaintext-key",
+                        }
+                    ],
+                }
+            },
+            {
+                "config": {
+                    "daemon_port": 9999,
+                    "voice": {
+                        "openai_compatible_audio": [
+                            {
+                                "provider": "remote-stt",
+                                "url": "https://audio.example/v1",
+                                "model": "whisper-large-v3",
+                                "api_key": "plaintext-key",
+                            }
+                        ]
+                    },
+                }
+            },
+        ],
+        ids=["config-store", "nested-config"],
+    )
+    def test_import_rejects_voice_audio_plaintext_before_replacing_config(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        store = ConfigStore(temp_db)
+        store.set("daemon_port", 5555)
+
+        response = client.post("/api/config/import", json=payload)
+
+        assert response.status_code == 422
+        assert "$secret:NAME" in response.json()["detail"]
+        assert store.get("daemon_port") == 5555
+        assert store.get("voice.openai_compatible_audio") is None
 
     def test_import_empty_config_store_clears_existing_keys(
         self, client: TestClient, temp_db: Any

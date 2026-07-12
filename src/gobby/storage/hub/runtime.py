@@ -27,7 +27,7 @@ def open_runtime_hub_database(
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    db = PostgresHubDatabase(config.database_url)
+    db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
     try:
         if apply_migrations:
             db.apply_migrations()

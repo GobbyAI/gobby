@@ -85,23 +85,17 @@ class ServerManagementService:
             except ValueError as e:
                 return {"success": False, "error": f"Validation error: {e}"}
 
-            # Add to manager (runtime)
-            self._mcp_manager.add_server_config(server_config)
-
-            # Persist to config
-            # self._config_manager.add_mcp_server(...) # Mocking this interaction
-
-            # Attempt connection
-            if enabled:
-                try:
-                    await self._mcp_manager.connect_all([server_config])
-                except Exception as e:
+            try:
+                await self._mcp_manager.add_server(server_config)
+            except Exception as e:
+                if self._mcp_manager.has_server(name):
                     logger.warning(f"Added server {name} but connection failed: {e}")
                     return {
                         "success": True,
                         "message": f"Server added but connection failed: {str(e)}",
                         "connected": False,
                     }
+                raise
 
             return {
                 "success": True,

@@ -99,6 +99,7 @@ class CodeIndexConfig(BaseModel):
     )
     max_file_size_bytes: int = Field(
         default=1_000_000,
+        ge=1,
         description="Skip files larger than this",
     )
     exclude_patterns: list[str] = Field(
@@ -158,6 +159,7 @@ class CodeIndexConfig(BaseModel):
     )
     sync_worker_interval_seconds: float = Field(
         default=5.0,
+        gt=0,
         description="Sync worker poll interval in seconds",
     )
     sync_worker_projection_timeout_seconds: float = Field(
@@ -167,6 +169,7 @@ class CodeIndexConfig(BaseModel):
     )
     sync_worker_batch_size: int = Field(
         default=50,
+        ge=1,
         description="Max files to sync per poll iteration",
     )
     content_extensions: list[str] = Field(

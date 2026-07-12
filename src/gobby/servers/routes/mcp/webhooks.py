@@ -55,6 +55,7 @@ def create_webhooks_router() -> APIRouter:
                 "events": e.events,
                 "enabled": e.enabled,
                 "can_block": e.can_block,
+                "fail_closed": e.fail_closed,
                 "timeout": e.timeout,
                 "retry_count": e.retry_count,
             }

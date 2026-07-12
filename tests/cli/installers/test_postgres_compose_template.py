@@ -43,6 +43,16 @@ def test_compose_defines_postgres_alongside_shared_services(
     assert "neo4j" not in services
 
 
+def test_all_published_service_ports_are_loopback_bound(
+    compose_data: dict[str, object],
+) -> None:
+    services = compose_data["services"]
+
+    for service in services.values():
+        for published_port in service.get("ports", []):
+            assert published_port.startswith("127.0.0.1:")
+
+
 def test_postgres_service_uses_local_build_context_and_tag(
     compose_data: dict[str, object],
 ) -> None:
@@ -61,7 +71,10 @@ def test_postgres_service_has_required_profiles_ports_and_volumes(
     postgres = compose_data["services"]["postgres"]
 
     assert set(postgres["profiles"]) == {"postgres", "all"}
-    assert "${GOBBY_POSTGRES_PORT:-60891}:5432" in postgres["ports"]
+    assert "127.0.0.1:${GOBBY_POSTGRES_PORT:-60891}:5432" in postgres["ports"]
+    assert postgres["environment"]["POSTGRES_PASSWORD"] == (
+        "${GOBBY_POSTGRES_PASSWORD:?GOBBY_POSTGRES_PASSWORD must be set}"
+    )
     assert "gobby_postgres_data:/var/lib/postgresql" in postgres["volumes"]
     assert "gobby_pgaudit_log:/var/log/pgaudit" in postgres["volumes"]
     assert "gobby_postgres_data" in compose_data["volumes"]

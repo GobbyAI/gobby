@@ -18,6 +18,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
+from gobby.config.url_validation import validate_optional_endpoint_url
 
 __all__ = [
     "CompactHandoffConfig",
@@ -130,6 +131,7 @@ class TaskExpansionConfig(FeatureDefaultConfig):
     )
     research_max_steps: int = Field(
         default=10,
+        ge=1,
         description="Maximum number of steps for research agent loop",
     )
     research_system_prompt: str = Field(
@@ -147,10 +149,12 @@ class TaskExpansionConfig(FeatureDefaultConfig):
     )
     timeout: float = Field(
         default=300.0,
+        gt=0,
         description="Maximum time in seconds for entire task expansion (default: 5 minutes)",
     )
     research_timeout: float = Field(
         default=60.0,
+        gt=0,
         description="Maximum time in seconds for research phase (default: 60 seconds)",
     )
     pattern_criteria: PatternCriteriaConfig = Field(
@@ -266,6 +270,11 @@ class TaskValidationConfig(FeatureDefaultConfig):
         if not 0 <= v <= 1:
             raise ValueError("issue_similarity_threshold must be between 0 and 1")
         return v
+
+    @field_validator("escalation_webhook_url")
+    @classmethod
+    def validate_escalation_webhook_url(cls, value: str | None) -> str | None:
+        return validate_optional_endpoint_url(value, field_name="escalation_webhook_url")
 
 
 class FileExtractionConfig(BaseModel):

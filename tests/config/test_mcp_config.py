@@ -8,6 +8,8 @@ import pytest
 
 from gobby.config.mcp import MCPConfigManager
 from gobby.mcp_proxy.manager import MCPServerConfig
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
@@ -476,6 +478,166 @@ class TestMCPConfigManagerUpdateServer:
 
         with pytest.raises(ValueError, match="not found"):
             manager.update_server(server)
+
+
+class TestMCPConfigManagerSecretPersistence:
+    def test_save_encrypts_env_and_headers_without_mutating_inputs(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+    ) -> None:
+        config_path = tmp_path / "mcp.json"
+        store = SecretStore(temp_db)
+        manager = MCPConfigManager(str(config_path), secret_store=store)
+        stdio = MCPServerConfig(
+            name="secure-stdio",
+            project_id="global",
+            transport="stdio",
+            command="node",
+            env={"API_KEY": "file-api-plaintext", "LOG_LEVEL": "debug"},
+        )
+        http = MCPServerConfig(
+            name="secure-http",
+            project_id="global",
+            transport="http",
+            url="http://localhost",
+            headers={"Authorization": "Bearer file-header-plaintext", "X-Region": "local"},
+        )
+
+        manager.save_servers([stdio, http])
+
+        raw = config_path.read_text()
+        assert "file-api-plaintext" not in raw
+        assert "file-header-plaintext" not in raw
+        saved = json.loads(raw)["servers"]
+        env = saved[0]["env"]
+        headers = saved[1]["headers"]
+        assert env["LOG_LEVEL"] == "debug"
+        assert headers["X-Region"] == "local"
+        assert store.resolve(env["API_KEY"]) == "file-api-plaintext"
+        assert store.resolve(headers["Authorization"]) == "Bearer file-header-plaintext"
+        assert stdio.env == {"API_KEY": "file-api-plaintext", "LOG_LEVEL": "debug"}
+        assert http.headers == {
+            "Authorization": "Bearer file-header-plaintext",
+            "X-Region": "local",
+        }
+
+    def test_add_and_update_use_stable_ref_and_cleanup_removed_secret(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+    ) -> None:
+        config_path = tmp_path / "mcp.json"
+        store = SecretStore(temp_db)
+        manager = MCPConfigManager(str(config_path), secret_store=store)
+        manager.add_server(
+            MCPServerConfig(
+                name="rotating-file-server",
+                project_id="global",
+                transport="http",
+                url="http://localhost",
+                headers={
+                    "Authorization": "Bearer first-file-value",
+                    "X-API-Key": "removed-file-value",
+                },
+            )
+        )
+        initial = manager.get_server("rotating-file-server")
+        assert initial is not None and initial.headers is not None
+        auth_ref = initial.headers["Authorization"]
+        removed_name = initial.headers["X-API-Key"].removeprefix("$secret:")
+
+        manager.update_server(
+            MCPServerConfig(
+                name="rotating-file-server",
+                project_id="global",
+                transport="http",
+                url="http://localhost",
+                headers={"Authorization": "Bearer second-file-value"},
+            )
+        )
+
+        updated = manager.get_server("rotating-file-server")
+        assert updated is not None and updated.headers is not None
+        assert updated.headers["Authorization"] == auth_ref
+        assert store.resolve(auth_ref) == "Bearer second-file-value"
+        assert store.get(removed_name) is None
+
+    def test_explicit_ref_and_non_secret_value_are_preserved(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+    ) -> None:
+        config_path = tmp_path / "mcp.json"
+        store = SecretStore(temp_db)
+        store.set("operator_owned", "operator-value")
+        manager = MCPConfigManager(str(config_path), secret_store=store)
+        manager.save_servers(
+            [
+                MCPServerConfig(
+                    name="explicit-file-server",
+                    project_id="global",
+                    transport="stdio",
+                    command="node",
+                    env={"API_KEY": "$secret:operator_owned", "MODE": "safe"},
+                )
+            ]
+        )
+
+        server = manager.get_server("explicit-file-server")
+        assert server is not None
+        assert server.env == {"API_KEY": "$secret:operator_owned", "MODE": "safe"}
+        assert store.get("operator_owned") == "operator-value"
+
+    def test_secret_plaintext_requires_secret_store(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "mcp.json"
+        manager = MCPConfigManager(str(config_path))
+        original = config_path.read_bytes()
+
+        with pytest.raises(ValueError, match="requires SecretStore-backed persistence"):
+            manager.save_servers(
+                [
+                    MCPServerConfig(
+                        name="unsafe-file-server",
+                        project_id="global",
+                        transport="stdio",
+                        command="node",
+                        env={"API_KEY": "must-not-be-written"},
+                    )
+                ]
+            )
+
+        assert config_path.read_bytes() == original
+        assert "must-not-be-written" not in config_path.read_text()
+
+    def test_file_write_failure_rolls_back_new_secret(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+    ) -> None:
+        config_path = tmp_path / "mcp.json"
+        store = SecretStore(temp_db)
+        manager = MCPConfigManager(str(config_path), secret_store=store)
+        original = config_path.read_bytes()
+
+        with (
+            patch.object(manager, "_write_config", side_effect=OSError("forced write failure")),
+            pytest.raises(OSError, match="forced write failure"),
+        ):
+            manager.save_servers(
+                [
+                    MCPServerConfig(
+                        name="rollback-file-server",
+                        project_id="global",
+                        transport="stdio",
+                        command="node",
+                        env={"API_KEY": "must-rollback"},
+                    )
+                ]
+            )
+
+        assert config_path.read_bytes() == original
+        assert store.list() == []
 
 
 class TestMCPConfigManagerGetServer:

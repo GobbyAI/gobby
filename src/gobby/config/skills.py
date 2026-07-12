@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.config.url_validation import validate_optional_endpoint_url
+
 
 class HubConfig(BaseModel):
     """
@@ -45,6 +47,11 @@ class HubConfig(BaseModel):
         default=None,
         description="Secret name in SecretStore for the hub's auth key",
     )
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str | None) -> str | None:
+        return validate_optional_endpoint_url(value, field_name="base_url")
 
 
 class SkillsConfig(BaseModel):

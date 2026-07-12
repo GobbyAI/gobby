@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from gobby.config.embedding_keys import is_removed_embedding_config_store_key
+from gobby.config.voice_secrets import mask_voice_audio_api_keys
 from gobby.config.wiki_migration import migrate_legacy_wiki_roots
 
 if TYPE_CHECKING:
@@ -57,7 +59,12 @@ _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
     "backup_count": "backup_count",
 }
 
-_BOOTSTRAP_BACKEND_KEYS = ("hub_backend", "database_url", "postgres_install_mode")
+_BOOTSTRAP_PRE_DATABASE_KEYS = (
+    "hub_backend",
+    "database_url",
+    "postgres_install_mode",
+    "postgres_pool",
+)
 
 
 def expand_env_vars(
@@ -467,8 +474,8 @@ def _migrate_default_ui_mode_config_store_row(
     return migrated
 
 
-def _restore_bootstrap_backend_selection(config_dict: dict[str, Any], bootstrap: Any) -> None:
-    for key in _BOOTSTRAP_BACKEND_KEYS:
+def _restore_bootstrap_pre_database_settings(config_dict: dict[str, Any], bootstrap: Any) -> None:
+    for key in _BOOTSTRAP_PRE_DATABASE_KEYS:
         config_dict[key] = getattr(bootstrap, key)
 
 
@@ -510,14 +517,35 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     # Convert config to dict, excluding None values to keep file clean
     # mode="json" ensures Path objects are converted to strings for YAML serialization
     config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
+    config_dict = mask_voice_audio_api_keys(config_dict)
 
-    # Write with owner-only permissions before any data is emitted.
-    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, temp_name = tempfile.mkstemp(
+        dir=config_path.parent,
+        prefix=f".{config_path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temp_path = Path(temp_name)
     try:
         os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = -1
             yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, config_path)
+
+        directory_fd = os.open(
+            config_path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     finally:
         if fd != -1:
             os.close(fd)

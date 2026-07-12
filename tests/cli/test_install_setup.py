@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 import pytest
+import yaml
 
 from gobby.cli.install_setup import (
     _download_release_binary,
@@ -98,6 +99,32 @@ class TestEnsureDaemonConfig:
             target.read_text()
         )
         assert "daemon_port: 60887" in target.read_text()
+        assert yaml.safe_load(target.read_text())["postgres_pool"] == {
+            "min_size": 2,
+            "max_size": 20,
+            "acquire_timeout_seconds": 5.0,
+            "open_timeout_seconds": 30.0,
+        }
+
+    def test_bundled_bootstrap_exposes_postgres_pool_defaults(self) -> None:
+        template = (
+            Path(__file__).parents[2]
+            / "src"
+            / "gobby"
+            / "install"
+            / "shared"
+            / "config"
+            / "bootstrap.yaml"
+        )
+
+        content = yaml.safe_load(template.read_text())
+
+        assert content["postgres_pool"] == {
+            "min_size": 2,
+            "max_size": 20,
+            "acquire_timeout_seconds": 5.0,
+            "open_timeout_seconds": 30.0,
+        }
 
 
 class TestRunDaemonSetup:

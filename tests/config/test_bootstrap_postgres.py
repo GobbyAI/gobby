@@ -23,6 +23,56 @@ def test_bootstrap_defaults_to_postgres_backend_without_runtime_url(temp_dir: Pa
     assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url is None
     assert bootstrap.postgres_install_mode is None
+    assert bootstrap.postgres_pool.min_size == 2
+    assert bootstrap.postgres_pool.max_size == 20
+    assert bootstrap.postgres_pool.acquire_timeout_seconds == 5.0
+    assert bootstrap.postgres_pool.open_timeout_seconds == 30.0
+
+
+def test_bootstrap_loads_postgres_pool_settings(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "postgres_pool:\n"
+        "  min_size: 4\n"
+        "  max_size: 24\n"
+        "  acquire_timeout_seconds: 7.5\n"
+        "  open_timeout_seconds: 12.5\n",
+    )
+
+    pool = load_bootstrap(str(bootstrap_file)).postgres_pool
+
+    assert pool.min_size == 4
+    assert pool.max_size == 24
+    assert pool.acquire_timeout_seconds == 7.5
+    assert pool.open_timeout_seconds == 12.5
+
+
+@pytest.mark.parametrize(
+    ("pool_yaml", "expected_message"),
+    [
+        ("min_size: 0", "min_size must be a positive integer"),
+        ("max_size: -1", "max_size must be a positive integer"),
+        ("acquire_timeout_seconds: 0", "acquire_timeout_seconds.*positive"),
+        ("open_timeout_seconds: -1", "open_timeout_seconds.*positive"),
+        ("min_size: 21\nmax_size: 20", "min_size must be less than or equal"),
+    ],
+)
+def test_bootstrap_rejects_invalid_postgres_pool_settings(
+    temp_dir: Path,
+    pool_yaml: str,
+    expected_message: str,
+) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    indented_yaml = pool_yaml.replace("\n", "\n  ")
+    _write_bootstrap(bootstrap_file, f"postgres_pool:\n  {indented_yaml}\n")
+
+    with pytest.raises(BootstrapConfigError, match=expected_message):
+        load_bootstrap(str(bootstrap_file))
 
 
 def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
@@ -64,6 +114,12 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
     assert persisted["database_url"] == database_url
     assert "database_url_ref" not in persisted
     assert persisted["postgres_install_mode"] == "docker"
+    assert persisted["postgres_pool"] == {
+        "min_size": 2,
+        "max_size": 20,
+        "acquire_timeout_seconds": 5.0,
+        "open_timeout_seconds": 30.0,
+    }
     assert read_bootstrap_database_url(temp_dir) == database_url
 
 
@@ -144,12 +200,13 @@ def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Pa
 
 def test_clear_postgres_fields_rejects_legacy_database_url_ref(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError
-    from gobby.config.postgres_bootstrap import KEYRING_DATABASE_URL_REF, clear_postgres_fields
+    from gobby.config.postgres_bootstrap import clear_postgres_fields
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        f"hub_backend: postgres\ndatabase_url_ref: {KEYRING_DATABASE_URL_REF}\n"
+        "hub_backend: postgres\n"
+        "database_url_ref: keyring:gobby:postgres_database_url\n"
         "postgres_install_mode: docker\n",
     )
 
@@ -158,7 +215,7 @@ def test_clear_postgres_fields_rejects_legacy_database_url_ref(temp_dir: Path) -
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["hub_backend"] == "postgres"
-    assert persisted["database_url_ref"] == KEYRING_DATABASE_URL_REF
+    assert persisted["database_url_ref"] == "keyring:gobby:postgres_database_url"
     assert persisted["postgres_install_mode"] == "docker"
 
 
@@ -184,13 +241,12 @@ def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -
 
 def test_database_url_ref_is_rejected_for_runtime(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
-    from gobby.config.postgres_bootstrap import KEYRING_DATABASE_URL_REF
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
         "hub_backend: postgres\n"
-        f"database_url_ref: {KEYRING_DATABASE_URL_REF}\n"
+        "database_url_ref: keyring:gobby:postgres_database_url\n"
         "postgres_install_mode: docker\n",
     )
 

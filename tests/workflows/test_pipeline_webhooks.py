@@ -122,15 +122,27 @@ class TestNotifyApprovalPending:
 
     @pytest.mark.asyncio
     async def test_expands_env_vars_in_headers(
-        self, mock_execution: PipelineExecution, pipeline_with_webhooks: PipelineDefinition
+        self,
+        mock_execution: PipelineExecution,
+        pipeline_with_webhooks: PipelineDefinition,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test that ${VAR} patterns in headers are expanded from env."""
+        """Use shared populated, default, and unresolved expansion semantics."""
         notifier = WebhookNotifier(base_url="https://gobby.local")
+        webhooks = pipeline_with_webhooks.webhooks
+        assert webhooks is not None
+        endpoint = webhooks.on_approval_pending
+        assert endpoint is not None
+        endpoint.headers = {
+            "Authorization": "Bearer ${API_TOKEN}",
+            "X-Default": "${EMPTY_TOKEN:-fallback}",
+            "X-Unresolved": "${MISSING_TOKEN}",
+        }
+        monkeypatch.setenv("API_TOKEN", "secret-token-value")
+        monkeypatch.setenv("EMPTY_TOKEN", "")
+        monkeypatch.delenv("MISSING_TOKEN", raising=False)
 
-        with (
-            patch("httpx.AsyncClient") as mock_client_class,
-            patch.dict("os.environ", {"API_TOKEN": "secret-token-value"}),
-        ):
+        with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=MagicMock(status_code=200))
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -148,6 +160,8 @@ class TestNotifyApprovalPending:
             call_args = mock_client.post.call_args
             headers = call_args.kwargs["headers"]
             assert headers["Authorization"] == "Bearer secret-token-value"
+            assert headers["X-Default"] == "fallback"
+            assert headers["X-Unresolved"] == "${MISSING_TOKEN}"
             assert call_args.kwargs["json"]["token"] == "token-123"
 
     @pytest.mark.asyncio

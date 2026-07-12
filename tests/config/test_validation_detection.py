@@ -14,6 +14,7 @@ from gobby.config.validation_detection import (
     load_project_validation_detection,
     resolve_validation_detection_config,
     save_project_validation_detection,
+    shell_command_segments,
 )
 
 pytestmark = pytest.mark.unit
@@ -70,6 +71,14 @@ def test_builtin_validation_detection_accepts_common_commands(
         "dotnet format",
         "rust-token-killer -- 'git status'",
         "python script.py",
+        "pytest --collect-only",
+        "pytest --co",
+        "pytest --version",
+        "pytest --help",
+        "pytest --fixtures",
+        "pytest --markers",
+        "ruff check --help",
+        "mypy --install-types",
     ],
 )
 def test_builtin_validation_detection_rejects_non_validation_commands(command: str) -> None:
@@ -84,6 +93,63 @@ def test_default_wrapper_rules_apply_to_explicit_config() -> None:
     assert match is not None
     assert match.matcher_id == "rust-validation"
     assert match.wrapper_chain == ("rust-token-killer-command-string",)
+
+
+@pytest.mark.parametrize(
+    "command,segments",
+    [
+        ("pytest; true", [["pytest"], ["true"]]),
+        ("pytest>/dev/null", [["pytest"]]),
+        ("pytest 2>/dev/null", [["pytest"]]),
+        ("pytest -k 'value<3'", [["pytest", "-k", "value<3"]]),
+        ("pytest |& tee pytest.log", [["pytest"], ["tee", "pytest.log"]]),
+    ],
+)
+def test_shell_command_segments_handle_glued_operators_and_redirections(
+    command: str,
+    segments: list[list[str]],
+) -> None:
+    assert shell_command_segments(command) == segments
+
+
+@pytest.mark.parametrize(
+    "command,segment_index,operators",
+    [
+        ("pytest || echo ok", 0, ("||",)),
+        ("true; pytest", 1, (";",)),
+        ("bash -lc 'pytest || echo ok'", 0, ("||",)),
+        ("bash -lc 'echo ok; pytest'", 1, (";",)),
+        ("pytest |& tee pytest.log", 0, ("|&",)),
+    ],
+)
+def test_compound_validation_match_reports_segment_metadata(
+    command: str,
+    segment_index: int,
+    operators: tuple[str, ...],
+) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.segment_index == segment_index
+    assert match.segment_count == 2
+    assert match.shell_operators == operators
+    assert match.is_compound is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest -k nonexistent",
+        "go test ./... -run nonexistent",
+        "cargo test nonexistent",
+        "cargo nextest run nonexistent",
+    ],
+)
+def test_selector_narrowed_validation_requires_execution_confirmation(command: str) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.evidence_requires_confirmation is True
 
 
 @pytest.mark.parametrize(

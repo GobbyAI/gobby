@@ -83,8 +83,8 @@ class TestDockerComposeFalkorDB:
         assert falkordb["image"] == "falkordb/falkordb:latest"
         assert "falkordb" in falkordb["profiles"]
         assert "all" in falkordb["profiles"]
-        assert "${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
-        assert "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
+        assert "127.0.0.1:${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
+        assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
             "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
             in falkordb["environment"]

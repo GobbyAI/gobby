@@ -68,3 +68,22 @@ def test_code_index_config_migrates_legacy_flat_summary_fields() -> None:
 def test_code_index_config_still_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         CodeIndexConfig.model_validate({"unknown_field": 1})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        pytest.param("max_file_size_bytes", 0, id="zero-max-file-size"),
+        pytest.param("max_file_size_bytes", -1, id="negative-max-file-size"),
+        pytest.param("sync_worker_interval_seconds", 0, id="zero-sync-interval"),
+        pytest.param("sync_worker_interval_seconds", -0.1, id="negative-sync-interval"),
+        pytest.param("sync_worker_batch_size", 0, id="zero-sync-batch"),
+        pytest.param("sync_worker_batch_size", -1, id="negative-sync-batch"),
+    ],
+)
+def test_code_index_config_rejects_non_positive_worker_limits(
+    field_name: str,
+    value: int | float,
+) -> None:
+    with pytest.raises(ValidationError):
+        CodeIndexConfig.model_validate({field_name: value})

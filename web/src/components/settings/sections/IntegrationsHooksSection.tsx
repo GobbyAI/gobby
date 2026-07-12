@@ -56,6 +56,7 @@ interface WebhookEndpoint {
   retry_count: number | null
   retry_delay: number | null
   can_block: boolean
+  fail_closed: boolean
   enabled: boolean
 }
 
@@ -74,6 +75,7 @@ function asEndpoint(value: unknown): WebhookEndpoint {
     retry_count: asNumber(entry.retry_count),
     retry_delay: asNumber(entry.retry_delay),
     can_block: entry.can_block === true,
+    fail_closed: entry.fail_closed === true,
     // The daemon default is True; only an explicit stored `false` disables it.
     enabled: entry.enabled !== false,
   }
@@ -90,6 +92,7 @@ function createEndpoint(): WebhookEndpoint {
     retry_count: 3,
     retry_delay: 1,
     can_block: false,
+    fail_closed: false,
     enabled: true,
   }
 }
@@ -277,6 +280,12 @@ function WebhookEndpointFields({
         ariaLabel={`${name} can block the action`}
         value={endpoint.can_block}
         onChange={(value) => onChange({ ...endpoint, can_block: value })}
+      />
+      <SwitchField
+        label="Fail closed"
+        ariaLabel={`${name} fail closed`}
+        value={endpoint.fail_closed}
+        onChange={(value) => onChange({ ...endpoint, fail_closed: value })}
       />
       <SwitchField
         label="Enabled"

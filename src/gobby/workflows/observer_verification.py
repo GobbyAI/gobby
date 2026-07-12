@@ -52,7 +52,11 @@ def detect_verification_evidence(
     if match is None:
         return
 
-    success = _shell_tool_succeeded(event)
+    success = (
+        _shell_tool_succeeded(event)
+        and not match.is_compound
+        and not match.evidence_requires_confirmation
+    )
     evidence = {
         "evidence_type": VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
         "command": command,
@@ -65,6 +69,10 @@ def detect_verification_evidence(
         "normalized_command": match.normalized_command,
         "normalized_argv": list(match.normalized_argv),
         "wrapper_chain": list(match.wrapper_chain),
+        "segment_index": match.segment_index,
+        "segment_count": match.segment_count,
+        "shell_operators": list(match.shell_operators),
+        "evidence_requires_confirmation": match.evidence_requires_confirmation,
         "timestamp": datetime.now(UTC).isoformat(),
         "tool_name": tool_name,
         "success": success,

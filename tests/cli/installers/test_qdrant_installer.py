@@ -56,8 +56,8 @@ class TestDockerComposeServices:
         falkordb = data["services"]["falkordb"]
 
         assert falkordb["image"] == "falkordb/falkordb:latest"
-        assert "${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
-        assert "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
+        assert "127.0.0.1:${GOBBY_FALKORDB_PORT:-16379}:6379" in falkordb["ports"]
+        assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in falkordb["ports"]
         assert (
             "REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
             in falkordb["environment"]
@@ -78,9 +78,10 @@ class TestDockerComposeServices:
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         ports = data["services"]["qdrant"]["ports"]
-        port_strs = [str(p) for p in ports]
-        assert any("6333" in p for p in port_strs)
-        assert any("6334" in p for p in port_strs)
+        assert ports == [
+            "127.0.0.1:${GOBBY_QDRANT_HTTP_PORT:-6333}:6333",
+            "127.0.0.1:${GOBBY_QDRANT_GRPC_PORT:-6334}:6334",
+        ]
 
     def test_qdrant_has_healthcheck(self) -> None:
         """Qdrant service has a healthcheck."""

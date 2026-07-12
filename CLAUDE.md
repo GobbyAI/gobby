@@ -334,7 +334,7 @@ crates/
 | Path | Purpose |
 | --- | --- |
 | `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings, including ports, bind host, and Postgres install metadata |
-| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN (`database_url_ref` is no longer supported) |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN, stored directly in the owner-only (`0600`) bootstrap file (`database_url_ref` is unsupported) |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file (git-native) |
@@ -555,7 +555,7 @@ def test_integration() -> None:
 | Type errors | Run `uv run mypy src/` |
 | Lint errors | Run `uv run ruff check src/ --fix` |
 | Daemon not starting | Check logs in `~/.gobby/logs/` |
-| Postgres connection failures | Run `uv run gobby postgres status` and verify the keyring/bootstrap `database_url` |
+| Postgres connection failures | Run `uv run gobby postgres status` and verify `database_url` in the owner-only (`0600`) `~/.gobby/bootstrap.yaml` |
 | Legacy SQLite hub import | Use `uv run gobby postgres migrate-from-sqlite` |
 | MCP connection issues | Verify daemon is running: `uv run gobby status` |
 
