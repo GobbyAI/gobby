@@ -1737,10 +1737,21 @@ class TestHookManagerWebhookDispatch:
             async def aclose(self) -> None:
                 self.closed = True
 
-            async def post(
+            def build_request(
                 self,
-                _url: str,
-                **_kwargs: object,
+                method: str,
+                url: str,
+                **kwargs: object,
+            ) -> httpx.Request:
+                kwargs.pop("timeout", None)
+                return httpx.Request(method, url, **kwargs)
+
+            async def send(
+                self,
+                request: httpx.Request,
+                *,
+                stream: bool = False,
+                follow_redirects: bool = False,
             ) -> httpx.Response:
                 nonlocal post_count
                 current_loop = asyncio.get_running_loop()
@@ -1750,7 +1761,9 @@ class TestHookManagerWebhookDispatch:
                     raise RuntimeError("client reused across event loops")
                 post_count += 1
                 decision = "allow" if post_count == 1 else "deny"
-                return httpx.Response(200, json={"decision": decision})
+                assert stream is True
+                assert follow_redirects is False
+                return httpx.Response(200, json={"decision": decision}, request=request)
 
         created_clients: list[LoopBoundClient] = []
         with patch("gobby.hooks.webhooks.httpx.AsyncClient", LoopBoundClient):
