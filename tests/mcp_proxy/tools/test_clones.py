@@ -197,6 +197,96 @@ class TestCreateClone:
         assert result["clone"]["task_id"] == "task-456"
 
     @pytest.mark.asyncio
+    async def test_create_clone_resolves_task_before_filesystem_clone(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Invalid task references fail before any clone directory is created."""
+        from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
+
+        resolve_task_id = MagicMock(side_effect=ValueError("task not found"))
+        monkeypatch.setattr(CloneRegistryContext, "resolve_task_id", resolve_task_id)
+
+        result = await registry.call(
+            "create_clone",
+            {
+                "branch_name": "main",
+                "clone_path": "/tmp/clones/test",
+                "remote_url": "https://github.com/user/repo.git",
+                "task_id": "#404",
+            },
+        )
+
+        assert result == {"success": False, "error": "task not found"}
+        resolve_task_id.assert_called_once_with("#404")
+        mock_git_manager.full_clone.assert_not_called()
+        mock_git_manager.shallow_clone.assert_not_called()
+        mock_git_manager.delete_clone.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_clone_storage_failure_cleans_path_for_retry(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A failed DB insert removes the clone so the same path can be retried."""
+        clone_exists = False
+
+        def clone_to_path(**_kwargs: object) -> MagicMock:
+            nonlocal clone_exists
+            if clone_exists:
+                return MagicMock(success=False, error="clone path already exists")
+            clone_exists = True
+            return MagicMock(success=True)
+
+        def delete_clone(*_args: object, **_kwargs: object) -> MagicMock:
+            nonlocal clone_exists
+            clone_exists = False
+            return MagicMock(success=True)
+
+        mock_git_manager.shallow_clone.side_effect = clone_to_path
+        mock_git_manager.delete_clone.side_effect = delete_clone
+        mock_clone_storage.create.side_effect = [
+            RuntimeError("database unavailable"),
+            Clone(
+                id="clone-retry",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="main",
+                clone_path="/tmp/clones/retry",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="active",
+                remote_url="https://github.com/user/repo.git",
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=RECENT_TIMESTAMP,
+                updated_at=RECENT_TIMESTAMP,
+            ),
+        ]
+        arguments = {
+            "branch_name": "main",
+            "clone_path": "/tmp/clones/retry",
+            "remote_url": "https://github.com/user/repo.git",
+        }
+
+        first_result = await registry.call("create_clone", arguments)
+        second_result = await registry.call("create_clone", arguments)
+
+        assert first_result == {"success": False, "error": "database unavailable"}
+        assert second_result["success"] is True
+        assert second_result["clone"]["id"] == "clone-retry"
+        assert clone_exists is True
+        mock_git_manager.delete_clone.assert_called_once_with(
+            "/tmp/clones/retry",
+            force=True,
+        )
+        assert mock_git_manager.shallow_clone.call_count == 2
+        assert mock_clone_storage.create.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_create_clone_use_local(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:

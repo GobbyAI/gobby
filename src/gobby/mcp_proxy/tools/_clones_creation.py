@@ -64,7 +64,13 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 "error": "No project context available for clone creation",
             }
 
+        clone_created = False
+        record_created = False
         try:
+            # Resolve task references before creating anything on disk. A bad task
+            # reference must not leave a clone directory behind.
+            resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
+
             if use_local:
                 # Clone from local repo path - always full clone
                 # Clone base_branch first, then create branch_name as new branch
@@ -75,6 +81,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     clone_path=clone_path,
                     branch=base_branch,
                 )
+                clone_created = result.success
                 if result.success and branch_name != base_branch:
                     await asyncio.to_thread(
                         git_manager.run_git_command,
@@ -102,15 +109,13 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     branch=branch_name,
                     depth=depth,
                 )
+                clone_created = result.success
 
             if not result.success:
                 return {
                     "success": False,
                     "error": f"Clone failed: {result.error or result.message}",
                 }
-
-            # Resolve task_id (#N -> UUID) before DB insert
-            resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
 
             # Store clone record
             clone = ctx.clone_storage.create(
@@ -121,6 +126,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 task_id=resolved_task_id,
                 remote_url=remote_url,
             )
+            record_created = True
 
             return {
                 "success": True,
@@ -129,7 +135,26 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             }
 
         except Exception as e:
-            logger.error(f"Error creating clone: {e}")
+            if clone_created and not record_created:
+                try:
+                    cleanup_result = await asyncio.to_thread(
+                        git_manager.delete_clone,
+                        clone_path,
+                        force=True,
+                    )
+                    if not cleanup_result.success:
+                        logger.warning(
+                            "Failed to clean up clone %s after create failure: %s",
+                            clone_path,
+                            cleanup_result.error or cleanup_result.message,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to clean up clone %s after create failure",
+                        clone_path,
+                        exc_info=True,
+                    )
+            logger.error("Error creating clone: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
 
     registry.register(
