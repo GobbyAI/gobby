@@ -5,20 +5,14 @@ import os
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.skills.formatting import format_skill_fetch_context
 
 logger = logging.getLogger(__name__)
 
-EDIT_TOOLS = {
-    "write_file",
-    "replace",
-    "edit_file",
-    "notebook_edit",
-    "edit",
-    "write",
-}
+EDIT_TOOLS = CANONICAL_WRITE_TOOL_NAMES
 
 
 class SkillResolutionError(RuntimeError):

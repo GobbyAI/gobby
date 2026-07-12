@@ -40,7 +40,7 @@ from gobby.hooks.code_navigation import (
 )
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
-_CANONICAL_WRITE_TOOL_NAMES = frozenset(
+CANONICAL_WRITE_TOOL_NAMES = frozenset(
     {
         "edit",
         "edit_file",
@@ -613,7 +613,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
 
     if tool_name_lower in _CANONICAL_READ_TOOL_NAMES:
         metadata = _build_canonical_tool_metadata("read")
-    elif tool_name_lower in _CANONICAL_WRITE_TOOL_NAMES:
+    elif tool_name_lower in CANONICAL_WRITE_TOOL_NAMES:
         metadata = _build_canonical_tool_metadata("write", repo_mutation=True)
     elif tool_name_lower in {"grep_search", "grep"}:
         metadata = _build_canonical_tool_metadata("search")
