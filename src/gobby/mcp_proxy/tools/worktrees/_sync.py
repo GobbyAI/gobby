@@ -9,7 +9,6 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
-from gobby.mcp_proxy.tools.worktrees._merge_state import is_branch_ancestor
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +211,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 ),
             }
         merge_target = raw_merge_target
+        source_ref = f"refs/heads/{effective_source}"
+        target_ref = f"refs/heads/{merge_target}"
         wt_path = worktree.worktree_path
         repo_path = str(resolved_git_mgr.repo_path)
         target_worktree_path = await asyncio.to_thread(
@@ -221,7 +222,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         target_ref_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
-            ["show-ref", "--verify", "--quiet", f"refs/heads/{merge_target}"],
+            ["show-ref", "--verify", "--quiet", target_ref],
             cwd=repo_path,
             timeout=10,
         )
@@ -237,7 +238,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         source_ref_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
-            ["show-ref", "--verify", "--quiet", f"refs/heads/{effective_source}"],
+            ["show-ref", "--verify", "--quiet", source_ref],
             cwd=repo_path,
             timeout=10,
         )
@@ -298,13 +299,61 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     )
 
         async def _source_is_merged_into_target() -> bool:
-            return await asyncio.to_thread(
-                is_branch_ancestor,
-                resolved_git_mgr,
-                effective_source,
-                merge_target,
+            ancestor_result = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                [
+                    "merge-base",
+                    "--is-ancestor",
+                    source_ref,
+                    target_ref,
+                ],
                 cwd=merge_cwd,
+                timeout=10,
             )
+            return ancestor_result.returncode == 0
+
+        if worktree.status == "merged" and await _source_is_merged_into_target():
+            target_sha_result = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                ["rev-parse", target_ref],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if target_sha_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": (
+                        "Source is already merged into the local target branch, but failed "
+                        f"to determine target SHA: {target_sha_result.stderr.strip()}"
+                    ),
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                    "merged": True,
+                    "pushed": False,
+                }
+            reconciled_target_sha = target_sha_result.stdout.strip()
+            ctx.worktree_storage.mark_merged(worktree_id)
+            return {
+                "success": True,
+                "message": (
+                    f"{effective_source} is already merged into local {merge_target}; "
+                    "reconciled completed merge"
+                ),
+                "worktree_path": wt_path,
+                "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
+                "source_branch": effective_source,
+                "target_branch": merge_target,
+                "merged": True,
+                "reconciled": True,
+                "pushed": False,
+                "merge_sha": reconciled_target_sha,
+                "target_head_sha": reconciled_target_sha,
+                "commit_sha": reconciled_target_sha,
+            }
 
         try:
             if original_branch != merge_target:
@@ -349,7 +398,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if dirty_paths:
                 incoming_result = await asyncio.to_thread(
                     resolved_git_mgr.run_git_command,
-                    ["diff", "--name-only", "HEAD", effective_source],
+                    ["diff", "--name-only", "HEAD", source_ref],
                     cwd=merge_cwd,
                     timeout=10,
                 )
@@ -406,7 +455,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             merge_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
-                ["merge", effective_source, "--no-ff", "--no-edit"],
+                ["merge", source_ref, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
                 timeout=60,
             )

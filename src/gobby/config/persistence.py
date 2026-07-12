@@ -16,6 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
+from gobby.config.url_validation import validate_optional_endpoint_url
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,11 @@ class QdrantConfig(BaseModel):
         default="code_symbols_",
         description="Qdrant collection name prefix for code symbol embeddings",
     )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str | None) -> str | None:
+        return validate_optional_endpoint_url(value, field_name="url")
 
 
 def validate_falkordb_password(value: str) -> str:
@@ -233,6 +239,11 @@ class EmbeddingsConfig(BaseModel):
         if v < 1:
             raise ValueError("dim must be at least 1")
         return v
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, value: str | None) -> str | None:
+        return validate_optional_endpoint_url(value, field_name="api_base")
 
 
 # ---------------------------------------------------------------------------

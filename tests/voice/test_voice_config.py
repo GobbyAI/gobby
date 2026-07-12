@@ -137,6 +137,13 @@ class TestVoiceConfig:
         assert binding.translation_enabled is False
         assert binding.timeout_seconds == 30.0
 
+    def test_openai_compatible_audio_api_key_guidance_requires_secret_reference(self):
+        description = OpenAICompatibleAudioBindingConfig.model_fields["api_key"].description
+
+        assert description is not None
+        assert "$secret:NAME" in description
+        assert "plaintext is only valid after runtime resolution" in description
+
     @pytest.mark.parametrize(
         "bindings, match",
         [

@@ -32,6 +32,10 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     "compact_self",
     "recall_review_context",
     "rebuild_knowledge_graph",
+    # Worktree merges allow a 60s git subprocess and perform additional git,
+    # storage, and cleanup work. Keep the HTTP caller alive for the bounded
+    # daemon operation so its authoritative result is not lost (#17900).
+    "merge_worktree",
     # Generation-backed gwiki calls: daemon-side synthesis scales with vault
     # size and cannot fit the default 30s request timeout (#17593). The
     # daemon's gwiki subprocess guard (GENERATION_GWIKI_TIMEOUT_SECONDS) sits

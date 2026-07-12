@@ -13,7 +13,9 @@ from gobby.mcp_proxy.bundled import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp_models import MCPServer, Tool
+from gobby.storage.mcp_secrets import cleanup_replaced_mcp_secrets, protect_mcp_mapping
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.storage.secrets import SecretStore
 from gobby.utils.datetime import utc_now
 
 
@@ -67,57 +69,85 @@ class MCPServerStorageMixin:
         )
         if requires_oauth_value is False:
             oauth_provider = None
-
-        self.db.execute(
-            """
-            INSERT INTO mcp_servers (
-                id, name, project_id, transport, url, command, args, env, headers,
-                enabled, description, requires_oauth, oauth_provider, connect_timeout,
-                created_at, updated_at
+        secret_store = SecretStore(self.db)
+        existing = self.get_server(name, project_id=project_id)
+        with self.db.transaction():
+            protected_env = protect_mcp_mapping(
+                env,
+                secret_store=secret_store,
+                persistence="database",
+                scope=project_id,
+                server_name=name,
+                field="env",
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT(name, project_id) DO UPDATE SET
-                transport = excluded.transport,
-                url = excluded.url,
-                command = excluded.command,
-                args = excluded.args,
-                env = excluded.env,
-                headers = excluded.headers,
-                enabled = excluded.enabled,
-                description = COALESCE(excluded.description, mcp_servers.description),
-                requires_oauth = COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth),
-                oauth_provider = CASE
-                    WHEN COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth) = FALSE
-                    THEN NULL
-                    ELSE COALESCE(excluded.oauth_provider, mcp_servers.oauth_provider)
-                END,
-                connect_timeout = COALESCE(excluded.connect_timeout, mcp_servers.connect_timeout),
-                updated_at = excluded.updated_at
-            """,
-            (
-                server_id,
-                name,
-                project_id,
-                transport,
-                url,
-                command,
-                json.dumps(args) if args is not None else None,
-                json.dumps(env) if env is not None else None,
-                json.dumps(headers) if headers is not None else None,
-                _parse_mcp_bool(enabled, field_name="enabled"),
-                description,
-                requires_oauth_value,
-                oauth_provider,
-                connect_timeout,
-                now,
-                now,
-            ),
-        )
+            protected_headers = protect_mcp_mapping(
+                headers,
+                secret_store=secret_store,
+                persistence="database",
+                scope=project_id,
+                server_name=name,
+                field="headers",
+            )
+            self.db.execute(
+                """
+                INSERT INTO mcp_servers (
+                    id, name, project_id, transport, url, command, args, env, headers,
+                    enabled, description, requires_oauth, oauth_provider, connect_timeout,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(name, project_id) DO UPDATE SET
+                    transport = excluded.transport,
+                    url = excluded.url,
+                    command = excluded.command,
+                    args = excluded.args,
+                    env = excluded.env,
+                    headers = excluded.headers,
+                    enabled = excluded.enabled,
+                    description = COALESCE(excluded.description, mcp_servers.description),
+                    requires_oauth = COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth),
+                    oauth_provider = CASE
+                        WHEN COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth) = FALSE
+                        THEN NULL
+                        ELSE COALESCE(excluded.oauth_provider, mcp_servers.oauth_provider)
+                    END,
+                    connect_timeout = COALESCE(excluded.connect_timeout, mcp_servers.connect_timeout),
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    server_id,
+                    name,
+                    project_id,
+                    transport,
+                    url,
+                    command,
+                    json.dumps(args) if args is not None else None,
+                    json.dumps(protected_env) if protected_env is not None else None,
+                    json.dumps(protected_headers) if protected_headers is not None else None,
+                    _parse_mcp_bool(enabled, field_name="enabled"),
+                    description,
+                    requires_oauth_value,
+                    oauth_provider,
+                    connect_timeout,
+                    now,
+                    now,
+                ),
+            )
+            cleanup_replaced_mcp_secrets(
+                secret_store,
+                persistence="database",
+                scope=project_id,
+                server_name=name,
+                old_env=existing.env if existing else None,
+                old_headers=existing.headers if existing else None,
+                new_env=protected_env,
+                new_headers=protected_headers,
+            )
 
-        server = self.get_server(name, project_id=project_id)
-        if not server:
-            raise RuntimeError(f"Failed to retrieve server '{name}' after upsert")
-        return server
+            server = self.get_server(name, project_id=project_id)
+            if not server:
+                raise RuntimeError(f"Failed to retrieve server '{name}' after upsert")
+            return server
 
     @staticmethod
     def _server_lookup_project_ids(name: str, project_id: str) -> list[str]:
@@ -457,6 +487,7 @@ class MCPServerStorageMixin:
             project_id: Required project ID
         """
         name = name.lower()
+        project_id = canonical_project_id_for_server(name, project_id)
         server = self.get_server(name, project_id=project_id)
         if not server:
             return None
@@ -481,39 +512,71 @@ class MCPServerStorageMixin:
         if "args" in fields:
             fields["args"] = normalize_bundled_managed_args(name, fields["args"])
 
-        if "args" in fields and fields["args"] is not None:
-            fields["args"] = json.dumps(fields["args"])
-        if "env" in fields and fields["env"] is not None:
-            fields["env"] = json.dumps(fields["env"])
-        if "headers" in fields and fields["headers"] is not None:
-            fields["headers"] = json.dumps(fields["headers"])
-        if "enabled" in fields:
-            fields["enabled"] = _parse_mcp_bool(fields["enabled"], field_name="enabled")
-        if "requires_oauth" in fields:
-            fields["requires_oauth"] = _parse_mcp_bool(
-                fields["requires_oauth"],
-                field_name="requires_oauth",
-                allow_none=True,
+        secret_store = SecretStore(self.db)
+        with self.db.transaction():
+            protected_env = server.env
+            protected_headers = server.headers
+            if "env" in fields:
+                protected_env = protect_mcp_mapping(
+                    fields["env"],
+                    secret_store=secret_store,
+                    persistence="database",
+                    scope=project_id,
+                    server_name=name,
+                    field="env",
+                )
+                fields["env"] = protected_env
+            if "headers" in fields:
+                protected_headers = protect_mcp_mapping(
+                    fields["headers"],
+                    secret_store=secret_store,
+                    persistence="database",
+                    scope=project_id,
+                    server_name=name,
+                    field="headers",
+                )
+                fields["headers"] = protected_headers
+
+            if "args" in fields and fields["args"] is not None:
+                fields["args"] = json.dumps(fields["args"])
+            if "env" in fields and fields["env"] is not None:
+                fields["env"] = json.dumps(fields["env"])
+            if "headers" in fields and fields["headers"] is not None:
+                fields["headers"] = json.dumps(fields["headers"])
+            if "enabled" in fields:
+                fields["enabled"] = _parse_mcp_bool(fields["enabled"], field_name="enabled")
+            if "requires_oauth" in fields:
+                fields["requires_oauth"] = _parse_mcp_bool(
+                    fields["requires_oauth"],
+                    field_name="requires_oauth",
+                    allow_none=True,
+                )
+                if fields["requires_oauth"] is False:
+                    fields["oauth_provider"] = None
+            if "connect_timeout" in fields and fields["connect_timeout"] is not None:
+                fields["connect_timeout"] = float(fields["connect_timeout"])
+
+            fields["updated_at"] = utc_now()
+            set_clause = ", ".join(f"{k} = %s" for k in fields)
+            values = list(fields.values()) + [server.id]
+            self.db.execute(
+                f"UPDATE mcp_servers SET {set_clause} WHERE id = %s",  # nosec B608
+                tuple(values),
             )
-            if fields["requires_oauth"] is False:
-                fields["oauth_provider"] = None
-        if "connect_timeout" in fields and fields["connect_timeout"] is not None:
-            fields["connect_timeout"] = float(fields["connect_timeout"])
+            cleanup_replaced_mcp_secrets(
+                secret_store,
+                persistence="database",
+                scope=project_id,
+                server_name=name,
+                old_env=server.env,
+                old_headers=server.headers,
+                new_env=protected_env,
+                new_headers=protected_headers,
+            )
 
-        fields["updated_at"] = utc_now()
-
-        set_clause = ", ".join(f"{k} = %s" for k in fields)
-        # Update by server ID to be precise
-        values = list(fields.values()) + [server.id]
-
-        self.db.execute(
-            f"UPDATE mcp_servers SET {set_clause} WHERE id = %s",  # nosec B608
-            tuple(values),
-        )
-
-        if is_bundled_external_mcp_server(name):
-            self.normalize_bundled_servers([name])
-        return self.get_server(name, project_id=project_id)
+            if is_bundled_external_mcp_server(name):
+                self.normalize_bundled_servers([name])
+            return self.get_server(name, project_id=project_id)
 
     def remove_server(self, name: str, project_id: str) -> bool:
         """
@@ -524,15 +587,37 @@ class MCPServerStorageMixin:
             project_id: Required project ID
         """
         name = name.lower()
-        if is_bundled_external_mcp_server(name):
-            cursor = self.db.execute(
-                "DELETE FROM mcp_servers WHERE name = %s",
-                (name,),
-            )
-            return cursor.rowcount > 0
-
-        cursor = self.db.execute(
-            "DELETE FROM mcp_servers WHERE name = %s AND project_id = %s",
-            (name, project_id),
+        servers = (
+            self._fetch_servers_by_name(name)
+            if is_bundled_external_mcp_server(name)
+            else [server]
+            if (server := self.get_server(name, project_id=project_id)) is not None
+            else []
         )
-        return cursor.rowcount > 0
+        if not servers:
+            return False
+
+        secret_store = SecretStore(self.db)
+        with self.db.transaction():
+            if is_bundled_external_mcp_server(name):
+                cursor = self.db.execute(
+                    "DELETE FROM mcp_servers WHERE name = %s",
+                    (name,),
+                )
+            else:
+                cursor = self.db.execute(
+                    "DELETE FROM mcp_servers WHERE name = %s AND project_id = %s",
+                    (name, project_id),
+                )
+            for server in servers:
+                cleanup_replaced_mcp_secrets(
+                    secret_store,
+                    persistence="database",
+                    scope=server.project_id,
+                    server_name=name,
+                    old_env=server.env,
+                    old_headers=server.headers,
+                    new_env=None,
+                    new_headers=None,
+                )
+            return cursor.rowcount > 0

@@ -39,6 +39,9 @@ call_tool("gobby-skills", "search_hub", {"query": "python best practices"})
 # Load an installed skill by name; do not include session_id in get_skill args
 call_tool("gobby-skills", "get_skill", {"name": "source-control"})
 
+# Leveled skills accept a level argument (valid levels come from the skill's metadata)
+call_tool("gobby-skills", "get_skill", {"name": "brevity", "level": "max"})
+
 # Install a skill from a hub result
 call_tool("gobby-skills", "install_skill", {"source": "hub:skill-slug"})
 ```

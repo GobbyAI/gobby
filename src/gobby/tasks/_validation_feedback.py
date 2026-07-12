@@ -122,6 +122,12 @@ _STATUS_VALUE_FAILURE_TOKEN_RE = re.compile(
     r"[\"'`]?fail(?:ed|ure)[\"'`]?\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_TERMINAL_STATE_PAIR_RE = re.compile(
+    # Example: "retry reaches FAILED/CANCELLED" — both words name the desired
+    # terminal states. A later genuine gate failure remains searchable.
+    r"\bfail(?:ed|ure)\s*/\s*cancel(?:led|ed)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _FAILURE_BUCKET_DESTINATION_RE = re.compile(
     # Example: "pushes these into failed" or "the source appears under failed"
     # — `failed` names a result bucket records are routed into, not a failure
@@ -278,6 +284,7 @@ def _searchable_feedback(feedback: str) -> str:
     normalized_feedback = _FAILED_AS_EXPECTED_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _HISTORICAL_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     normalized_feedback = _STATUS_VALUE_FAILURE_TOKEN_RE.sub("", normalized_feedback)
+    normalized_feedback = _TERMINAL_STATE_PAIR_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_BUCKET_DESTINATION_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_COLLECTION_NOUN_RE.sub("", normalized_feedback)
     normalized_feedback = _FAILURE_BUCKET_EMPTY_RE.sub("", normalized_feedback)

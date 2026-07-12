@@ -39,8 +39,8 @@ class TestDockerComposeFalkorDB:
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         ports = data["services"]["falkordb"]["ports"]
-        assert "${GOBBY_FALKORDB_PORT:-16379}:6379" in ports
-        assert "${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in ports
+        assert "127.0.0.1:${GOBBY_FALKORDB_PORT:-16379}:6379" in ports
+        assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in ports
 
     def test_compose_has_data_volume(self) -> None:
         from gobby.cli.installers.falkor import _COMPOSE_SRC

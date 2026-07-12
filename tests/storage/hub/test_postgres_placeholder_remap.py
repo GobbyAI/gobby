@@ -7,6 +7,8 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
+from gobby.config.postgres_pool import PostgresPoolConfig
+
 pytestmark = pytest.mark.unit
 
 
@@ -47,11 +49,15 @@ async def test_advisory_lock_does_not_consume_single_pool_connection(
     postgres_schema: str,
 ) -> None:
     module = _postgres_module()
-    monkeypatch.setenv("PGPOOL_MIN", "1")
-    monkeypatch.setenv("PGPOOL_MAX", "1")
-    monkeypatch.setenv("PGPOOL_TIMEOUT", "0.1")
     scoped_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
-    db = module.PostgresHubDatabase(scoped_url)
+    db = module.PostgresHubDatabase(
+        scoped_url,
+        pool_config=PostgresPoolConfig(
+            min_size=1,
+            max_size=1,
+            acquire_timeout_seconds=0.1,
+        ),
+    )
 
     try:
         db.open()
@@ -61,6 +67,43 @@ async def test_advisory_lock_does_not_consume_single_pool_connection(
         db.close()
 
     assert row == {"value": 1}
+
+
+def test_advisory_lock_connection_reuses_pool_session_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    calls: dict[str, object] = {}
+    connection = object()
+    monkeypatch.setenv("PGAPPNAME", "gobby-advisory-test")
+
+    def fake_connect(conninfo: str, **kwargs: object) -> object:
+        calls["conninfo"] = conninfo
+        calls["kwargs"] = kwargs
+        return connection
+
+    monkeypatch.setattr(module.psycopg, "connect", fake_connect)
+    db = module.PostgresHubDatabase(
+        "postgresql://gobby:secret@localhost/gobby?options=-cstatement_timeout%3D5000",
+        pool_config=PostgresPoolConfig(min_size=1, max_size=1),
+    )
+
+    try:
+        result = db._open_advisory_lock_connection()
+    finally:
+        db.close()
+
+    assert result is connection
+    conninfo = calls["conninfo"]
+    assert isinstance(conninfo, str)
+    assert module.conninfo_to_dict(conninfo)["options"] == (
+        "-cstatement_timeout=5000 -ctimezone=UTC"
+    )
+    assert calls["kwargs"] == {
+        "application_name": "gobby-advisory-test",
+        "prepare_threshold": None,
+        "row_factory": module.dict_row,
+    }
 
 
 def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:

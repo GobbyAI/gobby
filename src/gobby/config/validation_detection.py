@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -15,9 +16,23 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 logger = logging.getLogger(__name__)
 
 PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
-_SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|"}
+_SHELL_SEGMENT_SEPARATORS = {"&&", "||", ";", "|", "|&", "&"}
+_SHELL_PUNCTUATION = ";&|<>"
+_SHELL_REDIRECTION_RE = re.compile(r"^(?:[<>]+|[<>]&|&[<>])$")
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MUTATING_VALIDATION_ARGS = ["--fix", "--unsafe-fixes", "--write", "-w"]
+_NON_EXECUTING_VALIDATION_ARGS = [
+    "--collect-only",
+    "--co",
+    "--version",
+    "-V",
+    "--help",
+    "-h",
+    "--fixtures",
+    "--markers",
+    "--dry-run",
+]
+_SELECTOR_VALIDATION_ARGS = ["-k", "-m", "--run", "-run", "--filter"]
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
 _UV_RUN_OPTIONS_WITH_VALUES = ["--project", "--cache-dir", "--python", "--color", "-p", "-C"]
 WrapperKind = Literal["prefix", "delimiter", "command_string"]
@@ -37,6 +52,9 @@ class ValidationCommandMatcher(BaseModel):
     required_args_all: list[str] = Field(default_factory=list)
     required_args_any: list[str] = Field(default_factory=list)
     forbidden_args_any: list[str] = Field(default_factory=list)
+    non_executing_args_any: list[str] = Field(default_factory=list)
+    evidence_weakening_args_any: list[str] = Field(default_factory=list)
+    evidence_weakening_bare_args_after: list[str] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -109,6 +127,15 @@ class ValidationCommandMatch:
     normalized_command: str = ""
     normalized_argv: tuple[str, ...] = ()
     wrapper_chain: tuple[str, ...] = ()
+    segment_index: int = 0
+    segment_count: int = 1
+    shell_operators: tuple[str, ...] = ()
+    evidence_requires_confirmation: bool = False
+
+    @property
+    def is_compound(self) -> bool:
+        """Return whether aggregate shell status cannot prove this segment passed."""
+        return self.segment_count > 1 or bool(self.shell_operators)
 
 
 @dataclass(frozen=True)
@@ -117,6 +144,15 @@ class _NormalizedCommandSegment:
 
     argv: tuple[str, ...]
     wrapper_chain: tuple[str, ...]
+    shell_operators: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ParsedShellCommand:
+    """Tokenized shell segments and operators joining them."""
+
+    segments: tuple[tuple[str, ...], ...]
+    operators: tuple[str, ...]
 
 
 def default_validation_wrappers() -> list[str]:
@@ -188,6 +224,7 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
                 "python -m coverage run",
                 "python3 -m coverage run",
             ],
+            evidence_weakening_args_any=_SELECTOR_VALIDATION_ARGS,
         ),
         _matcher(
             "python-lint-type-format",
@@ -212,7 +249,7 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
                 "tox",
                 "nox",
             ],
-            forbidden_args_any=_MUTATING_VALIDATION_ARGS,
+            forbidden_args_any=[*_MUTATING_VALIDATION_ARGS, "--install-types"],
         ),
         _matcher(
             "python-format-check",
@@ -307,6 +344,7 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             ["test", "lint", "type_check"],
             ["go test", "go vet", "golangci-lint run", "staticcheck"],
             forbidden_args_any=_MUTATING_VALIDATION_ARGS,
+            evidence_weakening_args_any=["-run"],
         ),
         _matcher(
             "rust-validation",
@@ -315,6 +353,7 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             ["test", "lint", "type_check"],
             ["cargo test", "cargo nextest run", "cargo check", "cargo clippy"],
             forbidden_args_any=_MUTATING_VALIDATION_ARGS,
+            evidence_weakening_bare_args_after=["cargo test", "cargo nextest run"],
         ),
         _matcher(
             "rust-format-check",
@@ -449,22 +488,31 @@ def classify_validation_command(
         return None
 
     wrapper_rules = _iter_wrapper_rules(detection_config)
-    for segment in _command_segments(command):
-        normalized = _normalize_segment(segment, wrapper_rules)
-        if not normalized.argv:
-            continue
-        for matcher in _iter_matchers(detection_config):
-            if _matcher_matches_segment(matcher, list(normalized.argv)):
-                return ValidationCommandMatch(
-                    matcher_id=matcher.id,
-                    label=matcher.label,
-                    categories=tuple(matcher.categories),
-                    languages=tuple(matcher.languages),
-                    command=command,
-                    normalized_command=shlex.join(normalized.argv),
-                    normalized_argv=normalized.argv,
-                    wrapper_chain=normalized.wrapper_chain,
-                )
+    parsed = _parse_shell_command(command)
+    for segment_index, segment in enumerate(parsed.segments):
+        normalized_segments = _normalize_segments(list(segment), wrapper_rules)
+        for nested_index, normalized in enumerate(normalized_segments):
+            if not normalized.argv:
+                continue
+            for matcher in _iter_matchers(detection_config):
+                if _matcher_matches_segment(matcher, list(normalized.argv)):
+                    shell_operators = (*parsed.operators, *normalized.shell_operators)
+                    return ValidationCommandMatch(
+                        matcher_id=matcher.id,
+                        label=matcher.label,
+                        categories=tuple(matcher.categories),
+                        languages=tuple(matcher.languages),
+                        command=command,
+                        normalized_command=shlex.join(normalized.argv),
+                        normalized_argv=normalized.argv,
+                        wrapper_chain=normalized.wrapper_chain,
+                        segment_index=segment_index + nested_index,
+                        segment_count=len(parsed.segments) + len(normalized.shell_operators),
+                        shell_operators=shell_operators,
+                        evidence_requires_confirmation=(
+                            _matcher_requires_execution_confirmation(matcher, list(normalized.argv))
+                        ),
+                    )
     return None
 
 
@@ -581,6 +629,8 @@ def _matcher(
     required_args_any: list[str] | None = None,
     required_args_any_for: dict[str, list[str]] | None = None,
     forbidden_args_any: list[str] | None = None,
+    evidence_weakening_args_any: list[str] | None = None,
+    evidence_weakening_bare_args_after: list[str] | None = None,
 ) -> ValidationCommandMatcher:
     if not required_args_any_for:
         return ValidationCommandMatcher(
@@ -591,6 +641,9 @@ def _matcher(
             prefixes=prefixes,
             required_args_any=required_args_any or [],
             forbidden_args_any=forbidden_args_any or [],
+            non_executing_args_any=_NON_EXECUTING_VALIDATION_ARGS,
+            evidence_weakening_args_any=evidence_weakening_args_any or [],
+            evidence_weakening_bare_args_after=evidence_weakening_bare_args_after or [],
         )
 
     expanded_prefixes: list[str] = []
@@ -609,6 +662,9 @@ def _matcher(
         prefixes=expanded_prefixes,
         required_args_any=required_args_any or [],
         forbidden_args_any=forbidden_args_any or [],
+        non_executing_args_any=_NON_EXECUTING_VALIDATION_ARGS,
+        evidence_weakening_args_any=evidence_weakening_args_any or [],
+        evidence_weakening_bare_args_after=evidence_weakening_bare_args_after or [],
     )
 
 
@@ -662,47 +718,84 @@ def _iter_wrapper_rules(config: ValidationDetectionConfig) -> list[ValidationCom
 
 def shell_command_segments(command: str) -> list[list[str]]:
     """Split a shell command into token segments separated by shell operators."""
+    return [list(segment) for segment in _parse_shell_command(command).segments]
+
+
+def _parse_shell_command(command: str) -> _ParsedShellCommand:
+    """Tokenize a shell command while preserving control operators."""
     try:
-        tokens = shlex.split(command)
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
     except ValueError:
-        tokens = command.split()
-    segments: list[list[str]] = []
+        return _ParsedShellCommand((), ())
+
+    segments: list[tuple[str, ...]] = []
+    operators: list[str] = []
     current: list[str] = []
-    for token in [*tokens, ";"]:
+    skip_redirection_target = False
+    for token in tokens:
+        if skip_redirection_target:
+            skip_redirection_target = False
+            continue
         if token in _SHELL_SEGMENT_SEPARATORS:
             if current:
-                segments.append(current)
+                segments.append(tuple(current))
             current = []
+            operators.append(token)
+            continue
+        if _SHELL_REDIRECTION_RE.search(token):
+            if current and current[-1].isdigit():
+                current.pop()
+            skip_redirection_target = True
             continue
         current.append(token)
-    return segments
+    if current:
+        segments.append(tuple(current))
+    return _ParsedShellCommand(tuple(segments), tuple(operators))
 
 
 _command_segments = shell_command_segments
 
 
-def _normalize_segment(
+def _normalize_segments(
     tokens: list[str],
     wrappers: list[ValidationCommandWrapper],
-) -> _NormalizedCommandSegment:
+    *,
+    wrapper_chain: tuple[str, ...] = (),
+    shell_operators: tuple[str, ...] = (),
+    depth: int = 0,
+) -> list[_NormalizedCommandSegment]:
     tokens = _strip_env_assignments(tokens)
-    wrapper_chain: list[str] = []
-    for _ in range(_MAX_WRAPPER_NORMALIZATION_DEPTH):
-        if not tokens:
-            return _NormalizedCommandSegment((), tuple(wrapper_chain))
-        applied = _apply_wrapper_rule(tokens, wrappers)
-        if applied is None:
-            return _NormalizedCommandSegment(tuple(tokens), tuple(wrapper_chain))
-        tokens, wrapper_id = applied
-        wrapper_chain.append(wrapper_id)
-        tokens = _strip_env_assignments(tokens)
-    return _NormalizedCommandSegment(tuple(tokens), tuple(wrapper_chain))
+    if not tokens:
+        return [_NormalizedCommandSegment((), wrapper_chain, shell_operators)]
+    if depth >= _MAX_WRAPPER_NORMALIZATION_DEPTH:
+        return [_NormalizedCommandSegment(tuple(tokens), wrapper_chain, shell_operators)]
+
+    applied = _apply_wrapper_rule(tokens, wrappers)
+    if applied is None:
+        return [_NormalizedCommandSegment(tuple(tokens), wrapper_chain, shell_operators)]
+
+    unwrapped_segments, wrapper_id, nested_operators = applied
+    normalized: list[_NormalizedCommandSegment] = []
+    for unwrapped in unwrapped_segments:
+        normalized.extend(
+            _normalize_segments(
+                unwrapped,
+                wrappers,
+                wrapper_chain=(*wrapper_chain, wrapper_id),
+                shell_operators=(*shell_operators, *nested_operators),
+                depth=depth + 1,
+            )
+        )
+    return normalized
 
 
 def _apply_wrapper_rule(
     tokens: list[str],
     wrappers: list[ValidationCommandWrapper],
-) -> tuple[list[str], str] | None:
+) -> tuple[list[list[str]], str, tuple[str, ...]] | None:
     matches = sorted(
         _matching_wrapper_prefixes(tokens, wrappers),
         key=lambda match: (-len(match[2]), match[0]),
@@ -710,7 +803,8 @@ def _apply_wrapper_rule(
     for _, wrapper, prefix_tokens in matches:
         normalized = _unwrap_matched_rule(tokens, wrapper, prefix_tokens)
         if normalized is not None:
-            return normalized, wrapper.id
+            unwrapped, shell_operators = normalized
+            return unwrapped, wrapper.id, shell_operators
     return None
 
 
@@ -729,26 +823,27 @@ def _unwrap_matched_rule(
     tokens: list[str],
     wrapper: ValidationCommandWrapper,
     prefix_tokens: list[str],
-) -> list[str] | None:
+) -> tuple[list[list[str]], tuple[str, ...]] | None:
     if wrapper.kind == "prefix":
         remaining = tokens[len(prefix_tokens) :]
         if wrapper.strip_options_with_values:
-            return _strip_wrapper_options(remaining, set(wrapper.strip_options_with_values))
-        return remaining
+            remaining = _strip_wrapper_options(remaining, set(wrapper.strip_options_with_values))
+        return [remaining], ()
 
     if wrapper.kind == "delimiter":
         try:
             delimiter_index = tokens.index(wrapper.delimiter, len(prefix_tokens))
         except ValueError:
             return None
-        return tokens[delimiter_index + 1 :]
+        return [tokens[delimiter_index + 1 :]], ()
 
     command_tokens = tokens[len(prefix_tokens) :]
     if not command_tokens:
-        return []
+        return [[]], ()
     if len(command_tokens) == 1:
-        return _safe_split(command_tokens[0])
-    return command_tokens
+        parsed = _parse_shell_command(command_tokens[0])
+        return [list(segment) for segment in parsed.segments], parsed.operators
+    return [command_tokens], ()
 
 
 def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str]) -> bool:
@@ -760,6 +855,8 @@ def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str
             continue
         if any(_tokens_include_arg(tokens, arg) for arg in matcher.forbidden_args_any):
             continue
+        if any(_tokens_include_arg(tokens, arg) for arg in matcher.non_executing_args_any):
+            continue
         if matcher.required_args_all and not all(
             _tokens_include_arg(tokens, arg) for arg in matcher.required_args_all
         ):
@@ -769,6 +866,22 @@ def _matcher_matches_segment(matcher: ValidationCommandMatcher, tokens: list[str
         ):
             continue
         return True
+    return False
+
+
+def _matcher_requires_execution_confirmation(
+    matcher: ValidationCommandMatcher,
+    tokens: list[str],
+) -> bool:
+    if any(_tokens_include_arg(tokens, arg) for arg in matcher.evidence_weakening_args_any):
+        return True
+    for prefix in matcher.evidence_weakening_bare_args_after:
+        prefix_tokens = _safe_split(prefix)
+        if not _starts_with(tokens, prefix_tokens):
+            continue
+        remaining = tokens[len(prefix_tokens) :]
+        if remaining and not remaining[0].startswith("-"):
+            return True
     return False
 
 

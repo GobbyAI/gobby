@@ -10,7 +10,9 @@ Contains hook extension Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from gobby.config.url_validation import validate_endpoint_url
 
 __all__ = [
     "WebSocketBroadcastConfig",
@@ -81,10 +83,19 @@ class WebhookEndpointConfig(BaseModel):
         default=False,
         description="If True, webhook can block the action via response decision field",
     )
+    fail_closed: bool = Field(
+        default=False,
+        description="If True, a failed blocking webhook blocks the action",
+    )
     enabled: bool = Field(
         default=True,
         description="Enable or disable this webhook",
     )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return validate_endpoint_url(value, field_name="url")
 
 
 class WebhooksConfig(BaseModel):

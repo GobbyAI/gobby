@@ -4,11 +4,44 @@ Web UI configuration.
 
 from __future__ import annotations
 
+from ipaddress import IPv6Address, ip_address
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-__all__ = ["AuthConfig", "ToolApprovalConfig", "ToolApprovalPolicy", "UIConfig"]
+__all__ = [
+    "AuthConfig",
+    "ToolApprovalConfig",
+    "ToolApprovalPolicy",
+    "UIConfig",
+    "is_loopback_bind_host",
+]
+
+
+def is_loopback_bind_host(host: str) -> bool:
+    """Return whether a bind host is unambiguously local-only.
+
+    Hostname resolution is deliberately avoided: only the reserved localhost
+    name and numeric loopback addresses are trusted by this security boundary.
+    """
+    normalized = host.casefold()
+    if normalized.endswith("."):
+        normalized = normalized[:-1]
+    if normalized == "localhost":
+        return True
+
+    try:
+        address = ip_address(normalized)
+    except ValueError:
+        return False
+
+    if address.is_loopback:
+        return True
+    return (
+        isinstance(address, IPv6Address)
+        and address.ipv4_mapped is not None
+        and address.ipv4_mapped.is_loopback
+    )
 
 
 class ToolApprovalPolicy(BaseModel):

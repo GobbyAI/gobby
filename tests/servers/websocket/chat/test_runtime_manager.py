@@ -170,6 +170,8 @@ class TestWebChatRuntimeManager:
             daemon_config=DaemonConfig(
                 web_chat_sandbox={
                     "enabled": False,
+                    "mode": "restrictive",
+                    "allow_network": False,
                     "extra_read_paths": ["/tmp/web-read"],
                     "extra_write_paths": ["/tmp/web-write"],
                 },
@@ -178,8 +180,12 @@ class TestWebChatRuntimeManager:
 
         assert manager._claude_backend._sandbox_config is not None
         assert manager._claude_backend._sandbox_config.enabled is False
+        assert manager._claude_backend._sandbox_config.mode == "restrictive"
+        assert manager._claude_backend._sandbox_config.allow_network is False
         assert manager._codex_backend._sandbox_config is not None
         assert manager._codex_backend._sandbox_config.enabled is False
+        assert manager._codex_backend._sandbox_config.mode == "restrictive"
+        assert manager._codex_backend._sandbox_config.allow_network is False
         assert manager._grok_backend._sandbox_config is not None
         assert manager._grok_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
         assert manager._qwen_backend._sandbox_config is not None

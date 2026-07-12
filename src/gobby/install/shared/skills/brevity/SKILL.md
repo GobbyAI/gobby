@@ -1,7 +1,7 @@
 ---
 name: brevity
-description: "Anti-slop output mode. Kills filler, summary-stamps, negation framing, follow-up menus, and plain-language restatement. Three compression levels: lite, full, ultra."
-version: "1.0.0"
+description: "Anti-slop output mode. Kills filler, summary-stamps, negation framing, follow-up menus, and plain-language restatement. Three compression levels: lite, normal, max."
+version: "1.1.0"
 category: optimization
 triggers:
   - brevity
@@ -13,6 +13,8 @@ triggers:
 metadata:
   gobby:
     audience: all
+    levels: [lite, normal, max]
+    default_level: normal
 ---
 
 # Brevity
@@ -47,18 +49,22 @@ Preserve exactly (never compress): code blocks and inline code, URLs and file pa
 
 ## Levels
 
+Select a level at load time: `get_skill(name="brevity", level="max")`. Omitting
+`level` loads the default (`normal`). The active level persists in session
+state until changed or the session ends.
+
 ### Lite
 Hard rules only. Keep complete sentences, articles, normal punctuation.
 
-### Full (default)
+### Normal (default)
 Hard rules plus:
 - Fragments OK: "Fix applied. Tests pass." over "I have applied the fix and all the tests are now passing."
 - Drop articles (a, an, the) when unambiguous
 - Drop hedging (might, perhaps, appears that, seems to)
 - Shorten: "in order to" → "to", "due to the fact that" → "because"
 
-### Ultra
-Full plus:
+### Max
+Normal plus:
 - Drop transitions (however, therefore, additionally)
 - Drop obvious subjects ("Fixed" over "I fixed")
 - Abbreviate: fn, cfg, impl, deps, repo, dir
@@ -71,4 +77,4 @@ Switch to normal prose for:
 - Plan contents
 - Security warnings or destructive-operation confirmations
 - Multi-step confirmation sequences
-- When the user says "normal mode" or "stop brevity"
+- When the user says "stop brevity"

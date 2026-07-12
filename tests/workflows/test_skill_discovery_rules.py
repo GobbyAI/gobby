@@ -256,6 +256,7 @@ class TestBrevityRules:
         return {
             "loaded_skills": ["brevity"] if loaded else [],
             "brevity_disabled": disabled,
+            "brevity_level": "normal",
             "skill_discovery_instructions_shown": True,
             "memory_nudge_fired": True,
             "servers_listed": True,
@@ -307,6 +308,9 @@ class TestBrevityRules:
         variables = yaml.safe_load(vars_path.read_text())["variables"]
 
         assert variables["brevity_disabled"]["value"] is False
+        assert variables["brevity_level"]["value"] == "normal"
+        assert variables["restraint_disabled"]["value"] is False
+        assert variables["restraint_level"]["value"] == "normal"
         assert variables["brevity_last_violation"]["value"] == ""
         assert variables["brevity_last_violation_rule"]["value"] == ""
         assert variables["code_index_navigation_used_this_turn"]["value"] is False
@@ -330,8 +334,8 @@ class TestBrevityRules:
 
         assert first.context is not None
         assert second.context is not None
-        assert "Brevity reminder: answer first; keep context tight." in first.context
-        assert "Brevity reminder: answer first; keep context tight." in second.context
+        assert "Brevity reminder (normal): answer first; keep context tight." in first.context
+        assert "Brevity reminder (normal): answer first; keep context tight." in second.context
 
     @pytest.mark.asyncio
     async def test_opt_out_prompt_disables_and_suppresses_brevity_rules(self, db) -> None:
@@ -343,7 +347,7 @@ class TestBrevityRules:
             session_id=SESSION_ID,
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
-            data={"prompt": " Normal Mode "},
+            data={"prompt": " Stop Brevity "},
         )
 
         response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)

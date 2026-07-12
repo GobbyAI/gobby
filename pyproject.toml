@@ -74,7 +74,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-email = ["aiosmtplib>=2.0", "aioimaplib>=1.0"]
+email = ["aiosmtplib>=5.1.1", "aioimaplib>=1.0"]
 # Compatibility alias for older setup scripts. Voice dependencies are base requirements.
 voice = []
 
@@ -92,6 +92,8 @@ Issues = "https://github.com/GobbyAI/gobby/issues"
 # (missing project.version in pyproject.toml). Force >=0.21.
 constraint-dependencies = [
     "tokenizers>=0.21",
+    # aiosmtplib <5.1.1 permits SMTP command injection via CR/LF in addresses.
+    "aiosmtplib>=5.1.1",
     # idna <3.15 has CVE-2026-45409 (transitive via HTTP clients)
     "idna>=3.15",
     # starlette <0.49.1 has CVE-2025-62727; <1.3.1 has the later GHSA;
@@ -106,6 +108,8 @@ constraint-dependencies = [
     # authlib <=1.6.11 has GHSA-r95x-qfjj-fjj2 (medium); <1.6.11 also had
     # GHSA-jj8c-mmj3-mmgv. Transitive via fastmcp.
     "authlib>=1.6.12",
+    # joserfc <1.6.8 has HMAC empty-key and unencoded-payload limit bypass advisories.
+    "joserfc>=1.6.8",
     # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) - see override-dependencies below
     "torch>=2.8.0",
 ]
@@ -120,6 +124,9 @@ constraint-dependencies = [
 override-dependencies = [
     "torch==2.11.0",
     "torchaudio==2.11.0",
+    # chatterbox-tts==0.1.7 pins vulnerable voice-stack transitive versions.
+    "onnx>=1.22.0",
+    "transformers>=5.3.0",
     # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts)
     "diffusers>=0.38.0",
     # chatterbox-tts==0.1.7 pins gradio==6.8.0, which keeps Starlette below
@@ -129,6 +136,13 @@ override-dependencies = [
     # chatterbox-tts==0.1.7 pins safetensors==0.5.3.
     "safetensors>=0.8.0",
 ]
+
+[tool.uv.audit]
+# GHSA-rrmf-rvhw-rf47 / CVE-2025-3000 requires a local caller to exercise
+# torch.jit.script. Gobby does not invoke torch.jit.script, and OSV
+# currently publishes no fixed PyTorch release. This conditional ignore stops
+# applying automatically as soon as a fixed version becomes available.
+ignore-until-fixed = ["GHSA-rrmf-rvhw-rf47"]
 
 [build-system]
 requires = [
@@ -288,7 +302,7 @@ dev = [
     "scikit-learn>=1.5",
     "types-croniter>=6.0.0.20250809",
     "types-PyYAML>=6.0.12.12",
-    "aiosmtplib>=2.0",
+    "aiosmtplib>=5.1.1",
     "aioimaplib>=1.0",
     "pytest-timeout>=2.4.0",
     "types-aiofiles>=25.1.0.20260409",

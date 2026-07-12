@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from gobby.paths import get_global_workflows_dir
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.loader import WorkflowLoader
 
@@ -63,7 +64,7 @@ def import_workflow(
     filename = f"{safe_name}.yaml"
 
     if is_global:
-        dest_dir = Path.home() / ".gobby" / "workflows"
+        dest_dir = get_global_workflows_dir()
     else:
         # Auto-discover project path if not provided
         if not project_path:

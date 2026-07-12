@@ -97,10 +97,23 @@ def daemon_owned_sandbox_config(
             allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
         )
 
+    raw_mode = getattr(config, "mode", _DAEMON_OWNED_SANDBOX_MODE)
+    mode = cast(
+        Literal["permissive", "restrictive"],
+        raw_mode
+        if isinstance(raw_mode, str) and raw_mode in {"permissive", "restrictive"}
+        else _DAEMON_OWNED_SANDBOX_MODE,
+    )
+    raw_allow_network = getattr(config, "allow_network", _DAEMON_OWNED_ALLOW_NETWORK)
+
     return SandboxConfig(
         enabled=bool(getattr(config, "enabled", default_enabled)),
-        mode=_DAEMON_OWNED_SANDBOX_MODE,
-        allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
+        mode=mode,
+        allow_network=(
+            raw_allow_network
+            if isinstance(raw_allow_network, bool)
+            else _DAEMON_OWNED_ALLOW_NETWORK
+        ),
         extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
         extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
     )

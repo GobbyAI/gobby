@@ -24,8 +24,8 @@ DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
 DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
 
 
-def _log_wiki_watcher_failure(task: asyncio.Task[None]) -> None:
-    """Log wiki watcher task failures so a dead watcher is visible in daemon logs."""
+def _log_periodic_task_failure(task: asyncio.Task[None]) -> None:
+    """Log periodic task failures so a dead maintenance job is visible in daemon logs."""
     if task.cancelled():
         return
     try:
@@ -34,7 +34,8 @@ def _log_wiki_watcher_failure(task: asyncio.Task[None]) -> None:
         return
     if error is not None:
         logger.error(
-            "Wiki watcher task failed",
+            "Periodic task %s failed",
+            task.get_name(),
             exc_info=(type(error), error, error.__traceback__),
         )
 
@@ -159,12 +160,18 @@ def start_periodic_tasks(
     loops = {**_default_loops(), **loops}
     db_executor = getattr(runner, "db_executor", None)
     runner._metrics_cleanup_task = asyncio.create_task(
-        loops["metrics_cleanup_loop"](runner.metrics_manager, lambda: runner._shutdown_requested),
+        loops["metrics_cleanup_loop"](
+            runner.metrics_manager,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
         name="metrics-cleanup",
     )
     runner._metrics_archive_task = asyncio.create_task(
         loops["metrics_archive_loop"](
-            runner.metrics_event_store, lambda: runner._shutdown_requested
+            runner.metrics_event_store,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
         ),
         name="metrics-archive",
     )
@@ -215,7 +222,11 @@ def start_periodic_tasks(
         name="zombie-message-cleanup",
     )
     runner._comms_messages_task = asyncio.create_task(
-        loops["cleanup_comms_messages_loop"](runner.database, lambda: runner._shutdown_requested),
+        loops["cleanup_comms_messages_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
         name="comms-message-cleanup",
     )
     chat_config = getattr(runner.config, "chat", None)
@@ -248,7 +259,11 @@ def start_periodic_tasks(
         name="expired-isolation-cleanup",
     )
     runner._metric_snapshot_task = asyncio.create_task(
-        loops["metric_snapshot_loop"](runner.database, lambda: runner._shutdown_requested),
+        loops["metric_snapshot_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
         name="metric-snapshot",
     )
     runner._hook_inbox_task = asyncio.create_task(
@@ -272,7 +287,9 @@ def start_periodic_tasks(
     if runner.pipeline_execution_manager:
         runner._approval_timeout_task = asyncio.create_task(
             loops["expire_approval_timeouts_loop"](
-                runner.pipeline_execution_manager, lambda: runner._shutdown_requested
+                runner.pipeline_execution_manager,
+                lambda: runner._shutdown_requested,
+                run_db=getattr(db_executor, "run", None),
             ),
             name="approval-timeout-expiry",
         )
@@ -311,10 +328,9 @@ def start_periodic_tasks(
                 runner._wiki_watcher.run(),
                 name="wiki-watcher",
             )
-            runner._wiki_watcher_task.add_done_callback(_log_wiki_watcher_failure)
 
-    task_count = sum(
-        1
+    periodic_tasks = tuple(
+        task
         for task in (
             runner._metrics_cleanup_task,
             runner._metrics_archive_task,
@@ -335,5 +351,8 @@ def start_periodic_tasks(
         )
         if task is not None
     )
+    for task in periodic_tasks:
+        task.add_done_callback(_log_periodic_task_failure)
+
     if tracker:
-        tracker.schedule(f"Periodic maintenance ({task_count} tasks)")
+        tracker.schedule(f"Periodic maintenance ({len(periodic_tasks)} tasks)")

@@ -244,6 +244,27 @@ class TestTaskExpansionConfigValidation:
         with pytest.raises(ValidationError):
             TaskExpansionConfig.model_validate({"default_strategy": "invalid"})
 
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            pytest.param("research_max_steps", 0, id="zero-research-steps"),
+            pytest.param("research_max_steps", -1, id="negative-research-steps"),
+            pytest.param("timeout", 0, id="zero-timeout"),
+            pytest.param("timeout", -0.1, id="negative-timeout"),
+            pytest.param("research_timeout", 0, id="zero-research-timeout"),
+            pytest.param("research_timeout", -0.1, id="negative-research-timeout"),
+        ],
+    )
+    def test_non_positive_research_limits_rejected(
+        self,
+        field_name: str,
+        value: int | float,
+    ) -> None:
+        from gobby.config.tasks import TaskExpansionConfig
+
+        with pytest.raises(ValidationError):
+            TaskExpansionConfig.model_validate({field_name: value})
+
 
 # =============================================================================
 # TaskValidationConfig Tests

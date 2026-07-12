@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from gobby.paths import get_gobby_home
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 
 logger = logging.getLogger(__name__)
@@ -133,8 +134,6 @@ def resolve_session_wiki_path(session: Any) -> Path:
     Always ``<gobby_home>/session_wiki/{external_id}.md`` — one machine-global
     directory the daemon owns and gwiki ingests.
     """
-    from gobby.cli.utils_config import get_gobby_home
-
     return get_gobby_home() / "session_wiki" / f"{_safe_filename_stem(session)}.md"
 
 
@@ -211,11 +210,12 @@ def write_session_wiki_page(session: Any, summary_markdown: str | None) -> dict[
     """
     if not is_summary_markdown_valid(summary_markdown):
         return {"written": False, "skipped": "invalid_summary"}
+    if summary_markdown is None:
+        return {"written": False, "skipped": "invalid_summary"}
     skip = _skip_reason(session)
     if skip is not None:
         return {"written": False, "skipped": skip}
 
-    assert isinstance(summary_markdown, str)  # narrowed by is_summary_markdown_valid
     tags: list[str] = []
     frontmatter = _build_frontmatter(session, tags)
     page = f"{frontmatter}\n\n{summary_markdown.strip()}\n"

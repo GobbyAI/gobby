@@ -276,6 +276,8 @@ class TestProviderResolution:
                 daemon_config=DaemonConfig(
                     agent_sandbox={
                         "enabled": True,
+                        "mode": "restrictive",
+                        "allow_network": False,
                         "extra_write_paths": ["/tmp/agent-write"],
                     },
                 ),
@@ -285,8 +287,8 @@ class TestProviderResolution:
         spawn_request = mock_execute.call_args[0][0]
         assert spawn_request.sandbox_config is not None
         assert spawn_request.sandbox_config.enabled is True
-        assert spawn_request.sandbox_config.mode == "permissive"
-        assert spawn_request.sandbox_config.allow_network is True
+        assert spawn_request.sandbox_config.mode == "restrictive"
+        assert spawn_request.sandbox_config.allow_network is False
         assert spawn_request.sandbox_config.extra_write_paths == ["/tmp/agent-write"]
 
     @pytest.mark.asyncio

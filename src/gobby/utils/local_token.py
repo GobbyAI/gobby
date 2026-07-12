@@ -2,14 +2,15 @@
 
 from pathlib import Path
 
-from gobby.config.bootstrap_io import default_gobby_home
+from gobby.paths import get_gobby_home
 
-LOCAL_API_TOKEN_FILENAME = "local_cli_token"
+# This is a filename, not a credential value.
+LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
 
 
 def local_token_path() -> Path:
     """Return the local daemon API token path."""
-    return default_gobby_home() / LOCAL_API_TOKEN_FILENAME
+    return get_gobby_home() / LOCAL_API_TOKEN_FILENAME
 
 
 def read_local_api_token() -> str | None:

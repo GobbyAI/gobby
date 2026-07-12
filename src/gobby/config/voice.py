@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.config.url_validation import validate_endpoint_url
+
 _RESERVED_AUDIO_PROVIDER_IDS = frozenset({"whisper"})
 
 
@@ -31,7 +33,10 @@ class OpenAICompatibleAudioBindingConfig(BaseModel):
     )
     api_key: str | None = Field(
         default=None,
-        description="Optional bearer token for the compatible endpoint.",
+        description=(
+            "Optional bearer token for the compatible endpoint. Persisted configuration must "
+            "use a $secret:NAME reference; plaintext is only valid after runtime resolution."
+        ),
     )
     transcription_enabled: bool = Field(
         default=True,
@@ -46,6 +51,11 @@ class OpenAICompatibleAudioBindingConfig(BaseModel):
         gt=0,
         description="Maximum seconds to wait for the compatible audio endpoint.",
     )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return validate_endpoint_url(value, field_name="url")
 
 
 class VoiceConfig(BaseModel):

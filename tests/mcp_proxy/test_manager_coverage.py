@@ -137,6 +137,57 @@ def test_resolve_secrets_in_config_strips_unresolved_args(
     assert "missing_key" not in caplog.text
 
 
+def test_resolve_secrets_in_config_failure_logs_only_safe_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sentinel_secret = "sentinel-secret-value"
+    secret_ref = "$secret:sentinel_secret"
+    manager = MagicMock()
+    manager.mcp_db_manager = MagicMock(db=object())
+    config = MCPServerConfig(
+        name="context7",
+        transport="stdio",
+        command="npx",
+        args=["--api-key", secret_ref],
+        project_id="proj-1",
+    )
+    store = MagicMock()
+    failure = RuntimeError(f"provider exposed {secret_ref}={sentinel_secret}")
+    store.resolve.side_effect = failure
+
+    with (
+        caplog.at_level("WARNING", logger="test"),
+        patch("gobby.storage.secrets.SecretStore", return_value=store),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    assert exc_info.value is failure
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.exc_info is None
+    assert record.getMessage() == "Secret resolution failed for context7 (RuntimeError)"
+    assert sentinel_secret not in caplog.text
+    assert secret_ref not in caplog.text
+
+
+def test_resolve_secrets_in_config_preserves_config_on_import_error() -> None:
+    manager = MagicMock()
+    manager.mcp_db_manager = MagicMock(db=object())
+    config = MCPServerConfig(
+        name="context7",
+        transport="stdio",
+        command="npx",
+        args=["--api-key", "$secret:context7_api_key"],
+        project_id="proj-1",
+    )
+
+    with patch.dict("sys.modules", {"gobby.storage.secrets": None}):
+        resolved = resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    assert resolved is config
+
+
 @pytest.mark.asyncio
 async def test_remove_server_unregisters_lazy_connection_state() -> None:
     manager = MCPClientManager(

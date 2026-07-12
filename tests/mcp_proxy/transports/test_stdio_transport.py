@@ -18,12 +18,8 @@ import pytest
 
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, resolve_runtime_stdio_args
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
-from gobby.mcp_proxy.transports.stdio import (
-    StdioTransportConnection,
-    _expand_args,
-    _expand_env_dict,
-    _expand_env_var,
-)
+from gobby.mcp_proxy.transports.stdio import StdioTransportConnection, _expand_args
+from gobby.utils.env import expand_env_mapping, expand_env_variables
 
 pytestmark = pytest.mark.unit
 
@@ -71,55 +67,55 @@ def conn(config: MCPServerConfig) -> StdioTransportConnection:
 
 
 # ===========================================================================
-# Environment variable expansion — _expand_env_var
+# Environment variable expansion — expand_env_variables
 # ===========================================================================
 
 
 class TestExpandEnvVar:
     def test_plain_text_unchanged(self) -> None:
-        assert _expand_env_var("plain text") == "plain text"
+        assert expand_env_variables("plain text") == "plain text"
 
     def test_empty_string(self) -> None:
-        assert _expand_env_var("") == ""
+        assert expand_env_variables("") == ""
 
     def test_existing_var_expanded(self) -> None:
         with patch.dict(os.environ, {"MY_VAR": "hello"}):
-            assert _expand_env_var("${MY_VAR}") == "hello"
+            assert expand_env_variables("${MY_VAR}") == "hello"
 
     def test_missing_var_no_default_unchanged(self) -> None:
         env_clean = {k: v for k, v in os.environ.items() if k != "NONEXISTENT_XYZ"}
         with patch.dict(os.environ, env_clean, clear=True):
-            assert _expand_env_var("${NONEXISTENT_XYZ}") == "${NONEXISTENT_XYZ}"
+            assert expand_env_variables("${NONEXISTENT_XYZ}") == "${NONEXISTENT_XYZ}"
 
     def test_missing_var_with_default(self) -> None:
         env_clean = {k: v for k, v in os.environ.items() if k != "MISSING_ABC"}
         with patch.dict(os.environ, env_clean, clear=True):
-            assert _expand_env_var("${MISSING_ABC:-fallback}") == "fallback"
+            assert expand_env_variables("${MISSING_ABC:-fallback}") == "fallback"
 
     def test_existing_var_ignores_default(self) -> None:
         with patch.dict(os.environ, {"PRESENT": "real"}):
-            assert _expand_env_var("${PRESENT:-fallback}") == "real"
+            assert expand_env_variables("${PRESENT:-fallback}") == "real"
 
     def test_empty_var_uses_default(self) -> None:
         with patch.dict(os.environ, {"EMPTY_V": ""}):
-            assert _expand_env_var("${EMPTY_V:-fallback}") == "fallback"
+            assert expand_env_variables("${EMPTY_V:-fallback}") == "fallback"
 
     def test_empty_default_string(self) -> None:
         env_clean = {k: v for k, v in os.environ.items() if k != "NOPE"}
         with patch.dict(os.environ, env_clean, clear=True):
-            assert _expand_env_var("${NOPE:-}") == ""
+            assert expand_env_variables("${NOPE:-}") == ""
 
     def test_multiple_vars_in_one_string(self) -> None:
         with patch.dict(os.environ, {"HOST": "localhost", "PORT": "8080"}):
-            assert _expand_env_var("${HOST}:${PORT}") == "localhost:8080"
+            assert expand_env_variables("${HOST}:${PORT}") == "localhost:8080"
 
     def test_mixed_vars_and_plain_text(self) -> None:
         with patch.dict(os.environ, {"DB": "mydb"}):
-            assert _expand_env_var("postgres://${DB}/data") == "postgres://mydb/data"
+            assert expand_env_variables("postgres://${DB}/data") == "postgres://mydb/data"
 
     def test_var_with_underscores_and_digits(self) -> None:
         with patch.dict(os.environ, {"MY_VAR_2": "works"}):
-            assert _expand_env_var("${MY_VAR_2}") == "works"
+            assert expand_env_variables("${MY_VAR_2}") == "works"
 
 
 # ===========================================================================
@@ -129,25 +125,25 @@ class TestExpandEnvVar:
 
 class TestExpandEnvDict:
     def test_none_returns_none(self) -> None:
-        assert _expand_env_dict(None) is None
+        assert expand_env_mapping(None) is None
 
     def test_empty_dict(self) -> None:
-        assert _expand_env_dict({}) == {}
+        assert expand_env_mapping({}) == {}
 
     def test_expands_values(self) -> None:
         with patch.dict(os.environ, {"SECRET": "s3cr3t"}):
-            result = _expand_env_dict({"API_KEY": "${SECRET}"})
+            result = expand_env_mapping({"API_KEY": "${SECRET}"})
             assert result == {"API_KEY": "s3cr3t"}
 
     def test_keys_not_expanded(self) -> None:
         with patch.dict(os.environ, {"K": "v"}):
-            result = _expand_env_dict({"${K}": "literal"})
+            result = expand_env_mapping({"${K}": "literal"})
             # Key is still "${K}" — only values are expanded
             assert result == {"${K}": "literal"}
 
     def test_multiple_entries(self) -> None:
         with patch.dict(os.environ, {"A": "1", "B": "2"}):
-            result = _expand_env_dict({"x": "${A}", "y": "${B}", "z": "plain"})
+            result = expand_env_mapping({"x": "${A}", "y": "${B}", "z": "plain"})
             assert result == {"x": "1", "y": "2", "z": "plain"}
 
 

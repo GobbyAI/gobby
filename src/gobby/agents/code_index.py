@@ -19,7 +19,8 @@ from gobby.config.bootstrap import (
     DEFAULT_DAEMON_BIND_HOST,
     DEFAULT_DAEMON_PORT,
 )
-from gobby.config.bootstrap_io import default_gobby_home, write_bootstrap_yaml
+from gobby.config.bootstrap_io import write_bootstrap_yaml
+from gobby.paths import get_gobby_home
 from gobby.storage.secrets import SECRET_MATERIAL_FILENAMES
 from gobby.utils.local_token import LOCAL_API_TOKEN_FILENAME
 from gobby.utils.native_bin import resolve_native_bin
@@ -120,7 +121,7 @@ def _prepare_gcode_runtime(
     if not database_url:
         return CodeIndexPreflightResult(env={})
 
-    source_home = default_gobby_home()
+    source_home = get_gobby_home()
     runtime_home = _runtime_home_for_workspace(
         workspace, runtime_root or source_home / _RUNTIME_DIR_NAME
     )

@@ -55,10 +55,9 @@
 - **Failure mode:** Setting `ui.enabled=True` with empty credentials serves the UI and all `/api/` routes with no auth; an operator who also sets a non-loopback `bind_host` (a common "reach it from my LAN" change) exposes an unauthenticated control plane. No guardrail/warning fires.
 - **Minimal fix:** A cross-field validator/startup check that refuses to start (or loudly warns) when `ui.enabled` + non-loopback bind + unconfigured auth combine.
 
-### [IMPORTANT] Runtime Postgres DSN (with password) is stored plaintext in bootstrap.yaml; the keyring contract has drifted
-- **Where:** `config/postgres_bootstrap.py:18` (`KEYRING_DATABASE_URL_REF` defined+exported but never used to read/write a keyring — verified zero `keyring.get/set_password` calls), `:39-45` (`write_postgres_install` writes `data["database_url"]` and pops `database_url_ref`); `bootstrap.py:123-126` (loader *rejects* `database_url_ref` as "no longer supported"), `:138` (loads plaintext `database_url`).
-- **Failure mode:** CLAUDE.md documents the DSN as living in the OS keyring (`gobby:postgres_database_url`) with bootstrap holding only a `database_url_ref`. The code does the opposite: the keyring path is dead and the full DSN (with the DB password) is always plaintext in `~/.gobby/bootstrap.yaml`. Mitigated to owner-only by 0600 (`bootstrap_io.py:46,48`, enforced on read at `bootstrap.py:186-190`) — hence IMPORTANT, not Blocker — but weaker than the keyring (backups, `tar`/`rsync` of `~/.gobby`, any same-user process), and the docs mislead operators.
-- **Minimal fix:** Restore the keyring-backed `database_url_ref` resolution, or remove the dead constant and update CLAUDE.md to state the DSN is plaintext-in-0600-bootstrap. The contract and code must agree.
+### [RESOLVED] Runtime Postgres DSN storage contract
+- **Current contract:** `config/postgres_bootstrap.py` writes the full DSN directly to `database_url` and removes the unsupported `database_url_ref`; `config/bootstrap.py` rejects legacy references and loads the plaintext DSN. `bootstrap.yaml` is owner-only (`0600`) through `config/bootstrap_io.py`.
+- **Operator guidance:** `CLAUDE.md` and `docs/guides/configuration.md` state that the DSN is stored directly in the owner-only bootstrap file. Backups and same-user processes can read that file, so operators must preserve its permissions and handle copies as secrets.
 
 ### [IMPORTANT] MCP server `env`/`headers` secrets are persisted plaintext (DB + file), unlike the config_store which enforces `$secret:` refs
 - **Where:** `config/mcp.py:221-233` (`save_servers` writes `headers`/`env` verbatim to `~/.gobby/mcp-servers.json`); `storage/mcp.py:192-194` (`upsert` does `json.dumps(env)`/`json.dumps(headers)` straight into `mcp_servers`); `mcp_proxy/services/server_mgmt.py:42-89` passes them through with no extraction. Contrast `config_store.py:87-95` which *rejects* plaintext for secret-suffixed keys.
@@ -124,8 +123,8 @@
 - **Where:** `config/voice.py:32`, `config/ai.py:38` (`api_key` nested in object/list config — never passes `config_store._reject_plaintext_secret_value`, which guards only flat secret-suffixed dotted keys; `ai` documents `$secret:NAME`, voice does not, and voice has no redaction in any config dump).
 - **Minimal fix:** Add `$secret:` guidance to voice's `api_key` and ensure config dump/export redacts these nested fields.
 
-### [NIT] Dead keyring constant + stale contract; `resolve_secrets_in_config` re-raises with `exc_info`
-- **Where:** `config/postgres_bootstrap.py:18,25` (`KEYRING_DATABASE_URL_REF` defined/exported, referenced nowhere — vestige of the reverted keyring migration; CLAUDE.md still claims keyring storage); `mcp_proxy/client_manager/secrets.py:69-71` (generic `except Exception` re-raises with `exc_info=True` — no current leak since `resolve_dict` doesn't put values in exceptions, but a future change surfacing a header/env value would land in logs).
+### [NIT] `resolve_secrets_in_config` re-raises with `exc_info`
+- **Where:** `mcp_proxy/client_manager/secrets.py:69-71` (generic `except Exception` re-raises with `exc_info=True` — no current leak since `resolve_dict` doesn't put values in exceptions, but a future change surfacing a header/env value would land in logs).
 
 ## Systemic patterns
 

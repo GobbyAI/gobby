@@ -22,6 +22,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
+from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
@@ -57,6 +58,7 @@ from gobby.utils.datetime import to_aware_utc, to_json_safe
 logger = logging.getLogger(__name__)
 
 _OPEN_DATABASES: weakref.WeakSet[PostgresHubDatabase] = weakref.WeakSet()
+_POOL_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 def _close_open_databases_at_exit() -> None:
@@ -117,15 +119,20 @@ class PostgresHubDatabase:
 
     dialect: Literal["postgres"] = "postgres"
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
+    ) -> None:
         self._conninfo = _conninfo_with_utc_session_timezone(dsn)
         self._application_name = os.getenv("PGAPPNAME", "gobby")
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
             open=False,
-            min_size=int(os.getenv("PGPOOL_MIN", "2")),
-            max_size=int(os.getenv("PGPOOL_MAX", "20")),
-            timeout=float(os.getenv("PGPOOL_TIMEOUT", "5")),
+            min_size=pool_config.min_size,
+            max_size=pool_config.max_size,
+            timeout=pool_config.acquire_timeout_seconds,
             kwargs={
                 "application_name": self._application_name,
                 "prepare_threshold": None,
@@ -136,6 +143,7 @@ class PostgresHubDatabase:
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
+        self._pool_open_timeout = pool_config.open_timeout_seconds
         _OPEN_DATABASES.add(self)
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
@@ -158,7 +166,7 @@ class PostgresHubDatabase:
                 return
             open_timeout = timeout
             if open_timeout is None:
-                open_timeout = float(os.getenv("PGPOOL_OPEN_TIMEOUT", "30"))
+                open_timeout = self._pool_open_timeout
             open_pool(wait=wait, timeout=open_timeout)
             self._pool_opened = True
 
@@ -386,7 +394,10 @@ class PostgresHubDatabase:
         if getattr(self, "_pool_closed", False):
             return
         self._pool_closed = True
-        self._pool.close()
+        # Daemon shutdown reserves three seconds after its 17-second async
+        # cleanup deadline before the CLI force-kills the process at 20
+        # seconds. Leave a one-second scheduling margin inside that tail.
+        self._pool.close(timeout=_POOL_CLOSE_TIMEOUT_SECONDS)
         self._pool_opened = False
 
 
@@ -671,7 +682,8 @@ def _build_safe_update(
         set_clauses.append(f"{column} = %s")
         update_params.append(value)
 
-    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
+    # Table/column identifiers are allowlisted above; values remain parameterized.
+    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec
     return sql, (*update_params, *where_params)
 
 

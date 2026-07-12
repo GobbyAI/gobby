@@ -105,6 +105,15 @@ variables:
   brevity_disabled:
     value: false
     description: "True after the user opts out of brevity reinforcement for the session"
+  brevity_level:
+    value: "normal"
+    description: "Active brevity level (lite/normal/max); set by gobby-skills:get_skill on each leveled load"
+  restraint_disabled:
+    value: false
+    description: "True after the user opts out of restraint reinforcement for the session"
+  restraint_level:
+    value: "normal"
+    description: "Active restraint level (lite/normal/max); set by gobby-skills:get_skill on each leveled load"
   brevity_last_violation:
     value: ""
     description: "Last assistant response fragment that violated brevity rules"

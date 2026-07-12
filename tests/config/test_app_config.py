@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import stat
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from unittest.mock import patch
@@ -674,6 +675,112 @@ class TestLoadConfig:
         assert isinstance(config, DaemonConfig)
         assert "Ignoring unreadable config file" in caplog.text
 
+    def test_load_config_resolves_nested_layer_two_env_and_secret_values(
+        self,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Layer 2 resolves nested references before DaemonConfig validation."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text(
+            "memory:\n"
+            "  crossref_threshold: ${LAYER_TWO_THRESHOLD}\n"
+            "  recall_signal_log_path: $secret:LAYER_TWO_LOG_PATH\n"
+        )
+        monkeypatch.setenv("LAYER_TWO_THRESHOLD", "0.73")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        def resolve_secret(name: str) -> str | None:
+            return "/tmp/layer-two.jsonl" if name == "LAYER_TWO_LOG_PATH" else None
+
+        config = load_config(
+            config_file=str(config_file),
+            config_store=DummyConfigStore(),
+            secret_resolver=resolve_secret,
+        )
+
+        assert config.memory.crossref_threshold == 0.73
+        assert config.memory.recall_signal_log_path == "/tmp/layer-two.jsonl"
+
+    def test_load_config_resolves_voice_audio_api_key_reference_from_db(
+        self, temp_dir: Path
+    ) -> None:
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "voice.openai_compatible_audio": [
+                        {
+                            "provider": "remote-stt",
+                            "url": "https://audio.example/v1",
+                            "model": "whisper-large-v3",
+                            "api_key": "$secret:REMOTE_STT_API_KEY",
+                        }
+                    ]
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "missing.yaml"),
+            config_store=DummyConfigStore(),
+            secret_resolver=lambda name: "resolved-runtime-key"
+            if name == "REMOTE_STT_API_KEY"
+            else None,
+        )
+
+        binding = config.voice.openai_compatible_audio[0]
+        assert binding.api_key == "resolved-runtime-key"
+        assert binding.model == "whisper-large-v3"
+
+    def test_load_config_surfaces_unresolved_layer_two_reference(
+        self,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An unresolved typed Layer 2 value warns and fails config validation."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text("memory:\n  crossref_threshold: $secret:MISSING_THRESHOLD\n")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {}
+
+        with (
+            caplog.at_level(logging.WARNING),
+            pytest.raises(
+                ValueError,
+                match="Configuration validation failed",
+            ),
+        ):
+            load_config(
+                config_file=str(config_file),
+                config_store=DummyConfigStore(),
+                secret_resolver=lambda _name: None,
+            )
+
+        assert "Unresolved secret '$secret:MISSING_THRESHOLD'" in caplog.text
+
+    def test_load_config_db_value_overrides_unresolved_layer_two_reference(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Layer 3 keeps precedence over its corresponding Layer 2 value."""
+        config_file = temp_dir / "config.yaml"
+        config_file.write_text("memory:\n  crossref_threshold: $secret:MISSING_THRESHOLD\n")
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {"memory.crossref_threshold": 0.81}
+
+        config = load_config(
+            config_file=str(config_file),
+            config_store=DummyConfigStore(),
+            secret_resolver=lambda _name: None,
+        )
+
+        assert config.memory.crossref_threshold == 0.81
+
     def test_load_config_rejects_removed_llm_providers_file_section(self, temp_dir: Path) -> None:
         """Legacy llm_providers file config now fails loudly."""
         config_file = temp_dir / "config.yaml"
@@ -724,15 +831,13 @@ class TestLoadConfig:
         with pytest.raises(ValueError, match="Configuration validation failed"):
             load_config(config_file=str(bootstrap_file))
 
-    def test_load_config_invalid_type_falls_back_to_defaults(self, temp_dir: Path) -> None:
-        """Test load_config falls back to defaults when bootstrap has invalid type."""
+    def test_load_config_rejects_invalid_bootstrap_scalar(self, temp_dir: Path) -> None:
+        """Test load_config surfaces invalid bootstrap scalar values."""
         bootstrap_file = temp_dir / "bootstrap.yaml"
-        # Write string instead of int for port — bootstrap silently falls back
         write_secure_bootstrap(bootstrap_file, "daemon_port: not_a_number")
 
-        config = load_config(config_file=str(bootstrap_file))
-        # Bootstrap swallows the int() conversion error and returns defaults
-        assert config.daemon_port == 60887
+        with pytest.raises(BootstrapConfigError, match="daemon_port"):
+            load_config(config_file=str(bootstrap_file))
 
     def test_load_config_rejects_legacy_session_title_db_keys(self, temp_dir: Path) -> None:
         """Legacy session_title DB config now fails loudly instead of being migrated."""
@@ -1324,7 +1429,12 @@ class TestLoadConfig:
             bootstrap_file,
             "hub_backend: postgres\n"
             "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
-            "postgres_install_mode: docker\n",
+            "postgres_install_mode: docker\n"
+            "postgres_pool:\n"
+            "  min_size: 4\n"
+            "  max_size: 24\n"
+            "  acquire_timeout_seconds: 7.5\n"
+            "  open_timeout_seconds: 12.5\n",
         )
 
         class DummyConfigStore:
@@ -1333,6 +1443,8 @@ class TestLoadConfig:
                     "hub_backend": "local",
                     "database_url": None,
                     "postgres_install_mode": "bogus",
+                    "postgres_pool.min_size": 99,
+                    "postgres_pool.max_size": 100,
                 }
 
         config = load_config(
@@ -1344,6 +1456,10 @@ class TestLoadConfig:
         assert config.hub_backend == "postgres"
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert config.postgres_install_mode == "docker"
+        assert config.postgres_pool.min_size == 4
+        assert config.postgres_pool.max_size == 24
+        assert config.postgres_pool.acquire_timeout_seconds == 7.5
+        assert config.postgres_pool.open_timeout_seconds == 12.5
 
     def test_load_config_without_resolution_reads_plaintext_dsn(self, temp_dir: Path) -> None:
         """Config readers can inspect bootstrap fields without special credential access."""
@@ -1447,6 +1563,30 @@ class TestSaveConfig:
         content = yaml.safe_load(config_file.read_text())
         assert content["daemon_port"] == default_config.daemon_port
 
+    def test_masks_voice_audio_api_keys_without_hiding_binding_fields(self, temp_dir: Path) -> None:
+        config = DaemonConfig(
+            voice={
+                "openai_compatible_audio": [
+                    {
+                        "provider": "remote-stt",
+                        "url": "https://audio.example/v1",
+                        "model": "whisper-large-v3",
+                        "api_key": "resolved-runtime-key",
+                    }
+                ]
+            }
+        )
+        config_file = temp_dir / "voice.yaml"
+
+        export_config_to_yaml(config, str(config_file))
+
+        raw_text = config_file.read_text()
+        binding = yaml.safe_load(raw_text)["voice"]["openai_compatible_audio"][0]
+        assert binding["api_key"] == "********"
+        assert binding["provider"] == "remote-stt"
+        assert binding["model"] == "whisper-large-v3"
+        assert "resolved-runtime-key" not in raw_text
+
     def test_file_permissions(self, temp_dir: Path, default_config: DaemonConfig) -> None:
         """Test saved config has restrictive permissions."""
         config_file = temp_dir / "secure.yaml"
@@ -1462,6 +1602,59 @@ class TestSaveConfig:
         export_config_to_yaml(default_config, str(config_file))
 
         assert config_file.exists()
+
+    def test_partial_serialization_failure_preserves_existing_export(
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+    ) -> None:
+        config_file = temp_dir / "saved.yaml"
+        original = b"daemon_port: 12345\n"
+        config_file.write_bytes(original)
+
+        def fail_after_partial_write(*args: object, **kwargs: object) -> None:
+            stream = args[1]
+            assert hasattr(stream, "write")
+            stream.write("partial: true\n")
+            raise OSError("forced serialization failure")
+
+        with (
+            patch("gobby.config._loading.yaml.safe_dump", side_effect=fail_after_partial_write),
+            pytest.raises(OSError, match="forced serialization failure"),
+        ):
+            export_config_to_yaml(default_config, str(config_file))
+
+        assert config_file.read_bytes() == original
+        assert list(temp_dir.glob(f".{config_file.name}.*.tmp")) == []
+
+    def test_successful_export_fsyncs_file_then_replacement_directory(
+        self,
+        temp_dir: Path,
+        default_config: DaemonConfig,
+    ) -> None:
+        config_file = temp_dir / "saved.yaml"
+        config_file.write_text("old: true\n")
+        real_fsync = os.fsync
+        real_replace = os.replace
+        events: list[tuple[str, bool]] = []
+
+        def record_fsync(fd: int) -> None:
+            events.append(("fsync", stat.S_ISDIR(os.fstat(fd).st_mode)))
+            real_fsync(fd)
+
+        def record_replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+            events.append(("replace", False))
+            real_replace(source, target)
+
+        with (
+            patch("gobby.config._loading.os.fsync", side_effect=record_fsync),
+            patch("gobby.config._loading.os.replace", side_effect=record_replace),
+        ):
+            export_config_to_yaml(default_config, str(config_file))
+
+        assert events == [("fsync", False), ("replace", False), ("fsync", True)]
+        assert yaml.safe_load(config_file.read_text())["daemon_port"] == default_config.daemon_port
+        assert list(temp_dir.glob(f".{config_file.name}.*.tmp")) == []
 
     def test_export_config_to_yaml_with_none_path_uses_default(
         self,
