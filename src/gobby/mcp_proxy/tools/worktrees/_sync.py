@@ -299,7 +299,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         async def _source_is_merged_into_target() -> bool:
             ancestor_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
-                ["merge-base", "--is-ancestor", effective_source, merge_target],
+                [
+                    "merge-base",
+                    "--is-ancestor",
+                    f"refs/heads/{effective_source}",
+                    f"refs/heads/{merge_target}",
+                ],
                 cwd=merge_cwd,
                 timeout=10,
             )
@@ -308,7 +313,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if worktree.status == "merged" and await _source_is_merged_into_target():
             target_sha_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
-                ["rev-parse", merge_target],
+                ["rev-parse", f"refs/heads/{merge_target}"],
                 cwd=merge_cwd,
                 timeout=10,
             )

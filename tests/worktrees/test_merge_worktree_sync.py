@@ -92,7 +92,7 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout=target)
         if args == ["rev-parse", "HEAD"]:
             return _make_git_result(0, stdout="abc123def456\n")
-        if args == ["rev-parse", target]:
+        if args == ["rev-parse", f"refs/heads/{target}"]:
             return _make_git_result(0, stdout="abc123def456\n")
         if args == ["stash", "list"]:
             stash_list_calls += 1
@@ -173,6 +173,15 @@ async def test_merge_worktree_retry_reconciles_completed_merge_without_duplicate
     assert result["reconciled"] is True
     assert result["merge_sha"] == "abc123def456"
     assert "already merged" in result["message"]
+    assert [
+        "merge-base",
+        "--is-ancestor",
+        "refs/heads/feat",
+        "refs/heads/main",
+    ] in [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
+    assert ["rev-parse", "refs/heads/main"] in [
+        call.args[0] for call in ctx.git_manager._run_git.call_args_list
+    ]
     assert ["merge", "feat", "--no-ff", "--no-edit"] not in [
         call.args[0] for call in ctx.git_manager._run_git.call_args_list
     ]
