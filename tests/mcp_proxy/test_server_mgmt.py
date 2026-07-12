@@ -80,6 +80,32 @@ class TestServerManagementServicePersistence:
         with pytest.raises(ValueError, match="already exists"):
             await service.add_server("duplicate-server", "http", **kwargs)
 
+    async def test_add_rolls_back_runtime_state_when_persistence_fails(
+        self,
+        sample_project,
+    ) -> None:
+        project_id = sample_project["id"]
+        storage = MagicMock()
+        storage.upsert.side_effect = RuntimeError("database unavailable")
+        manager = MCPClientManager(
+            server_configs=[],
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        service = ServerManagementService(manager, config_manager=MagicMock())
+
+        result = await service.add_server(
+            "ephemeral-server",
+            "http",
+            url="https://mcp.example.test",
+            enabled=False,
+            project_id=project_id,
+        )
+
+        assert result == {"success": False, "error": "database unavailable"}
+        assert not manager.has_server("ephemeral-server")
+        assert "ephemeral-server" not in manager.get_lazy_connection_states()
+
 
 class TestServerManagementServiceImport:
     """Tests for ServerManagementService.import_server()."""

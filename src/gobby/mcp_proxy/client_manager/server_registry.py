@@ -178,21 +178,26 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     manager._lazy_connector.register_server(config.name)
 
     if manager.mcp_db_manager and config.project_id:
-        manager.mcp_db_manager.upsert(
-            name=config.name,
-            transport=config.transport,
-            project_id=config.project_id,
-            url=config.url,
-            command=config.command,
-            args=config.args,
-            env=config.env,
-            headers=config.headers,
-            enabled=config.enabled,
-            description=config.description,
-            requires_oauth=config.requires_oauth,
-            oauth_provider=config.oauth_provider,
-            connect_timeout=config.connect_timeout,
-        )
+        try:
+            manager.mcp_db_manager.upsert(
+                name=config.name,
+                transport=config.transport,
+                project_id=config.project_id,
+                url=config.url,
+                command=config.command,
+                args=config.args,
+                env=config.env,
+                headers=config.headers,
+                enabled=config.enabled,
+                description=config.description,
+                requires_oauth=config.requires_oauth,
+                oauth_provider=config.oauth_provider,
+                connect_timeout=config.connect_timeout,
+            )
+        except Exception:
+            del manager._configs[config.name]
+            manager._lazy_connector.unregister_server(config.name)
+            raise
 
     tool_schemas: list[dict[str, Any]] = []
     if config.enabled:
