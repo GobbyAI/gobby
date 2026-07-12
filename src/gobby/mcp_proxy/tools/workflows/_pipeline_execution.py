@@ -45,7 +45,11 @@ async def cleanup_background_tasks() -> None:
 
 
 class PipelineLoader(Protocol):
-    async def load_pipeline(self, name: str) -> PipelineDefinition | None: ...
+    async def load_pipeline(
+        self,
+        name: str,
+        project_path: str | None = None,
+    ) -> PipelineDefinition | None: ...
 
 
 class PipelineExecutionManager(Protocol):
@@ -72,7 +76,15 @@ class PipelineExecutionManager(Protocol):
     def create_execution(
         self, pipeline_name: str, inputs_json: str, session_id: str | None = None
     ) -> PipelineExecution: ...
-    def list_executions(self, status: ExecutionStatus) -> list[PipelineExecution]: ...
+    def list_executions(
+        self,
+        status: ExecutionStatus | None = None,
+        pipeline_name: str | None = None,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[PipelineExecution]: ...
 
 
 class PipelineExecutor(Protocol):
@@ -555,18 +567,31 @@ async def resume_interrupted_pipelines(
     """
     from gobby.workflows.pipeline_state import ExecutionStatus
 
-    running = execution_manager.list_executions(status=ExecutionStatus.RUNNING)
-    if not running:
-        return []
+    running_executions: list[Any] = []
+    offset = 0
+    page_size = 100
+    while True:
+        running = execution_manager.list_executions(
+            status=ExecutionStatus.RUNNING,
+            limit=page_size,
+            offset=offset,
+        )
+        running_executions.extend(running)
+        offset += len(running)
+        if len(running) < page_size:
+            break
 
     resumed: list[str] = []
-    for execution in running:
+    for execution in running_executions:
         try:
-            pipeline = await loader.load_pipeline(execution.pipeline_name)
+            pipeline = await loader.load_pipeline(
+                execution.pipeline_name,
+                project_path=execution.project_id,
+            )
         except Exception as e:
             logger.warning(
                 f"Cannot load pipeline '{execution.pipeline_name}' for "
-                f"execution {execution.id} — will be failed: {e}"
+                f"execution {execution.id} — will be interrupted: {e}"
             )
             continue
 

@@ -3,7 +3,7 @@
 import json
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -270,6 +270,36 @@ class LocalProjectManager:
             rows = self.db.fetchall("SELECT * FROM projects ORDER BY name")
         else:
             rows = self.db.fetchall("SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY name")
+        return [Project.from_row(row) for row in rows]
+
+    def list_page(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        include_deleted: bool = False,
+    ) -> Sequence[Project]:
+        """List one stable, bounded page of projects."""
+        if limit <= 0:
+            raise ValueError(f"limit must be > 0, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+
+        if include_deleted:
+            rows = self.db.fetchall(
+                "SELECT * FROM projects ORDER BY name, id LIMIT %s OFFSET %s",
+                (limit, offset),
+            )
+        else:
+            rows = self.db.fetchall(
+                """
+                SELECT * FROM projects
+                WHERE deleted_at IS NULL
+                ORDER BY name, id
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
         return [Project.from_row(row) for row in rows]
 
     def update(self, project_id: str, **fields: Any) -> Project | None:

@@ -294,6 +294,37 @@ class PipelineExecutionStorageMixin:
         row = self.db.fetchone(sql, tuple(params))
         return int(row["cnt"]) if row else 0
 
+    def list_recovery_project_ids(
+        self,
+        *,
+        limit: int = 100,
+        after_project_id: str | None = None,
+    ) -> list[str]:
+        """List project IDs with running or interrupted executions, one bounded page at a time."""
+        if limit <= 0:
+            raise ValueError(f"limit must be > 0, got {limit}")
+
+        after_clause = " AND project_id > %s" if after_project_id is not None else ""
+        params: list[Any] = [
+            ExecutionStatus.RUNNING.value,
+            ExecutionStatus.INTERRUPTED.value,
+        ]
+        if after_project_id is not None:
+            params.append(after_project_id)
+        params.append(limit)
+        rows = self.db.fetchall(
+            f"""
+            SELECT DISTINCT project_id
+            FROM pipeline_executions
+            WHERE status IN (%s, %s)
+            {after_clause}
+            ORDER BY project_id
+            LIMIT %s
+            """,  # nosec B608
+            tuple(params),
+        )
+        return [str(row["project_id"]) for row in rows]
+
     def execution_metrics(
         self,
         status: ExecutionStatus | None = None,

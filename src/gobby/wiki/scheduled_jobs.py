@@ -300,17 +300,47 @@ async def register_wiki_cron_jobs(
     task_manager: LibrarianTaskManagerProtocol | None = None,
 ) -> int:
     """Register wiki cron handlers and reconcile one cron row per scope and command."""
+    return await register_wiki_cron_jobs_for_projects(
+        cron_storage=cron_storage,
+        cron_executor=cron_executor,
+        project_scopes=((project_id, scopes),),
+        db=db,
+        gateway_factory=gateway_factory,
+        task_manager=task_manager,
+    )
+
+
+async def register_wiki_cron_jobs_for_projects(
+    *,
+    cron_storage: CronJobStorage,
+    cron_executor: CronRegistrationProtocol,
+    project_scopes: Iterable[tuple[str, Iterable[str] | None]],
+    db: HubDatabase | None = None,
+    gateway_factory: GatewayFactory | None = None,
+    task_manager: LibrarianTaskManagerProtocol | None = None,
+) -> int:
+    """Register deduplicated wiki cron handlers for a paginated project stream."""
     if gateway_factory is None and db is None:
-        raise ValueError("register_wiki_cron_jobs requires db when gateway_factory is not provided")
-    reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
+        raise ValueError(
+            "register_wiki_cron_jobs_for_projects requires db when gateway_factory is not provided"
+        )
+
+    scope_projects: dict[str, str] = {}
+    fallback_project_id = ""
+    for project_id, scopes in project_scopes:
+        if not fallback_project_id:
+            fallback_project_id = project_id
+        reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
+        for scope in _configured_scopes(scopes, project_id):
+            scope_projects.setdefault(scope, project_id)
+
     purge_legacy_wiki_research_jobs(cron_storage)
     if task_manager is None and db is not None:
         from gobby.storage.tasks import LocalTaskManager
 
         task_manager = LocalTaskManager(db)
     registered = 0
-    configured = _configured_scopes(scopes, project_id)
-    for scope in configured:
+    for scope, project_id in sorted(scope_projects.items()):
         gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
@@ -338,11 +368,11 @@ async def register_wiki_cron_jobs(
     registered += await _register_enabled_wiki_row_handlers(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
-        fallback_project_id=project_id,
+        fallback_project_id=fallback_project_id,
         db=db,
         gateway_factory=gateway_factory,
         task_manager=task_manager,
-        covered_scopes=set(configured),
+        covered_scopes=set(scope_projects),
     )
     return registered
 

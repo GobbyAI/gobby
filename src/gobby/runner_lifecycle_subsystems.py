@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +30,9 @@ ProviderCatalogRefreshRecorder = Callable[
     None,
 ]
 AgentLifecycleOperation = Callable[[Any], Awaitable[int]]
+
+_PROJECT_ENUMERATION_PAGE_SIZE = 100
+_PIPELINE_EXECUTION_PAGE_SIZE = 100
 
 
 def _schedule_provider_model_refresh(
@@ -302,42 +305,86 @@ async def _start_agent_lifecycle_monitor(
 
 
 async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    if runner.cron_scheduler:
-        await _register_wiki_cron_handlers(runner, tracker)
-        await _start_tracked_service(runner.cron_scheduler, "Cron scheduler", tracker)
+    await _register_wiki_cron_handlers(runner, tracker)
+    await _start_tracked_service(runner.cron_scheduler, "Cron scheduler", tracker)
 
 
 async def _register_wiki_cron_handlers(
     runner: GobbyRunner,
     tracker: StartupTracker | None,
 ) -> None:
-    if runner.cron_storage is None:
+    cron_storage = getattr(runner, "cron_storage", None)
+    if cron_storage is None:
+        if tracker:
+            tracker.error("Wiki cron handlers", "skipped: cron storage unavailable")
         return
     executor = getattr(runner.cron_scheduler, "executor", None)
     if executor is None:
+        if tracker:
+            tracker.error("Wiki cron handlers", "skipped: cron executor unavailable")
         return
     try:
+        from gobby.storage.projects import LocalProjectManager
         from gobby.wiki.scheduled_jobs import (
             configured_wiki_cron_scopes,
-            register_wiki_cron_jobs,
+            register_wiki_cron_jobs_for_projects,
         )
 
-        # Without a startup project there are no configured scopes to ensure,
-        # but registration still runs so enabled rows from other projects get
-        # handlers (or are parked) instead of failing every interval.
-        scopes = (
-            configured_wiki_cron_scopes(runner.config, runner.project_id)
-            if runner.project_id
-            else []
-        )
-        registered = await register_wiki_cron_jobs(
-            cron_storage=runner.cron_storage,
+        project_manager = LocalProjectManager(runner.database)
+        first_page = project_manager.list_page(limit=_PROJECT_ENUMERATION_PAGE_SIZE)
+        if not first_page:
+            if tracker:
+                tracker.error("Wiki cron handlers", "skipped: no registered projects")
+            return
+
+        eligible_projects = 0
+
+        def iter_project_scopes() -> Iterator[tuple[str, list[str]]]:
+            nonlocal eligible_projects
+            projects = first_page
+            offset = 0
+            while projects:
+                for project in projects:
+                    if project_manager.is_protected(project):
+                        continue
+                    if not project.repo_path:
+                        if tracker:
+                            tracker.error(
+                                f"Wiki cron handlers ({project.id})",
+                                "skipped: project has no repo path",
+                            )
+                        continue
+                    if not Path(project.repo_path).exists():
+                        if tracker:
+                            tracker.error(
+                                f"Wiki cron handlers ({project.id})",
+                                f"skipped: project repo path does not exist: {project.repo_path}",
+                            )
+                        continue
+                    eligible_projects += 1
+                    yield (
+                        project.id,
+                        configured_wiki_cron_scopes(runner.config, project.id),
+                    )
+                offset += len(projects)
+                if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
+                    break
+                projects = project_manager.list_page(
+                    limit=_PROJECT_ENUMERATION_PAGE_SIZE,
+                    offset=offset,
+                )
+
+        registered = await register_wiki_cron_jobs_for_projects(
+            cron_storage=cron_storage,
             cron_executor=executor,
-            project_id=runner.project_id or "",
             db=runner.database,
-            scopes=scopes,
+            project_scopes=iter_project_scopes(),
         )
         logger.debug("Wiki cron handlers registered: %s", registered)
+        if eligible_projects == 0 and registered == 0 and tracker:
+            tracker.error("Wiki cron handlers", "skipped: no wiki-capable projects")
+        elif tracker:
+            tracker.complete("Wiki cron handlers")
     except Exception as e:
         logger.error("Failed to register wiki cron handlers: %s", e)
         if tracker:
@@ -408,34 +455,90 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
 
 
 async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    if not (
-        runner.pipeline_executor and runner.pipeline_execution_manager and runner.workflow_loader
-    ):
+    if runner.workflow_loader is None:
+        if tracker:
+            tracker.error("Pipeline recovery", "skipped: workflow loader unavailable")
         return
 
     try:
         from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
             resume_interrupted_pipelines,
         )
+        from gobby.runner_pipeline_runtime import build_pipeline_runtime
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
 
-        resumed_ids = await resume_interrupted_pipelines(
-            loader=runner.workflow_loader,
-            executor=runner.pipeline_executor,
-            execution_manager=runner.pipeline_execution_manager,
-            project_id=runner.project_id,
-        )
-        if resumed_ids:
-            logger.info(f"Resumed {len(resumed_ids)} pipeline(s) after restart: {resumed_ids}")
+        discovery_manager = LocalPipelineExecutionManager(runner.database, project_id=None)
+        after_project_id: str | None = None
+        failed_projects = 0
+        while True:
+            project_ids = discovery_manager.list_recovery_project_ids(
+                limit=_PROJECT_ENUMERATION_PAGE_SIZE,
+                after_project_id=after_project_id,
+            )
+            if not project_ids:
+                break
 
-        stale_count = runner.pipeline_execution_manager.interrupt_stale_running_executions(
-            exclude_ids=set(resumed_ids),
-        )
-        if stale_count > 0:
-            logger.info(f"Interrupted {stale_count} non-resumable stale pipeline executions")
+            for project_id in project_ids:
+                if bool(getattr(runner, "_shutdown_requested", False)):
+                    if tracker:
+                        tracker.error("Pipeline recovery", "stopped: daemon shutdown requested")
+                    return
+                try:
+                    if (
+                        runner.project_id == project_id
+                        and runner.pipeline_execution_manager is not None
+                        and runner.pipeline_executor is not None
+                    ):
+                        execution_manager = runner.pipeline_execution_manager
+                        executor = runner.pipeline_executor
+                    else:
+                        execution_manager, executor = build_pipeline_runtime(runner, project_id)
 
-        if stale_count > 0 and runner.completion_registry:
-            await _wake_interrupted_pipeline_subscribers(runner)
-        if tracker:
+                    resumed_ids = await resume_interrupted_pipelines(
+                        loader=runner.workflow_loader,
+                        executor=executor,
+                        execution_manager=execution_manager,
+                        project_id=project_id,
+                    )
+                    if resumed_ids:
+                        logger.info(
+                            "Resumed %d pipeline(s) for project %s after restart: %s",
+                            len(resumed_ids),
+                            project_id,
+                            resumed_ids,
+                        )
+
+                    stale_count = execution_manager.interrupt_stale_running_executions(
+                        exclude_ids=set(resumed_ids),
+                    )
+                    if stale_count > 0:
+                        logger.info(
+                            "Interrupted %d non-resumable stale pipeline execution(s) "
+                            "for project %s",
+                            stale_count,
+                            project_id,
+                        )
+
+                    if runner.completion_registry is not None:
+                        await _wake_interrupted_pipeline_subscribers(
+                            execution_manager,
+                            runner.completion_registry,
+                        )
+                except Exception as e:
+                    failed_projects += 1
+                    logger.warning("Pipeline recovery failed for project %s: %s", project_id, e)
+                    if tracker:
+                        tracker.error(f"Pipeline recovery ({project_id})", str(e))
+
+            after_project_id = project_ids[-1]
+            if len(project_ids) < _PROJECT_ENUMERATION_PAGE_SIZE:
+                break
+
+        if runner.completion_registry is None and tracker:
+            tracker.error(
+                "Pipeline recovery", "subscriber notifications skipped: registry unavailable"
+            )
+        elif failed_projects == 0 and tracker:
             tracker.complete("Pipeline recovery")
     except Exception as e:
         logger.warning(f"Pipeline recovery after restart failed: {e}")
@@ -443,21 +546,25 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
             tracker.error("Pipeline recovery", str(e))
 
 
-async def _wake_interrupted_pipeline_subscribers(runner: GobbyRunner) -> None:
-    execution_manager = runner.pipeline_execution_manager
-    completion_registry = runner.completion_registry
-    if execution_manager is None or completion_registry is None:
-        return
-
+async def _wake_interrupted_pipeline_subscribers(
+    execution_manager: Any,
+    completion_registry: Any,
+) -> int:
     try:
         from gobby.workflows.pipeline_state import ExecutionStatus as _ES
 
-        interrupted = execution_manager.list_executions(
-            status=_ES.INTERRUPTED,
-        )
-        for exe in interrupted:
-            subs = execution_manager.get_completion_subscribers(exe.id)
-            if subs:
+        notified = 0
+        offset = 0
+        while True:
+            interrupted = execution_manager.list_executions(
+                status=_ES.INTERRUPTED,
+                limit=_PIPELINE_EXECUTION_PAGE_SIZE,
+                offset=offset,
+            )
+            for exe in interrupted:
+                subs = execution_manager.get_completion_subscribers(exe.id)
+                if not subs:
+                    continue
                 completion_registry.register(exe.id, subscribers=subs)
                 await completion_registry.notify(
                     exe.id,
@@ -475,11 +582,15 @@ async def _wake_interrupted_pipeline_subscribers(runner: GobbyRunner) -> None:
                 )
                 execution_manager.remove_completion_subscribers(exe.id)
                 completion_registry.cleanup(exe.id)
-        logger.info(
-            f"Notified subscribers of {len(interrupted)} interrupted pipeline(s)",
-        )
+                notified += 1
+            offset += len(interrupted)
+            if len(interrupted) < _PIPELINE_EXECUTION_PAGE_SIZE:
+                break
+        logger.info("Notified subscribers of %d interrupted pipeline(s)", notified)
+        return notified
     except Exception as e:
         logger.warning(f"Failed to wake subscribers of interrupted pipelines: {e}")
+        raise
 
 
 def _record_websocket_startup_result(
