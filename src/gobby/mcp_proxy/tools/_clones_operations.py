@@ -292,8 +292,6 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     "step": "fetch",
                 }
 
-            ctx.clone_storage.record_sync(clone_id)
-
             # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
             # Record the stash object created by this call so later stashes cannot
             # change which entry is restored.
@@ -302,6 +300,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             stash_restore_error: str | None = None
             primary_result: dict[str, Any]
             try:
+                ctx.clone_storage.record_sync(clone_id)
                 try:
                     stash_head_before = await run_thread_to_completion(
                         git_manager.run_git_command,

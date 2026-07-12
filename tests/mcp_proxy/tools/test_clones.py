@@ -1130,6 +1130,39 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.assert_any_call("clone-123", status="active")
 
     @pytest.mark.asyncio
+    async def test_merge_clone_record_sync_failure_deletes_temp_ref_before_unlock(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Storage failure after fetch cannot leak the fetched temporary branch."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_clone_storage.record_sync.side_effect = RuntimeError("database unavailable")
+
+        def git_result(_args: list[str], **_kwargs: object) -> MagicMock:
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git_manager.run_git_command.side_effect = git_result
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+
+        commands = [entry.args[0] for entry in mock_git_manager.run_git_command.call_args_list]
+        assert commands == [
+            [
+                "fetch",
+                "/tmp/clones/test",
+                "feature/test:refs/heads/clone-merge/feature/test",
+            ],
+            ["branch", "-D", "clone-merge/feature/test"],
+        ]
+        mock_git_manager.merge_branch.assert_not_called()
+        mock_clone_storage.update.assert_called_with("clone-123", status="active")
+        assert lock.locked() is False
+
+    @pytest.mark.asyncio
     async def test_merge_clone_stash_oserror_restores_status_and_cleans_temp_branch(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
