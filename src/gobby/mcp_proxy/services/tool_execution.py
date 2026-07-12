@@ -261,9 +261,13 @@ async def call_tool(
         bool(arguments) or effective_session_id is not None or project_id_from_context
     )
     if should_check_schema:
-        schema_result = await service.get_tool_schema(server_name, tool_name)
-        if schema_result.get("success"):
-            input_schema = schema_result.get("tool", {}).get("inputSchema", {})
+        validation_schema_result: dict[str, Any] | None = None
+        try:
+            validation_schema_result = await service.get_tool_schema(server_name, tool_name)
+        except Exception as schema_error:
+            logger.debug("Could not fetch schema for pre-validation: %s", schema_error)
+        if validation_schema_result and validation_schema_result.get("success"):
+            input_schema = validation_schema_result.get("tool", {}).get("inputSchema", {})
             if input_schema:
                 _inject_required_session_id_argument(
                     arguments,

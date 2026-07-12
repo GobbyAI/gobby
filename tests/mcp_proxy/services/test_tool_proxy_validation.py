@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.utils.session_context import session_context_for_test
 
@@ -511,21 +512,25 @@ class TestCallToolPreValidation:
         """Verify tool execution proceeds when schema fetch fails."""
 
         async def mock_get_schema(server, tool):
-            return {"success": False, "error": "Schema not found"}
+            raise MCPError("Schema temporarily unavailable")
 
         tool_proxy.get_tool_schema = mock_get_schema
         mock_mcp_manager.call_tool.return_value = {"success": True}
 
-        await tool_proxy.call_tool(
+        result = await tool_proxy.call_tool(
             server_name="test-server",
             tool_name="test_tool",
             arguments={"some_param": "test"},
         )
 
         # Should still attempt execution when schema is unavailable
-        mock_mcp_manager.call_tool.assert_called_once()
-        assert mock_mcp_manager.call_tool.call_count == 1
-        assert mock_mcp_manager.call_tool.call_args is not None
+        assert result == {"success": True}
+        mock_mcp_manager.call_tool.assert_awaited_once_with(
+            "test-server",
+            "test_tool",
+            {"some_param": "test"},
+            session_id=None,
+        )
 
 
 class TestCallToolInternalServer:
