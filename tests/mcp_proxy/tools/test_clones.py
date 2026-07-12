@@ -10,6 +10,7 @@ Tests for the gobby-clones MCP server tools:
 """
 
 import asyncio
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,35 @@ pytestmark = pytest.mark.integration
 
 RECENT_TIMESTAMP = "2026-01-02T03:04:05+00:00"
 STALE_TIMESTAMP = "2025-01-02T03:04:05+00:00"
+
+
+def _merge_test_clone() -> Clone:
+    """Build the clone record shared by merge failure-path tests."""
+    return Clone(
+        id="clone-123",
+        project_id="11111111-1111-4111-8111-111111110001",
+        branch_name="feature/test",
+        clone_path="/tmp/clones/test",
+        base_branch="main",
+        task_id=None,
+        agent_session_id=None,
+        status="active",
+        remote_url="https://github.com/user/repo.git",
+        last_sync_at=None,
+        cleanup_after=None,
+        created_at=RECENT_TIMESTAMP,
+        updated_at=RECENT_TIMESTAMP,
+    )
+
+
+def _git_result(
+    *,
+    returncode: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+) -> MagicMock:
+    """Build a completed git command result."""
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 @pytest.fixture
@@ -783,6 +813,118 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is False
         assert "fetch" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_fetch_timeout_restores_active_status(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A fetch timeout is reported and cannot leave the clone syncing."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = subprocess.TimeoutExpired(
+            ["git", "fetch"],
+            120,
+        )
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Fetch timed out after 120 seconds",
+            "step": "fetch",
+        }
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_oserror_restores_status_and_cleans_temp_branch(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A stash process failure returns its own result and still cleans up."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(),
+            OSError("stash executable unavailable"),
+            _git_result(),
+        ]
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Stash failed: stash executable unavailable",
+            "step": "stash",
+        }
+        cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert cleanup_call.args[0][:2] == ["branch", "-D"]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_branch_cleanup_failure_warns_without_masking_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A branch-delete exception is a warning on the successful merge result."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(),
+            _git_result(stdout=""),
+            OSError("cannot delete temporary branch"),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is True
+        assert result["warnings"] == [
+            "Failed to delete temporary branch clone-merge/feature/test: "
+            "cannot delete temporary branch"
+        ]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_pop_timeout_warns_without_masking_conflict(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A stash-pop timeout preserves the primary merge-conflict result."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(),
+            _git_result(stdout="stash@{0}: gobby merge"),
+            _git_result(),
+            subprocess.TimeoutExpired(["git", "stash", "pop"], 10),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(
+            success=False,
+            error="merge_conflict",
+            message="Merge conflict in 2 files",
+            output="src/foo.py\nsrc/bar.py",
+        )
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is False
+        assert result["has_conflicts"] is True
+        assert result["error"] == "Merge conflict in 2 files"
+        assert result["warnings"] == [
+            "Failed to restore stashed .gobby/ files: "
+            "Command '['git', 'stash', 'pop']' timed out after 10 seconds"
+        ]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
 
     @pytest.mark.asyncio
     async def test_merge_clone_with_conflicts(

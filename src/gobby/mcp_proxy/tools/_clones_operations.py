@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess  # nosec B404 # exceptions from CloneGitManager's fixed git argv
 from typing import Any, Literal
 
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
@@ -11,6 +12,18 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _git_exception_result(
+    step: str,
+    error: subprocess.TimeoutExpired | OSError,
+) -> dict[str, Any]:
+    """Convert an expected git execution exception into a tool result."""
+    if isinstance(error, subprocess.TimeoutExpired):
+        message = f"{step.capitalize()} timed out after {error.timeout} seconds"
+    else:
+        message = f"{step.capitalize()} failed: {error}"
+    return {"success": False, "error": message, "step": step}
 
 
 def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolRegistry:
@@ -218,109 +231,157 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         # This avoids pushing to origin (which fails on divergent branches).
         ctx.clone_storage.mark_syncing(clone_id)
         temp_ref = f"clone-merge/{clone.branch_name}"
-        fetch_result = await asyncio.to_thread(
-            git_manager.run_git_command,
-            ["fetch", str(clone.clone_path), f"{clone.branch_name}:refs/heads/{temp_ref}"],
-            cwd=git_manager.repo_path,
-            timeout=120,
-        )
-
-        if fetch_result.returncode != 0:
-            ctx.clone_storage.update(clone_id, status="active")
-            return {
-                "success": False,
-                "error": f"Fetch from clone failed: {fetch_result.stderr}",
-                "step": "fetch",
-            }
-
-        ctx.clone_storage.record_sync(clone_id)
-
-        # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
-        # Compare stash list before/after to reliably detect if a stash was created.
-        stash_created = False
-        stash_list_before = await asyncio.to_thread(
-            git_manager.run_git_command,
-            ["stash", "list"],
-            cwd=git_manager.repo_path,
-            timeout=10,
-        )
-        stash_result = await asyncio.to_thread(
-            git_manager.run_git_command,
-            ["stash", "push", "-m", "gobby-merge-clone: auto-stash sync files", "--", ".gobby/"],
-            cwd=git_manager.repo_path,
-            timeout=10,
-        )
-        if stash_result.returncode == 0:
-            stash_list_after = await asyncio.to_thread(
-                git_manager.run_git_command,
-                ["stash", "list"],
-                cwd=git_manager.repo_path,
-                timeout=10,
-            )
-            stash_created = stash_list_after.stdout != stash_list_before.stdout
-
-        # Step 3: Merge the fetched ref into target branch
         try:
-            merge_result = await asyncio.to_thread(
-                git_manager.merge_branch,
-                source_branch=temp_ref,
-                target_branch=target_branch,
-                source_is_local=True,
-            )
-        finally:
-            # Clean up temp ref regardless of merge outcome
-            await asyncio.to_thread(
-                git_manager.run_git_command,
-                ["branch", "-D", temp_ref],
-                cwd=git_manager.repo_path,
-                timeout=10,
-            )
-            # Restore stashed .gobby/ files
-            if stash_created:
-                pop_result = await asyncio.to_thread(
+            try:
+                fetch_result = await asyncio.to_thread(
                     git_manager.run_git_command,
-                    ["stash", "pop"],
+                    [
+                        "fetch",
+                        str(clone.clone_path),
+                        f"{clone.branch_name}:refs/heads/{temp_ref}",
+                    ],
                     cwd=git_manager.repo_path,
-                    timeout=10,
+                    timeout=120,
                 )
-                if pop_result.returncode != 0:
-                    logger.warning(
-                        "Failed to restore stashed .gobby/ files: %s",
-                        pop_result.stderr or pop_result.stdout,
-                    )
+            except (subprocess.TimeoutExpired, OSError) as error:
+                return _git_exception_result("fetch", error)
 
-        if not merge_result.success:
-            ctx.clone_storage.update(clone_id, status="active")
-            # Check for conflicts
-            if merge_result.error == "merge_conflict":
-                conflicted_files = merge_result.output.split("\n") if merge_result.output else []
+            if fetch_result.returncode != 0:
                 return {
                     "success": False,
-                    "has_conflicts": True,
-                    "conflicted_files": conflicted_files,
-                    "error": merge_result.message,
-                    "step": "merge",
-                    "message": (
-                        f"Merge conflicts detected in {len(conflicted_files)} files. "
-                        "Use gobby-merge tools to resolve."
-                    ),
+                    "error": f"Fetch from clone failed: {fetch_result.stderr}",
+                    "step": "fetch",
                 }
 
-            return {
-                "success": False,
-                "has_conflicts": False,
-                "error": merge_result.error or merge_result.message,
-                "step": "merge",
-            }
+            ctx.clone_storage.record_sync(clone_id)
 
-        cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
-        ctx.clone_storage.update(clone_id, cleanup_after=cleanup_after)
+            # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
+            # Compare stash list before/after to reliably detect if a stash was created.
+            stash_created = False
+            warnings: list[str] = []
+            primary_result: dict[str, Any]
+            try:
+                try:
+                    stash_list_before = await asyncio.to_thread(
+                        git_manager.run_git_command,
+                        ["stash", "list"],
+                        cwd=git_manager.repo_path,
+                        timeout=10,
+                    )
+                    stash_result = await asyncio.to_thread(
+                        git_manager.run_git_command,
+                        [
+                            "stash",
+                            "push",
+                            "-m",
+                            "gobby-merge-clone: auto-stash sync files",
+                            "--",
+                            ".gobby/",
+                        ],
+                        cwd=git_manager.repo_path,
+                        timeout=10,
+                    )
+                    if stash_result.returncode == 0:
+                        stash_list_after = await asyncio.to_thread(
+                            git_manager.run_git_command,
+                            ["stash", "list"],
+                            cwd=git_manager.repo_path,
+                            timeout=10,
+                        )
+                        stash_created = stash_list_after.stdout != stash_list_before.stdout
+                except (subprocess.TimeoutExpired, OSError) as error:
+                    primary_result = _git_exception_result("stash", error)
+                else:
+                    # Step 3: Merge the fetched ref into target branch.
+                    try:
+                        merge_result = await asyncio.to_thread(
+                            git_manager.merge_branch,
+                            source_branch=temp_ref,
+                            target_branch=target_branch,
+                            source_is_local=True,
+                        )
+                    except (subprocess.TimeoutExpired, OSError) as error:
+                        primary_result = _git_exception_result("merge", error)
+                    else:
+                        if not merge_result.success:
+                            if merge_result.error == "merge_conflict":
+                                conflicted_files = (
+                                    merge_result.output.split("\n") if merge_result.output else []
+                                )
+                                primary_result = {
+                                    "success": False,
+                                    "has_conflicts": True,
+                                    "conflicted_files": conflicted_files,
+                                    "error": merge_result.message,
+                                    "step": "merge",
+                                    "message": (
+                                        f"Merge conflicts detected in {len(conflicted_files)} files. "
+                                        "Use gobby-merge tools to resolve."
+                                    ),
+                                }
+                            else:
+                                primary_result = {
+                                    "success": False,
+                                    "has_conflicts": False,
+                                    "error": merge_result.error or merge_result.message,
+                                    "step": "merge",
+                                }
+                        else:
+                            cleanup_after = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+                            ctx.clone_storage.update(clone_id, cleanup_after=cleanup_after)
+                            primary_result = {
+                                "success": True,
+                                "message": (
+                                    f"Successfully merged {clone.branch_name} into {target_branch}"
+                                ),
+                                "cleanup_after": cleanup_after,
+                            }
+            finally:
+                try:
+                    delete_result = await asyncio.to_thread(
+                        git_manager.run_git_command,
+                        ["branch", "-D", temp_ref],
+                        cwd=git_manager.repo_path,
+                        timeout=10,
+                    )
+                    if delete_result.returncode != 0:
+                        detail = (
+                            delete_result.stderr
+                            or delete_result.stdout
+                            or f"git exited with status {delete_result.returncode}"
+                        )
+                        warnings.append(f"Failed to delete temporary branch {temp_ref}: {detail}")
+                except (subprocess.TimeoutExpired, OSError) as error:
+                    warnings.append(f"Failed to delete temporary branch {temp_ref}: {error}")
 
-        return {
-            "success": True,
-            "message": f"Successfully merged {clone.branch_name} into {target_branch}",
-            "cleanup_after": cleanup_after,
-        }
+                if stash_created:
+                    try:
+                        pop_result = await asyncio.to_thread(
+                            git_manager.run_git_command,
+                            ["stash", "pop"],
+                            cwd=git_manager.repo_path,
+                            timeout=10,
+                        )
+                        if pop_result.returncode != 0:
+                            detail = (
+                                pop_result.stderr
+                                or pop_result.stdout
+                                or f"git exited with status {pop_result.returncode}"
+                            )
+                            warnings.append(f"Failed to restore stashed .gobby/ files: {detail}")
+                    except (subprocess.TimeoutExpired, OSError) as error:
+                        warnings.append(f"Failed to restore stashed .gobby/ files: {error}")
+
+            for warning in warnings:
+                logger.warning(warning)
+            if warnings:
+                primary_result["warnings"] = warnings
+            return primary_result
+        finally:
+            ctx.clone_storage.update(
+                clone_id,
+                status=CloneStatus.ACTIVE.value,
+            )
 
     registry.register(
         name="merge_clone",
