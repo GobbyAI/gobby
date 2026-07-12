@@ -1545,6 +1545,7 @@ class TestCleanupStaleClones:
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.delete.return_value = True
 
         result = await registry.call(
             "cleanup_stale_clones",
@@ -1554,7 +1555,9 @@ class TestCleanupStaleClones:
         assert result["success"] is True
         assert result["cleaned"][0]["marked_stale"] is True
         assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is True
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/old", force=True)
+        mock_clone_storage.delete.assert_called_once_with("clone-1")
 
     @pytest.mark.asyncio
     async def test_cleanup_slow_git_does_not_block_event_loop(
@@ -1616,6 +1619,8 @@ class TestCleanupStaleClones:
         result = await asyncio.wait_for(operation, timeout=1)
         assert result["success"] is True
         assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is True
+        mock_clone_storage.delete.assert_called_once_with("clone-1")
 
     @pytest.mark.asyncio
     async def test_cleanup_delete_files_failure(
@@ -1650,4 +1655,41 @@ class TestCleanupStaleClones:
 
         assert result["success"] is True
         assert result["cleaned"][0]["files_deleted"] is False
+        assert result["cleaned"][0]["record_deleted"] is False
         assert result["cleaned"][0]["delete_error"] == "Permission denied"
+        mock_clone_storage.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_record_delete_failure_is_reported_after_files_removed(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Cleanup surfaces a storage failure after successful file deletion."""
+        mock_clone_storage.cleanup_stale.return_value = [
+            Clone(
+                id="clone-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="old-feature",
+                clone_path="/tmp/clones/old",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="stale",
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            ),
+        ]
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.delete.side_effect = RuntimeError("database unavailable")
+
+        result = await registry.call(
+            "cleanup_stale_clones",
+            {"hours": 24, "dry_run": False, "delete_files": True},
+        )
+
+        assert result["success"] is True
+        assert result["cleaned"][0]["files_deleted"] is True
+        assert result["cleaned"][0]["record_deleted"] is False
+        assert result["cleaned"][0]["record_delete_error"] == "database unavailable"

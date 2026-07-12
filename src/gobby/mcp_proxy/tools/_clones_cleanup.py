@@ -114,6 +114,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                 "clone_path": c.clone_path,
                 "marked_stale": not dry_run,
                 "files_deleted": False,
+                "record_deleted": False,
             }
 
             if delete_files and not dry_run and ctx.git_manager:
@@ -123,7 +124,18 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                     force=True,
                 )
                 result_item["files_deleted"] = git_result.success
-                if not git_result.success:
+                if git_result.success:
+                    try:
+                        deleted = ctx.clone_storage.delete(c.id)
+                    except Exception as error:
+                        result_item["record_delete_error"] = str(error)
+                    else:
+                        # False means the row was already absent, which is also a
+                        # consistent terminal state after file removal.
+                        result_item["record_deleted"] = True
+                        if not deleted:
+                            result_item["record_already_missing"] = True
+                else:
                     result_item["delete_error"] = git_result.error or "Unknown error"
 
             results.append(result_item)
