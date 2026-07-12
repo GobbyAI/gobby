@@ -627,6 +627,23 @@ class TestGobbyDaemonToolsSemanticSearch:
         assert len(result["results"]) == 1
 
     @pytest.mark.asyncio
+    async def test_search_tools_prefers_ambient_project_context(self, tools_handler):
+        """Semantic search is scoped to the caller instead of the startup project."""
+        mock_semantic = AsyncMock()
+        mock_semantic.search_tools = AsyncMock(return_value=[])
+        tools_handler._semantic_search = mock_semantic
+        tools_handler._mcp_manager.project_id = "startup-project"
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "caller-project"},
+        ):
+            result = await tools_handler.search_tools(query="find files")
+
+        assert result["success"] is True
+        assert mock_semantic.search_tools.await_args.kwargs["project_id"] == "caller-project"
+
+    @pytest.mark.asyncio
     async def test_search_tools_with_server_filter(self, tools_handler):
         """Test semantic search with server filter."""
         mock_semantic = AsyncMock()

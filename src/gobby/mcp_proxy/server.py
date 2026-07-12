@@ -439,10 +439,7 @@ class GobbyDaemonTools:
                 "query": query,
             }
 
-        project_id = self._mcp_manager.project_id
-        if not project_id:
-            ctx = project_context_utils.get_project_context()
-            project_id = ctx.get("id") if ctx else None
+        project_id = self._caller_project_ref()
         if not project_id:
             return {
                 "success": False,
