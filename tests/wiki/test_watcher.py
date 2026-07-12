@@ -243,6 +243,50 @@ async def test_successful_flush_restarts_debounce_for_concurrent_changes(
 
 
 @pytest.mark.asyncio
+async def test_successful_flush_preserves_repeated_same_path_change(tmp_path: Path) -> None:
+    coordinator = BlockingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=60.0,
+    )
+    path = tmp_path / "page.md"
+    await watcher.record_change(path)
+
+    flush = asyncio.create_task(watcher.flush_pending())
+    await coordinator.started.wait()
+    await watcher.record_change(path)
+    coordinator.release.set()
+    await flush
+
+    assert coordinator.calls == [{"project": ["page.md"]}]
+    assert watcher._pending == {"project": {path.resolve()}}
+    assert watcher._pending_since is not None
+    assert watcher._debounce_elapsed() is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_flush_restores_dispatched_paths(tmp_path: Path) -> None:
+    coordinator = BlockingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=60.0,
+    )
+    path = tmp_path / "page.md"
+    await watcher.record_change(path)
+
+    flush = asyncio.create_task(watcher.flush_pending())
+    await coordinator.started.wait()
+    flush.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await flush
+
+    assert watcher._pending == {"project": {path.resolve()}}
+    assert watcher._pending_since is not None
+
+
+@pytest.mark.asyncio
 async def test_flush_keeps_pending_changes_when_coordinator_fails(tmp_path: Path) -> None:
     coordinator = FailingCoordinator()
     watcher = WikiWatcher(
