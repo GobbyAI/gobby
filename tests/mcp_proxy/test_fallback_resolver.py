@@ -48,6 +48,20 @@ class TestFallbackSuggestion:
         assert result["success_rate"] is None
         assert result["description"] is None
 
+    def test_to_dict_preserves_zero_success_rate(self) -> None:
+        suggestion = FallbackSuggestion(
+            server_name="test-server",
+            tool_name="failing_tool",
+            description="Always fails",
+            similarity=0.75,
+            success_rate=0.0,
+            score=0.45,
+        )
+
+        result = suggestion.to_dict()
+
+        assert result["success_rate"] == 0.0
+
 
 class TestToolFallbackResolver:
     """Tests for ToolFallbackResolver."""

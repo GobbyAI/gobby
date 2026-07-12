@@ -41,7 +41,9 @@ class FallbackSuggestion:
             "tool_name": self.tool_name,
             "description": self.description,
             "similarity": round(self.similarity, 4),
-            "success_rate": round(self.success_rate, 4) if self.success_rate else None,
+            "success_rate": (
+                round(self.success_rate, 4) if self.success_rate is not None else None
+            ),
             "score": round(self.score, 4),
         }
 
