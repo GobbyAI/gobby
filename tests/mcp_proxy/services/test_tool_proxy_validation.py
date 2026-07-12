@@ -1368,6 +1368,34 @@ class TestDirectMcpAfterToolWorkflow:
         mock_hook_manager.handle.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_after_tool_workflow_exception_preserves_successful_result(
+        self, tool_proxy_with_hooks, mock_internal_manager, caplog
+    ) -> None:
+        """After-tool workflow failures must not replace successful tool output."""
+        successful_result = {"id": "task-123", "ref": "#123"}
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value=successful_result)
+        mock_internal_manager.get_registry.return_value = mock_registry
+        tool_proxy_with_hooks._apply_after_tool_workflow = AsyncMock(
+            side_effect=RuntimeError("session lookup failed")
+        )
+
+        result = await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="create_task",
+            arguments={"title": "Test task"},
+            session_id="session-123",
+        )
+
+        assert result == successful_result
+        assert (
+            "After-tool workflow failed for gobby-tasks/create_task; preserving tool result"
+            in caplog.text
+        )
+        assert "session lookup failed" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_internal_tool_exception_emits_failed_after_tool_workflow(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:

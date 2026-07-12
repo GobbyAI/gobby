@@ -334,13 +334,20 @@ async def _execute_tool_dispatch(
         effective_session_id=effective_session_id,
     )
     if emit_after_workflow:
-        await service._apply_after_tool_workflow(
-            server_name=server_name,
-            tool_name=tool_name,
-            arguments=arguments,
-            session_id=effective_session_id,
-            tool_output=result,
-        )
+        try:
+            await service._apply_after_tool_workflow(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                session_id=effective_session_id,
+                tool_output=result,
+            )
+        except Exception:
+            logger.exception(
+                "After-tool workflow failed for %s/%s; preserving tool result",
+                server_name,
+                tool_name,
+            )
     return result
 
 
