@@ -28,6 +28,24 @@ IMPLEMENTATION_DOMAIN_ENUM = tuple(sorted(IMPLEMENTATION_DOMAINS))
 TASK_TYPE_ENUM = TASK_TYPE_CHOICES
 
 
+def _code_task_invariant_error(
+    category: str | None,
+    validation_criteria: str | None,
+    implementation_domain: str | None,
+) -> str | None:
+    """Return the code-task invariant error for the effective task state."""
+    if category != "code":
+        return None
+    if not validation_criteria:
+        return (
+            "Code tasks require validation_criteria. "
+            "Describe what 'done' looks like so validate_task can check your diff against it."
+        )
+    if implementation_domain is None:
+        return "Code tasks require implementation_domain ('backend', 'frontend', or 'fullstack')."
+    return None
+
+
 def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create a registry with task CRUD tools.
 
@@ -116,17 +134,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}"}
 
-        # Enforce validation_criteria for code tasks
-        if category == "code" and not validation_criteria:
-            return {
-                "error": "Code tasks require validation_criteria. "
-                "Describe what 'done' looks like so validate_task can check your diff against it."
-            }
-        if category == "code" and implementation_domain is None:
-            return {
-                "error": "Code tasks require implementation_domain "
-                "('backend', 'frontend', or 'fullstack')."
-            }
+        invariant_error = _code_task_invariant_error(
+            category, validation_criteria, implementation_domain
+        )
+        if invariant_error:
+            return {"error": invariant_error}
 
         # Create task
         create_result = ctx.task_manager.create_task_with_decomposition(
@@ -458,6 +470,29 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": str(e)}
         except ValueError as e:
             return {"error": str(e)}
+
+        current_task = ctx.task_manager.get_task(resolved_id)
+        if current_task is None:
+            return {"error": f"Task {task_id} not found"}
+
+        effective_category = category if category is not None else current_task.category
+        effective_validation_criteria = (
+            validation_criteria
+            if validation_criteria is not None
+            else current_task.validation_criteria
+        )
+        effective_implementation_domain = (
+            implementation_domain
+            if implementation_domain is not None
+            else current_task.implementation_domain
+        )
+        invariant_error = _code_task_invariant_error(
+            effective_category,
+            effective_validation_criteria,
+            effective_implementation_domain,
+        )
+        if invariant_error:
+            return {"error": invariant_error}
 
         # Build kwargs only for non-None values to avoid overwriting with NULL
         kwargs: dict[str, Any] = {}
