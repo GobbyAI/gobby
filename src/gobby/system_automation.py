@@ -658,9 +658,24 @@ class SystemAutomationLoop:
                     max_ticks=1,
                 )
                 for project_id in project_ids
-            ]
+            ],
+            return_exceptions=True,
         )
-        return dict(zip(project_ids, results, strict=True))
+        dispatch: dict[str, DispatcherTickSummary] = {}
+        for project_id, result in zip(project_ids, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, BaseException):
+                if not isinstance(result, Exception):
+                    raise result
+                logger.error(
+                    "System automation dispatch failed for project %s",
+                    project_id,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
+                continue
+            dispatch[project_id] = result
+        return dispatch
 
     async def _run_pipeline_maintenance(self) -> AutomationMaintenanceSummary:
         heartbeat = self.pipeline_heartbeat

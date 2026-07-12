@@ -244,6 +244,49 @@ async def test_multiple_projects_fan_out_independently(
 
 
 @pytest.mark.asyncio
+async def test_dispatch_projects_isolates_project_failure(
+    caplog: pytest.LogCaptureFixture,
+    temp_db: HubDatabase,
+) -> None:
+    failed_project = "11111111-1111-4111-8111-111111110001"
+    successful_project = "11111111-1111-4111-8111-111111110002"
+    completed: list[str] = []
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
+        project_id = str(kwargs["project_id"])
+        if project_id == failed_project:
+            raise RuntimeError("project dispatch failed")
+        completed.append(project_id)
+        return DispatcherTickSummary(reason=str(kwargs["reason"]))
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+
+    results = await loop._dispatch_projects(
+        [failed_project, successful_project],
+        reason="interval",
+    )
+
+    assert results == {successful_project: DispatcherTickSummary(reason="interval")}
+    assert completed == [successful_project]
+    assert f"System automation dispatch failed for project {failed_project}" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_projects_propagates_project_cancellation(temp_db: HubDatabase) -> None:
+    project_id = "11111111-1111-4111-8111-111111110001"
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**_kwargs: Any) -> DispatcherTickSummary:
+        raise asyncio.CancelledError
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await loop._dispatch_projects([project_id], reason="interval")
+
+
+@pytest.mark.asyncio
 async def test_overlapping_interval_dispatches_serialize_and_run_followup(
     temp_db: HubDatabase,
 ) -> None:
