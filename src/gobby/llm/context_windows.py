@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from gobby.llm.context_window_values import positive_context_window
+
 ContextLengthSource = Literal[
     "provider_reported",
     "provider_catalog",
@@ -473,8 +475,9 @@ def _registry_context_window(provider: str | None, model: str) -> int | None:
 
     for candidate in _registry_lookup_candidates(provider, model):
         registry_val = lookup_context_window(candidate)
-        if registry_val is not None:
-            return registry_val
+        context_window = positive_context_window(registry_val)
+        if context_window is not None:
+            return context_window
     return None
 
 

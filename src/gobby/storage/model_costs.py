@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, NamedTuple
 
+from gobby.llm.context_window_values import positive_context_window
+
 if TYPE_CHECKING:
     from gobby.llm.model_registry import ModelInfo
     from gobby.storage.hub.protocol import HubDatabase
@@ -97,15 +99,19 @@ class ModelCostStore:
 
         model = strip_provider_prefix(model)
 
-        row = self.db.fetchone("SELECT context_length FROM model_costs WHERE model = %s", (model,))
-        if row and row["context_length"]:
-            return int(row["context_length"])
+        row = self.db.fetchone(
+            "SELECT context_length FROM model_costs WHERE model = %s AND context_length > 0",
+            (model,),
+        )
+        exact_context_window = positive_context_window(row["context_length"] if row else None)
+        if exact_context_window is not None:
+            return exact_context_window
 
         # Prefix match — find longest matching model key via SQL
         row = self.db.fetchone(
             "SELECT context_length FROM model_costs "
-            "WHERE %s LIKE model || '%%' AND context_length IS NOT NULL "
+            "WHERE %s LIKE model || '%%' AND context_length > 0 "
             "ORDER BY LENGTH(model) DESC LIMIT 1",
             (model,),
         )
-        return int(row["context_length"]) if row else None
+        return positive_context_window(row["context_length"] if row else None)

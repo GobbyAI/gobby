@@ -230,6 +230,47 @@ class TestFetchModelsSync:
         assert claude.context_length == 200000
         assert claude.max_completion_tokens == 64000
 
+    @pytest.mark.parametrize(
+        "context_length",
+        [
+            pytest.param(None, id="null"),
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool"),
+            pytest.param("128000", id="string"),
+            pytest.param(128000.0, id="float"),
+        ],
+    )
+    @patch("gobby.llm.model_registry.httpx.get")
+    def test_skips_non_positive_integer_context_lengths(
+        self,
+        mock_get: MagicMock,
+        context_length: object,
+    ) -> None:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "openai/gpt-invalid-window",
+                    "name": "Invalid Window",
+                    "context_length": context_length,
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        assert fetch_models_sync() == []
+
+    @patch("gobby.llm.model_registry.httpx.get")
+    def test_skips_missing_context_length(self, mock_get: MagicMock) -> None:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [{"id": "openai/gpt-missing-window", "name": "Missing Window"}]
+        }
+        mock_get.return_value = mock_response
+
+        assert fetch_models_sync() == []
+
     @patch("gobby.llm.model_registry.httpx.get")
     def test_network_failure_returns_empty(self, mock_get: MagicMock) -> None:
         import httpx as _httpx

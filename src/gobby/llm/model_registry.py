@@ -19,6 +19,8 @@ import httpx
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.llm.context_window_values import positive_context_window
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -97,7 +99,9 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
         top_provider = entry.get("top_provider") or {}
         if not isinstance(top_provider, dict):
             top_provider = {}
-        context_length = entry.get("context_length") or 0
+        context_length = positive_context_window(entry.get("context_length"))
+        if context_length is None:
+            continue
         max_completion = top_provider.get("max_completion_tokens")
 
         models.append(

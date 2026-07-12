@@ -240,6 +240,45 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
             assert resolve_context_window("grok-composer-2.5-fast", provider="grok") == 200_000
 
+    @pytest.mark.parametrize(
+        "registry_value",
+        [
+            pytest.param(None, id="null"),
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool"),
+            pytest.param("128000", id="string"),
+            pytest.param(128000.0, id="float"),
+        ],
+    )
+    def test_invalid_registry_window_defers_to_static_fallback(
+        self,
+        registry_value: object,
+    ) -> None:
+        with patch(
+            "gobby.llm.model_registry.lookup_context_window",
+            return_value=registry_value,
+        ):
+            result = resolve_context_window_with_source(
+                "grok-composer-2.5-fast",
+                provider="grok",
+            )
+
+        assert result is not None
+        assert result.value == 200_000
+        assert result.source == "static_default"
+
+    def test_positive_registry_window_keeps_registry_source(self) -> None:
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=300_000):
+            result = resolve_context_window_with_source(
+                "grok-composer-2.5-fast",
+                provider="grok",
+            )
+
+        assert result is not None
+        assert result.value == 300_000
+        assert result.source == "registry"
+
     def test_family_fallback_scoped_to_claude_providers(self) -> None:
         """Claude family keys stay scoped to Claude-compatible providers."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
