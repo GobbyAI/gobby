@@ -404,10 +404,10 @@ class HookManagerFactory:
     @staticmethod
     def _create_database(config: Any | None) -> HubDatabase:
         database_url = getattr(config, "database_url", None) if config is not None else None
-        if database_url:
+        if database_url and config is not None:
             from gobby.storage.hub.postgres import PostgresHubDatabase
 
-            return PostgresHubDatabase(database_url)
+            return PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
 
         from gobby.storage.hub.runtime import open_runtime_hub_database
 

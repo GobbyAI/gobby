@@ -24,7 +24,7 @@ from gobby.config._loading import (
     _migrate_legacy_config,
     _reject_removed_file_config_sections,
     _resolve_config_values,
-    _restore_bootstrap_backend_selection,
+    _restore_bootstrap_pre_database_settings,
     apply_cli_overrides,
     deep_merge,
     expand_env_vars,
@@ -63,6 +63,7 @@ from gobby.config.persistence import (
     MemoryConfig,
 )
 from gobby.config.pipelines import PipelineConfig
+from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
@@ -122,7 +123,7 @@ class DaemonConfig(BaseModel):
     3. Pydantic defaults (lowest)
 
     Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
-    hub_backend, database_url, and postgres_install_mode) are read from
+    hub_backend, database_url, postgres_install_mode, and postgres_pool) are read from
     ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
@@ -199,6 +200,11 @@ class DaemonConfig(BaseModel):
     postgres_install_mode: Literal["docker"] | None = Field(
         default=None,
         description="PostgreSQL install mode recorded by gobby postgres install.",
+    )
+    postgres_pool: PostgresPoolConfig = Field(
+        default_factory=PostgresPoolConfig,
+        description="PostgreSQL client pool settings selected by bootstrap.yaml.",
+        exclude=True,
     )
 
     # Sub-configs
@@ -581,7 +587,7 @@ def load_config(
                 db_dict = _resolve_config_values(db_dict, secret_resolver)
             # Deep merge: DB values override config file and bootstrap
             deep_merge(config_dict, db_dict)
-        _restore_bootstrap_backend_selection(config_dict, bootstrap)
+        _restore_bootstrap_pre_database_settings(config_dict, bootstrap)
     else:
         # Phase 1: bootstrap.yaml for pre-DB settings (ports and hub connection).
         from gobby.config.bootstrap import load_bootstrap

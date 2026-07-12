@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 import click
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
 from gobby.install.distribution import (
     HomebrewDistributionError,
     is_homebrew_distribution,
@@ -314,7 +315,7 @@ def ensure_daemon_config() -> dict[str, Any]:
     """Ensure bootstrap config exists at ~/.gobby/bootstrap.yaml.
 
     If bootstrap.yaml doesn't exist, copies the shared template.
-    Bootstrap.yaml contains only the 5 pre-DB settings; all other
+    Bootstrap.yaml contains only pre-DB settings; all other
     configuration is managed via the DB (config_store) + Pydantic defaults.
 
     Returns:
@@ -339,6 +340,7 @@ def ensure_daemon_config() -> dict[str, Any]:
         "hub_backend": "postgres",
         "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
         "postgres_install_mode": "docker",
+        "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
         "daemon_port": 60887,
         "bind_host": "localhost",
         "websocket_port": DEFAULT_WEBSOCKET_PORT,

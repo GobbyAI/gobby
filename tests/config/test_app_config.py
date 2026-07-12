@@ -1429,7 +1429,12 @@ class TestLoadConfig:
             bootstrap_file,
             "hub_backend: postgres\n"
             "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
-            "postgres_install_mode: docker\n",
+            "postgres_install_mode: docker\n"
+            "postgres_pool:\n"
+            "  min_size: 4\n"
+            "  max_size: 24\n"
+            "  acquire_timeout_seconds: 7.5\n"
+            "  open_timeout_seconds: 12.5\n",
         )
 
         class DummyConfigStore:
@@ -1438,6 +1443,8 @@ class TestLoadConfig:
                     "hub_backend": "local",
                     "database_url": None,
                     "postgres_install_mode": "bogus",
+                    "postgres_pool.min_size": 99,
+                    "postgres_pool.max_size": 100,
                 }
 
         config = load_config(
@@ -1449,6 +1456,10 @@ class TestLoadConfig:
         assert config.hub_backend == "postgres"
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert config.postgres_install_mode == "docker"
+        assert config.postgres_pool.min_size == 4
+        assert config.postgres_pool.max_size == 24
+        assert config.postgres_pool.acquire_timeout_seconds == 7.5
+        assert config.postgres_pool.open_timeout_seconds == 12.5
 
     def test_load_config_without_resolution_reads_plaintext_dsn(self, temp_dir: Path) -> None:
         """Config readers can inspect bootstrap fields without special credential access."""

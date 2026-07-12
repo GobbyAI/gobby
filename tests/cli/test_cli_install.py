@@ -222,6 +222,12 @@ class TestEnsureDaemonConfig:
         content = yaml.safe_load(bootstrap_path.read_text())
         assert content["daemon_port"] == 60887
         assert content["bind_host"] == "localhost"
+        assert content["postgres_pool"] == {
+            "min_size": 2,
+            "max_size": 20,
+            "acquire_timeout_seconds": 5.0,
+            "open_timeout_seconds": 30.0,
+        }
 
 
 class TestCLIDetectionFunctions:

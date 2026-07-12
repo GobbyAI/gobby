@@ -59,7 +59,12 @@ _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
     "backup_count": "backup_count",
 }
 
-_BOOTSTRAP_BACKEND_KEYS = ("hub_backend", "database_url", "postgres_install_mode")
+_BOOTSTRAP_PRE_DATABASE_KEYS = (
+    "hub_backend",
+    "database_url",
+    "postgres_install_mode",
+    "postgres_pool",
+)
 
 
 def expand_env_vars(
@@ -469,8 +474,8 @@ def _migrate_default_ui_mode_config_store_row(
     return migrated
 
 
-def _restore_bootstrap_backend_selection(config_dict: dict[str, Any], bootstrap: Any) -> None:
-    for key in _BOOTSTRAP_BACKEND_KEYS:
+def _restore_bootstrap_pre_database_settings(config_dict: dict[str, Any], bootstrap: Any) -> None:
+    for key in _BOOTSTRAP_PRE_DATABASE_KEYS:
         config_dict[key] = getattr(bootstrap, key)
 
 

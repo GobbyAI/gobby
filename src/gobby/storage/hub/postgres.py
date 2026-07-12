@@ -21,6 +21,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
+from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
@@ -113,13 +114,18 @@ class PostgresHubDatabase:
 
     dialect: Literal["postgres"] = "postgres"
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
+    ) -> None:
         self._pool = ConnectionPool(
             conninfo=_conninfo_with_utc_session_timezone(dsn),
             open=False,
-            min_size=int(os.getenv("PGPOOL_MIN", "2")),
-            max_size=int(os.getenv("PGPOOL_MAX", "20")),
-            timeout=float(os.getenv("PGPOOL_TIMEOUT", "5")),
+            min_size=pool_config.min_size,
+            max_size=pool_config.max_size,
+            timeout=pool_config.acquire_timeout_seconds,
             kwargs={
                 "application_name": os.getenv("PGAPPNAME", "gobby"),
                 "prepare_threshold": None,
@@ -130,6 +136,7 @@ class PostgresHubDatabase:
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
+        self._pool_open_timeout = pool_config.open_timeout_seconds
         _OPEN_DATABASES.add(self)
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
@@ -152,7 +159,7 @@ class PostgresHubDatabase:
                 return
             open_timeout = timeout
             if open_timeout is None:
-                open_timeout = float(os.getenv("PGPOOL_OPEN_TIMEOUT", "30"))
+                open_timeout = self._pool_open_timeout
             open_pool(wait=wait, timeout=open_timeout)
             self._pool_opened = True
 
