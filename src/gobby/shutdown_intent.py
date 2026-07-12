@@ -165,16 +165,6 @@ def _fsync_parent_directory(directory: Path) -> None:
         os.close(directory_fd)
 
 
-def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
-    """Write a stop marker."""
-    write_shutdown_intent(source, ShutdownIntent.STOP, sender_pid)
-
-
-def write_restart_intent(source: str, sender_pid: int | None = None) -> None:
-    """Write a restart marker."""
-    write_shutdown_intent(source, ShutdownIntent.RESTART, sender_pid)
-
-
 def read_shutdown_intent(
     *,
     consume: bool = True,
