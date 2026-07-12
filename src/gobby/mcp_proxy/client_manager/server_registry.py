@@ -318,6 +318,25 @@ async def update_server(
     return {"success": True, "name": name}
 
 
+async def set_server_description(manager: Any, name: str, description: str) -> None:
+    """Persist a generated description and update the registered config."""
+    config = manager._configs.get(name)
+    if config is None:
+        raise ValueError(f"MCP server '{name}' not found")
+
+    if manager.mcp_db_manager and config.project_id:
+        persisted = await asyncio.to_thread(
+            manager.mcp_db_manager.update_server,
+            name,
+            config.project_id,
+            description=description,
+        )
+        if persisted is None:
+            raise RuntimeError(f"Persisted MCP server '{name}' not found")
+
+    config.description = description
+
+
 async def set_server_enabled(
     manager: Any,
     name: str,

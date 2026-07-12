@@ -156,6 +156,9 @@ class MCPClientManager:
     ) -> dict[str, Any]:
         return await server_registry.update_server(self, name, config, project_id)
 
+    async def set_server_description(self, name: str, description: str) -> None:
+        await server_registry.set_server_description(self, name, description)
+
     async def set_server_enabled(
         self, name: str, enabled: bool, project_id: str | None = None
     ) -> dict[str, Any]:
