@@ -12,6 +12,7 @@ Focuses on MCP client management operations including:
 import asyncio
 import logging
 from datetime import datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -445,7 +446,7 @@ class TestMCPClientManagerAddServer:
     """Tests for add_server method."""
 
     @pytest.mark.asyncio
-    async def test_add_server_success_disabled(self):
+    async def test_add_server_success_disabled(self) -> None:
         """Test adding a disabled server doesn't attempt connection."""
         manager = MCPClientManager(server_configs=[])
 
@@ -466,7 +467,7 @@ class TestMCPClientManagerAddServer:
         assert manager.has_server("new-server")
 
     @pytest.mark.asyncio
-    async def test_add_server_persists_to_database(self):
+    async def test_add_server_persists_to_database(self) -> None:
         """Test add_server persists config to database."""
         mock_db = MagicMock()
         manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
@@ -487,7 +488,7 @@ class TestMCPClientManagerAddServer:
         assert call_kwargs["project_id"] == "test-project"
 
     @pytest.mark.asyncio
-    async def test_add_server_canonicalizes_bundled_server_scope(self):
+    async def test_add_server_canonicalizes_bundled_server_scope(self) -> None:
         """Bundled servers are persisted under the global project scope."""
         mock_db = MagicMock()
         manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
@@ -517,7 +518,7 @@ class TestMCPClientManagerAddServer:
         ]
 
     @pytest.mark.asyncio
-    async def test_add_server_connects_and_lists_tools(self):
+    async def test_add_server_connects_and_lists_tools(self) -> None:
         """Test add_server connects and lists tools for enabled server."""
         manager = MCPClientManager(server_configs=[])
 
@@ -633,7 +634,7 @@ class TestMCPClientManagerAddServer:
     async def test_set_server_enabled_rejects_internal_servers(self) -> None:
         config = MCPServerConfig(
             name="gobby-tasks",
-            project_id=None,
+            project_id="test-project",
             transport="internal",
             enabled=True,
         )
@@ -692,7 +693,7 @@ class TestMCPClientManagerAddServer:
         assert "existing-server" not in manager._tool_schema_cache
 
     @pytest.mark.asyncio
-    async def test_add_server_handles_list_tools_failure(self):
+    async def test_add_server_handles_list_tools_failure(self) -> None:
         """Test add_server handles failure when listing tools."""
         manager = MCPClientManager(server_configs=[])
 
@@ -718,7 +719,7 @@ class TestMCPClientManagerRemoveServer:
     """Tests for remove_server method."""
 
     @pytest.mark.asyncio
-    async def test_remove_server_disconnects_and_cleans_up(self):
+    async def test_remove_server_disconnects_and_cleans_up(self) -> None:
         """Test remove_server disconnects and removes from tracking."""
         config = MCPServerConfig(
             name="test-server",
@@ -748,7 +749,7 @@ class TestMCPClientManagerRemoveServer:
         mock_connection.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_remove_server_uses_config_project_id(self):
+    async def test_remove_server_uses_config_project_id(self) -> None:
         """Test remove_server uses project_id from config if not provided."""
         mock_db = MagicMock()
         config = MCPServerConfig(
@@ -767,7 +768,7 @@ class TestMCPClientManagerRemoveServer:
         assert mock_db.remove_server.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_remove_server_uses_provided_project_id(self):
+    async def test_remove_server_uses_provided_project_id(self) -> None:
         """Test remove_server uses provided project_id over config."""
         mock_db = MagicMock()
         config = MCPServerConfig(
@@ -790,7 +791,7 @@ class TestMCPClientManagerConnectAll:
     """Tests for connect_all method."""
 
     @pytest.mark.asyncio
-    async def test_connect_all_lazy_mode_only_preconnect(self):
+    async def test_connect_all_lazy_mode_only_preconnect(self) -> None:
         """Test connect_all in lazy mode only connects preconnect servers."""
         configs = [
             MCPServerConfig(
@@ -816,7 +817,7 @@ class TestMCPClientManagerConnectAll:
         mock_session = AsyncMock()
         connect_calls = []
 
-        async def mock_connect(config):
+        async def mock_connect(config: MCPServerConfig) -> Any:
             connect_calls.append(config.name)
             return mock_session
 
@@ -830,7 +831,7 @@ class TestMCPClientManagerConnectAll:
         assert results.get("preconnect-server") is True
 
     @pytest.mark.asyncio
-    async def test_connect_all_eager_mode_connects_all(self):
+    async def test_connect_all_eager_mode_connects_all(self) -> None:
         """Test connect_all in eager mode connects all enabled servers."""
         configs = [
             MCPServerConfig(
@@ -855,7 +856,7 @@ class TestMCPClientManagerConnectAll:
         mock_session = AsyncMock()
         connect_calls = []
 
-        async def mock_connect(config):
+        async def mock_connect(config: MCPServerConfig) -> Any:
             connect_calls.append(config.name)
             return mock_session
 
@@ -869,7 +870,7 @@ class TestMCPClientManagerConnectAll:
         assert results.get("server2") is True
 
     @pytest.mark.asyncio
-    async def test_connect_all_handles_connection_errors(self):
+    async def test_connect_all_handles_connection_errors(self) -> None:
         """Test connect_all handles connection errors gracefully."""
         config = MCPServerConfig(
             name="failing-server",
@@ -893,7 +894,7 @@ class TestMCPClientManagerConnectAll:
         assert results["failing-server"] is False
 
     @pytest.mark.asyncio
-    async def test_connect_all_starts_health_monitor(self):
+    async def test_connect_all_starts_health_monitor(self) -> None:
         """Test connect_all starts health monitoring task."""
         manager = MCPClientManager(server_configs=[])
 
@@ -904,7 +905,7 @@ class TestMCPClientManagerConnectAll:
         await manager.disconnect_all()
 
     @pytest.mark.asyncio
-    async def test_connect_all_stores_provided_configs(self):
+    async def test_connect_all_stores_provided_configs(self) -> None:
         """Test connect_all stores configs when provided as argument."""
         manager = MCPClientManager(server_configs=[])
 
@@ -949,7 +950,7 @@ class TestMCPClientManagerEnsureConnected:
     """Tests for ensure_connected method."""
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_server_not_configured(self):
+    async def test_ensure_connected_server_not_configured(self) -> None:
         """Test ensure_connected raises KeyError for unknown server."""
         manager = MCPClientManager(server_configs=[])
 
@@ -957,7 +958,7 @@ class TestMCPClientManagerEnsureConnected:
             await manager.ensure_connected("unknown")
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_disabled_server(self):
+    async def test_ensure_connected_disabled_server(self) -> None:
         """Test ensure_connected raises MCPError for disabled server."""
         config = MCPServerConfig(
             name="disabled-server",
@@ -973,7 +974,7 @@ class TestMCPClientManagerEnsureConnected:
             await manager.ensure_connected("disabled-server")
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_already_connected(self):
+    async def test_ensure_connected_already_connected(self) -> None:
         """Test ensure_connected returns existing session."""
         config = MCPServerConfig(
             name="test-server",
@@ -996,7 +997,7 @@ class TestMCPClientManagerEnsureConnected:
         assert result is mock_session
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_circuit_breaker_open(self):
+    async def test_ensure_connected_circuit_breaker_open(self) -> None:
         """Test ensure_connected raises CircuitBreakerOpen when circuit is open."""
         config = MCPServerConfig(
             name="test-server",
@@ -1009,6 +1010,7 @@ class TestMCPClientManagerEnsureConnected:
 
         # Trip the circuit breaker
         state = manager._lazy_connector.get_state("test-server")
+        assert state is not None
         state.circuit_breaker.state = CircuitState.OPEN
         state.circuit_breaker.last_failure_time = float("inf")  # Never recovers
 
@@ -1016,7 +1018,7 @@ class TestMCPClientManagerEnsureConnected:
             await manager.ensure_connected("test-server")
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_retries_on_failure(self):
+    async def test_ensure_connected_retries_on_failure(self) -> None:
         """Test ensure_connected retries connection on failure."""
         config = MCPServerConfig(
             name="test-server",
@@ -1036,7 +1038,7 @@ class TestMCPClientManagerEnsureConnected:
 
         call_count = 0
 
-        async def failing_connect(cfg):
+        async def failing_connect(cfg: MCPServerConfig) -> None:
             nonlocal call_count
             call_count += 1
             raise Exception("Connection failed")
@@ -1049,7 +1051,7 @@ class TestMCPClientManagerEnsureConnected:
         assert call_count == 3
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_timeout(self):
+    async def test_ensure_connected_timeout(self) -> None:
         """Test ensure_connected handles connection timeout."""
         config = MCPServerConfig(
             name="test-server",
@@ -1064,7 +1066,7 @@ class TestMCPClientManagerEnsureConnected:
             max_connection_retries=0,
         )
 
-        async def slow_connect(cfg):
+        async def slow_connect(cfg: MCPServerConfig) -> None:
             await wait_forever()
 
         with patch.object(manager, "_connect_server", side_effect=slow_connect):
@@ -1076,7 +1078,7 @@ class TestMCPClientManagerConnectServer:
     """Tests for _connect_server internal method."""
 
     @pytest.mark.asyncio
-    async def test_connect_server_success(self):
+    async def test_connect_server_success(self) -> None:
         """Test _connect_server successfully connects."""
         config = MCPServerConfig(
             name="test-server",
@@ -1101,7 +1103,7 @@ class TestMCPClientManagerConnectServer:
         assert manager.health["test-server"].state == ConnectionState.CONNECTED
 
     @pytest.mark.asyncio
-    async def test_connect_server_failure(self):
+    async def test_connect_server_failure(self) -> None:
         """Test _connect_server handles connection failure."""
         config = MCPServerConfig(
             name="test-server",
@@ -1132,7 +1134,7 @@ class TestMCPClientManagerDisconnect:
     """Tests for disconnect_all method."""
 
     @pytest.mark.asyncio
-    async def test_disconnect_all_cancels_health_task(self):
+    async def test_disconnect_all_cancels_health_task(self) -> None:
         """Test disconnect_all cancels health monitoring."""
         manager = MCPClientManager(server_configs=[])
 
@@ -1145,12 +1147,12 @@ class TestMCPClientManagerDisconnect:
         assert manager._health_check_task is None
 
     @pytest.mark.asyncio
-    async def test_disconnect_all_cancels_reconnect_tasks(self):
+    async def test_disconnect_all_cancels_reconnect_tasks(self) -> None:
         """Test disconnect_all cancels pending reconnect tasks."""
         manager = MCPClientManager(server_configs=[])
 
         # Add a mock reconnect task
-        async def slow_reconnect():
+        async def slow_reconnect() -> None:
             await wait_forever()
 
         task = asyncio.create_task(slow_reconnect())
@@ -1161,7 +1163,7 @@ class TestMCPClientManagerDisconnect:
         assert len(manager._reconnect_tasks) == 0
 
     @pytest.mark.asyncio
-    async def test_disconnect_all_tears_down_connecting_transport(self):
+    async def test_disconnect_all_tears_down_connecting_transport(self) -> None:
         """Shutdown must tear down transports that have not reached CONNECTED."""
         manager = MCPClientManager(server_configs=[])
         connection = AsyncMock()
@@ -1179,7 +1181,7 @@ class TestMCPClientManagerDisconnect:
         assert manager.health["connecting-server"].state is ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
-    async def test_disconnect_all_handles_timeout(self):
+    async def test_disconnect_all_handles_timeout(self) -> None:
         """Test disconnect_all handles disconnect timeout."""
         config = MCPServerConfig(
             name="slow-server",
@@ -1193,7 +1195,7 @@ class TestMCPClientManagerDisconnect:
         # Add mock connection that takes too long to disconnect
         mock_connection = AsyncMock()
 
-        async def slow_disconnect():
+        async def slow_disconnect() -> None:
             await wait_forever()
 
         mock_connection.disconnect = slow_disconnect
@@ -1214,7 +1216,7 @@ class TestMCPClientManagerCallTool:
     """Tests for call_tool method."""
 
     @pytest.mark.asyncio
-    async def test_call_tool_success(self):
+    async def test_call_tool_success(self) -> None:
         """Test call_tool executes tool successfully."""
         config = MCPServerConfig(
             name="test-server",
@@ -1241,7 +1243,7 @@ class TestMCPClientManagerCallTool:
         mock_session.call_tool.assert_called_once_with("test-tool", {"arg": "val"})
 
     @pytest.mark.asyncio
-    async def test_call_tool_with_timeout(self):
+    async def test_call_tool_with_timeout(self) -> None:
         """Test call_tool respects timeout."""
         config = MCPServerConfig(
             name="test-server",
@@ -1254,7 +1256,7 @@ class TestMCPClientManagerCallTool:
 
         mock_session = AsyncMock()
 
-        async def slow_tool(*args):
+        async def slow_tool(*args: Any) -> dict[str, str]:
             await wait_forever()
             return {"result": "late"}
 
@@ -1270,7 +1272,7 @@ class TestMCPClientManagerCallTool:
                 await manager.call_tool("test-server", "slow-tool", None, timeout=0.01)
 
     @pytest.mark.asyncio
-    async def test_call_tool_records_metrics(self):
+    async def test_call_tool_records_metrics(self) -> None:
         """Test call_tool records metrics when manager configured."""
         config = MCPServerConfig(
             name="test-server",
@@ -1303,7 +1305,7 @@ class TestMCPClientManagerCallTool:
         assert call_kwargs["success"] is True
 
     @pytest.mark.asyncio
-    async def test_call_tool_records_failure_metrics(self):
+    async def test_call_tool_records_failure_metrics(self) -> None:
         """Test call_tool records failure in metrics."""
         config = MCPServerConfig(
             name="test-server",
@@ -1335,7 +1337,7 @@ class TestMCPClientManagerCallTool:
         assert call_kwargs["success"] is False
 
     @pytest.mark.asyncio
-    async def test_call_tool_handles_metrics_error(self):
+    async def test_call_tool_handles_metrics_error(self) -> None:
         """Test call_tool doesn't fail when metrics recording fails."""
         config = MCPServerConfig(
             name="test-server",
@@ -1370,7 +1372,7 @@ class TestMCPClientManagerReadResource:
     """Tests for read_resource method."""
 
     @pytest.mark.asyncio
-    async def test_read_resource_success(self):
+    async def test_read_resource_success(self) -> None:
         """Test read_resource returns resource content."""
         config = MCPServerConfig(
             name="test-server",
@@ -1395,7 +1397,7 @@ class TestMCPClientManagerReadResource:
         assert result == {"content": "resource data"}
 
     @pytest.mark.asyncio
-    async def test_read_resource_records_failure(self):
+    async def test_read_resource_records_failure(self) -> None:
         """Test read_resource records health failure on error."""
         config = MCPServerConfig(
             name="test-server",
@@ -1425,7 +1427,7 @@ class TestMCPClientManagerListTools:
     """Tests for list_tools method."""
 
     @pytest.mark.asyncio
-    async def test_list_tools_single_server(self):
+    async def test_list_tools_single_server(self) -> None:
         """Test list_tools for a single server."""
         config = MCPServerConfig(
             name="test-server",
@@ -1456,7 +1458,7 @@ class TestMCPClientManagerListTools:
         assert result["test-server"][0]["name"] == "test-tool"
 
     @pytest.mark.asyncio
-    async def test_list_tools_handles_missing_tools_attr(self):
+    async def test_list_tools_handles_missing_tools_attr(self) -> None:
         """Test list_tools handles result without tools attribute."""
         config = MCPServerConfig(
             name="test-server",
@@ -1483,7 +1485,7 @@ class TestMCPClientManagerListTools:
         assert result["test-server"] == []
 
     @pytest.mark.asyncio
-    async def test_list_tools_single_server_propagates_connection_error(self):
+    async def test_list_tools_single_server_propagates_connection_error(self) -> None:
         """A dead single server must not be reported as an empty inventory."""
         config = MCPServerConfig(
             name="test-server",
@@ -1520,7 +1522,7 @@ class TestMCPClientManagerGetToolInputSchema:
     """Tests for get_tool_input_schema method."""
 
     @pytest.mark.asyncio
-    async def test_get_tool_input_schema_success(self):
+    async def test_get_tool_input_schema_success(self) -> None:
         """Test get_tool_input_schema returns schema for tool."""
         config = MCPServerConfig(
             name="test-server",
@@ -1543,7 +1545,7 @@ class TestMCPClientManagerGetToolInputSchema:
         assert result == expected_schema
 
     @pytest.mark.asyncio
-    async def test_get_tool_input_schema_tool_not_found(self):
+    async def test_get_tool_input_schema_tool_not_found(self) -> None:
         """Test get_tool_input_schema raises MCPError when tool not found."""
         config = MCPServerConfig(
             name="test-server",
@@ -1612,7 +1614,7 @@ class TestMCPClientManagerHealthCheck:
     """Tests for health_check_all method."""
 
     @pytest.mark.asyncio
-    async def test_health_check_all_with_connections(self):
+    async def test_health_check_all_with_connections(self) -> None:
         """Test health_check_all checks all connected servers."""
         config = MCPServerConfig(
             name="test-server",
@@ -1638,7 +1640,7 @@ class TestMCPClientManagerHealthCheck:
         mock_connection.health_check.assert_called_once_with(timeout=5.0)
 
     @pytest.mark.asyncio
-    async def test_health_check_all_records_failures(self):
+    async def test_health_check_all_records_failures(self) -> None:
         """Test health_check_all records failures."""
         config = MCPServerConfig(
             name="test-server",
@@ -1668,7 +1670,7 @@ class TestMCPClientManagerReconnect:
     """Tests for _reconnect method."""
 
     @pytest.mark.asyncio
-    async def test_reconnect_success(self):
+    async def test_reconnect_success(self) -> None:
         """Test _reconnect disconnects old connection before reconnecting."""
         config = MCPServerConfig(
             name="test-server",
@@ -1697,7 +1699,7 @@ class TestMCPClientManagerReconnect:
         assert old_conn.disconnect.await_args is not None
 
     @pytest.mark.asyncio
-    async def test_reconnect_no_old_connection(self):
+    async def test_reconnect_no_old_connection(self) -> None:
         """Test _reconnect works when no old connection exists."""
         config = MCPServerConfig(
             name="test-server",
@@ -1716,7 +1718,7 @@ class TestMCPClientManagerReconnect:
         assert mock_connect.await_args is not None
 
     @pytest.mark.asyncio
-    async def test_reconnect_old_disconnect_failure_does_not_block(self):
+    async def test_reconnect_old_disconnect_failure_does_not_block(self) -> None:
         """Test _reconnect proceeds even if old connection disconnect fails."""
         config = MCPServerConfig(
             name="test-server",
@@ -1739,16 +1741,15 @@ class TestMCPClientManagerReconnect:
         assert mock_connect.await_args is not None
 
     @pytest.mark.asyncio
-    async def test_reconnect_handles_unknown_server(self):
+    async def test_reconnect_handles_unknown_server(self) -> None:
         """Test _reconnect handles unknown server gracefully."""
         manager = MCPClientManager(server_configs=[])
 
-        result = await manager._reconnect("unknown-server")
-        assert result is None
+        await manager._reconnect("unknown-server")
         assert "unknown-server" not in manager._connections
 
     @pytest.mark.asyncio
-    async def test_reconnect_handles_failure(self):
+    async def test_reconnect_handles_failure(self) -> None:
         """Test _reconnect handles connection failure."""
         config = MCPServerConfig(
             name="test-server",
@@ -1764,12 +1765,11 @@ class TestMCPClientManagerReconnect:
             "_connect_server",
             side_effect=Exception("Reconnect failed"),
         ):
-            result = await manager._reconnect("test-server")
-            assert result is None
+            await manager._reconnect("test-server")
             assert "test-server" not in manager._connections
 
     @pytest.mark.asyncio
-    async def test_reconnect_and_ensure_connected_share_one_connect(self):
+    async def test_reconnect_and_ensure_connected_share_one_connect(self) -> None:
         """Concurrent recovery paths serialize connection startup."""
         config = MCPServerConfig(
             name="test-server",
@@ -1791,14 +1791,14 @@ class TestMCPClientManagerReconnect:
 
         original_ensure_connected = manager.ensure_connected
 
-        async def tracked_ensure_connected(server_name):
+        async def tracked_ensure_connected(server_name: str) -> Any:
             nonlocal ensure_calls
             ensure_calls += 1
             if ensure_calls == 2:
                 both_ensure_calls_started.set()
             return await original_ensure_connected(server_name)
 
-        async def controlled_connect(_config):
+        async def controlled_connect(_config: MCPServerConfig) -> Any:
             nonlocal connect_calls
             connect_calls += 1
             connect_started.set()
@@ -1825,7 +1825,7 @@ class TestMCPClientManagerReconnect:
         assert connect_calls == 1
 
     @pytest.mark.asyncio
-    async def test_reconnect_applies_connection_timeout(self):
+    async def test_reconnect_applies_connection_timeout(self) -> None:
         """A wedged reconnect returns after the configured connect timeout."""
         config = MCPServerConfig(
             name="test-server",
@@ -1840,16 +1840,15 @@ class TestMCPClientManagerReconnect:
         )
         connect_cancelled = asyncio.Event()
 
-        async def wedged_connect(_config):
+        async def wedged_connect(_config: MCPServerConfig) -> None:
             try:
                 await asyncio.Event().wait()
             finally:
                 connect_cancelled.set()
 
         with patch.object(manager, "_connect_server", side_effect=wedged_connect):
-            result = await asyncio.wait_for(manager._reconnect("test-server"), timeout=0.2)
+            await asyncio.wait_for(manager._reconnect("test-server"), timeout=0.2)
 
-        assert result is None
         assert connect_cancelled.is_set()
 
 
@@ -1948,7 +1947,7 @@ class TestMCPClientManagerMonitorHealth:
     """Tests for _monitor_health background task."""
 
     @pytest.mark.asyncio
-    async def test_monitor_health_checks_connections(self):
+    async def test_monitor_health_checks_connections(self) -> None:
         """Test _monitor_health performs health checks."""
         config = MCPServerConfig(
             name="test-server",
@@ -1983,7 +1982,7 @@ class TestMCPClientManagerMonitorHealth:
         assert mock_connection.health_check.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_monitor_health_triggers_reconnect_on_unhealthy(self):
+    async def test_monitor_health_triggers_reconnect_on_unhealthy(self) -> None:
         """Test _monitor_health triggers reconnect for unhealthy servers."""
         config = MCPServerConfig(
             name="test-server",
@@ -2012,7 +2011,7 @@ class TestMCPClientManagerMonitorHealth:
         reconnect_called = asyncio.Event()
         original_reconnect = manager._reconnect
 
-        async def mock_reconnect(name):
+        async def mock_reconnect(name: str) -> None:
             reconnect_called.set()
             return await original_reconnect(name)
 
@@ -2034,7 +2033,9 @@ class TestMCPClientManagerMonitorHealth:
             assert mock_connection.health_check.await_count >= 1
 
     @pytest.mark.asyncio
-    async def test_monitor_health_keeps_transient_failure_below_warning(self, caplog):
+    async def test_monitor_health_keeps_transient_failure_below_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Transient health failures are tracked without warning-level log noise."""
         config = MCPServerConfig(
             name="test-server",
@@ -2064,7 +2065,9 @@ class TestMCPClientManagerMonitorHealth:
         assert "Health check failed for test-server" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_monitor_health_warns_on_unhealthy_transition(self, caplog):
+    async def test_monitor_health_warns_on_unhealthy_transition(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A server emits one warning when it crosses into unhealthy state."""
         config = MCPServerConfig(
             name="test-server",
@@ -2099,7 +2102,9 @@ class TestMCPClientManagerMonitorHealth:
         assert "Health check failed for test-server" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_monitor_health_debugs_repeated_unhealthy_failure_with_context(self, caplog):
+    async def test_monitor_health_debugs_repeated_unhealthy_failure_with_context(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Repeated unhealthy health failures are logged at debug with context."""
         config = MCPServerConfig(
             name="test-server",
@@ -2137,12 +2142,13 @@ class TestMCPClientManagerMonitorHealth:
             and record.message == "Health check failed for test-server"
         ]
         assert debug_records
-        assert debug_records[0].server_name == "test-server"
-        assert debug_records[0].previous_health == HealthState.UNHEALTHY.value
-        assert debug_records[0].consecutive_failures == 6
+        record_context = vars(debug_records[0])
+        assert record_context["server_name"] == "test-server"
+        assert record_context["previous_health"] == HealthState.UNHEALTHY.value
+        assert record_context["consecutive_failures"] == 6
 
     @pytest.mark.asyncio
-    async def test_monitor_health_continues_when_no_connections(self):
+    async def test_monitor_health_continues_when_no_connections(self) -> None:
         """Test _monitor_health continues loop when no connected servers."""
         manager = MCPClientManager(
             server_configs=[],
@@ -2167,7 +2173,7 @@ class TestMCPClientManagerMonitorHealth:
         )
 
     @pytest.mark.asyncio
-    async def test_monitor_health_handles_exceptions(self):
+    async def test_monitor_health_handles_exceptions(self) -> None:
         """Test _monitor_health handles exceptions in loop."""
         config = MCPServerConfig(
             name="test-server",
@@ -2206,7 +2212,7 @@ class TestMCPClientManagerConnectAllEager:
     """Tests for connect_all in eager mode with disabled servers."""
 
     @pytest.mark.asyncio
-    async def test_connect_all_eager_skips_disabled(self):
+    async def test_connect_all_eager_skips_disabled(self) -> None:
         """Test connect_all in eager mode skips disabled servers."""
         configs = [
             MCPServerConfig(
@@ -2232,7 +2238,7 @@ class TestMCPClientManagerConnectAllEager:
 
         connect_calls = []
 
-        async def mock_connect(config):
+        async def mock_connect(config: MCPServerConfig) -> Any:
             connect_calls.append(config.name)
             return MagicMock()
 
@@ -2251,7 +2257,7 @@ class TestMCPClientManagerDisconnectErrors:
     """Tests for disconnect error handling."""
 
     @pytest.mark.asyncio
-    async def test_disconnect_all_handles_disconnect_error(self):
+    async def test_disconnect_all_handles_disconnect_error(self) -> None:
         """Test disconnect_all handles errors during disconnect."""
         config = MCPServerConfig(
             name="error-server",
@@ -2281,7 +2287,7 @@ class TestMCPClientManagerCircuitBreakerEdgeCases:
     """Tests for circuit breaker edge cases."""
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_circuit_open_no_failure_time(self):
+    async def test_ensure_connected_circuit_open_no_failure_time(self) -> None:
         """Test circuit breaker open without last_failure_time raises MCPError."""
         config = MCPServerConfig(
             name="test-server",
@@ -2295,6 +2301,7 @@ class TestMCPClientManagerCircuitBreakerEdgeCases:
         # Set circuit to open without failure time and mock can_attempt_connection
         # to return False (simulating open circuit breaker)
         state = manager._lazy_connector.get_state("test-server")
+        assert state is not None
         state.circuit_breaker.state = CircuitState.OPEN
         state.circuit_breaker.last_failure_time = None
 
@@ -2312,7 +2319,7 @@ class TestMCPClientManagerConcurrentConnection:
     """Tests for concurrent connection handling."""
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_double_check_after_lock(self):
+    async def test_ensure_connected_double_check_after_lock(self) -> None:
         """Test ensure_connected returns session if connected while waiting for lock."""
         config = MCPServerConfig(
             name="test-server",
@@ -2327,7 +2334,7 @@ class TestMCPClientManagerConcurrentConnection:
         connect_started = asyncio.Event()
         connection_established = asyncio.Event()
 
-        async def simulate_concurrent_connect():
+        async def simulate_concurrent_connect() -> None:
             await connect_started.wait()
             # Simulate another coroutine connecting while we wait
             mock_connection = MagicMock()
@@ -2336,7 +2343,7 @@ class TestMCPClientManagerConcurrentConnection:
             manager._connections["test-server"] = mock_connection
             connection_established.set()
 
-        async def slow_connect(cfg):
+        async def slow_connect(cfg: MCPServerConfig) -> Any:
             # Wait for "concurrent" connection to complete
             connect_started.set()
             await connection_established.wait()
@@ -2356,7 +2363,7 @@ class TestMCPClientManagerNullSession:
     """Tests for null session handling."""
 
     @pytest.mark.asyncio
-    async def test_ensure_connected_null_session(self):
+    async def test_ensure_connected_null_session(self) -> None:
         """Test ensure_connected raises when connection returns None."""
         config = MCPServerConfig(
             name="test-server",
@@ -2380,7 +2387,7 @@ class TestMCPClientManagerGetClientSession:
     """Tests for get_client_session method."""
 
     @pytest.mark.asyncio
-    async def test_get_client_session_delegates_to_ensure_connected(self):
+    async def test_get_client_session_delegates_to_ensure_connected(self) -> None:
         """Test get_client_session calls ensure_connected."""
         config = MCPServerConfig(
             name="test-server",
@@ -2404,7 +2411,7 @@ class TestMCPClientManagerCallToolMetricsEdgeCases:
     """Tests for call_tool metrics edge cases."""
 
     @pytest.mark.asyncio
-    async def test_call_tool_no_metrics_recorded_without_project_id(self):
+    async def test_call_tool_no_metrics_recorded_without_project_id(self) -> None:
         """Test call_tool doesn't record metrics when no project_id available."""
         config = MCPServerConfig(
             name="test-server",
@@ -2436,7 +2443,7 @@ class TestMCPClientManagerCallToolMetricsEdgeCases:
         mock_metrics.record_call.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_call_tool_uses_config_project_id(self):
+    async def test_call_tool_uses_config_project_id(self) -> None:
         """Test call_tool uses config's project_id for metrics."""
         config = MCPServerConfig(
             name="test-server",
@@ -2472,7 +2479,7 @@ class TestMCPClientManagerListToolsAllServers:
     """Tests for list_tools with all servers."""
 
     @pytest.mark.asyncio
-    async def test_list_tools_all_connected_servers(self):
+    async def test_list_tools_all_connected_servers(self) -> None:
         """Test list_tools lists tools from all connected servers."""
         configs = [
             MCPServerConfig(
