@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
+TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
 
 
 # ---------------------------------------------------------------------------
@@ -102,15 +104,15 @@ def _make_stage_state(
 
 @pytest.fixture(autouse=True)
 def _stub_project_manager() -> Iterator[None]:
-    """Resolve no project during repo-path resolution.
+    """Resolve the test checkout during repo-path resolution.
 
     RegistryContext.__post_init__ builds a real LocalProjectManager over the
     MagicMock db used here, so close_task's resolve_task_repo_path would parse
     MagicMock rows as datetimes (fromisoformat TypeError). Stubbing the class
-    makes project lookup return None and repo-path resolution fall back to cwd.
+    provides the explicit repository required by close_task Git operations.
     """
     with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm:
-        mock_pm.return_value.get.return_value = None
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
         mock_pm.return_value.list.return_value = []
         yield
 
