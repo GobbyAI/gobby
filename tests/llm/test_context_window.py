@@ -12,11 +12,17 @@ Note: SDK-reported contextWindow (2nd arg) is deprecated and ignored.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
-from gobby.llm.context_windows import coerce_context_length, resolve_context_window
+from gobby.llm.context_windows import (
+    coerce_context_length,
+    resolve_context_window,
+    resolve_context_window_with_source,
+)
 from gobby.servers.provider_models import ProviderModelCatalog
 
 pytestmark = pytest.mark.unit
@@ -46,6 +52,19 @@ def _mock_lookup(model: str) -> int | None:
             best_len = len(key)
             best_val = val
     return best_val
+
+
+def test_db_failure_degrades_to_static_context_window() -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = psycopg.OperationalError("database unavailable")
+    app_context = SimpleNamespace(database=db, provider_model_catalog=None)
+
+    with patch("gobby.app_context.get_app_context", return_value=app_context):
+        result = resolve_context_window_with_source("gpt-5.4")
+
+    assert result is not None
+    assert result.value == 258_400
+    assert result.source == "static_default"
 
 
 @pytest.mark.parametrize(

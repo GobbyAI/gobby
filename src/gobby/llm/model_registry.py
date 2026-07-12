@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
+import psycopg
+from psycopg_pool import PoolTimeout
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -37,6 +39,7 @@ PROVIDER_MAP: dict[str, str] = {
 
 # Request timeout — startup shouldn't block forever on a slow network
 _FETCH_TIMEOUT = 10.0
+_DATABASE_LOOKUP_ERRORS = (psycopg.Error, PoolTimeout)
 
 
 @dataclass(frozen=True)
@@ -121,20 +124,36 @@ def lookup_context_window(model: str, db: HubDatabase | None = None) -> int | No
         from gobby.storage.model_costs import ModelCostStore
 
         store = ModelCostStore(db)
-        return store.get_context_window(model)
+        try:
+            return store.get_context_window(model)
+        except _DATABASE_LOOKUP_ERRORS as exc:
+            logger.warning(
+                "Catalog context-window database lookup failed for model %s: %s",
+                model,
+                exc,
+            )
+            return None
 
     # Fallback: try to get DB from app context
     try:
         from gobby.app_context import get_app_context
+    except ImportError as exc:
+        logger.debug("App context fallback failed for model %s: %s", model, exc)
+        return None
 
-        ctx = get_app_context()
-        if ctx and ctx.database:
-            from gobby.storage.model_costs import ModelCostStore
+    ctx = get_app_context()
+    if ctx and ctx.database:
+        from gobby.storage.model_costs import ModelCostStore
 
-            store = ModelCostStore(ctx.database)
+        store = ModelCostStore(ctx.database)
+        try:
             return store.get_context_window(model)
-    except (ImportError, AttributeError) as e:
-        logger.debug(f"App context fallback failed for model {model}: {e}")
+        except _DATABASE_LOOKUP_ERRORS as exc:
+            logger.warning(
+                "App-context context-window database lookup failed for model %s: %s",
+                model,
+                exc,
+            )
 
     return None
 

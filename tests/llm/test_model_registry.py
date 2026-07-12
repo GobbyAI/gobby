@@ -2,19 +2,77 @@
 
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
+from psycopg_pool import PoolTimeout
 
 from gobby.llm.model_registry import (
     ModelInfo,
     _provider_for_model,
     fetch_models_sync,
     group_by_provider,
+    lookup_context_window,
     strip_provider_prefix,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "db_error",
+    [psycopg.OperationalError("database unavailable"), PoolTimeout("pool unavailable")],
+)
+def test_lookup_context_window_catalog_db_errors_degrade(
+    db_error: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = db_error
+
+    with caplog.at_level(logging.WARNING, logger="gobby.llm.model_registry"):
+        result = lookup_context_window("openai/gpt-5.4", db=db)
+
+    assert result is None
+    assert "Catalog context-window database lookup failed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "db_error",
+    [psycopg.OperationalError("database unavailable"), PoolTimeout("pool unavailable")],
+)
+def test_lookup_context_window_app_context_db_errors_degrade(
+    db_error: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = db_error
+    app_context = SimpleNamespace(database=db)
+
+    with (
+        patch("gobby.app_context.get_app_context", return_value=app_context),
+        caplog.at_level(logging.WARNING, logger="gobby.llm.model_registry"),
+    ):
+        result = lookup_context_window("openai/gpt-5.4")
+
+    assert result is None
+    assert "App-context context-window database lookup failed" in caplog.text
+
+
+def test_lookup_context_window_does_not_swallow_app_context_invariant_errors() -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = AttributeError("invalid row invariant")
+    app_context = SimpleNamespace(database=db)
+
+    with (
+        patch("gobby.app_context.get_app_context", return_value=app_context),
+        pytest.raises(AttributeError, match="invalid row invariant"),
+    ):
+        lookup_context_window("openai/gpt-5.4")
+
 
 # -- Fixtures ----------------------------------------------------------------
 
