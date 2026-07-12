@@ -19,6 +19,7 @@ class _ToolInventoryManager(Protocol):
     _configs: dict[str, Any]
     _lazy_connector: Any
     _tool_schema_cache: dict[str, list[dict[str, Any]]]
+    _tool_cache_dirty: set[str]
     health: dict[str, Any]
     mcp_db_manager: Any | None
 
@@ -142,7 +143,10 @@ def cache_discovered_tools(
     tools: list[dict[str, Any]],
 ) -> None:
     """Cache discovered full tool schemas and update config summaries."""
-    if manager._tool_schema_cache.get(server_name) == tools:
+    if (
+        manager._tool_schema_cache.get(server_name) == tools
+        and server_name not in manager._tool_cache_dirty
+    ):
         return
     manager._tool_schema_cache[server_name] = tools
 
@@ -157,7 +161,9 @@ def cache_discovered_tools(
         ]
         if manager.mcp_db_manager and config.project_id:
             manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
+        manager._tool_cache_dirty.discard(server_name)
     except Exception as exc:
+        manager._tool_cache_dirty.add(server_name)
         logging.getLogger("gobby.mcp.manager").debug(
             "Failed to cache tools for %s: %s",
             server_name,

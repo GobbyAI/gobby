@@ -1688,6 +1688,26 @@ class TestMCPClientManagerGetToolInputSchema:
         manager.cache_discovered_tools("test-server", changed_tools)
         assert mock_db.cache_tools.call_count == 2
 
+    def test_cache_discovered_tools_retries_transient_persistence_failure(self) -> None:
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        mock_db = MagicMock()
+        mock_db.cache_tools.side_effect = [RuntimeError("db unavailable"), None]
+        manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
+        tools = [{"name": "test-tool", "inputSchema": {"type": "object"}}]
+
+        manager.cache_discovered_tools("test-server", tools)
+
+        assert manager._tool_schema_cache["test-server"] == tools
+        manager.cache_discovered_tools("test-server", [dict(tools[0])])
+        manager.cache_discovered_tools("test-server", [dict(tools[0])])
+
+        assert mock_db.cache_tools.call_count == 2
+
     @pytest.mark.asyncio
     async def test_disconnect_server_invalidates_schema_cache(self) -> None:
         config = MCPServerConfig(
