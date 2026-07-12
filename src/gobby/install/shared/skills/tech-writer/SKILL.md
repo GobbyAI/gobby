@@ -88,9 +88,10 @@ honest. Apply the eight-point checklist established by the audit epic:
 2. No references to retired concepts. Maintain a project-specific deny-list
    when refactors retire terms — for Gobby today: `orchestrator`, `conductor`,
    `developer` agent, `pipeline-worker`, `terminal` agent mode (renamed
-   `interactive`), `list_pipeline_executions`, `search_pipeline_executions`
-   (renamed `pipeline_runs`), `lobster`, `mem0`, `tool-compression`,
-   `workflow-actions`.
+   `interactive`), `lobster`, `mem0`, `tool-compression`,
+   `workflow-actions`. (Note: `list_pipeline_executions` and
+   `search_pipeline_executions` are live gobby-workflows tools — they were
+   never renamed; do not flag them.)
 3. All inter-guide links resolve to existing files in `docs/guides/`.
 4. Code blocks showing CLI/MCP/HTTP usage match current signatures (no
    positional/keyword drift). Re-fetch tool schemas with

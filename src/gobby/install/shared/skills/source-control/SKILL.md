@@ -91,7 +91,7 @@ git commit -m "[<project_name>-#42] feat: implement feature"
 
 ## Part 2: Release PR Workflow
 
-When you're ready to cut a release from a working branch (e.g., `0.3.1`):
+When you're ready to cut a release from a working branch (e.g., `0.5.0`):
 
 ### Step 1: Version Bump
 
