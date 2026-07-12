@@ -405,6 +405,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                             external_id=external_id,
                             source=cli_source,
                             session_id=gobby_session_id_from_env,
+                            machine_id=existing_session.machine_id,
+                            project_id=existing_session.project_id,
                         )
                     return cast(
                         HookResponse,
@@ -438,7 +440,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if project_id is None:
         return HookResponse(decision="allow")
 
-    machine_id = handler._get_machine_id()
+    machine_id = event.machine_id or handler._get_machine_id()
 
     handler.logger.debug(
         f"SESSION_START: cli={cli_source}, project={project_id}, source={session_source}"
@@ -747,11 +749,13 @@ def handle_pre_created_session(
             external_id=external_id,
             source=cli_source,
             session_id=existing_session.id,
+            machine_id=session_obj.machine_id,
+            project_id=session_obj.project_id,
         )
 
     session_id = session_obj.id
     parent_session_id = session_obj.parent_session_id
-    machine_id = handler._get_machine_id()
+    machine_id = event.machine_id or session_obj.machine_id or handler._get_machine_id()
 
     if transcript_path and handler._session_coordinator:
         try:

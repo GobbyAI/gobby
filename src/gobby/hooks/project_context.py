@@ -193,7 +193,12 @@ def _project_id_from_existing_session(
         return None
 
     try:
-        cached_session_id = session_manager.get_session_id(event.session_id, event.source.value)
+        cached_session_id = session_manager.get_session_id(
+            event.session_id,
+            event.source.value,
+            machine_id=event.machine_id,
+            project_id=event.project_id,
+        )
     except Exception as exc:
         if logger:
             logger.debug("Failed to read hook session cache for %s: %s", event.session_id, exc)

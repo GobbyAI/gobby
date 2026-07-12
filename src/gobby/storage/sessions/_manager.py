@@ -16,7 +16,11 @@ from ._discovery import _DiscoveryMixin
 from ._field_update import _FieldUpdateMixin
 from ._lifecycle_delegate import _LifecycleDelegateMixin
 from ._query import _QueryMixin
-from ._registration_cache import _RegistrationCacheMixin
+from ._registration_cache import (
+    SessionMappingKey,
+    _put_session_mapping,
+    _RegistrationCacheMixin,
+)
 from ._renumber import _RenumberMixin
 from ._terminal import _TerminalMixin
 from ._title_defaults import PROVISIONAL_TITLE_SOURCE
@@ -51,7 +55,8 @@ class SessionManager(
     _config: DaemonConfig | None
     _title_listeners: list[TitleChangeCallback]
     _session_change_listeners: list[SessionChangeCallback]
-    _session_mapping: dict[tuple[str, str], str]
+    _session_mapping: dict[SessionMappingKey, str]
+    _session_mapping_timestamps: dict[SessionMappingKey, float]
     _session_mapping_lock: threading.Lock
     _session_metadata: dict[str, dict[str, Any]]
     _session_metadata_lock: threading.Lock
@@ -88,7 +93,8 @@ class SessionManager(
         self._config = config
         self._title_listeners: list[TitleChangeCallback] = []
         self._session_change_listeners: list[SessionChangeCallback] = []
-        self._session_mapping: dict[tuple[str, str], str] = {}
+        self._session_mapping: dict[SessionMappingKey, str] = {}
+        self._session_mapping_timestamps: dict[SessionMappingKey, float] = {}
         self._session_mapping_lock = threading.Lock()
         self._session_metadata: dict[str, dict[str, Any]] = {}
         self._session_metadata_lock = threading.Lock()
@@ -114,8 +120,14 @@ class SessionManager(
         is_local: bool,
         sandbox_enabled: bool | None,
     ) -> None:
-        with self._session_mapping_lock:
-            self._session_mapping[(external_id, source)] = session_id
+        _put_session_mapping(
+            self,
+            external_id=external_id,
+            source=source,
+            session_id=session_id,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
 
         with self._session_metadata_lock:
             self._session_metadata[session_id] = {
