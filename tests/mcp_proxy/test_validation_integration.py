@@ -1,5 +1,7 @@
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +16,10 @@ from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
+
+_TEST_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
+_TEST_TIMESTAMP_TEXT = _TEST_TIMESTAMP.isoformat()
+_StageState = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
 
 
 def test_format_verification_evidence_context_includes_structured_successes() -> None:
@@ -63,7 +69,7 @@ def repo_path(tmp_path: Path) -> str:
     return str(repo)
 
 
-def _stage(task_id: str, state: str) -> StageState:
+def _stage(task_id: str, state: _StageState) -> StageState:
     return StageState(
         task_id=task_id,
         stage_name="development",
@@ -71,7 +77,7 @@ def _stage(task_id: str, state: str) -> StageState:
         state=state,
         review_policy="required",
         reviewer_agent=None,
-        entered_at="now",
+        entered_at=_TEST_TIMESTAMP_TEXT,
         entered_by_session_id=None,
         completed_at=None,
         completed_by_session_id=None,
@@ -82,11 +88,11 @@ def _stage(task_id: str, state: str) -> StageState:
         max_review_rounds=None,
         artifact_refs=None,
         notes=None,
-        updated_at="now",
+        updated_at=_TEST_TIMESTAMP,
     )
 
 
-def _task(**kwargs) -> Task:
+def _task(**kwargs: Any) -> Task:
     status = kwargs.pop("status", "open")
     task_id = kwargs["id"]
     if status == "closed":
@@ -96,6 +102,9 @@ def _task(**kwargs) -> Task:
         kwargs.setdefault("escalated_at", "now")
     elif status in {"ready", "in_progress", "needs_review", "review_approved"}:
         kwargs.setdefault("stages", (_stage(task_id, status),))
+    for field_name in ("created_at", "updated_at", "closed_at", "escalated_at"):
+        if kwargs.get(field_name) == "now":
+            kwargs[field_name] = _TEST_TIMESTAMP
     return Task(**kwargs)
 
 
@@ -103,13 +112,13 @@ def _task(**kwargs) -> Task:
 # every test in this module; tests that need to exercise the guard itself live
 # in tests/mcp_proxy/tools/test_task_lifecycle_coverage.py.
 @pytest.fixture(autouse=True)
-def _seed_session_context() -> Generator:
+def _seed_session_context() -> Generator[None]:
     with session_context_for_test("validation-integration-session"):
         yield
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()  # Needed for dep_manager init
     conn = MagicMock()
@@ -119,13 +128,15 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def mock_task_validator():
+def mock_task_validator() -> AsyncMock:
     validator = AsyncMock(spec=TaskValidator)
     return validator
 
 
 @pytest.fixture
-def registry_with_patches(mock_task_manager, mock_task_validator):
+def registry_with_patches(
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock
+) -> Generator[Any]:
     """Create a validation registry directly (validation tools are internal-only, not on gobby-tasks)."""
     with patch(
         "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
@@ -141,8 +152,10 @@ def registry_with_patches(mock_task_manager, mock_task_validator):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_tool_success(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     # Setup
     task = _task(
         id="t1",
@@ -176,8 +189,10 @@ async def test_validate_task_tool_success(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_tool_failure_retry(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     # Setup
     task = _task(
         id="t1",
@@ -236,8 +251,10 @@ async def test_validate_task_tool_failure_retry(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_tool_failure_max_retries(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     # Setup -> already failed 2 times (max is 3, so failing one more time makes 3 -> failed?)
 
     task = _task(
@@ -289,8 +306,10 @@ async def test_validate_task_tool_failure_max_retries(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_parent_task_all_children_closed(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test that parent task validates successfully when all children are closed."""
     parent_task = _task(
         id="parent1",
@@ -341,8 +360,10 @@ async def test_validate_parent_task_all_children_closed(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_parent_task_some_children_open(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test that parent task validation fails when some children are still open."""
     parent_task = _task(
         id="parent1",
@@ -411,8 +432,10 @@ async def test_validate_parent_task_some_children_open(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_llm_returns_pending(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test handling when LLM validation returns pending status (error case)."""
     task = _task(
         id="t1",
@@ -450,8 +473,10 @@ async def test_validate_task_llm_returns_pending(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_llm_exception(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test handling when LLM throws an exception during validation."""
     task = _task(
         id="t1",
@@ -485,8 +510,10 @@ async def test_validate_task_llm_exception(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_failure_creates_fix_subtask_with_correct_fields(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test that validation failure creates a properly configured fix subtask."""
     task = _task(
         id="t1",
@@ -548,8 +575,10 @@ async def test_validate_task_failure_creates_fix_subtask_with_correct_fields(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_second_failure_creates_second_subtask(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test that second validation failure also creates a fix subtask."""
     task = _task(
         id="t1",
@@ -600,8 +629,10 @@ async def test_validate_task_second_failure_creates_second_subtask(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_exactly_at_max_retries(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test behavior when validation fails exactly at max retries (3)."""
     task = _task(
         id="t1",
@@ -646,8 +677,10 @@ async def test_validate_task_exactly_at_max_retries(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_beyond_max_retries(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test behavior when task already has max failures and fails again."""
     task = _task(
         id="t1",
@@ -696,8 +729,8 @@ async def test_validate_task_beyond_max_retries(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_without_changes_summary_uses_smart_context(
-    mock_task_manager, mock_task_validator
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock
+) -> None:
     """Test that validation without changes_summary uses smart context gathering."""
     task = _task(
         id="t1",
@@ -744,8 +777,8 @@ async def test_validate_task_without_changes_summary_uses_smart_context(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_validate_task_no_context_available_raises_error(
-    mock_task_manager, mock_task_validator
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock
+) -> None:
     """Test that validation fails gracefully when no context is available."""
     task = _task(
         id="t1",
@@ -790,8 +823,10 @@ async def test_validate_task_no_context_available_raises_error(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_reset_validation_count(
-    mock_task_manager, mock_task_validator, registry_with_patches
-):
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    registry_with_patches: Any,
+) -> None:
     """Test resetting validation failure count."""
     task = _task(
         id="t1",
@@ -832,8 +867,8 @@ async def test_reset_validation_count(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_uses_commit_diff_when_commits_linked(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     """Test that close_task uses commit-based diff when task has linked commits."""
     task = _task(
         id="t1",
@@ -996,8 +1031,8 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_autolinks_claim_window_before_validation(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     """close_task(commit_sha=last) validates the resolved linked task commit set."""
     task = _task(
         id="t1",
@@ -1018,17 +1053,19 @@ async def test_close_task_autolinks_claim_window_before_validation(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
-    def link_commit_side_effect(task_id, commit_sha, cwd=None):
+    def link_commit_side_effect(task_id: str, commit_sha: str, cwd: str | None = None) -> Task:
         assert task_id == "t1"
         assert cwd == repo_path
+        assert task.commits is not None
         task.commits.append(commit_sha)
         return task
 
-    def autolink_side_effect(*args, **kwargs):
+    def autolink_side_effect(*args: Any, **kwargs: Any) -> None:
         assert kwargs["task_id"] == "t1"
         assert kwargs["since"] == "2026-05-01T00:00:00+00:00"
         assert kwargs["cwd"] == repo_path
         assert kwargs["project_id"] == "p1"
+        assert task.commits is not None
         task.commits.insert(1, "a2")
 
     from gobby.tasks.commits import TaskDiffResult
@@ -1062,7 +1099,13 @@ async def test_close_task_autolinks_claim_window_before_validation(
         mock_task_manager.link_commit.side_effect = link_commit_side_effect
         mock_autolink.side_effect = autolink_side_effect
 
-        def diff_side_effect(task_id, task_manager, include_uncommitted, cwd):
+        def diff_side_effect(
+            task_id: str,
+            task_manager: MagicMock,
+            include_uncommitted: bool,
+            cwd: str,
+        ) -> TaskDiffResult:
+            assert task.commits is not None
             assert task.commits == ["a1", "a2", "a3"]
             assert include_uncommitted is False
             assert cwd == repo_path
@@ -1108,8 +1151,8 @@ async def test_close_task_autolinks_claim_window_before_validation(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_skip_validation_with_evidence_stores_override(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     task = _task(
         id="t1",
         title="Task with audited override",
@@ -1179,8 +1222,8 @@ async def test_close_task_skip_validation_with_evidence_stores_override(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_skip_validation_fails_without_evidence(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     task = _task(
         id="t1",
         title="Task missing evidence",
@@ -1237,8 +1280,8 @@ async def test_close_task_skip_validation_fails_without_evidence(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_skip_reason_bypasses_commit_check(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     """Test that close_task with skip reason (obsolete) bypasses commit check.
 
     When using a skip reason like 'obsolete', 'duplicate', 'already_implemented',
@@ -1263,7 +1306,7 @@ async def test_close_task_skip_reason_bypasses_commit_check(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
-    def git_command_side_effect(cmd, cwd=None):
+    def git_command_side_effect(cmd: list[str], cwd: str | None = None) -> str:
         """Return appropriate values for different git commands."""
         if "rev-parse" in cmd:
             # Return commit SHA for rev-parse
@@ -1309,8 +1352,8 @@ async def test_close_task_skip_reason_bypasses_commit_check(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_commit_diff_excludes_uncommitted_changes(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     """Test that close_task excludes uncommitted changes (linked commits are the work)."""
     task = _task(
         id="t1",
@@ -1373,8 +1416,8 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_with_commits_does_not_fallback_to_smart_context(
-    mock_task_manager, mock_task_validator, repo_path: str
-):
+    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+) -> None:
     """Test that close_task with linked commits doesn't fall back to smart context.
 
     When a task has linked commits, those commits ARE the work, so we don't
