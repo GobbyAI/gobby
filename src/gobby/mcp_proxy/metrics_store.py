@@ -304,14 +304,16 @@ class ToolMetricsStore:
                 ("tool_metrics_daily", "tool_name"),
                 ("metrics_events", "name"),
             ):
-                conditions = [
+                conditions = ["event_type = %s"] if table == "metrics_events" else []
+                conditions.extend(
                     f"{tool_column if column == 'tool_name' else column} = %s"
                     for column, _ in filters
-                ]
+                )
                 where_clause = " AND ".join(conditions)
+                table_params = ("tool_call", *params) if table == "metrics_events" else params
                 cursor = txn.execute(
                     f"DELETE FROM {table} WHERE {where_clause}",  # nosec B608
-                    params,
+                    table_params,
                 )
                 if table == "tool_metrics":
                     deleted_tool_metrics = cursor.rowcount

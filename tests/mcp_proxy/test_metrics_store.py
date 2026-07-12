@@ -176,6 +176,37 @@ class TestToolMetricsStore:
         with pytest.raises(ValueError, match="at least one filter"):
             metrics_store.reset_metrics()
 
+    def test_reset_metrics_preserves_non_tool_events(
+        self,
+        metrics_store: ToolMetricsStore,
+    ) -> None:
+        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0)
+        for event_type in ("tool_call", "rule_eval", "skill_search"):
+            metrics_store.db.execute(
+                """
+                INSERT INTO metrics_events (event_type, project_id, server_name, name)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (event_type, PROJECT_1, "s1", "t1"),
+            )
+
+        deleted = metrics_store.reset_metrics(
+            project_id=PROJECT_1,
+            server_name="s1",
+            tool_name="t1",
+        )
+
+        assert deleted == 1
+        remaining = metrics_store.db.fetchall(
+            """
+            SELECT event_type FROM metrics_events
+            WHERE project_id = %s AND server_name = %s AND name = %s
+            ORDER BY event_type
+            """,
+            (PROJECT_1, "s1", "t1"),
+        )
+        assert [row["event_type"] for row in remaining] == ["rule_eval", "skill_search"]
+
     def test_reset_metrics_rolls_back_all_tables_on_failure(
         self,
         metrics_store: ToolMetricsStore,
