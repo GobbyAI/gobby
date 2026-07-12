@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -18,6 +18,7 @@ fn codewiki_ownership_codeowners_only_maps_declared_owners() {
         project.path(),
         &["src/api/mod.rs".to_string()],
         &modules([("src/api/mod.rs", "src/api")]),
+        &emitted(["src/api"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 10,
@@ -43,6 +44,7 @@ fn codewiki_ownership_derives_top_committers_from_git_blame() {
         project.path(),
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src")]),
+        &emitted(["src"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 10,
@@ -92,6 +94,7 @@ fn codewiki_ownership_declared_owners_take_primary_precedence() {
         project.path(),
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src")]),
+        &emitted(["src"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 10,
@@ -116,6 +119,7 @@ fn codewiki_ownership_without_sources_degrades_to_unknown() {
         project.path(),
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src")]),
+        &emitted(["src"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 10,
@@ -139,6 +143,7 @@ fn codewiki_ownership_file_cap_marks_partial() {
         project.path(),
         &["src/a.rs".to_string(), "src/b.rs".to_string()],
         &modules([("src/a.rs", "src"), ("src/b.rs", "src")]),
+        &emitted(["src"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 1,
@@ -176,6 +181,7 @@ fn codewiki_ownership_file_cap_counts_only_cache_misses() {
         project.path(),
         &["src/a.rs".to_string(), "src/b.rs".to_string()],
         &modules([("src/a.rs", "src"), ("src/b.rs", "src")]),
+        &emitted(["src"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 1,
@@ -204,6 +210,7 @@ fn codewiki_ownership_blame_error_marks_partial_without_caching() {
         project.path(),
         &["src/untracked.rs".to_string()],
         &modules([("src/untracked.rs", "src")]),
+        &emitted(["src"]),
         &mut meta,
         OwnershipOptions {
             blame_file_cap: 10,
@@ -222,6 +229,69 @@ fn modules<const N: usize>(items: [(&str, &str); N]) -> HashMap<String, String> 
         .into_iter()
         .map(|(file, module)| (file.to_string(), module.to_string()))
         .collect()
+}
+
+fn emitted<const N: usize>(items: [&str; N]) -> BTreeSet<String> {
+    items.into_iter().map(str::to_string).collect()
+}
+
+#[test]
+fn codewiki_ownership_remaps_unemitted_cluster_to_nearest_emitted_ancestor() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("crates/gwiki/src")).expect("create src");
+    std::fs::write(project.path().join("CODEOWNERS"), "/crates/ @platform\n")
+        .expect("write CODEOWNERS");
+    std::fs::write(
+        project.path().join("crates/gwiki/src/lib.rs"),
+        "pub fn lib() {}\n",
+    )
+    .expect("write source");
+
+    let mut meta = OwnershipMeta::default();
+    // The clustering assigned a synthetic module that this run never emitted
+    // as a module page (#18005); ownership must link the emitted ancestor.
+    let doc = build_ownership_doc(
+        project.path(),
+        &["crates/gwiki/src/lib.rs".to_string()],
+        &modules([("crates/gwiki/src/lib.rs", "crates/gwiki/src/source_file")]),
+        &emitted(["crates/gwiki/src", "crates/gwiki", "crates"]),
+        &mut meta,
+        OwnershipOptions {
+            blame_file_cap: 10,
+            blame_timeout: Duration::from_secs(10),
+        },
+    )
+    .expect("ownership doc");
+
+    assert!(!doc.contains("code/modules/crates/gwiki/src/source_file"));
+    assert!(doc.contains("Module: [[code/modules/crates/gwiki/src|crates/gwiki/src]]"));
+}
+
+#[test]
+fn codewiki_ownership_falls_back_to_repo_overview_when_no_ancestor_is_emitted() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src")).expect("create src");
+    std::fs::write(project.path().join("CODEOWNERS"), "/src/ @platform\n")
+        .expect("write CODEOWNERS");
+    std::fs::write(project.path().join("src/lib.rs"), "pub fn lib() {}\n").expect("write source");
+
+    let mut meta = OwnershipMeta::default();
+    let doc = build_ownership_doc(
+        project.path(),
+        &["src/lib.rs".to_string()],
+        &modules([("src/lib.rs", "src/synthetic_cluster")]),
+        &emitted([]),
+        &mut meta,
+        OwnershipOptions {
+            blame_file_cap: 10,
+            blame_timeout: Duration::from_secs(10),
+        },
+    )
+    .expect("ownership doc");
+
+    assert!(!doc.contains("code/modules/src/synthetic_cluster"));
+    assert!(!doc.contains("code/modules/src|"));
+    assert!(doc.contains("Module: [[code/repo|Repository Overview]]"));
 }
 
 fn git_project_with_history() -> tempfile::TempDir {
