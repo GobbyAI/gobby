@@ -312,6 +312,24 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
             return ancestor_result.returncode == 0
 
+        async def _worktree_branch_is_merged_into_base(
+            effective_merge_result: bool,
+        ) -> bool:
+            if effective_source == worktree.branch_name and merge_target == worktree.base_branch:
+                return effective_merge_result
+            ancestor_result = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                [
+                    "merge-base",
+                    "--is-ancestor",
+                    f"refs/heads/{worktree.branch_name}",
+                    f"refs/heads/{worktree.base_branch}",
+                ],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            return ancestor_result.returncode == 0
+
         if worktree.status == "merged" and await _source_is_merged_into_target():
             target_sha_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
@@ -335,7 +353,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "pushed": False,
                 }
             reconciled_target_sha = target_sha_result.stdout.strip()
-            ctx.worktree_storage.mark_merged(worktree_id)
+            if await _worktree_branch_is_merged_into_base(True):
+                ctx.worktree_storage.mark_merged(worktree_id)
             return {
                 "success": True,
                 "message": (
@@ -543,7 +562,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             git_merged = await _source_is_merged_into_target()
             if git_merged:
-                ctx.worktree_storage.mark_merged(worktree_id)
+                if await _worktree_branch_is_merged_into_base(git_merged):
+                    ctx.worktree_storage.mark_merged(worktree_id)
                 target_sha_result = await asyncio.to_thread(
                     resolved_git_mgr.run_git_command,
                     ["rev-parse", "HEAD"],

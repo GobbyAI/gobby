@@ -1269,6 +1269,54 @@ async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
 
 
 @pytest.mark.asyncio
+async def test_merge_worktree_custom_refs_do_not_mark_unmerged_worktree_branch(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="11111111-1111-4111-8111-111111110001",
+        branch_name="feature/worktree",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    custom_merge = _local_merge_git_side_effect(source="release/source", target="release/target")
+
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == [
+            "merge-base",
+            "--is-ancestor",
+            "refs/heads/feature/worktree",
+            "refs/heads/main",
+        ]:
+            return MagicMock(returncode=1, stdout="", stderr="")
+        return custom_merge(args, cwd=cwd, timeout=timeout, check=check)
+
+    mock_git_manager._run_git.side_effect = _run_git_side_effect
+
+    result = await registry.call(
+        "merge_worktree",
+        {
+            "worktree_id": wt.id,
+            "source_branch": "release/source",
+            "target_branch": "release/target",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["merged"] is True
+    assert result["source_branch"] == "release/source"
+    assert result["target_branch"] == "release/target"
+    mock_worktree_storage.mark_merged.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_merge_worktree_rejects_push_true(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
@@ -1519,6 +1567,7 @@ async def test_merge_worktree_explicit_source_branch(
     assert result["source_branch"] == "my-branch"
     push_calls = [c for c in mock_git_manager._run_git.call_args_list if c[0][0][:1] == ["push"]]
     assert len(push_calls) == 0
+    mock_worktree_storage.mark_merged.assert_called_once_with(wt.id)
 
 
 @pytest.mark.asyncio
