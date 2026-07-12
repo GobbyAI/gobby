@@ -29,4 +29,4 @@ jobs:
       - name: Run uv audit
         # [tool.uv.audit] contains only conditional no-fix exceptions; each
         # exception becomes reportable automatically when OSV publishes a fix.
-        run: uv audit --locked
+        run: uv audit --locked --preview-features audit-command

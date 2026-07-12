@@ -392,7 +392,7 @@ jobs:
       - name: Run uv audit (dependency CVEs)
         # Narrow no-fix exceptions live in [tool.uv.audit] so they automatically
         # fail again when OSV publishes a fixed version.
-        run: uv audit --locked
+        run: uv audit --locked --preview-features audit-command
 
 
 
