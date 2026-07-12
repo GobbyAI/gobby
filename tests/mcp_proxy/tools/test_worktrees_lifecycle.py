@@ -764,13 +764,52 @@ async def test_delete_worktree_path_not_exists(
     )
     mock_worktree_storage.get.return_value = wt
     mock_worktree_storage.delete.return_value = True
+    mock_git_manager.delete_worktree.return_value.success = True
     with patch("pathlib.Path.exists", return_value=False):
         result = await registry.call(
             "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
         )
         assert result["success"] is True
-        mock_git_manager.delete_worktree.assert_not_called()
+        mock_git_manager.delete_worktree.assert_called_once_with(
+            wt.worktree_path,
+            force=False,
+            delete_branch=True,
+            force_delete_branch=False,
+            branch_name=wt.branch_name,
+        )
         mock_worktree_storage.delete.assert_called_once_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_missing_path_prune_failure_preserves_record(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/nonexistent",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager.delete_worktree.return_value.success = False
+    mock_git_manager.delete_worktree.return_value.error = "Git delete failed"
+    mock_git_manager.prune_worktrees.return_value.success = False
+    mock_git_manager.prune_worktrees.return_value.error = "Prune failed"
+
+    with patch("pathlib.Path.exists", return_value=False):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is False
+    assert result["error"] == "Prune failed"
+    mock_git_manager.prune_worktrees.assert_called_once_with()
+    mock_worktree_storage.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
