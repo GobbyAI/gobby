@@ -205,12 +205,11 @@ async def test_add_mcp_server(daemon_tools, mock_mcp_manager):
 
 @pytest.mark.asyncio
 async def test_remove_mcp_server(daemon_tools, mock_mcp_manager):
-    # ServerManagementService.remove_server calls mcp_manager.remove_server_config
-    mock_mcp_manager.remove_server_config = MagicMock()
+    mock_mcp_manager.remove_server = AsyncMock(return_value={"success": True, "name": "s1"})
 
     result = await daemon_tools.remove_mcp_server(name="s1")
     assert result["success"] is True
-    mock_mcp_manager.remove_server_config.assert_called_once_with("s1")
+    mock_mcp_manager.remove_server.assert_awaited_once_with("s1")
 
 
 @pytest.mark.asyncio
