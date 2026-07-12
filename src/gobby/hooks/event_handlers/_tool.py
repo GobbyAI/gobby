@@ -325,14 +325,30 @@ class ToolEventHandlerMixin(EventHandlersBase):
             db = getattr(self._session_manager, "db", None)
             if db:
                 manager = SessionVariableManager(db)
-                manager.record_edited_file(
-                    session_id,
-                    rel_path,
-                    condition_name=VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
-                    updates=VERIFICATION_EVIDENCE_RESET_UPDATES,
-                )
+                try:
+                    manager.record_edited_file(
+                        session_id,
+                        rel_path,
+                        condition_name=VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+                        updates=VERIFICATION_EVIDENCE_RESET_UPDATES,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to track session edited file; resetting verification evidence",
+                        exc_info=True,
+                    )
+                    try:
+                        manager.merge_variables(
+                            session_id,
+                            VERIFICATION_EVIDENCE_RESET_UPDATES,
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to reset verification evidence after edit-tracking failure",
+                            exc_info=True,
+                        )
         except Exception as e:
-            logger.debug(f"Failed to track session edited file: {e}")
+            logger.warning(f"Failed to track session edited file: {e}", exc_info=True)
 
     def handle_before_tool_selection(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_TOOL_SELECTION events."""
