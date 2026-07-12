@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+# Used only to classify timeout exceptions from the existing Git runner.
+import subprocess  # nosec
 from typing import Any, Literal, cast
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -257,6 +260,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         original_branch = ""
         checked_out_target = False
+        merge_cleanup_required = False
 
         stash_oid: str | None = None
 
@@ -286,6 +290,51 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     raise RuntimeError(
                         f"Failed to restore stashed .gobby/ files from {stash_ref}: {detail}"
                     )
+
+        async def _abort_failed_merge() -> None:
+            """Abort a failed merge transaction if Git still has MERGE_HEAD."""
+            nonlocal merge_cleanup_required
+            if not merge_cleanup_required:
+                return
+
+            try:
+                merge_head = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["rev-parse", "--verify", "-q", "MERGE_HEAD"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, OSError) as error:
+                raise RuntimeError(f"Failed to inspect failed merge state: {error}") from error
+
+            if merge_head.returncode == 1:
+                merge_cleanup_required = False
+                return
+            if merge_head.returncode != 0:
+                detail = (
+                    merge_head.stderr
+                    or merge_head.stdout
+                    or f"git exited with status {merge_head.returncode}"
+                )
+                raise RuntimeError(f"Failed to inspect failed merge state: {detail}")
+
+            try:
+                abort_result = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["merge", "--abort"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, OSError) as error:
+                raise RuntimeError(f"Failed to abort merge_worktree merge: {error}") from error
+            if abort_result.returncode != 0:
+                detail = (
+                    abort_result.stderr
+                    or abort_result.stdout
+                    or f"git exited with status {abort_result.returncode}"
+                )
+                raise RuntimeError(f"Failed to abort merge_worktree merge: {detail}")
+            merge_cleanup_required = False
 
         async def _source_is_merged_into_target() -> bool:
             ancestor_result = await asyncio.to_thread(
@@ -548,6 +597,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             message = f"Merged {effective_source} into local {merge_target}"
 
             if merge_result.returncode != 0:
+                merge_cleanup_required = True
                 # Detect unmerged (conflicted) files via git index — more reliable
                 # than parsing human-readable merge output for "CONFLICT" strings
                 conflicted_files = await run_thread_to_completion(
@@ -582,19 +632,15 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                                 "source_branch": effective_source,
                                 "target_branch": merge_target,
                             }
+                        merge_cleanup_required = False
                         auto_resolved = conflicted_files
                         message = (
                             f"Merged {effective_source} into local {merge_target} "
                             f"(auto-resolved {len(conflicted_files)} trivial conflict(s))"
                         )
                     else:
-                        # Still have real conflicts — abort and report.
-                        await run_thread_to_completion(
-                            resolved_git_mgr.run_git_command,
-                            ["merge", "--abort"],
-                            cwd=merge_cwd,
-                            timeout=10,
-                        )
+                        # Still have real conflicts — the transaction cleanup
+                        # below aborts before the checkout lock is released.
                         return {
                             "success": False,
                             "has_conflicts": True,
@@ -613,12 +659,6 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
                 else:
                     merge_output = merge_result.stdout + merge_result.stderr
-                    await run_thread_to_completion(
-                        resolved_git_mgr.run_git_command,
-                        ["merge", "--abort"],
-                        cwd=merge_cwd,
-                        timeout=10,
-                    )
                     return {
                         "success": False,
                         "has_conflicts": False,
@@ -675,8 +715,13 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["auto_resolved"] = auto_resolved
             return result
         finally:
-            branch_restore_error: RuntimeError | None = None
+            cleanup_errors: list[RuntimeError] = []
             try:
+                try:
+                    await _abort_failed_merge()
+                except RuntimeError as abort_error:
+                    cleanup_errors.append(abort_error)
+                    logger.error("%s", abort_error)
                 if checked_out_target and original_branch != merge_target:
                     restore_branch = await run_thread_to_completion(
                         resolved_git_mgr.run_git_command,
@@ -690,14 +735,20 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                             or restore_branch.stdout
                             or f"git exited with status {restore_branch.returncode}"
                         )
-                        branch_restore_error = RuntimeError(
-                            f"Failed to restore original branch {original_branch} "
-                            f"after merge_worktree: {detail}"
+                        cleanup_errors.append(
+                            RuntimeError(
+                                f"Failed to restore original branch {original_branch} "
+                                f"after merge_worktree: {detail}"
+                            )
                         )
-                        logger.error("%s", branch_restore_error)
-                await _restore_stash()
-                if branch_restore_error is not None:
-                    raise branch_restore_error
+                        logger.error("%s", cleanup_errors[-1])
+                try:
+                    await _restore_stash()
+                except RuntimeError as stash_error:
+                    cleanup_errors.append(stash_error)
+                    logger.error("%s", stash_error)
+                if cleanup_errors:
+                    raise RuntimeError("; ".join(str(error) for error in cleanup_errors))
             finally:
                 mutation_lock.release()
 
