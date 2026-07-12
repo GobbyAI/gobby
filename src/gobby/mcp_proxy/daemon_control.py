@@ -126,8 +126,8 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
         # Use asyncio.create_subprocess_exec to avoid blocking the event loop
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
         # Do NOT await communicate() - this blocks until exit.
@@ -135,12 +135,10 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
         await asyncio.sleep(0.5)
 
         if proc.returncode is not None:
-            # Process exited immediately - capture output
-            stdout, stderr = await proc.communicate()
             return {
                 "success": False,
                 "message": "Start failed - process exited immediately",
-                "error": stderr.decode().strip() if stderr else "Unknown error",
+                "error": f"Process exited with code {proc.returncode}",
             }
 
         # Process is running - check health

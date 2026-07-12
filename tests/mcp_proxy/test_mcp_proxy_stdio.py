@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any
@@ -294,13 +295,61 @@ class TestStartDaemonProcess:
                             assert result["success"] is True
                             assert result["pid"] == 12345
                             assert "started successfully" in result["output"]
+                            _, kwargs = mock_exec.call_args
+                            assert kwargs["stdout"] is asyncio.subprocess.DEVNULL
+                            assert kwargs["stderr"] is asyncio.subprocess.DEVNULL
+
+    @pytest.mark.asyncio
+    async def test_noisy_start_child_cannot_block_on_output_pipes(self) -> None:
+        """A child writing more than pipe capacity exits without a reader."""
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+        spawned: list[asyncio.subprocess.Process] = []
+
+        async def spawn_noisy_child(*_args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+            proc = await real_create_subprocess_exec(
+                sys.executable,
+                "-c",
+                (
+                    "import os,time; data=b'x'*(256*1024); "
+                    "os.write(1,data); os.write(2,data); time.sleep(1)"
+                ),
+                **kwargs,
+            )
+            spawned.append(proc)
+            return proc
+
+        with (
+            patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
+            patch(
+                "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
+                side_effect=spawn_noisy_child,
+            ),
+            patch(
+                "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345),
+        ):
+            result = await start_daemon_process(60887, 60888)
+
+        assert result["success"] is True, result
+        assert len(spawned) == 1
+        proc = spawned[0]
+        try:
+            assert proc.stdout is None
+            assert proc.stderr is None
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.communicate()
 
     @pytest.mark.asyncio
     async def test_handles_start_failure(self) -> None:
         """Test handles daemon start failure."""
         mock_proc = MagicMock()
         mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"Start failed"))
 
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
             with patch(
@@ -313,7 +362,7 @@ class TestStartDaemonProcess:
 
                     assert result["success"] is False
                     assert "process exited immediately" in result["message"]
-                    assert result["error"] == "Start failed"
+                    assert result["error"] == "Process exited with code 1"
 
     @pytest.mark.asyncio
     async def test_handles_timeout(self) -> None:
