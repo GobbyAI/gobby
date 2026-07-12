@@ -1,11 +1,13 @@
 """Tests for ServerManagementService."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 
 pytestmark = pytest.mark.unit
@@ -16,8 +18,8 @@ class TestServerManagementServicePersistence:
 
     async def test_add_and_remove_survive_manager_restarts(
         self,
-        temp_db,
-        sample_project,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
     ) -> None:
         project_id = sample_project["id"]
         storage = LocalMCPManager(temp_db)
@@ -59,8 +61,8 @@ class TestServerManagementServicePersistence:
 
     async def test_duplicate_add_raises_value_error(
         self,
-        temp_db,
-        sample_project,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
     ) -> None:
         project_id = sample_project["id"]
         storage = LocalMCPManager(temp_db)
@@ -82,7 +84,7 @@ class TestServerManagementServicePersistence:
 
     async def test_add_rolls_back_runtime_state_when_persistence_fails(
         self,
-        sample_project,
+        sample_project: dict[str, Any],
     ) -> None:
         project_id = sample_project["id"]
         storage = MagicMock()
@@ -107,16 +109,71 @@ class TestServerManagementServicePersistence:
         assert "ephemeral-server" not in manager.get_lazy_connection_states()
 
 
+class TestServerManagementServiceConnectionStatus:
+    """Tests that the agent-facing service preserves manager connection status."""
+
+    @pytest.mark.parametrize(
+        ("manager_result", "expected_message"),
+        [
+            (
+                {"success": True, "connected": True, "full_tool_schemas": []},
+                "Server test-server added successfully",
+            ),
+            (
+                {"success": True, "connected": False, "full_tool_schemas": []},
+                "Server test-server added successfully",
+            ),
+            (
+                {
+                    "success": True,
+                    "connected": False,
+                    "error": "connection refused",
+                    "full_tool_schemas": [],
+                },
+                "Server test-server added but connection failed",
+            ),
+        ],
+    )
+    async def test_add_server_preserves_manager_connection_status(
+        self,
+        manager_result: dict[str, object],
+        expected_message: str,
+    ) -> None:
+        manager = MagicMock()
+
+        async def add_server(_config: object) -> dict[str, object]:
+            return manager_result
+
+        manager.add_server = add_server
+        service = ServerManagementService(manager, config_manager=MagicMock())
+
+        result = await service.add_server(
+            "test-server",
+            "http",
+            url="https://mcp.example.test",
+            enabled=bool(manager_result["connected"]),
+            project_id="11111111-1111-4111-8111-111111111111",
+        )
+
+        assert result["success"] is True
+        assert result["connected"] is manager_result["connected"]
+        assert result["message"] == expected_message
+        if "error" in manager_result:
+            assert result["error"] == manager_result["error"]
+        else:
+            assert "error" not in result
+
+
 class TestServerManagementServiceImport:
     """Tests for ServerManagementService.import_server()."""
 
     @pytest.fixture
-    def mock_mcp_manager(self):
+    def mock_mcp_manager(self) -> MagicMock:
         """Create a mock MCP manager."""
         return MagicMock()
 
     @pytest.fixture
-    def mock_config(self):
+    def mock_config(self) -> MagicMock:
         """Create a mock daemon config."""
         config = MagicMock()
         import_config = MagicMock()
@@ -127,7 +184,11 @@ class TestServerManagementServiceImport:
         return config
 
     @pytest.fixture
-    def service(self, mock_mcp_manager, mock_config):
+    def service(
+        self,
+        mock_mcp_manager: MagicMock,
+        mock_config: MagicMock,
+    ) -> ServerManagementService:
         """Create a ServerManagementService instance."""
         return ServerManagementService(
             mcp_manager=mock_mcp_manager,
@@ -136,7 +197,7 @@ class TestServerManagementServiceImport:
         )
 
     @pytest.fixture
-    def service_no_config(self, mock_mcp_manager):
+    def service_no_config(self, mock_mcp_manager: MagicMock) -> ServerManagementService:
         """Create a ServerManagementService without config."""
         return ServerManagementService(
             mcp_manager=mock_mcp_manager,
@@ -144,14 +205,16 @@ class TestServerManagementServiceImport:
             config=None,
         )
 
-    async def test_import_requires_source(self, service):
+    async def test_import_requires_source(self, service: ServerManagementService) -> None:
         """Test that import_server requires at least one source."""
         result = await service.import_server()
 
         assert result["success"] is False
         assert "Specify at least one" in result["error"]
 
-    async def test_import_without_config_fails(self, service_no_config):
+    async def test_import_without_config_fails(
+        self, service_no_config: ServerManagementService
+    ) -> None:
         """Test that import fails without daemon config."""
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -162,7 +225,9 @@ class TestServerManagementServiceImport:
         assert result["success"] is False
         assert "configuration not available" in result["error"]
 
-    async def test_import_without_project_context_fails(self, service):
+    async def test_import_without_project_context_fails(
+        self, service: ServerManagementService
+    ) -> None:
         """Test that import fails without project context."""
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -173,7 +238,9 @@ class TestServerManagementServiceImport:
         assert result["success"] is False
         assert "No current project" in result["error"]
 
-    async def test_import_from_project_delegates_to_importer(self, service):
+    async def test_import_from_project_delegates_to_importer(
+        self, service: ServerManagementService
+    ) -> None:
         """Test that from_project delegates to MCPServerImporter.import_from_project."""
         mock_importer = MagicMock()
         mock_importer.import_from_project = AsyncMock(
@@ -205,7 +272,9 @@ class TestServerManagementServiceImport:
             servers=["server1"],
         )
 
-    async def test_import_from_github_delegates_to_importer(self, service):
+    async def test_import_from_github_delegates_to_importer(
+        self, service: ServerManagementService
+    ) -> None:
         """Test that github_url delegates to MCPServerImporter.import_from_github."""
         mock_importer = MagicMock()
         mock_importer.import_from_github = AsyncMock(
@@ -234,7 +303,9 @@ class TestServerManagementServiceImport:
         assert mock_importer.import_from_github.call_count == 1
         assert mock_importer.import_from_github.call_args is not None
 
-    async def test_import_from_query_delegates_to_importer(self, service):
+    async def test_import_from_query_delegates_to_importer(
+        self, service: ServerManagementService
+    ) -> None:
         """Test that query delegates to MCPServerImporter.import_from_query."""
         mock_importer = MagicMock()
         mock_importer.import_from_query = AsyncMock(
@@ -261,7 +332,7 @@ class TestServerManagementServiceImport:
         assert mock_importer.import_from_query.call_count == 1
         assert mock_importer.import_from_query.call_args is not None
 
-    async def test_import_handles_exception(self, service):
+    async def test_import_handles_exception(self, service: ServerManagementService) -> None:
         """Test that exceptions are caught and returned as errors."""
         with (
             patch(
@@ -281,7 +352,9 @@ class TestServerManagementServiceImport:
         assert result["success"] is False
         assert "Connection failed" in result["error"]
 
-    async def test_import_priority_from_project_first(self, service):
+    async def test_import_priority_from_project_first(
+        self, service: ServerManagementService
+    ) -> None:
         """Test that from_project takes priority when multiple sources provided."""
         mock_importer = MagicMock()
         mock_importer.import_from_project = AsyncMock(

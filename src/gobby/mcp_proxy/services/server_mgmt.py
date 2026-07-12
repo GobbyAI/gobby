@@ -82,7 +82,7 @@ class ServerManagementService:
                 return {"success": False, "error": f"Validation error: {e}"}
 
             try:
-                await self._mcp_manager.add_server(server_config)
+                add_result = await self._mcp_manager.add_server(server_config)
             except ValueError:
                 raise
             except Exception as e:
@@ -95,11 +95,15 @@ class ServerManagementService:
                     }
                 raise
 
-            return {
+            response: dict[str, Any] = {
                 "success": True,
                 "message": f"Server {name} added successfully",
-                "connected": enabled,
+                "connected": bool(add_result.get("connected")),
             }
+            if add_result.get("error") is not None:
+                response["error"] = add_result["error"]
+                response["message"] = f"Server {name} added but connection failed"
+            return response
 
         except ValueError:
             raise
