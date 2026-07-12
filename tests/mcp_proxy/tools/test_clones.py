@@ -14,7 +14,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -661,6 +661,40 @@ class TestDeleteClone:
         assert mock_clone_storage.get.return_value is original_clone
         assert original_clone.id == "clone-123"
         assert original_clone.task_id == "task-123"
+
+    async def test_delete_clone_file_exception_restores_original_status(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A raised filesystem error preserves the existing clone record."""
+        original_clone = Clone(
+            id="clone-123",
+            project_id="11111111-1111-4111-8111-111111110001",
+            branch_name="main",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            task_id="task-123",
+            agent_session_id=None,
+            status=CloneStatus.STALE.value,
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
+        )
+        mock_clone_storage.get.return_value = original_clone
+        mock_git_manager.delete_clone.side_effect = OSError("filesystem unavailable")
+
+        result = await registry.call("delete_clone", {"clone_id": "clone-123"})
+
+        assert result == {
+            "success": False,
+            "error": "Failed to delete clone files: filesystem unavailable",
+        }
+        assert mock_clone_storage.update.call_args_list == [
+            call("clone-123", status=CloneStatus.DELETING.value),
+            call("clone-123", status=CloneStatus.STALE.value),
+        ]
+        mock_clone_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_delete_clone_record_failure_leaves_retryable_deleting_state(

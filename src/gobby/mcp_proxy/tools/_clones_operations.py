@@ -79,15 +79,20 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             logger.error("Failed to mark clone %s as deleting: %s", clone_id, e, exc_info=True)
             return {"success": False, "error": f"Failed to mark clone deleting: {e}"}
 
-        result = await asyncio.to_thread(
-            git_manager.delete_clone,
-            clone_path,
-            force=force,
-        )
-        if not result.success:
-            logger.error(
-                f"Failed to delete clone files for {clone_id}: {result.error or result.message}"
+        delete_error: str | None
+        try:
+            result = await asyncio.to_thread(
+                git_manager.delete_clone,
+                clone_path,
+                force=force,
             )
+        except Exception as error:
+            delete_error = str(error)
+        else:
+            delete_error = None if result.success else result.error or result.message
+
+        if delete_error is not None:
+            logger.error("Failed to delete clone files for %s: %s", clone_id, delete_error)
             try:
                 ctx.clone_storage.update(clone_id, status=previous_status)
             except Exception:
@@ -98,7 +103,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 )
             return {
                 "success": False,
-                "error": f"Failed to delete clone files: {result.error or result.message}",
+                "error": f"Failed to delete clone files: {delete_error}",
             }
 
         try:
