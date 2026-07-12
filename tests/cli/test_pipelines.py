@@ -391,6 +391,22 @@ class TestPipelinesRun:
 
             assert result.exit_code != 0 or "not found" in result.output.lower()
 
+    def test_run_pipeline_disabled(self, runner, mock_pipeline) -> None:
+        """Disabled pipelines fail before daemon or local execution."""
+        mock_pipeline.enabled = False
+        mock_loader = MagicMock()
+        mock_loader.load_pipeline_sync.return_value = mock_pipeline
+
+        with (
+            patch("gobby.cli.load_full_config_from_db", return_value=MagicMock()),
+            patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
+            patch("gobby.cli.pipelines.get_project_path", return_value=None),
+        ):
+            result = runner.invoke(cli, ["pipelines", "run", "deploy"])
+
+        assert result.exit_code != 0
+        assert "Pipeline 'deploy' is disabled" in result.output
+
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_run_json_format(self, runner, mock_pipeline, mock_execution) -> None:
         """Verify run command supports --json output."""

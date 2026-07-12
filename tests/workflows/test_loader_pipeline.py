@@ -93,6 +93,34 @@ class TestLoadPipeline:
         assert result.type == "pipeline"
         assert len(result.steps) == 2
 
+    async def test_load_pipeline_uses_database_enabled_state(self, loader, def_manager) -> None:
+        """Mutable row metadata overrides a stale enabled value in definition JSON."""
+        row = def_manager.create(
+            name="toggle-pipeline",
+            definition_json=json.dumps(
+                {
+                    "name": "toggle-pipeline",
+                    "type": "pipeline",
+                    "enabled": True,
+                    "steps": [{"id": "step1", "exec": "echo toggle"}],
+                }
+            ),
+            workflow_type="pipeline",
+            enabled=False,
+        )
+
+        disabled = await loader.load_pipeline("toggle-pipeline")
+
+        assert disabled is not None
+        assert disabled.enabled is False
+
+        def_manager.update(row.id, enabled=True)
+        loader.clear_cache()
+        enabled = await loader.load_pipeline("toggle-pipeline")
+
+        assert enabled is not None
+        assert enabled.enabled is True
+
     @pytest.mark.parametrize(
         ("path", "step_id"),
         [
@@ -842,6 +870,25 @@ class TestDiscoverPipelineWorkflows:
         assert result[0].is_project is False
         assert isinstance(result[0].definition, PipelineDefinition)
         assert result[0].definition.type == "pipeline"
+
+    async def test_discovery_excludes_disabled_pipelines(self, loader, def_manager) -> None:
+        for name, enabled in (("enabled-pipeline", True), ("disabled-pipeline", False)):
+            def_manager.create(
+                name=name,
+                definition_json=json.dumps(
+                    {
+                        "name": name,
+                        "type": "pipeline",
+                        "steps": [{"id": "step1", "exec": "echo test"}],
+                    }
+                ),
+                workflow_type="pipeline",
+                enabled=enabled,
+            )
+
+        result = await loader.discover_pipeline_workflows()
+
+        assert [pipeline.name for pipeline in result] == ["enabled-pipeline"]
 
     @pytest.mark.asyncio
     async def test_discovers_pipelines_in_project_dir(self, loader, def_manager, project) -> None:

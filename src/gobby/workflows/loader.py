@@ -152,6 +152,9 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
                     logger.warning(f"Parent workflow '{parent_name}' not found in DB for '{name}'")
 
             if row.workflow_type == "pipeline" or data.get("type") == "pipeline":
+                # The database row is the source of truth for mutable metadata. The
+                # serialized YAML may still contain the value from import time.
+                data["enabled"] = row.enabled
                 self._validate_pipeline_references(data)
                 return PipelineDefinition(**data)
             else:

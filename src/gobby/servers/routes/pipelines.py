@@ -292,6 +292,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         pipeline = await loader.load_pipeline(request.name)
         if pipeline is None:
             raise HTTPException(status_code=404, detail=f"Pipeline '{request.name}' not found")
+        if not pipeline.enabled:
+            raise HTTPException(status_code=409, detail=f"Pipeline '{request.name}' is disabled")
 
         if request.background:
             # Detached run: answer immediately; progress streams over

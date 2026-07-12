@@ -546,6 +546,10 @@ def _register_exposed_pipeline_tools(
     for workflow in discovered:
         pipeline = workflow.definition
 
+        # Disabled pipelines must not remain callable through dynamic tools.
+        if not getattr(pipeline, "enabled", False):
+            continue
+
         # Only expose pipelines with expose_as_tool=True
         if not getattr(pipeline, "expose_as_tool", False):
             continue

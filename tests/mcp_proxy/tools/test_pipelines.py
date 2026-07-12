@@ -502,6 +502,31 @@ class TestRunPipelineTool:
         assert result["success"] is False
         assert "not found" in result["error"].lower()
 
+    async def test_run_pipeline_disabled(
+        self, mock_loader, mock_executor, mock_execution_manager
+    ) -> None:
+        """Disabled pipelines fail before an execution record is created."""
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        mock_loader.load_pipeline.return_value = PipelineDefinition(
+            name="disabled-pipeline",
+            enabled=False,
+            steps=[PipelineStep(id="step1", exec="echo disabled")],
+        )
+        registry = create_workflows_registry(
+            loader=mock_loader,
+            executor_getter=lambda: mock_executor,
+            execution_manager_getter=lambda: mock_execution_manager,
+        )
+
+        result = await registry.call(
+            "run_pipeline",
+            {"name": "disabled-pipeline", "inputs": {}},
+        )
+
+        assert result == {"success": False, "error": "Pipeline 'disabled-pipeline' is disabled"}
+        mock_execution_manager.create_execution.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_run_pipeline_execution_error_returns_running(
         self, mock_loader, mock_executor, mock_execution_manager
@@ -1078,6 +1103,39 @@ class TestDynamicPipelineTools:
         tool_names = [t["name"] for t in tools]
 
         assert "pipeline:internal-pipeline" not in tool_names
+
+    async def test_disabled_pipeline_not_exposed(
+        self, mock_loader, mock_executor, mock_execution_manager
+    ) -> None:
+        """A disabled exposed pipeline must not remain callable as a dynamic tool."""
+        from pathlib import Path
+
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        pipeline = PipelineDefinition(
+            name="disabled-tool",
+            enabled=False,
+            expose_as_tool=True,
+            steps=[PipelineStep(id="step1", exec="echo disabled")],
+        )
+        discovered = [
+            DiscoveredWorkflow(
+                name=pipeline.name,
+                definition=pipeline,
+                priority=100,
+                is_project=False,
+                path=Path("db://disabled-tool"),
+            )
+        ]
+        mock_loader.discover_pipeline_workflows_sync.return_value = discovered
+
+        registry = create_workflows_registry(
+            loader=mock_loader,
+            executor_getter=lambda: mock_executor,
+            execution_manager_getter=lambda: mock_execution_manager,
+        )
+
+        assert "pipeline:disabled-tool" not in {tool["name"] for tool in registry.list_tools()}
 
     @pytest.mark.asyncio
     async def test_dynamic_tool_has_correct_description(

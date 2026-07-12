@@ -84,7 +84,11 @@ def _merge_db_pipelines(
         return
 
     try:
-        db_rows = mgr.list_all(project_id=project_id, workflow_type="pipeline")
+        db_rows = mgr.list_all(
+            project_id=project_id,
+            workflow_type="pipeline",
+            enabled=True,
+        )
     except Exception as e:
         logger.warning(f"Failed to list DB pipeline definitions: {e}")
         return

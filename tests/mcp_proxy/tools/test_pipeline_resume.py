@@ -52,11 +52,16 @@ def _make_execution(
     return execution
 
 
-def _make_pipeline(name: str = "test-pipeline", resume_on_restart: bool = False) -> MagicMock:
+def _make_pipeline(
+    name: str = "test-pipeline",
+    resume_on_restart: bool = False,
+    enabled: bool = True,
+) -> MagicMock:
     """Create a mock PipelineDefinition."""
     pipeline = MagicMock()
     pipeline.name = name
     pipeline.resume_on_restart = resume_on_restart
+    pipeline.enabled = enabled
     return pipeline
 
 
@@ -85,6 +90,28 @@ async def test_resume_skips_non_resumable_pipelines() -> None:
     execution = _make_execution()
     pipeline = _make_pipeline(resume_on_restart=False)
 
+    loader = AsyncMock()
+    loader.load_pipeline.return_value = pipeline
+    executor = MagicMock()
+    execution_manager = MagicMock()
+    execution_manager.list_executions.return_value = [execution]
+
+    result = await resume_interrupted_pipelines(
+        loader=loader,
+        executor=executor,
+        execution_manager=execution_manager,
+        project_id="test-project",
+    )
+
+    assert result == []
+    assert len(_background_tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_disabled_pipelines() -> None:
+    """Disabled pipelines are not restarted even when resume_on_restart is set."""
+    execution = _make_execution()
+    pipeline = _make_pipeline(resume_on_restart=True, enabled=False)
     loader = AsyncMock()
     loader.load_pipeline.return_value = pipeline
     executor = MagicMock()

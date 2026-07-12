@@ -75,7 +75,6 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
     if not pipeline:
         click.echo(f"Pipeline '{name}' not found.", err=True)
         raise SystemExit(1)
-
     if json_format:
         pipeline_dict = {
             "name": pipeline.name,
@@ -166,6 +165,9 @@ def run_pipeline(
     pipeline = loader.load_pipeline_sync(name, project_path=project_path)
     if not pipeline:
         click.echo(f"Pipeline '{name}' not found.", err=True)
+        raise SystemExit(1)
+    if not pipeline.enabled:
+        click.echo(f"Pipeline '{name}' is disabled.", err=True)
         raise SystemExit(1)
 
     # Parse inputs

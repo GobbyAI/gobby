@@ -175,6 +175,9 @@ class PipelineExecutor(
         Returns:
             The RUNNING PipelineExecution record.
         """
+        if not pipeline.enabled:
+            raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
+
         execution = self._create_execution_record(pipeline, inputs, session_id)
         updated = self.execution_manager.update_execution_status(
             execution_id=execution.id,
@@ -272,6 +275,9 @@ class PipelineExecutor(
         Raises:
             RuntimeError: If nesting depth limit exceeded or cycle detected
         """
+        if not pipeline.enabled:
+            raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
+
         span_attrs = {
             "pipeline_name": pipeline.name,
             "project_id": project_id,

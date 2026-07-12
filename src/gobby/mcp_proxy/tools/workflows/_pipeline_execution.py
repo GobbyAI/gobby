@@ -334,6 +334,9 @@ async def run_pipeline(
     if not pipeline:
         return {"success": False, "error": f"Pipeline '{name}' not found"}
 
+    if not pipeline.enabled:
+        return {"success": False, "error": f"Pipeline '{name}' is disabled"}
+
     # Pre-create execution record so we can return the ID immediately
     try:
         execution = executor.execution_manager.create_execution(
@@ -426,6 +429,12 @@ async def resume_pipeline(
         return {
             "success": False,
             "error": f"Pipeline '{execution.pipeline_name}' not found",
+        }
+
+    if not pipeline.enabled:
+        return {
+            "success": False,
+            "error": f"Pipeline '{execution.pipeline_name}' is disabled",
         }
 
     # Determine resume point and reset steps
@@ -642,6 +651,9 @@ async def resume_interrupted_pipelines(
             continue
 
         if not pipeline:
+            continue
+
+        if not pipeline.enabled:
             continue
 
         if not getattr(pipeline, "resume_on_restart", False):
