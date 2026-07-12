@@ -118,14 +118,16 @@ class PostgresHubDatabase:
     dialect: Literal["postgres"] = "postgres"
 
     def __init__(self, dsn: str) -> None:
+        self._conninfo = _conninfo_with_utc_session_timezone(dsn)
+        self._application_name = os.getenv("PGAPPNAME", "gobby")
         self._pool = ConnectionPool(
-            conninfo=_conninfo_with_utc_session_timezone(dsn),
+            conninfo=self._conninfo,
             open=False,
             min_size=int(os.getenv("PGPOOL_MIN", "2")),
             max_size=int(os.getenv("PGPOOL_MAX", "20")),
             timeout=float(os.getenv("PGPOOL_TIMEOUT", "5")),
             kwargs={
-                "application_name": os.getenv("PGAPPNAME", "gobby"),
+                "application_name": self._application_name,
                 "prepare_threshold": None,
                 "row_factory": dict_row,
             },
@@ -214,55 +216,38 @@ class PostgresHubDatabase:
     async def advisory_lock(self, lock: LockTarget) -> AsyncIterator[None]:
         """Hold typed PostgreSQL session locks without an idle transaction."""
         lock_keys = _advisory_lock_keys(lock)
-        connection_context: Any = None
-        conn: psycopg.Connection[Any] | None = None
+        raw_conn, cancellation = await _await_task_completion(
+            asyncio.create_task(asyncio.to_thread(self._open_advisory_lock_connection))
+        )
+        conn = cast(psycopg.Connection[Any], raw_conn)
+        acquired = False
 
-        while conn is None:
-            candidate_context = self._pool_connection()
-            candidate, cancellation = await _await_task_completion(
-                asyncio.create_task(asyncio.to_thread(candidate_context.__enter__))
-            )
-            candidate_conn = cast(psycopg.Connection[Any], candidate)
-            acquired = False
-            try:
+        try:
+            if cancellation is not None:
+                raise cancellation
+            while not acquired:
                 acquired_result, lock_cancellation = await _await_task_completion(
                     asyncio.create_task(
-                        asyncio.to_thread(
-                            _try_session_advisory_locks,
-                            candidate_conn,
-                            lock_keys,
-                        )
+                        asyncio.to_thread(_try_session_advisory_locks, conn, lock_keys)
                     )
                 )
                 acquired = bool(acquired_result)
-                cancellation = lock_cancellation or cancellation
-            except BaseException:
-                await _close_advisory_lock_connection(
-                    candidate_context,
-                    candidate_conn,
-                    lock_keys if acquired else (),
-                )
-                raise
-
-            if cancellation is not None:
-                await _close_advisory_lock_connection(
-                    candidate_context,
-                    candidate_conn,
-                    lock_keys if acquired else (),
-                )
-                raise cancellation
-            if acquired:
-                connection_context = candidate_context
-                conn = candidate_conn
-                break
-
-            await _close_advisory_lock_connection(candidate_context, candidate_conn, ())
-            await asyncio.sleep(0.05)
-
-        try:
+                if lock_cancellation is not None:
+                    raise lock_cancellation
+                if not acquired:
+                    await asyncio.sleep(0.05)
             yield
         finally:
-            await _close_advisory_lock_connection(connection_context, conn, lock_keys)
+            await _close_advisory_lock_connection(conn, lock_keys if acquired else ())
+
+    def _open_advisory_lock_connection(self) -> psycopg.Connection[Any]:
+        """Open lock ownership outside the worker pool used by the protected body."""
+        return psycopg.connect(
+            self._conninfo,
+            application_name=self._application_name,
+            prepare_threshold=None,
+            row_factory=dict_row,
+        )
 
     @contextmanager
     def _native_transaction(
@@ -757,15 +742,15 @@ def _release_session_advisory_locks(
 
 
 async def _close_advisory_lock_connection(
-    connection_context: Any,
     conn: psycopg.Connection[Any],
     lock_keys: tuple[str, ...],
 ) -> None:
     def close() -> None:
         try:
-            _release_session_advisory_locks(conn, lock_keys)
+            if lock_keys:
+                _release_session_advisory_locks(conn, lock_keys)
         finally:
-            connection_context.__exit__(None, None, None)
+            conn.close()
 
     _, cancellation = await _await_task_completion(asyncio.create_task(asyncio.to_thread(close)))
     if cancellation is not None:

@@ -40,6 +40,29 @@ async def test_await_task_completion_propagates_inner_cancellation_without_spinn
     assert shield_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_advisory_lock_does_not_consume_single_pool_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_database_url: str,
+    postgres_schema: str,
+) -> None:
+    module = _postgres_module()
+    monkeypatch.setenv("PGPOOL_MIN", "1")
+    monkeypatch.setenv("PGPOOL_MAX", "1")
+    monkeypatch.setenv("PGPOOL_TIMEOUT", "0.1")
+    scoped_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    db = module.PostgresHubDatabase(scoped_url)
+
+    try:
+        db.open()
+        async with db.advisory_lock(module.AgentCapAdmission(project_id=None)):
+            row = await asyncio.to_thread(db.fetchone, "SELECT 1 AS value")
+    finally:
+        db.close()
+
+    assert row == {"value": 1}
+
+
 def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
     module = _postgres_module()
 
