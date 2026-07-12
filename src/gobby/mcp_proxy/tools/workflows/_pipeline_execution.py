@@ -79,6 +79,8 @@ class PipelineExecutionManager(Protocol):
         resume_token: str | None = None,
         outputs_json: str | None = None,
     ) -> PipelineExecution | None: ...
+
+    def claim_failed_execution_for_resume(self, execution_id: str) -> PipelineExecution | None: ...
     def update_step_execution(
         self,
         step_execution_id: int,
@@ -467,10 +469,8 @@ async def resume_pipeline(
                 "error": "No failed or errored step found to resume from",
             }
 
-    # Reset the resume point and all subsequent steps to PENDING
     if not resume_step_id:
         raise ValueError("resume_step_id resolved to None despite early-return guard")
-    reset_count = execution_manager.reset_steps_from(execution_id, resume_step_id)
 
     # Parse stored inputs
     inputs: dict[str, Any] = {}
@@ -483,11 +483,23 @@ async def resume_pipeline(
                 "error": f"Malformed inputs_json for execution {execution_id}: {e}",
             }
 
-    # Mark as running before spawning background task
-    execution_manager.update_execution_status(
-        execution_id=execution_id,
-        status=ExecutionStatus.RUNNING,
-    )
+    # Atomically claim the failed execution. Both callers may have observed FAILED
+    # above, but only one may transition it to RUNNING and mutate its steps.
+    claimed = execution_manager.claim_failed_execution_for_resume(execution_id)
+    if claimed is None:
+        return {
+            "success": False,
+            "error": (
+                f"Execution '{execution_id}' is already being resumed or is no longer failed"
+            ),
+        }
+
+    # Reset the resume point and all subsequent steps to PENDING only after the claim.
+    try:
+        reset_count = execution_manager.reset_steps_from(execution_id, resume_step_id)
+    except Exception:
+        execution_manager.update_execution_status(execution_id, ExecutionStatus.FAILED)
+        raise
 
     task = asyncio.create_task(
         _execute_pipeline_background(

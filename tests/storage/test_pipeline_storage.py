@@ -161,6 +161,21 @@ class TestUpdateExecutionStatus:
         assert manager.update_execution_status(other_execution.id, ExecutionStatus.RUNNING) is None
         assert other_manager.get_execution(other_execution.id).status == ExecutionStatus.PENDING
 
+    def test_claim_failed_execution_for_resume_is_atomic(self, manager) -> None:
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        failed = manager.update_execution_status(execution.id, ExecutionStatus.FAILED)
+        assert failed is not None
+        assert failed.completed_at is not None
+
+        winner = manager.claim_failed_execution_for_resume(execution.id)
+        loser = manager.claim_failed_execution_for_resume(execution.id)
+
+        assert winner is not None
+        assert winner.status == ExecutionStatus.RUNNING
+        assert winner.completed_at is None
+        assert loser is None
+        assert manager.get_execution(execution.id).status == ExecutionStatus.RUNNING
+
     def test_update_status_to_waiting_approval(self, manager) -> None:
         """Test updating status to waiting_approval with resume token."""
         execution = manager.create_execution(pipeline_name="test-pipeline")
