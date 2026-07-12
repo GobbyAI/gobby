@@ -264,6 +264,25 @@ def test_check_tools_hashes_internal_and_external_shapes_consistently(
     assert result["changed"] == []
 
 
+def test_check_tools_preserves_empty_schema_for_both_key_shapes(
+    manager: SchemaHashManager, mock_db: MagicMock
+) -> None:
+    definition_hash = compute_schema_hash({}, description="No arguments")
+    mock_db.fetchall.return_value = [
+        _hash_row(id=1, tool_name="internal", schema_hash=definition_hash),
+        _hash_row(id=2, tool_name="external", schema_hash=definition_hash),
+    ]
+    tools = [
+        {"name": "internal", "description": "No arguments", "inputSchema": {}},
+        {"name": "external", "description": "No arguments", "input_schema": {}},
+    ]
+
+    result = manager.check_tools_for_changes("srv", "proj", tools)
+
+    assert result["unchanged"] == ["internal", "external"]
+    assert result["changed"] == []
+
+
 def test_update_verification_time(manager: SchemaHashManager, mock_db: MagicMock) -> None:
     cursor = MagicMock()
     cursor.rowcount = 1

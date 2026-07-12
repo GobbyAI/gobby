@@ -251,7 +251,7 @@ class SchemaHashManager:
 
         for tool in tools:
             tool_name = tool.get("name", "")
-            schema = tool.get("inputSchema") or tool.get("input_schema")
+            schema = tool["inputSchema"] if "inputSchema" in tool else tool.get("input_schema")
             current_hash = compute_schema_hash(schema, description=tool.get("description"))
 
             if tool_name not in stored_hashes:
