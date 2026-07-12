@@ -2045,7 +2045,9 @@ class FakeNativeTextProvider:
         self.text_calls: list[
             tuple[str, str | None, str | None, int | None, str | None, str | None]
         ] = []
-        self.json_calls: list[tuple[str, str | None, str | None, str | None, str | None]] = []
+        self.json_calls: list[
+            tuple[str, str | None, str | None, int | None, str | None, str | None]
+        ] = []
         self.__class__.last_instance = self
 
     async def generate_text_result(
@@ -2069,15 +2071,17 @@ class FakeNativeTextProvider:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
-        self.json_calls.append((prompt, system_prompt, model, reasoning_effort, caller))
+        self.json_calls.append((prompt, system_prompt, model, max_tokens, reasoning_effort, caller))
         return {
             "prompt": prompt,
             "system_prompt": system_prompt,
             "model": model,
+            "max_tokens": max_tokens,
             "reasoning_effort": reasoning_effort,
             "caller": caller,
         }
@@ -2125,6 +2129,7 @@ async def test_local_text_generate_adapter_forwards_json_request(
             prompt="json please",
             system_prompt="system",
             model="model-b",
+            max_tokens=64,
             reasoning_effort="high",
             caller="test",
         )
@@ -2134,11 +2139,12 @@ async def test_local_text_generate_adapter_forwards_json_request(
     assert provider is not None
     assert provider.config is config
     assert provider.endpoint_name == "lm-studio"
-    assert provider.json_calls == [("json please", "system", "model-b", "high", "test")]
+    assert provider.json_calls == [("json please", "system", "model-b", 64, "high", "test")]
     assert response == {
         "prompt": "json please",
         "system_prompt": "system",
         "model": "model-b",
+        "max_tokens": 64,
         "reasoning_effort": "high",
         "caller": "test",
     }

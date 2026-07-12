@@ -137,6 +137,7 @@ class LocalTextGenerateAdapter:
             request.prompt,
             system_prompt=request.system_prompt,
             model=request.model,
+            max_tokens=request.max_tokens,
             reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )

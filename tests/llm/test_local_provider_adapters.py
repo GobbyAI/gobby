@@ -262,14 +262,37 @@ async def test_openai_compatible_json_retries_once_without_json_mode(
         "json",
         system_prompt="custom system",
         model="local-model",
+        max_tokens=321,
         reasoning_effort="low",
     )
 
     assert result == {"ok": True}
     assert len(completions.calls) == 2
+    assert [call["max_tokens"] for call in completions.calls] == [321, 321]
     assert "response_format" not in completions.calls[1]
     assert completions.calls[1]["reasoning_effort"] == "low"
     assert completions.calls[1]["messages"][0]["content"] == "custom system"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_json_defaults_to_8000_tokens() -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+    )
+    completions = _FakeOpenAICompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    assert await adapter.generate_json(
+        "json",
+        system_prompt=None,
+        model="local-model",
+    ) == {"ok": True}
+    assert completions.calls[0]["max_tokens"] == 8000
 
 
 async def test_openai_compatible_json_does_not_retry_failed_fallback() -> None:
@@ -517,10 +540,43 @@ async def test_ollama_adapter_requests_json_format(
         "json",
         system_prompt=None,
         model="qwen3",
+        max_tokens=42,
     )
 
     assert result == {"ok": True}
     assert fake_client.calls[0][2]["json"]["format"] == "json"
+    assert fake_client.calls[0][2]["json"]["options"] == {"num_predict": 42}
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_json_forwards_max_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_client = _FakeAsyncClient(
+        {
+            ("POST", "http://localhost:1234/api/v1/chat"): [
+                _FakeResponse(
+                    "POST",
+                    "http://localhost:1234/api/v1/chat",
+                    json_data={"output": [{"type": "message", "content": '{"ok": true}'}]},
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda: fake_client)
+    endpoint = LocalGenerationEndpointConfig(
+        provider="lmstudio",
+        api_base="http://localhost:1234/v1",
+        model="google/gemma",
+    )
+
+    result = await LMStudioLocalProviderAdapter(endpoint).generate_json(
+        "json",
+        system_prompt=None,
+        model="google/gemma",
+        max_tokens=73,
+    )
+
+    assert result == {"ok": True}
+    assert fake_client.calls[0][2]["json"]["max_output_tokens"] == 73
 
 
 def _vision_adapter(provider: str) -> Any:

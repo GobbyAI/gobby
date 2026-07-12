@@ -75,6 +75,7 @@ class LocalProviderAdapter(Protocol):
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Generate and parse JSON."""
@@ -286,6 +287,7 @@ class OpenAICompatibleLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         if not self._client:
@@ -301,7 +303,7 @@ class OpenAICompatibleLocalProviderAdapter:
                 },
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 8000,
+            "max_tokens": max_tokens if max_tokens is not None else 8000,
             "response_format": {"type": "json_object"},
         }
         if reasoning_effort is not None:
@@ -402,6 +404,7 @@ class LMStudioLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         result = await self.generate_text_result(
@@ -409,7 +412,7 @@ class LMStudioLocalProviderAdapter:
             system_prompt=system_prompt
             or "You are a helpful assistant. Respond with valid JSON only.",
             model=model,
-            max_tokens=8000,
+            max_tokens=max_tokens if max_tokens is not None else 8000,
             reasoning_effort=reasoning_effort,
         )
         return _parse_json_response(result.text)
@@ -491,6 +494,7 @@ class OllamaLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         payload = _ollama_chat_payload(
@@ -498,7 +502,7 @@ class OllamaLocalProviderAdapter:
             system_prompt=system_prompt
             or "You are a helpful assistant. Respond with valid JSON only.",
             model=model,
-            max_tokens=8000,
+            max_tokens=max_tokens if max_tokens is not None else 8000,
         )
         payload["format"] = "json"
         data = await self._post_chat(payload, timeout=300.0)
