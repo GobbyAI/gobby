@@ -86,9 +86,22 @@ class TaskTransitionsMixin:
         self._notify_listeners()
         return task
 
-    def claim_task(self, task_id: str, session_id: str, force: bool = False) -> Task:
+    def claim_task(
+        self,
+        task_id: str,
+        session_id: str,
+        force: bool = False,
+        *,
+        expected_owner: str | None = None,
+    ) -> Task:
         """Claim a task for a session, preserving non-open lifecycle states."""
-        task = _claim_task(self.db, task_id=task_id, session_id=session_id, force=force)
+        task = _claim_task(
+            self.db,
+            task_id=task_id,
+            session_id=session_id,
+            force=force,
+            expected_owner=expected_owner,
+        )
         self._notify_listeners()
         return task
 
