@@ -281,8 +281,8 @@ def ensure_project_json_for_isolation(
     the source. This allows ``get_workflow_project_path()`` to discover
     workflows from the parent project.
 
-    Always overwrites any existing project.json in the target — git-tracked
-    copies won't have the ``parent_project_path`` field.
+    Preserves an existing target byte-for-byte when it already has the required
+    parent metadata. Otherwise, rewrites it from the source with those fields.
 
     Args:
         source_repo_path: Path to the main/source repository.
@@ -294,8 +294,9 @@ def ensure_project_json_for_isolation(
         return
 
     try:
-        with open(source_project_json) as f:
-            data = json.load(f)
+        source_bytes = source_project_json.read_bytes()
+        source_data = json.loads(source_bytes)
+        data = dict(source_data)
 
         parent_project_id = data["id"]
         data["parent_project_path"] = str(Path(source_repo_path).resolve())
@@ -304,9 +305,22 @@ def ensure_project_json_for_isolation(
         target_gobby_dir = Path(isolated_path) / ".gobby"
         target_gobby_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(target_gobby_dir / "project.json", "w") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
+        target_project_json = target_gobby_dir / "project.json"
+        if target_project_json.exists():
+            try:
+                target_bytes = target_project_json.read_bytes()
+                target_data = json.loads(target_bytes)
+                if target_bytes == source_bytes and target_data == data:
+                    return
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                pass
+
+        if source_data == data:
+            target_project_json.write_bytes(source_bytes)
+        else:
+            with open(target_project_json, "w") as f:
+                json.dump(data, f, indent=2)
+                f.write("\n")
 
         logger.info(f"Wrote project.json with parent reference in {isolated_path}")
     except Exception as e:
