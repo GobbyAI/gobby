@@ -1,7 +1,9 @@
 ---
 name: clones
 description: Git clones for isolated parallel development. Use when full repo isolation is needed beyond what worktrees provide.
+version: "1.0.0"
 category: core
+triggers: clones, git clone, clone workspace, full repo isolation
 metadata:
   gobby:
     audience: all

@@ -51,7 +51,7 @@ instructions: |
   rather than broad full-suite runs.
 
   ADDITIONAL SKILLS:
-  After claiming the task, first load development-discipline and
+  After claiming the task, first load development-discipline, restraint, and
   task-transitions with gobby-skills. Then inspect the prompt's additional_skills
   list. For each entry, call get_skill(name=<skill>) on gobby-skills before
   implementing. TDD-required leaves include
@@ -85,6 +85,7 @@ step_variables:
   task_claimed: false
   required_skills:
     - development-discipline
+    - restraint
     - task-transitions
   required_skills_loaded: false
   additional_skills: []
@@ -120,7 +121,8 @@ steps:
       Load required developer skills before loading optional task skills or
       implementing:
       1. get_skill(name="development-discipline") on gobby-skills
-      2. get_skill(name="task-transitions") on gobby-skills
+      2. get_skill(name="restraint") on gobby-skills
+      3. get_skill(name="task-transitions") on gobby-skills
       Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->

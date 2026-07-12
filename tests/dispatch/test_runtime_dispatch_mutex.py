@@ -76,6 +76,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
 
     class SpyMutex:
         def __init__(self, *args: object, **kwargs: object) -> None:
+            self.run_id: str | None = None
             captured.update(kwargs)
 
         def __enter__(self) -> SpyMutex:
@@ -86,6 +87,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
             return True
 
         def attach(self, run_id: str) -> None:
+            self.run_id = run_id
             captured["run_id"] = run_id
 
         @staticmethod

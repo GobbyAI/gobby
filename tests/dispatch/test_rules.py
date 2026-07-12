@@ -374,6 +374,15 @@ def test_development_rule_falls_back_from_missing_assigned_agent() -> None:
     assert "default.yaml agent" not in action.prompt
 
 
+def test_non_epic_with_stale_children_is_still_a_development_leaf() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    task = _task_at("development", "in_progress")
+    task.children = [SimpleNamespace(id="stale-child")]
+
+    assert isinstance(_evaluate(task), SpawnAgentAction)
+
+
 def test_development_rule_falls_back_from_agent_without_prompt_builder() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
@@ -420,12 +429,58 @@ def test_development_rule_routes_code_by_implementation_domain(
     assert action.agent_slug == agent_slug
 
 
-def test_development_rule_escalates_when_no_dispatchable_fallback_agent() -> None:
+def test_development_rule_falls_back_from_disabled_implementation_domain_agent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="code",
+            assigned_agent=None,
+            implementation_domain="frontend",
+        ),
+        _context(
+            agents=_agents(
+                **{
+                    "frontend-developer": SimpleNamespace(
+                        name="frontend-developer",
+                        enabled=False,
+                    )
+                }
+            )
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+    assert "Ignoring unavailable implementation-domain development agent" in caplog.text
+
+
+def test_development_rule_escalates_when_domain_and_fallback_agents_unavailable() -> None:
     from gobby.dispatch.actions import EscalateAction
 
     action = _evaluate(
-        _task_at("development", "in_progress", assigned_agent="test-architect"),
-        _context(agents=_agents(**{"backend-developer": None})),
+        _task_at(
+            "development",
+            "in_progress",
+            category="code",
+            assigned_agent=None,
+            implementation_domain="frontend",
+        ),
+        _context(
+            agents=_agents(
+                **{
+                    "backend-developer": None,
+                    "frontend-developer": SimpleNamespace(
+                        name="frontend-developer",
+                        enabled=False,
+                    ),
+                }
+            )
+        ),
     )
 
     assert isinstance(action, EscalateAction)
@@ -599,6 +654,32 @@ def test_docs_dev_rule_routes_to_tech_writer_when_available() -> None:
     assert action.agent_slug == "tech-writer"
 
 
+def test_docs_dev_rule_falls_back_when_tech_writer_is_disabled() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+
+    action = _evaluate(
+        _task_at(
+            "development",
+            "in_progress",
+            category="docs",
+            assigned_agent=None,
+        ),
+        _context(
+            agents=_agents(
+                **{
+                    "tech-writer": SimpleNamespace(
+                        name="tech-writer",
+                        enabled=False,
+                    )
+                }
+            )
+        ),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "backend-developer"
+
+
 def test_qa_rule_fires_with_cap() -> None:
     from gobby.dispatch.actions import EscalateAction, SpawnAgentAction
 
@@ -712,13 +793,36 @@ def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
     assert "#2" in action.body
     assert "stage=development:ready" in action.body
 
+    description = f"\n\n### {action.heading}\n\n{action.body}"
     repeated_task = _task_at(
         "holistic_qa",
         "ready",
         task_type="epic",
-        description=f"\n\n### {action.heading}\n\n{action.body}",
+        description=description,
     )
     assert _evaluate(repeated_task, context) is None
+
+    for stage_state in ("in_progress", "needs_review", "review_approved"):
+        changed_gate = SimpleNamespace(
+            blockers=(
+                SimpleNamespace(
+                    task_id="46a005df-b318-5d7b-a5b5-9b843d64909d",
+                    task_ref="#2",
+                    task_path="1.2",
+                    title="Reopened child",
+                    stage_name="development",
+                    stage_state=stage_state,
+                    is_escalated=False,
+                ),
+            )
+        )
+        changed_context = _context(
+            children=[_task(stages=[])],
+            holistic_descendant_gate=changed_gate,
+        )
+        assert _evaluate(repeated_task, changed_context) is None
+
+    assert description.count(f"### {action.heading}") == 1
 
 
 def test_all_leaves_holistic_rule_never_targets_merging_directly() -> None:
@@ -849,6 +953,21 @@ def test_attended_review_cap_escalates_with_reason() -> None:
     assert action.reason == "development_max_review_rounds"
 
 
+def test_holistic_qa_review_escalates_when_review_cap_reached() -> None:
+    from gobby.dispatch.actions import EscalateAction
+
+    action = _evaluate(
+        _task_at(
+            "holistic_qa",
+            "needs_review",
+            stage_overrides={"review_round_count": 2, "max_review_rounds": 2},
+        )
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "holistic_qa_max_review_rounds"
+
+
 def test_base_rules_order_excludes_merge_rule() -> None:
     from gobby.dispatch.rules import BASE_RULES
 
@@ -903,13 +1022,13 @@ def test_merge_rule_routes_on_merge_stage() -> None:
     assert action.agent_slug == "merge-orchestrator"
 
 
-def test_merge_rule_does_not_advance_lifecycle() -> None:
-    from gobby.dispatch.actions import AdvanceLifecycleAction
+def test_merge_rule_does_not_advance_stage() -> None:
+    from gobby.dispatch.actions import AdvanceStageAction
     from gobby.dispatch.rules import merge_rule
 
     action = merge_rule(_task_at("merge", "in_progress", task_type="epic"), _context())
 
-    assert not isinstance(action, AdvanceLifecycleAction)
+    assert not isinstance(action, AdvanceStageAction)
 
 
 def test_merge_rule_escalates_when_merge_agent_missing() -> None:

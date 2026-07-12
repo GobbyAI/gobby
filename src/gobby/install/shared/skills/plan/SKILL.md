@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Artifact-first /gobby plan workflow. Drafts and revises a plan with the user, runs a constructive enhancement pass and then taskless adversarial review after approval, records enhancement and review history in the plan, and hands approved plans to gobby build.
-version: "3.0.0"
+version: "3.1.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -30,7 +30,11 @@ which runs after approval and before the unchanged adversary gate.
 
 ## Workflow
 
-1. Gather requirements, constraints, risks, and success criteria.
+1. Gather requirements, constraints, risks, and success criteria. When
+   requirements are ambiguous or the user asks to be grilled or interviewed,
+   load `elicit` (`get_skill(name="elicit")` on gobby-skills) and run the
+   interview before drafting; the confirmed Decision Record feeds the draft.
+   Elicitation is opt-in and never gates drafting.
 2. Draft `.gobby/plans/<slug>.md` using the Plan-Coverage Contract from
    `plan-draft`.
 3. Run plan verification locally:

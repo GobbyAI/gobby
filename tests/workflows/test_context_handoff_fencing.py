@@ -46,10 +46,23 @@ def test_handoff_templates_are_fenced(filename: str, rule_name: str) -> None:
     assert template.index(INJECTED_CONTEXT_BEGIN) < template.index(INJECTED_CONTEXT_END)
 
 
-def test_per_turn_brevity_template_is_not_fenced() -> None:
-    template = _inject_template(
-        _RULES_DIR / "brevity" / "reinforce-brevity.yaml", "remind-brevity-on-turn-start"
-    )
+@pytest.mark.parametrize(
+    ("group", "filename", "rule_name", "level_var"),
+    [
+        ("brevity", "reinforce-brevity.yaml", "remind-brevity-on-turn-start", "brevity_level"),
+        (
+            "restraint",
+            "require-restraint-skill.yaml",
+            "remind-restraint-on-turn-start",
+            "restraint_level",
+        ),
+    ],
+)
+def test_per_turn_reminder_template_is_not_fenced_and_interpolates_level(
+    group: str, filename: str, rule_name: str, level_var: str
+) -> None:
+    template = _inject_template(_RULES_DIR / group / filename, rule_name)
 
     assert INJECTED_CONTEXT_BEGIN not in template
     assert INJECTED_CONTEXT_END not in template
+    assert f"{{{{ {level_var} }}}}" in template

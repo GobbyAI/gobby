@@ -14,7 +14,7 @@ import psycopg
 
 from gobby.dispatch.actions import StartPipelineAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex, RuntimeDispatchMutexError
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
@@ -314,7 +314,7 @@ def create_stage_pipeline_execution(
         definition_json = json.dumps(
             {"name": action.pipeline_name, "error": "serialization failed"}
         )
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(DispatchMutexRow(task_id=action.task_id)) as conn:
         cursor = conn.execute(
             """
             INSERT INTO pipeline_executions (

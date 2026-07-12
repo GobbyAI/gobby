@@ -1,7 +1,9 @@
 ---
 name: task-creation
 description: "How to create tasks effectively via gobby-tasks MCP. Covers task types, priorities, when to use each, and writing effective validation criteria."
+version: "1.0.0"
 category: core
+triggers: create task, new task, task types, validation criteria, priorities
 metadata:
   gobby:
     audience: all

@@ -32,8 +32,10 @@ D) Delegated - dispatch the developer agent and end the turn.
 ```
 
 Persist the choice as `value="interactive" | "delegated"` for the handoff.
-Both modes use the `developer` agent and the shared workflow YAML; the only
-difference is whether the current session stays available for follow-up.
+Both modes use the shared developer agent (`backend-developer` by default,
+overridable via the workflow's `agent` input) and the shared workflow YAML;
+the only difference is whether the current session stays available for
+follow-up.
 
 ## Dispatch
 
@@ -49,7 +51,7 @@ call_tool("gobby-workflows", "run_pipeline", {
 })
 ```
 
-Surface the returned execution id. The spawned `developer` agent owns the
+Surface the returned execution id. The spawned developer agent owns the
 implementation loop: claim the task, implement, validate, commit, and either
 close or hand off for QA according to its agent contract.
 
@@ -57,4 +59,4 @@ close or hand off for QA according to its agent contract.
 
 - Do not implement the task directly inside this skill.
 - Do not run `gobby build`; this is the per-task developer loop.
-- Do not replace the `developer` agent instructions here.
+- Do not replace the dispatched developer agent's instructions here.

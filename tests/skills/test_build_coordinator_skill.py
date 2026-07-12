@@ -34,6 +34,61 @@ def test_build_coordinator_skill_parses_and_is_discoverable() -> None:
     assert "build-coordinator" in {skill.name for skill in skills}
 
 
+def test_build_coordinator_documents_interactive_e2e_validation_pattern() -> None:
+    content = _body()
+
+    assert "coordinator/tracking epic" in content
+    assert "automation target" in content
+    assert "without `--quick`" in content
+    assert "real merge SHA" in content
+    assert "no agents are running" in content
+    assert "no tasks remain claimed" in content
+    assert "no stale build worktrees or clones" in content
+    assert "root `README.md`" in content
+
+
+def test_build_coordinator_forbids_changing_requirements_to_pass_e2e() -> None:
+    content = _body()
+
+    assert "Do not make the test pass by changing the required agent" in content
+    assert "provider" in content
+    assert "lifecycle route" in content
+    assert "task scope" in content
+    assert "acceptance criteria" in content
+    assert "preserving the requested path" in content
+    assert "extreme edge case" in content
+    assert "exhausting practical fixes" in content
+
+
+def test_build_coordinator_forbids_manual_dispatcher_ticks_during_unattended_e2e() -> None:
+    content = _body()
+
+    assert "project build automation is enabled" in content
+    assert "run `gobby build resume` once" in content
+    assert "launch `gobby build #epic ...` once" in content
+    assert "daemon-owned automation" in content
+    assert "manual dispatcher ticks" in content
+    assert "anti-pattern" in content
+    assert "can hide a broken dispatcher loop" in content
+    assert "If project automation is paused, use `gobby build resume`" in content
+    assert "bounded explicit tick" in content
+    assert "only as a diagnostic or recovery step" in content
+
+
+def test_build_coordinator_documents_provider_neutral_automation_diagnostics() -> None:
+    content = _body()
+
+    assert "Automation Debugging Pattern" in content
+    assert "Compare against the last known successful run" in content
+    assert "SessionStart activation completed" in content
+    assert "first provider-neutral prompt event" in content
+    assert "ensure_session_activation(session_id)" in content
+    assert "Do not replay the raw SessionStart hook wholesale" in content
+    assert "OpenTelemetry" in content
+    assert "agent_run_id" in content
+    assert "session_id" in content
+
+
 def test_build_coordinator_separates_target_and_coordination_epic() -> None:
     body = _body()
 

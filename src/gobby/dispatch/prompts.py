@@ -6,6 +6,9 @@ from collections.abc import Callable, Mapping
 
 PromptBuilder = Callable[[object, Mapping[str, object]], str]
 
+_FAILURE_CONTEXT_MAX_CHARS = 2000
+_FAILURE_CONTEXT_TRUNCATION_MARKER = "\n[truncated]"
+
 
 def _field(obj: object, name: str, default: object = "") -> object:
     if isinstance(obj, Mapping):
@@ -40,10 +43,18 @@ def _artifact_value(context: Mapping[str, object], name: str) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
+def _bounded_failure_context(context: Mapping[str, object]) -> str | None:
+    value = _context_value(context, "failure_context")
+    if value is None or len(value) <= _FAILURE_CONTEXT_MAX_CHARS:
+        return value
+    prefix_length = _FAILURE_CONTEXT_MAX_CHARS - len(_FAILURE_CONTEXT_TRUNCATION_MARKER)
+    return f"{value[:prefix_length]}{_FAILURE_CONTEXT_TRUNCATION_MARKER}"
+
+
 def _prompt(task: object, context: Mapping[str, object], *, role: str, contract: str) -> str:
     reason = _context_value(context, "reason")
     reason_line = f"\nDispatch reason: {reason}." if reason else ""
-    failure_context = _context_value(context, "failure_context")
+    failure_context = _bounded_failure_context(context)
     failure_block = (
         f"\n\nPrevious failure context for this follow-up work:\n{failure_context}"
         if failure_context

@@ -184,3 +184,32 @@ Entry format:
   11 consecutive failures).
 - NOTE: binary reinstall required for the fix to reach the heal (freeze
   superseded 2026-07-10); reinstall logged in #17531 evidence narrative.
+
+## 2026-07-11 22:30 UTC — #17848 — Pin canonical spine titles in narrative plan normalization — CLOSED
+
+- Changes: `normalize_narrative_pages` (crates/gcode/src/commands/codewiki/
+  build_parts/concepts/plan.rs) pins spine-chapter titles to
+  `DEFAULT_CHAPTERS` canon when a model page merges into the spine. On-disk
+  slugs derive from titles (`ordinal_narrative_slug`), and the guided tour
+  (`default_chapter_links()` via `render_repo_doc` / `append_guided_tour`)
+  independently derives slugs from canonical titles — a model re-wording
+  ("Overview — Gobby's build pipeline and the gcode tool") moved the page
+  to `01-overview-gobby-s-...` while repo.md linked `01-overview`, and
+  publish failed closed on the dangling link. Extras keep model titles and
+  readable ordinal slugs (existing behavior, still tested).
+- Found by: #17531 arm S heal attempt=5 died at publish (exit=1):
+  "generated link in code/repo.md has no staged target
+  code/narrative/01-overview.md". sonnet@xhigh re-worded spine titles;
+  gpt-5.5 default kept them, which is why production never hit it.
+- Commits: 835b9c62b
+- Validation: `cargo test -p gobby-code` fully green — 1108 tests total
+  across lib + integration, 0 failed (new unit test
+  `re_titled_spine_chapter_keeps_the_canonical_slug_and_title` asserts the
+  normalized spine slugs equal `default_chapter_links()` exactly);
+  `cargo clippy -p gobby-code --tests` clean; `cargo fmt --check` clean;
+  `gobby test-quality audit` on plan.rs: 0 new issues.
+- Deferred: none.
+- Also this window: 18:16Z cli_restart attributed via process trap to the
+  codex --yolo session (uv run gobby restart, pid 91960 ← codex pid 15045,
+  now exited) — 5th uncoordinated restart; urgent P2P sent with evidence.
+  Staged degraded 9→19 in that window; heal attempt=6 will converge.

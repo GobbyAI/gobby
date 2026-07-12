@@ -1,6 +1,7 @@
 ---
 name: source-control
 description: Commit message format and release PR process. Use when ready to commit or push a release; use task-transitions for task close/review gates.
+version: "1.0.0"
 category: core
 triggers: commit, git commit, commit changes, release, push release, create pr, pull request
 metadata:
@@ -91,7 +92,7 @@ git commit -m "[<project_name>-#42] feat: implement feature"
 
 ## Part 2: Release PR Workflow
 
-When you're ready to cut a release from a working branch (e.g., `0.3.1`):
+When you're ready to cut a release from a working branch (e.g., `0.5.0`):
 
 ### Step 1: Version Bump
 

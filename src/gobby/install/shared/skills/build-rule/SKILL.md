@@ -322,7 +322,7 @@ Scope rules to specific agent types:
 rules:
   no-push-workers:
     event: before_tool
-    agent_scope: [developer, pipeline-worker, qa-reviewer]
+    agent_scope: [backend-developer, merge-worker, qa-reviewer]
     effect:
       type: block
       tools: [Bash]
@@ -462,7 +462,7 @@ import-memories:
 5. **YAML regex needs double escaping** — `\\s+` in YAML becomes `\s+` in the regex engine.
 6. **Templates are Jinja2** — `{{ var }}` in `reason` and `template` fields. Use `{{ var | default('') }}` for safety.
 7. **`mcp_tools` uses `"server:tool"` format** — Not just the tool name.
-8. **Rules are templates until installed** — Files in `src/gobby/install/shared/rules/` are synced but disabled. Import and enable your custom rules.
+8. **Rules are templates until installed** — Bundled rule groups in `src/gobby/install/shared/workflows/rules/` sync to the DB registry on startup with the template's `enabled` value (enabled by default). The DB row is the source of truth — import and enable your custom rules; check the installed row, not the YAML, to see what's active.
 
 ## See Also
 

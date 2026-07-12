@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         name: str | None = None,
         skill_id: str | None = None,
         session_id: str | None = None,
+        level: str | None = None,
     ) -> dict[str, Any]:
         """
         Get a skill by name or ID with full content.
@@ -73,6 +75,8 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             name: Skill name (used if skill_id not provided)
             skill_id: Skill ID (takes precedence over name)
             session_id: Optional session ID (accepts #N, N, UUID, or prefix) to record skill usage
+            level: Optional level for leveled skills (declared in metadata.gobby.levels);
+                defaults to the skill's default_level
 
         Returns:
             Dict with success status and full skill data
@@ -100,22 +104,68 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if scan_error is not None:
                 return scan_error
 
-            # Record skill usage when session_id is provided
+            # Resolve effective level for leveled skills (metadata.gobby.levels)
+            gobby_meta = (skill.metadata or {}).get("gobby") or {}
+            levels = gobby_meta.get("levels") if isinstance(gobby_meta, dict) else None
+            if not isinstance(levels, list) or not levels:
+                levels = None
+            if level is not None and levels is None:
+                return {
+                    "success": False,
+                    "error": f"Skill '{skill.name}' does not declare levels",
+                }
+            effective_level: str | None = None
+            if levels is not None:
+                if level is not None and level not in levels:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Invalid level '{level}' for skill '{skill.name}'. "
+                            f"Valid levels: {', '.join(levels)}"
+                        ),
+                    }
+                effective_level = level or gobby_meta.get("default_level") or levels[0]
+
+            # Record skill usage against the explicit session_id, falling back to
+            # the ambient wrapper session context seeded by call_tool
+            resolved_session_id: str | None = None
+            if not session_id:
+                session_id = get_current_session_id()
             if session_id:
                 try:
-                    resolved_id = ctx.session_manager.resolve_session_reference(
+                    resolved_session_id = ctx.session_manager.resolve_session_reference(
                         session_id, project_id=ctx.project_id
                     )
-                    ctx.session_manager.record_skills_used(resolved_id, [skill.name])
+                    ctx.session_manager.record_skills_used(resolved_session_id, [skill.name])
                 except Exception as e:
                     logger.debug(f"Best-effort skill tracking failed for session {session_id}: {e}")
+
+            content = skill.content
+            if effective_level is not None:
+                content = f"Active level: {effective_level}\n\n{content}"
+                if resolved_session_id is not None:
+                    try:
+                        from gobby.workflows.state_manager import SessionVariableManager
+
+                        var_name = f"{skill.name.replace('-', '_')}_level"
+                        SessionVariableManager(ctx.db).set_variable(
+                            resolved_session_id, var_name, effective_level
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"Best-effort level variable set failed for session {session_id}: {e}"
+                        )
+                else:
+                    logger.debug(
+                        f"No session resolved; skipping {skill.name} level variable persistence"
+                    )
 
             # Build response
             skill_data: dict[str, Any] = {
                 "id": skill.id,
                 "name": skill.name,
                 "description": skill.description,
-                "content": skill.content,
+                "content": content,
                 "version": skill.version,
                 "license": skill.license,
                 "compatibility": skill.compatibility,
