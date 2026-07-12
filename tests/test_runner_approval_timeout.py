@@ -16,7 +16,8 @@ class _RetryingApprovalManager:
         self.attempts: list[tuple[int, str]] = []
         self.step = SimpleNamespace(id=7, step_id="approval", execution_id="execution-1")
 
-    def get_expired_approval_steps(self) -> list[SimpleNamespace]:
+    def get_expired_approval_steps(self, *, limit: int) -> list[SimpleNamespace]:
+        assert limit > 0
         return [self.step]
 
     def expire_approval_timeout(self, *, step_execution_id: int, execution_id: str) -> None:
