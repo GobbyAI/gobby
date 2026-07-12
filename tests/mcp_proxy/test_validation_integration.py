@@ -63,6 +63,9 @@ def repo_path(tmp_path: Path) -> str:
     return str(repo)
 
 
+TEST_TIMESTAMP = "2024-01-01T00:00:00+00:00"
+
+
 def _stage(task_id: str, state: str) -> StageState:
     return StageState(
         task_id=task_id,
@@ -71,7 +74,7 @@ def _stage(task_id: str, state: str) -> StageState:
         state=state,
         review_policy="required",
         reviewer_agent=None,
-        entered_at="now",
+        entered_at=TEST_TIMESTAMP,
         entered_by_session_id=None,
         completed_at=None,
         completed_by_session_id=None,
@@ -82,11 +85,8 @@ def _stage(task_id: str, state: str) -> StageState:
         max_review_rounds=None,
         artifact_refs=None,
         notes=None,
-        updated_at="now",
+        updated_at=TEST_TIMESTAMP,
     )
-
-
-TEST_TIMESTAMP = "2024-01-01T00:00:00+00:00"
 
 
 def _task(**kwargs) -> Task:
