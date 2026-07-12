@@ -273,7 +273,7 @@ class ClaudeCLI:
                     mcp_config, max_turns, timeout,
                     strip_hooks: bool = True, ...) -> CliResult:
         """Single-turn: claude -p --output-format json --no-session-persistence
-        
+
         When strip_hooks=True (default for internal/headless calls):
           --settings ~/.gobby/settings/headless.json
         """

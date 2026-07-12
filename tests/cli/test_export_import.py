@@ -75,6 +75,7 @@ class TestExportCommand:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("HOME", str(fake_home))
+            mp.setenv("GOBBY_HOME", str(fake_home / ".gobby"))
             result = runner.invoke(export_cmd, ["prompt", "--global"])
 
         assert result.exit_code == 0

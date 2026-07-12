@@ -11,7 +11,7 @@ git branch -m 0.3.3 0.3.3-fail
 git push origin 0.3.3-fail
 
 git checkout 0.4.0
-git branch -m 0.4.0 0.4.0-fail  
+git branch -m 0.4.0 0.4.0-fail
 git push origin 0.4.0-fail
 
 # Create clean 0.3.3 from v0.3.2 tag

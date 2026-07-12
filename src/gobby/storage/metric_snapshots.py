@@ -41,9 +41,10 @@ class MetricSnapshotStorage:
         """
         recent_sql = newer_than_now_expr(self.db, "timestamp", "%s", "hour")
         rows = self.db.fetchall(
-            f"SELECT timestamp, metrics_json FROM metric_snapshots "
+            # recent_sql is selected by the internal storage dialect.
+            f"SELECT timestamp, metrics_json FROM metric_snapshots "  # nosec
             f"WHERE {recent_sql} "
-            f"ORDER BY timestamp ASC LIMIT %s",  # nosec B608 # cutoff expr is dialect-owned.
+            f"ORDER BY timestamp ASC LIMIT %s",
             (hours, limit),
         )
         results = []
@@ -60,12 +61,21 @@ class MetricSnapshotStorage:
             )
         return results
 
-    def delete_old_snapshots(self, retention_hours: int = 24) -> int:
+    def delete_old_snapshots(self, retention_hours: int = 24, *, limit: int = 1000) -> int:
         """Purge snapshots older than retention period."""
         expired_sql = older_than_now_expr(self.db, "timestamp", "%s", "hour")
         cursor = self.db.execute(
-            f"DELETE FROM metric_snapshots WHERE {expired_sql}",  # nosec B608
-            (retention_hours,),
+            # expired_sql is selected by the internal storage dialect.
+            f"""
+DELETE FROM metric_snapshots
+WHERE id IN (
+    SELECT id FROM metric_snapshots
+    WHERE {expired_sql}
+    ORDER BY timestamp ASC
+    LIMIT %s
+)
+""",  # nosec
+            (retention_hours, limit),
         )
         return cursor.rowcount
 

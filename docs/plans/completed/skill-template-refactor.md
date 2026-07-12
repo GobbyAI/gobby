@@ -129,7 +129,7 @@ uv run pytest tests/storage/skills/ tests/storage/test_skill_sync.py -v
 # Skill MCP tool tests
 uv run pytest tests/mcp_proxy/tools/test_skills_coverage.py -v
 
-# Skill route tests  
+# Skill route tests
 uv run pytest tests/servers/routes/test_skills_routes.py -v
 
 # Fresh DB sync

@@ -8,6 +8,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
 
 if TYPE_CHECKING:
@@ -22,6 +23,8 @@ _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
 _HTTP_CONNECTION_GRACE_SECONDS = 0.25
 _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
+_GRACEFUL_SHUTDOWN_BUDGET_SECONDS = 14.0
+_OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
 _GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 
@@ -34,14 +37,54 @@ class ReapChildProcesses(Protocol):
     ) -> None: ...
 
 
-def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
+async def _best_effort[T](
+    operation: Callable[[], Awaitable[T]],
+    name: str,
+    *,
+    timeout: float | None = None,
+    on_timeout: Callable[[], None] | None = None,
+) -> T | None:
+    """Run one async shutdown step without letting ordinary failures stop the tail.
+
+    ``CancelledError`` deliberately propagates so cancellation semantics remain
+    visible to the caller and synchronous finalizers can run from ``finally``.
+    """
+    try:
+        awaitable = operation()
+        if timeout is None:
+            return await awaitable
+        return await asyncio.wait_for(awaitable, timeout=timeout)
+    except TimeoutError:
+        if on_timeout is not None:
+            on_timeout()
+        else:
+            logger.warning("%s timed out", name)
+    except Exception as e:
+        logger.warning("%s failed: %s", name, e, exc_info=True)
+    return None
+
+
+def _best_effort_sync[T](operation: Callable[[], T], name: str) -> T | None:
+    """Run one synchronous shutdown step and log ordinary failures."""
+    try:
+        return operation()
+    except Exception as e:
+        logger.warning("%s failed: %s", name, e, exc_info=True)
+        return None
+
+
+async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
     """Return pane PIDs for active tmux-backed agents that survive restart."""
     agent_runner = getattr(runner, "agent_runner", None)
     run_storage = getattr(agent_runner, "run_storage", None)
     if run_storage is None:
         return set()
     try:
-        runs = run_storage.list_active()
+        db_executor = getattr(runner, "db_executor", None)
+        if db_executor is not None:
+            runs = await db_executor.run(_list_active_agent_runs_once, runner)
+        else:
+            runs = await asyncio.to_thread(_list_active_agent_runs_once, runner)
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return set()
@@ -289,7 +332,11 @@ async def _cancel_runner_task(runner: GobbyRunner, attr: str, timeout: float = 2
         task.cancel()
         try:
             await asyncio.wait_for(task, timeout=timeout)
-        except (asyncio.CancelledError, TimeoutError):
+        except asyncio.CancelledError:
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling():
+                raise
+        except TimeoutError:
             pass
 
 
@@ -306,7 +353,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.warning(f"Wiki watcher shutdown failed: {e}")
 
-    for attr in (
+    periodic_task_attrs = (
         "_metrics_cleanup_task",
         "_metrics_archive_task",
         "_span_cleanup_task",
@@ -314,6 +361,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_metric_snapshot_task",
         "_hook_inbox_task",
         "_bin_freshness_task",
+        "_approval_timeout_task",
         "_zombie_messages_task",
         "_comms_messages_task",
         "_chat_attachments_cleanup_task",
@@ -323,23 +371,38 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_recall_drift_task",
         "_tmux_window_repair_task",
         "_wiki_watcher_task",
-    ):
-        await _cancel_runner_task(runner, attr)
+    )
+
+    code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
+    if code_index_shutdown is not None:
+        code_index_shutdown.set()
+
+    sync_worker_shutdown = getattr(runner, "_sync_worker_shutdown", None)
+    if sync_worker_shutdown is not None:
+        sync_worker_shutdown.set()
+
+    cancellations = [(attr, _cancel_runner_task(runner, attr)) for attr in periodic_task_attrs]
+    cancellations.extend(
+        (
+            ("_code_index_task", _cancel_runner_task(runner, "_code_index_task")),
+            (
+                "_sync_worker_task",
+                _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0),
+            ),
+        )
+    )
+    results = await asyncio.gather(
+        *(cancellation for _, cancellation in cancellations),
+        return_exceptions=True,
+    )
+    for (attr, _), result in zip(cancellations, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("Failed to cancel periodic task %s: %r", attr, result)
 
     if hasattr(runner, "_wiki_watcher_task"):
         runner._wiki_watcher_task = None
     if hasattr(runner, "_wiki_watcher"):
         runner._wiki_watcher = None
-
-    code_index_shutdown = getattr(runner, "_code_index_shutdown", None)
-    if code_index_shutdown is not None:
-        code_index_shutdown.set()
-    await _cancel_runner_task(runner, "_code_index_task")
-
-    sync_worker_shutdown = getattr(runner, "_sync_worker_shutdown", None)
-    if sync_worker_shutdown is not None:
-        sync_worker_shutdown.set()
-    await _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0)
 
 
 async def _cleanup_pipeline_background_tasks() -> None:
@@ -362,44 +425,60 @@ async def _stop_started_services(
     shutdown_intent: ShutdownIntent,
 ) -> None:
     if runner.agent_lifecycle_monitor:
-        try:
-            if shutdown_intent.cancel_agents:
-                cancelled_runs = await cancel_active_agent_runs_for_shutdown(runner)
-                if cancelled_runs > 0:
-                    logger.info(
-                        "Cancelled %d active agent run(s) during graceful shutdown",
-                        cancelled_runs,
-                    )
-            else:
-                logger.info("Preserving active agent runs during daemon restart")
-            await asyncio.wait_for(runner.agent_lifecycle_monitor.stop(), timeout=2.0)
-        except TimeoutError:
-            logger.warning("Agent lifecycle monitor shutdown timed out")
+        if shutdown_intent.cancel_agents:
+            cancelled_runs = await _best_effort(
+                lambda: cancel_active_agent_runs_for_shutdown(runner),
+                "Active agent run cancellation",
+            )
+            if cancelled_runs is not None and cancelled_runs > 0:
+                logger.info(
+                    "Cancelled %d active agent run(s) during graceful shutdown",
+                    cancelled_runs,
+                )
+        else:
+            logger.info("Preserving active agent runs during daemon restart")
+        await _best_effort(
+            runner.agent_lifecycle_monitor.stop,
+            "Agent lifecycle monitor shutdown",
+            timeout=2.0,
+        )
 
     if runner.cron_scheduler:
-        try:
-            await asyncio.wait_for(runner.cron_scheduler.stop(), timeout=2.0)
-        except TimeoutError:
-            _log_shutdown_timeout("Cron scheduler", shutdown_intent=shutdown_intent)
+        await _best_effort(
+            runner.cron_scheduler.stop,
+            "Cron scheduler shutdown",
+            timeout=2.0,
+            on_timeout=lambda: _log_shutdown_timeout(
+                "Cron scheduler",
+                shutdown_intent=shutdown_intent,
+            ),
+        )
 
     system_automation_loop = getattr(runner, "system_automation_loop", None)
     if system_automation_loop is not None:
-        try:
-            await asyncio.wait_for(system_automation_loop.stop(), timeout=2.0)
-        except TimeoutError:
-            _log_shutdown_timeout("System automation loop", shutdown_intent=shutdown_intent)
+        await _best_effort(
+            system_automation_loop.stop,
+            "System automation loop shutdown",
+            timeout=2.0,
+            on_timeout=lambda: _log_shutdown_timeout(
+                "System automation loop",
+                shutdown_intent=shutdown_intent,
+            ),
+        )
 
     if runner.message_processor:
-        try:
-            await asyncio.wait_for(runner.message_processor.stop(), timeout=2.0)
-        except TimeoutError:
-            logger.warning("Message processor shutdown timed out")
+        await _best_effort(
+            runner.message_processor.stop,
+            "Message processor shutdown",
+            timeout=2.0,
+        )
 
     if runner.communications_manager:
-        try:
-            await asyncio.wait_for(runner.communications_manager.stop(), timeout=5.0)
-        except TimeoutError:
-            logger.warning("CommunicationsManager shutdown timed out")
+        await _best_effort(
+            runner.communications_manager.stop,
+            "CommunicationsManager shutdown",
+            timeout=5.0,
+        )
 
 
 def _log_shutdown_timeout(service_name: str, *, shutdown_intent: ShutdownIntent) -> None:
@@ -457,6 +536,151 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
             logger.warning(f"VectorStore close failed: {e}")
 
 
+async def _shutdown_database_executor(db_executor: Any) -> None:
+    """Stop queued database work without stranding the event-loop executor."""
+    try:
+        # ThreadPoolExecutor.shutdown(wait=False) is non-blocking. Running
+        # operations are allowed to finish while queued operations are
+        # cancelled. Do not put wait=True in asyncio's default executor: a
+        # timed-out to_thread call keeps running, and asyncio.run() waits for
+        # that worker again while closing the event loop.
+        db_executor.shutdown(wait=False, cancel_futures=True)
+    except Exception as e:
+        logger.warning(f"Database executor shutdown failed: {e}")
+
+
+async def _run_graceful_shutdown_sequence(
+    runner: GobbyRunner,
+    server: uvicorn.Server,
+    server_task: asyncio.Task[Any],
+    uvicorn_drain_timeout: int,
+    *,
+    shutdown_intent: ShutdownIntent,
+    await_critical_stop_hook_grace_window: Callable[[], Awaitable[None]],
+    shutdown_websocket_server: Callable[[GobbyRunner], Awaitable[None]],
+    cancel_active_agent_runs_for_shutdown: Callable[[GobbyRunner], Awaitable[int]],
+) -> None:
+    if shutdown_intent is ShutdownIntent.STOP:
+        await _best_effort(
+            await_critical_stop_hook_grace_window,
+            "Critical Stop-hook grace window",
+        )
+    else:
+        logger.debug("Skipping critical Stop-hook grace during daemon restart")
+    logger.debug("Shutdown requested; beginning graceful shutdown")
+
+    cleanup_pending_interactions = getattr(
+        getattr(runner, "http_server", None),
+        "_cleanup_pending_interactions",
+        None,
+    )
+    if cleanup_pending_interactions is not None:
+        await _best_effort(
+            cleanup_pending_interactions,
+            "Pending interaction cleanup",
+        )
+
+    await _best_effort(
+        runner.http_server._terminate_streamable_http_sessions,
+        "Streamable HTTP session termination",
+    )
+
+    await _best_effort(
+        lambda: _drain_uvicorn_http_connections(server),
+        "HTTP connection drain",
+    )
+
+    server.should_exit = True
+
+    await _best_effort(
+        lambda: _cancel_runner_task(runner, "_provider_model_refresh_task"),
+        "Provider model refresh task cancellation",
+    )
+
+    await _best_effort(
+        lambda: shutdown_websocket_server(runner),
+        "WebSocket server shutdown",
+    )
+
+    await _best_effort(
+        runner.lifecycle_manager.stop,
+        "Lifecycle manager shutdown",
+        timeout=2.0,
+        on_timeout=lambda: _log_shutdown_timeout(
+            "Lifecycle manager",
+            shutdown_intent=shutdown_intent,
+        ),
+    )
+
+    async def wait_for_http_server_shutdown() -> None:
+        logger.debug("Waiting for HTTP server lifespan shutdown")
+        await server_task
+        logger.debug("HTTP server lifespan shutdown complete")
+
+    await _best_effort(
+        wait_for_http_server_shutdown,
+        "HTTP server shutdown",
+        timeout=uvicorn_drain_timeout + 5,
+    )
+    await _best_effort(
+        lambda: _stop_started_services(
+            runner,
+            cancel_active_agent_runs_for_shutdown,
+            shutdown_intent=shutdown_intent,
+        ),
+        "Started service shutdown",
+    )
+    await _best_effort(
+        _cleanup_pipeline_background_tasks,
+        "Pipeline background task cleanup",
+    )
+    await _best_effort(
+        lambda: _cancel_periodic_tasks(runner),
+        "Periodic task cancellation",
+    )
+    _best_effort_sync(
+        lambda: _stop_ui_dev_server_if_needed(runner),
+        "UI development server shutdown",
+    )
+    await _best_effort(
+        lambda: _close_managers_and_storage(runner),
+        "Manager and storage shutdown",
+    )
+    await _best_effort(
+        runner.mcp_proxy.disconnect_all,
+        "MCP disconnect",
+        timeout=3.0,
+    )
+
+
+async def _run_async_shutdown_cleanup(
+    runner: GobbyRunner,
+    *,
+    shutdown_intent: ShutdownIntent,
+    reap_remaining_child_processes: ReapChildProcesses,
+    shutdown_telemetry: Callable[[], None],
+) -> None:
+    """Run bounded asynchronous cleanup before the synchronous finalizers."""
+    preserved_agent_pids = (
+        await _preserved_agent_terminal_pids(runner) if shutdown_intent.preserve_agents else set()
+    )
+    await _best_effort(
+        lambda: reap_remaining_child_processes(
+            preserve_agents=shutdown_intent.preserve_agents,
+            preserved_agent_pids=preserved_agent_pids,
+        ),
+        "Child process reap",
+    )
+    _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
+
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        await _best_effort(
+            lambda: _shutdown_database_executor(db_executor),
+            "Database executor shutdown",
+        )
+
+
 async def shutdown_daemon_services(
     runner: GobbyRunner,
     server: uvicorn.Server,
@@ -470,97 +694,83 @@ async def shutdown_daemon_services(
     shutdown_telemetry: Callable[[], None],
     cleanup_pid_file: Callable[[], None],
 ) -> None:
-    """Run the ordered graceful shutdown sequence."""
+    """Run graceful shutdown within the CLI's process-termination deadline."""
     shutdown_intent = coerce_shutdown_intent(getattr(runner, "_shutdown_intent", None))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None:
         services.startup_ready = False
         services.shutdown_in_progress = True
-    await await_critical_stop_hook_grace_window()
-    logger.debug("Shutdown requested; beginning graceful shutdown")
 
-    cleanup_pending_interactions = getattr(
-        getattr(runner, "http_server", None),
-        "_cleanup_pending_interactions",
-        None,
+    loop = asyncio.get_running_loop()
+    overall_deadline = loop.time() + _OVERALL_SHUTDOWN_DEADLINE_SECONDS
+    graceful_deadline = min(
+        overall_deadline,
+        loop.time() + _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
     )
-    if cleanup_pending_interactions is not None:
+    overall_timeout = asyncio.timeout_at(overall_deadline)
+    try:
         try:
-            await cleanup_pending_interactions()
-        except Exception as e:
-            logger.warning(f"Failed to clean up pending interactions: {e}")
+            async with overall_timeout:
+                await _best_effort(
+                    lambda: _cancel_runner_task(runner, "_subsystem_init_task"),
+                    "Subsystem initialization task cancellation",
+                )
+                graceful_timeout = asyncio.timeout_at(graceful_deadline)
+                try:
+                    async with graceful_timeout:
+                        await _best_effort(
+                            lambda: _run_graceful_shutdown_sequence(
+                                runner,
+                                server,
+                                server_task,
+                                uvicorn_drain_timeout,
+                                shutdown_intent=shutdown_intent,
+                                await_critical_stop_hook_grace_window=(
+                                    await_critical_stop_hook_grace_window
+                                ),
+                                shutdown_websocket_server=shutdown_websocket_server,
+                                cancel_active_agent_runs_for_shutdown=(
+                                    cancel_active_agent_runs_for_shutdown
+                                ),
+                            ),
+                            "Graceful shutdown sequence",
+                        )
+                except TimeoutError:
+                    if not graceful_timeout.expired():
+                        raise
+                    logger.warning(
+                        "Graceful shutdown exceeded %.1fs budget; entering cleanup tail",
+                        _GRACEFUL_SHUTDOWN_BUDGET_SECONDS,
+                    )
 
-    try:
-        await runner.http_server._terminate_streamable_http_sessions()
-    except Exception as e:
-        logger.warning(f"Failed to terminate Streamable HTTP sessions: {e}")
-
-    await _drain_uvicorn_http_connections(server)
-
-    server.should_exit = True
-
-    await _cancel_runner_task(runner, "_subsystem_init_task")
-    await _cancel_runner_task(runner, "_provider_model_refresh_task")
-
-    await shutdown_websocket_server(runner)
-
-    try:
-        await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
-    except TimeoutError:
-        _log_shutdown_timeout("Lifecycle manager", shutdown_intent=shutdown_intent)
-
-    try:
-        logger.debug("Waiting for HTTP server lifespan shutdown")
-        await asyncio.wait_for(server_task, timeout=uvicorn_drain_timeout + 5)
-        logger.debug("HTTP server lifespan shutdown complete")
-    except TimeoutError:
-        logger.warning("HTTP server shutdown timed out")
-
-    await _stop_started_services(
-        runner,
-        cancel_active_agent_runs_for_shutdown,
-        shutdown_intent=shutdown_intent,
-    )
-    await _cleanup_pipeline_background_tasks()
-    await _cancel_periodic_tasks(runner)
-    _stop_ui_dev_server_if_needed(runner)
-    await _close_managers_and_storage(runner)
-
-    try:
-        await asyncio.wait_for(runner.mcp_proxy.disconnect_all(), timeout=3.0)
-    except TimeoutError:
-        logger.warning("MCP disconnect timed out")
-
-    preserved_agent_pids = (
-        _preserved_agent_terminal_pids(runner) if shutdown_intent.preserve_agents else set()
-    )
-    await reap_remaining_child_processes(
-        preserve_agents=shutdown_intent.preserve_agents,
-        preserved_agent_pids=preserved_agent_pids,
-    )
-
-    try:
-        shutdown_telemetry()
-    except Exception as e:
-        logger.warning(f"Telemetry shutdown failed: {e}")
-
-    db_executor = getattr(runner, "db_executor", None)
-    if db_executor is not None:
+                await _run_async_shutdown_cleanup(
+                    runner,
+                    shutdown_intent=shutdown_intent,
+                    reap_remaining_child_processes=reap_remaining_child_processes,
+                    shutdown_telemetry=shutdown_telemetry,
+                )
+        except TimeoutError:
+            if not overall_timeout.expired():
+                raise
+            logger.warning(
+                "Async shutdown cleanup exceeded %.1fs overall deadline",
+                _OVERALL_SHUTDOWN_DEADLINE_SECONDS,
+            )
+    finally:
         try:
-            db_executor.shutdown(wait=True)
+            runner.database.close()
         except Exception as e:
-            logger.warning(f"Database executor shutdown failed: {e}")
+            logger.warning(f"Database close failed: {e}")
 
-    try:
-        runner.database.close()
-    except Exception as e:
-        logger.warning(f"Database close failed: {e}")
-
-    cleanup_pid_file()
-    try:
-        get_shutdown_marker_path().unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
+        try:
+            cleanup_pid_file()
+        except Exception as e:
+            logger.warning("PID file cleanup failed: %s", e)
+        finally:
+            try:
+                get_shutdown_marker_path().unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
     logger.info("Shutdown complete")

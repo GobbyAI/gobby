@@ -38,11 +38,13 @@ async def test_cleanup_deletes_old_messages(mock_attachment_manager: MagicMock):
             return_value=mock_store,
         ),
     ):
-        await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
+        await cleanup_comms_messages_loop(
+            MagicMock(), is_shutdown, retention_days=30, startup_delay_seconds=0
+        )
 
     sleep_mock.assert_called_once_with(24 * 60 * 60)
     mock_store.delete_messages_before.assert_called_once()
-    mock_attachment_manager.cleanup_old.assert_called_once_with(days=30)
+    mock_attachment_manager.cleanup_old.assert_called_once_with(days=30, limit=500)
     cutoff_arg = mock_store.delete_messages_before.call_args[0][0]
     assert isinstance(cutoff_arg, datetime)
     # Cutoff should be approximately 30 days ago
@@ -68,7 +70,9 @@ async def test_cleanup_respects_retention_days():
             return_value=mock_store,
         ),
     ):
-        await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=7)
+        await cleanup_comms_messages_loop(
+            MagicMock(), is_shutdown, retention_days=7, startup_delay_seconds=0
+        )
 
     cutoff_arg = mock_store.delete_messages_before.call_args[0][0]
     expected = datetime.now(UTC) - timedelta(days=7)
@@ -97,7 +101,9 @@ async def test_cleanup_runs_on_interval():
             return_value=mock_store,
         ),
     ):
-        await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
+        await cleanup_comms_messages_loop(
+            MagicMock(), is_shutdown, retention_days=30, startup_delay_seconds=0
+        )
 
     # Should have called sleep for each iteration
     assert len(sleep_mock.call_args_list) == max_calls
@@ -144,7 +150,9 @@ async def test_cleanup_handles_db_error_gracefully():
         ),
     ):
         # Should not raise despite first call failing
-        await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
+        await cleanup_comms_messages_loop(
+            MagicMock(), is_shutdown, retention_days=30, startup_delay_seconds=0
+        )
 
     assert mock_store.delete_messages_before.call_count == 2
     assert call_count == 3
@@ -168,7 +176,9 @@ async def test_cleanup_zero_deleted_no_error():
             return_value=mock_store,
         ),
     ):
-        await cleanup_comms_messages_loop(MagicMock(), is_shutdown, retention_days=30)
+        await cleanup_comms_messages_loop(
+            MagicMock(), is_shutdown, retention_days=30, startup_delay_seconds=0
+        )
 
     mock_store.delete_messages_before.assert_called_once()
     assert mock_store.delete_messages_before.call_count == 1

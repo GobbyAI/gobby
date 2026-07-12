@@ -114,22 +114,11 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
     if runner.workflow_loader is not None and runner.project_id:
         try:
-            from gobby.storage.pipelines import LocalPipelineExecutionManager as _LPEM
-            from gobby.workflows.pipeline_executor import PipelineExecutor as _PE
-            from gobby.workflows.templates import TemplateEngine
+            from gobby.runner_pipeline_runtime import build_pipeline_runtime
 
-            runner.pipeline_execution_manager = _LPEM(
-                db=runner.database, project_id=runner.project_id
-            )
-            runner.pipeline_executor = _PE(
-                db=runner.database,
-                execution_manager=runner.pipeline_execution_manager,
-                llm_service=runner.llm_service,
-                loader=runner.workflow_loader,
-                template_engine=TemplateEngine(),
-                session_manager=runner.session_manager,
-                completion_registry=runner.completion_registry,
-                run_db=runner.db_executor.run,
+            runner.pipeline_execution_manager, runner.pipeline_executor = build_pipeline_runtime(
+                runner,
+                runner.project_id,
             )
             logger.info("Pipeline executor initialized at startup")
         except Exception as e:

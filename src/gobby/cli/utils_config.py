@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -99,18 +98,6 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
             "Failed to load config from PostgreSQL hub: %s", _redact_exception_text(exc)
         )
         return bootstrap_config
-
-
-def get_gobby_home() -> Path:
-    """Get gobby home directory, respecting GOBBY_HOME env var.
-
-    Returns:
-        Path to gobby home (~/.gobby by default, or GOBBY_HOME if set)
-    """
-    gobby_home = os.environ.get("GOBBY_HOME")
-    if gobby_home:
-        return Path(gobby_home)
-    return Path.home() / ".gobby"
 
 
 def _redact_dsn(dsn: str) -> str:
