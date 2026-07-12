@@ -3595,8 +3595,7 @@ class TestHooksEndpoints:
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
-            "Unsupported schema_version: 99. "
-            f"Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
+            f"Unsupported schema_version: 99. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
         )
 
     def test_execute_hook_envelope_requires_source(self, session_storage: SessionManager) -> None:
