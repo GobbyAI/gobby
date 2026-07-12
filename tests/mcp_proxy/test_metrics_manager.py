@@ -15,6 +15,7 @@ pytestmark = pytest.mark.unit
 
 PROJECT_1 = "66666666-6666-4666-8666-666666666666"
 PROJECT_2 = "77777777-7777-4777-8777-777777777777"
+OLD_METRICS_ID = "55555555-5555-4555-8555-555555555555"
 
 
 @pytest.fixture
@@ -498,7 +499,7 @@ class TestCleanupOldMetrics:
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                "tm-old",
+                OLD_METRICS_ID,
                 PROJECT_1,
                 "server1",
                 "old_tool",
