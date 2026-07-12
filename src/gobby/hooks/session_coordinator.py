@@ -403,14 +403,18 @@ class SessionCoordinator:
             tmux_session_name = agent_run.tmux_session_name
             if not result and tmux_session_name:
                 try:
-                    import subprocess
+                    # Invoked only with fixed tmux argv and shell execution disabled.
+                    import subprocess  # nosec B404
 
                     from gobby.agents.tmux import get_configured_tmux_command_prefix
 
                     cmd = get_configured_tmux_command_prefix()
                     cmd.extend(["capture-pane", "-t", tmux_session_name, "-p", "-S", "-"])
 
-                    proc = subprocess.run(cmd, capture_output=True, timeout=5, text=True)
+                    # The configured tmux binary receives a fixed argument list.
+                    proc = subprocess.run(  # nosec B603
+                        cmd, capture_output=True, timeout=5, text=True
+                    )
                     if proc.returncode == 0 and proc.stdout.strip():
                         result = proc.stdout.strip()
                         self.logger.info(
@@ -425,13 +429,17 @@ class SessionCoordinator:
             # Clean up the tmux session (remain-on-exit keeps it alive for capture)
             if tmux_session_name:
                 try:
-                    import subprocess
+                    # Invoked only with fixed tmux argv and shell execution disabled.
+                    import subprocess  # nosec B404
 
                     from gobby.agents.tmux import get_configured_tmux_command_prefix
 
                     kill_cmd = get_configured_tmux_command_prefix()
                     kill_cmd.extend(["kill-session", "-t", tmux_session_name])
-                    subprocess.run(kill_cmd, capture_output=True, timeout=5)
+                    # The configured tmux binary receives a fixed argument list.
+                    subprocess.run(  # nosec B603
+                        kill_cmd, capture_output=True, timeout=5
+                    )
                 except Exception as e:
                     self.logger.debug(f"tmux kill-session failed for {tmux_session_name}: {e}")
 
