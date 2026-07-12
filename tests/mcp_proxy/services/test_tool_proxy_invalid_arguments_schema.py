@@ -40,14 +40,9 @@ def proxy_parts(temp_db: HubDatabase):
     return proxy, mcp_manager, temp_db
 
 
-def _schema_response(tool_name: str, input_schema: dict):
-    return {
-        "success": True,
-        "tool": {
-            "name": tool_name,
-            "inputSchema": input_schema,
-        },
-    }
+def _manager_schema(input_schema: dict):
+    """Match MCPClientManager.get_tool_input_schema's bare-schema contract."""
+    return input_schema
 
 
 @pytest.mark.asyncio
@@ -58,7 +53,7 @@ async def test_first_invalid_call_includes_schema_and_records_latch(proxy_parts)
         "properties": {"name": {"type": "string"}},
         "required": ["name"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _schema_response("test_tool", input_schema)
+    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     result = await proxy.call_tool(
         "test-server",
@@ -86,7 +81,7 @@ async def test_second_invalid_call_omits_schema(proxy_parts) -> None:
         "properties": {"name": {"type": "string"}},
         "required": ["name"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _schema_response("test_tool", input_schema)
+    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     await proxy.call_tool(
         "test-server",
@@ -114,7 +109,7 @@ async def test_leaked_routing_fields_are_invalid_target_arguments(proxy_parts) -
         "properties": {"title": {"type": "string"}},
         "required": [],
     }
-    mcp_manager.get_tool_input_schema.return_value = _schema_response("create_task", input_schema)
+    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     result = await proxy.call_tool(
         "gobby-tasks",
@@ -141,7 +136,7 @@ async def test_required_session_id_injected_from_wrapper_context(proxy_parts) ->
         "properties": {"session_id": {"type": "string"}},
         "required": ["session_id"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _schema_response("needs_session", input_schema)
+    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     result = await proxy.call_tool(
         "gobby-sessions",
@@ -167,7 +162,7 @@ async def test_malformed_string_arguments_return_schema_guidance(proxy_parts) ->
         "properties": {"name": {"type": "string"}},
         "required": ["name"],
     }
-    mcp_manager.get_tool_input_schema.return_value = _schema_response("test_tool", input_schema)
+    mcp_manager.get_tool_input_schema.return_value = _manager_schema(input_schema)
 
     result = await proxy.call_tool(
         "test-server",

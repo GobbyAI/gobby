@@ -234,13 +234,7 @@ async def test_get_tool_schema(daemon_tools, mock_mcp_manager):
     # For external tools, mcp_manager.get_tool_input_schema() is called
 
     # Test with external tool - mock the mcp_manager method
-    mock_mcp_manager.get_tool_input_schema = AsyncMock(
-        return_value={
-            "success": True,
-            "server": "downstream",
-            "tool": {"name": "dt1", "description": "desc", "inputSchema": {"type": "object"}},
-        }
-    )
+    mock_mcp_manager.get_tool_input_schema = AsyncMock(return_value={"type": "object"})
 
     result = await daemon_tools.get_tool_schema("downstream", "dt1")
     assert result["success"] is True
