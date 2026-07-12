@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Track background pipeline tasks so they can be awaited on shutdown
 _background_tasks: set[asyncio.Task[None]] = set()
+_background_tasks_by_execution: dict[str, asyncio.Task[None]] = {}
 
 RunDb = Callable[..., Awaitable[Any]]
 
@@ -42,6 +43,7 @@ async def cleanup_background_tasks() -> None:
     are left dangling.
     """
     if not _background_tasks:
+        _background_tasks_by_execution.clear()
         return
 
     tasks = list(_background_tasks)
@@ -56,6 +58,7 @@ async def cleanup_background_tasks() -> None:
             logger.warning(f"Pipeline task {task.get_name()} raised during shutdown: {result}")
 
     _background_tasks.clear()
+    _background_tasks_by_execution.clear()
 
 
 class PipelineLoader(Protocol):
@@ -117,11 +120,14 @@ class PipelineExecutor(Protocol):
     async def reject(self, token: str, rejected_by: str | None = None) -> PipelineExecution: ...
 
 
-def _register_background_task(task: asyncio.Task[None]) -> None:
+def _register_background_task(execution_id: str, task: asyncio.Task[None]) -> None:
     _background_tasks.add(task)
+    _background_tasks_by_execution[execution_id] = task
 
     def _on_done(t: asyncio.Task[None]) -> None:
         _background_tasks.discard(t)
+        if _background_tasks_by_execution.get(execution_id) is t:
+            _background_tasks_by_execution.pop(execution_id, None)
         if not t.cancelled() and t.exception():
             logger.error(f"Pipeline background task failed: {t.exception()}")
 
@@ -212,27 +218,16 @@ async def cancel_pipeline(
             "error": f"Pipeline already in a terminal state (current status: {execution.status.value})",
         }
 
-    # 1. Kill spawned agents (via DB)
-    try:
-        from gobby.agents.kill import kill_agent
-        from gobby.storage.agents import LocalAgentRunManager
+    # Stop the exact fire-and-forget task before yielding to agent termination.
+    background_task = _background_tasks_by_execution.get(execution_id)
+    if (
+        background_task
+        and background_task is not asyncio.current_task()
+        and not background_task.done()
+    ):
+        background_task.cancel()
 
-        _db: HubDatabase | None = getattr(execution_manager, "db", None)
-        if _db is None:
-            raise RuntimeError("execution manager has no database")
-        arm = LocalAgentRunManager(_db)
-        active_runs = arm.list_by_parent(execution.session_id) if execution.session_id else []
-        killed_count = 0
-        for run in active_runs:
-            await kill_agent(run, _db, signal_name="KILL")
-            killed_count += 1
-
-        if killed_count > 0:
-            logger.info(f"Killed {killed_count} agents associated with pipeline {execution_id[:8]}")
-    except Exception as e:
-        logger.warning(f"Failed to kill agents for pipeline {execution_id}: {e}")
-
-    # 2. Mark running steps as cancelled
+    # Mark running steps as cancelled.
     try:
         steps = execution_manager.get_steps_for_execution(execution_id)
         for step in steps:
@@ -244,7 +239,8 @@ async def cancel_pipeline(
     except Exception as e:
         logger.warning(f"Failed to cancel steps for pipeline {execution_id}: {e}")
 
-    # 3. Mark execution as cancelled
+    # Mark the execution as cancelled before the next await so the executor
+    # cannot race cancellation and write COMPLETED.
     try:
         execution_manager.update_execution_status(
             execution_id=execution_id,
@@ -252,6 +248,38 @@ async def cancel_pipeline(
         )
     except Exception as e:
         return {"success": False, "error": f"Failed to update execution status: {e}"}
+
+    if background_task and background_task is not asyncio.current_task():
+        await asyncio.gather(background_task, return_exceptions=True)
+
+    # Kill only agents owned by the deterministic pipeline child session.
+    # Never fall back to execution.session_id because an early cancellation
+    # may still contain the unrelated caller session there.
+    try:
+        from gobby.agents.kill import kill_agent
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.sessions import SessionManager
+
+        _db: HubDatabase | None = getattr(execution_manager, "db", None)
+        if _db is None:
+            raise RuntimeError("execution manager has no database")
+        pipeline_session = SessionManager(_db).find_by_external_id_any_project(
+            external_id=f"pipeline-{execution_id}",
+            machine_id="pipeline",
+            source="pipeline",
+        )
+        pipeline_session_id = pipeline_session.id if pipeline_session else None
+        arm = LocalAgentRunManager(_db)
+        active_runs = arm.list_by_parent(pipeline_session_id) if pipeline_session_id else []
+        killed_count = 0
+        for run in active_runs:
+            await kill_agent(run, _db, signal_name="KILL")
+            killed_count += 1
+
+        if killed_count > 0:
+            logger.info(f"Killed {killed_count} agents associated with pipeline {execution_id[:8]}")
+    except Exception as e:
+        logger.warning(f"Failed to kill agents for pipeline {execution_id}: {e}")
 
     return {
         "success": True,
@@ -330,7 +358,7 @@ async def run_pipeline(
         ),
         name=f"pipeline-{name}-{execution_id[:8]}",
     )
-    _register_background_task(task)
+    _register_background_task(execution_id, task)
 
     return {
         "success": True,
@@ -464,7 +492,7 @@ async def resume_pipeline(
         ),
         name=f"pipeline-resume-{execution.pipeline_name}-{execution_id[:8]}",
     )
-    _register_background_task(task)
+    _register_background_task(execution_id, task)
 
     return {
         "success": True,
@@ -642,7 +670,7 @@ async def resume_interrupted_pipelines(
             ),
             name=f"pipeline-resume-{execution.pipeline_name}-{execution.id[:8]}",
         )
-        _register_background_task(task)
+        _register_background_task(execution.id, task)
         resumed.append(execution.id)
         logger.info(f"Resumed pipeline '{execution.pipeline_name}' execution {execution.id}")
 

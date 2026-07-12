@@ -11,6 +11,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _background_tasks,
+    _background_tasks_by_execution,
     resume_interrupted_pipelines,
 )
 from gobby.workflows.pipeline_state import ExecutionStatus
@@ -23,11 +24,13 @@ pytestmark = pytest.mark.unit
 def _clear_background_tasks() -> Generator[None]:
     """Ensure _background_tasks is empty before and after each test."""
     _background_tasks.clear()
+    _background_tasks_by_execution.clear()
     yield
     # Cancel any tasks created during the test before clearing
     for task in list(_background_tasks):
         task.cancel()
     _background_tasks.clear()
+    _background_tasks_by_execution.clear()
 
 
 def _make_execution(

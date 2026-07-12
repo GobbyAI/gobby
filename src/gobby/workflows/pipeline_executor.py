@@ -238,6 +238,13 @@ class PipelineExecutor(
             logger.info(f"Startup sweep marked {count} orphaned pipeline execution(s) failed")
         return count
 
+    def _get_cancelled_execution(self, execution_id: str) -> PipelineExecution | None:
+        """Return the latest execution record when cancellation was persisted."""
+        execution: PipelineExecution | None = self.execution_manager.get_execution(execution_id)
+        if execution and execution.status == ExecutionStatus.CANCELLED:
+            return execution
+        return None
+
     async def execute(
         self,
         pipeline: PipelineDefinition,
@@ -449,6 +456,11 @@ class PipelineExecutor(
 
                 # 4. Iterate through steps in order
                 for step in pipeline.steps:
+                    cancelled = self._get_cancelled_execution(execution.id)
+                    if cancelled:
+                        self._close_pipeline_session(pipeline_session_id, caller_session_id)
+                        return cancelled
+
                     # Check for existing execution
                     step_execution = existing_steps.get(step.id)
 
@@ -541,6 +553,12 @@ class PipelineExecutor(
                     # Execute the step
                     step_output = await self._execute_step(step, context, project_id)
 
+                    cancelled = self._get_cancelled_execution(execution.id)
+                    if cancelled:
+                        current_step_execution = None
+                        self._close_pipeline_session(pipeline_session_id, caller_session_id)
+                        return cancelled
+
                     # Detect exec step failures from non-zero exit codes
                     if isinstance(step_output, dict) and step_output.get("exit_code", 0) != 0:
                         error_msg = (
@@ -588,6 +606,11 @@ class PipelineExecutor(
                         output=step_output,
                     )
 
+                cancelled = self._get_cancelled_execution(execution.id)
+                if cancelled:
+                    self._close_pipeline_session(pipeline_session_id, caller_session_id)
+                    return cancelled
+
                 # 5. Safety net — verify no steps failed before marking completed
                 failed_steps = self.execution_manager.get_failed_steps(execution.id)
                 if failed_steps:
@@ -631,6 +654,10 @@ class PipelineExecutor(
                 self._close_pipeline_session(pipeline_session_id, caller_session_id)
 
                 return execution
+
+            except asyncio.CancelledError:
+                self._close_pipeline_session(pipeline_session_id, caller_session_id)
+                raise
 
             except ApprovalRequired:
                 # Don't treat approval as an error - just re-raise
