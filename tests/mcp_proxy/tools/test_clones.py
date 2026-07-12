@@ -211,6 +211,53 @@ class TestCreateClone:
         result = await asyncio.wait_for(operation, timeout=1)
         assert result["success"] is False
 
+    async def test_create_clone_cancellation_waits_for_record_commit(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """Cancellation cannot abandon a clone after filesystem mutation starts."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_clone(**_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.shallow_clone.side_effect = blocking_clone
+        mock_clone_storage.create.return_value.to_dict.return_value = {"id": "clone-1"}
+        operation = asyncio.create_task(
+            registry.call(
+                "create_clone",
+                {
+                    "branch_name": "feature",
+                    "clone_path": "/tmp/clones/test",
+                    "remote_url": "https://github.com/user/repo.git",
+                },
+            )
+        )
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.create.assert_called_once()
+        mock_git_manager.delete_clone.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_create_clone_with_task_id(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
@@ -1775,6 +1822,69 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["files_deleted"] is True
         assert result["cleaned"][0]["record_deleted"] is True
         mock_clone_storage.delete.assert_called_once_with("clone-1")
+
+    async def test_cleanup_cancellation_finishes_current_item_and_stops(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """Cancellation commits the active DB/path pair before stopping the sweep."""
+        stale = [
+            Clone(
+                id=f"clone-{index}",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name=f"feature-{index}",
+                clone_path=f"/tmp/clones/{index}",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="stale",
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            )
+            for index in (1, 2)
+        ]
+        mock_clone_storage.cleanup_stale.return_value = stale
+        mock_clone_storage.mark_cleanup.return_value = stale[0]
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_delete(*_args: object, **_kwargs: object) -> MagicMock:
+            started.set()
+            assert release.wait(timeout=5)
+            return MagicMock(success=True)
+
+        mock_git_manager.delete_clone.side_effect = blocking_delete
+        operation = asyncio.create_task(
+            registry.call(
+                "cleanup_stale_clones",
+                {"hours": 24, "dry_run": False, "delete_files": True},
+            )
+        )
+
+        assert await asyncio.to_thread(started.wait, 2)
+        operation.cancel()
+        cancellation_cycle = asyncio.Event()
+
+        async def observe_cancellation_cycle() -> None:
+            cancellation_cycle.set()
+
+        observer = asyncio.create_task(observe_cancellation_cycle())
+        await cancellation_cycle.wait()
+        await observer
+        assert operation.done() is False
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")
+        mock_clone_storage.delete.assert_called_once_with("clone-1")
+        mock_git_manager.delete_clone.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_delete_files_failure(

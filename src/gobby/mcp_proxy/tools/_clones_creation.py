@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.utils.git import run_to_completion
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         description="Clone creation tools",
     )
 
-    async def create_clone(
+    async def _create_clone_impl(
         branch_name: str,
         clone_path: str,
         remote_url: str | None = None,
@@ -28,6 +29,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         base_branch: str = "main",
         depth: int = 1,
         use_local: bool = False,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Create a new git clone.
@@ -70,6 +72,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             # Resolve task references before creating anything on disk. A bad task
             # reference must not leave a clone directory behind.
             resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
 
             if use_local:
                 # Clone from local repo path - always full clone
@@ -100,6 +104,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                             "success": False,
                             "error": "No remote URL provided and could not get from repository",
                         }
+                if cancellation_requested is not None and cancellation_requested.is_set():
+                    raise asyncio.CancelledError
 
                 # Create the clone
                 result = await asyncio.to_thread(
@@ -156,6 +162,30 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     )
             logger.error("Error creating clone: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
+
+    async def create_clone(
+        branch_name: str,
+        clone_path: str,
+        remote_url: str | None = None,
+        task_id: str | None = None,
+        base_branch: str = "main",
+        depth: int = 1,
+        use_local: bool = False,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _create_clone_impl(
+                branch_name,
+                clone_path,
+                remote_url,
+                task_id,
+                base_branch,
+                depth,
+                use_local,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     registry.register(
         name="create_clone",

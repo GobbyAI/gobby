@@ -8,6 +8,7 @@ from typing import Any
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
+from gobby.utils.git import run_to_completion
 
 
 def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegistry:
@@ -77,10 +78,11 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
         func=detect_stale_clones,
     )
 
-    async def cleanup_stale_clones(
+    async def _cleanup_stale_clones_impl(
         hours: int | str = 24,
         dry_run: bool | str = True,
         delete_files: bool | str = False,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Mark and optionally delete stale clones.
@@ -110,6 +112,8 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
         results = []
         cleanup_succeeded = True
         for c in stale:
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
             result_item: dict[str, Any] = {
                 "id": c.id,
                 "branch_name": c.branch_name,
@@ -176,6 +180,22 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
             "count": len(results),
             "threshold_hours": hours,
         }
+
+    async def cleanup_stale_clones(
+        hours: int | str = 24,
+        dry_run: bool | str = True,
+        delete_files: bool | str = False,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _cleanup_stale_clones_impl(
+                hours,
+                dry_run,
+                delete_files,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     registry.register(
         name="cleanup_stale_clones",
