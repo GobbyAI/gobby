@@ -211,6 +211,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 ),
             }
         merge_target = raw_merge_target
+        source_ref = f"refs/heads/{effective_source}"
+        target_ref = f"refs/heads/{merge_target}"
         wt_path = worktree.worktree_path
         repo_path = str(resolved_git_mgr.repo_path)
         target_worktree_path = await asyncio.to_thread(
@@ -220,7 +222,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         target_ref_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
-            ["show-ref", "--verify", "--quiet", f"refs/heads/{merge_target}"],
+            ["show-ref", "--verify", "--quiet", target_ref],
             cwd=repo_path,
             timeout=10,
         )
@@ -236,7 +238,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         source_ref_result = await asyncio.to_thread(
             resolved_git_mgr.run_git_command,
-            ["show-ref", "--verify", "--quiet", f"refs/heads/{effective_source}"],
+            ["show-ref", "--verify", "--quiet", source_ref],
             cwd=repo_path,
             timeout=10,
         )
@@ -302,8 +304,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 [
                     "merge-base",
                     "--is-ancestor",
-                    f"refs/heads/{effective_source}",
-                    f"refs/heads/{merge_target}",
+                    source_ref,
+                    target_ref,
                 ],
                 cwd=merge_cwd,
                 timeout=10,
@@ -313,7 +315,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if worktree.status == "merged" and await _source_is_merged_into_target():
             target_sha_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
-                ["rev-parse", f"refs/heads/{merge_target}"],
+                ["rev-parse", target_ref],
                 cwd=merge_cwd,
                 timeout=10,
             )
@@ -396,7 +398,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if dirty_paths:
                 incoming_result = await asyncio.to_thread(
                     resolved_git_mgr.run_git_command,
-                    ["diff", "--name-only", "HEAD", effective_source],
+                    ["diff", "--name-only", "HEAD", source_ref],
                     cwd=merge_cwd,
                     timeout=10,
                 )
@@ -453,7 +455,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             merge_result = await asyncio.to_thread(
                 resolved_git_mgr.run_git_command,
-                ["merge", effective_source, "--no-ff", "--no-edit"],
+                ["merge", source_ref, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
                 timeout=60,
             )
