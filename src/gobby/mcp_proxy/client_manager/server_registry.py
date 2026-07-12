@@ -247,14 +247,15 @@ async def remove_server(
     if manager.mcp_db_manager and effective_project_id:
         await asyncio.to_thread(manager.mcp_db_manager.remove_server, name, effective_project_id)
 
-    if name in manager._connections:
-        await manager._connections[name].disconnect()
-        del manager._connections[name]
-    manager._tool_schema_cache.pop(name, None)
-
-    del manager._configs[name]
-    manager.health.pop(name, None)
-    manager._lazy_connector.unregister_server(name)
+    connection = manager._connections.pop(name, None)
+    try:
+        if connection is not None:
+            await connection.disconnect()
+    finally:
+        manager._tool_schema_cache.pop(name, None)
+        del manager._configs[name]
+        manager.health.pop(name, None)
+        manager._lazy_connector.unregister_server(name)
 
     return {"success": True, "name": name}
 
@@ -304,16 +305,18 @@ async def update_server(
             connect_timeout=config.connect_timeout,
         )
 
-    if name in manager._connections:
-        await manager._connections[name].disconnect()
-        del manager._connections[name]
-    manager._tool_schema_cache.pop(name, None)
-    manager.health.pop(name, None)
-    manager._lazy_connector.unregister_server(name)
+    connection = manager._connections.pop(name, None)
+    try:
+        if connection is not None:
+            await connection.disconnect()
+    finally:
+        manager._tool_schema_cache.pop(name, None)
+        manager.health.pop(name, None)
+        manager._lazy_connector.unregister_server(name)
 
-    manager._configs[name] = config
-    if config.enabled:
-        manager._lazy_connector.register_server(name)
+        manager._configs[name] = config
+        if config.enabled:
+            manager._lazy_connector.register_server(name)
 
     return {"success": True, "name": name}
 
@@ -399,12 +402,14 @@ async def set_server_enabled(
                 enabled=False,
             )
         config.enabled = False
-        if name in manager._connections:
-            await manager._connections[name].disconnect()
-            del manager._connections[name]
-        manager._tool_schema_cache.pop(name, None)
-        manager.health.pop(name, None)
-        manager._lazy_connector.unregister_server(name)
+        connection = manager._connections.pop(name, None)
+        try:
+            if connection is not None:
+                await connection.disconnect()
+        finally:
+            manager._tool_schema_cache.pop(name, None)
+            manager.health.pop(name, None)
+            manager._lazy_connector.unregister_server(name)
 
     return {"success": True, "name": name, "enabled": enabled}
 
