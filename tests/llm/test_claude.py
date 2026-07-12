@@ -163,6 +163,27 @@ class TestIsTransientError:
         assert is_transient_error(Exception("500 Internal Server Error")) is True
         assert is_transient_error(Exception("connection reset")) is True
 
+    def test_sdk_not_found_is_permanent_but_connection_failure_is_transient(self) -> None:
+        from claude_agent_sdk import CLIConnectionError, CLINotFoundError
+
+        from gobby.llm.claude_runtime import is_transient_error
+
+        assert is_transient_error(CLINotFoundError()) is False
+        assert is_transient_error(CLIConnectionError("socket unavailable")) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "connection to localhost:4010 timed out",
+            "connection reset after receiving 1404 bytes",
+            "worker 4032 disconnected",
+        ],
+    )
+    def test_status_code_substrings_do_not_suppress_retry(self, message: str) -> None:
+        from gobby.llm.claude_runtime import is_transient_error
+
+        assert is_transient_error(Exception(message)) is True
+
     def test_error_result_success_is_not_retried(self) -> None:
         """Known Claude SDK error-result-success failures are not retried noisily."""
         from gobby.llm.claude_runtime import is_transient_error
