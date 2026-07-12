@@ -92,6 +92,43 @@ def test_claim_delivery_for_processing_is_single_winner(temp_db, sample_project)
     assert second_claim is None
 
 
+def test_stale_processing_delivery_is_reclaimed_with_bounded_attempts(
+    temp_db,
+    sample_project,
+) -> None:
+    store = GitHubTriageStore(temp_db)
+    store.record_delivery(
+        project_id=sample_project["id"],
+        delivery_id="delivery-stale",
+        event="issues",
+        action="opened",
+        repository="owner/repo",
+        issue_number=42,
+        headers={"x-github-event": "issues"},
+        raw_body=b'{"action":"opened"}',
+    )
+
+    first = store.claim_delivery_for_processing(sample_project["id"], "delivery-stale")
+    assert first is not None
+    assert first.attempt_count == 1
+    temp_db.execute(
+        "UPDATE gh_triage_deliveries SET updated_at = NOW() - INTERVAL '1 hour' "
+        "WHERE project_id = %s AND delivery_id = %s",
+        (sample_project["id"], "delivery-stale"),
+    )
+
+    recovered = store.claim_delivery_for_processing(
+        sample_project["id"],
+        "delivery-stale",
+        lease_timeout_seconds=60,
+        max_attempts=3,
+    )
+
+    assert recovered is not None
+    assert recovered.status == "processing"
+    assert recovered.attempt_count == 2
+
+
 def test_issue_record_upsert_preserves_task_link_and_latest_decision(
     temp_db,
     sample_project,

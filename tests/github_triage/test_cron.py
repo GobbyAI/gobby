@@ -12,6 +12,7 @@ from gobby.github_triage.cron import (
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -86,3 +87,44 @@ def test_register_github_triage_cron_disables_existing_job_when_config_disabled(
     assert count == 0
     assert job is not None
     assert job.enabled is False
+
+
+def test_registration_failure_for_one_project_does_not_abort_later_projects(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_manager = LocalProjectManager(temp_db)
+    later_project = project_manager.create("later-triage-project", repo_path="/tmp/later")
+    store = GitHubTriageStore(temp_db)
+    for project_id in (sample_project["id"], later_project.id):
+        store.upsert_config(
+            GitHubTriageConfig(
+                project_id=project_id,
+                enabled=True,
+                repositories=("owner/repo",),
+            )
+        )
+    storage = CronJobStorage(temp_db)
+    executor = CronExecutor(storage=storage)
+    original_create_job = storage.create_job
+
+    def flaky_create_job(**kwargs):
+        if kwargs["project_id"] == sample_project["id"]:
+            raise RuntimeError("first project registration failed")
+        return original_create_job(**kwargs)
+
+    monkeypatch.setattr(storage, "create_job", flaky_create_job)
+
+    count = register_github_triage_cron(
+        cron_storage=storage,
+        cron_executor=executor,
+        db=temp_db,
+        mcp_manager=MagicMock(),
+        task_manager=LocalTaskManager(temp_db),
+        project_manager=project_manager,
+    )
+
+    assert count == 1
+    assert storage.get_job_by_name(github_triage_job_name(later_project.id)) is not None
+    assert executor.has_handler(github_triage_handler_name(later_project.id))

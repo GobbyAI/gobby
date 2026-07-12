@@ -17,6 +17,13 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 import psycopg
 
 from gobby.build import BuildOptions, build
+from gobby.github_triage.delivery import (
+    PROCESSABLE_ISSUE_ACTIONS,
+    DeliveryProcessor,
+    TransientDeliveryError,
+    payload_issue_number,
+    payload_repo,
+)
 from gobby.github_triage.issue_index import (
     GitHubIssueIndexer,
     IssueDuplicate,
@@ -39,7 +46,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PROCESSABLE_ISSUE_ACTIONS = frozenset({"opened", "edited", "reopened"})
 TRIAGE_ACCEPTED_LABEL = "gobby:accepted"
 TRIAGE_SKIPPED_LABEL = "gobby:skipped"
 TRIAGE_DUPLICATE_LABEL = "gobby:duplicate"
@@ -231,8 +237,8 @@ class GitHubIssueTriageService:
         self._validate_signature(config.webhook_secret_ref, normalized_headers, raw_body)
         payload = _loads_payload(raw_body)
         action = payload.get("action")
-        repo = _payload_repo(payload)
-        issue_number = _payload_issue_number(payload)
+        repo = payload_repo(payload)
+        issue_number = payload_issue_number(payload)
         allowed_repos = config.repositories_with_fallback(project.github_repo)
         if not allowed_repos:
             raise TriageWebhookError("No repositories are enabled for GitHub issue triage")
@@ -261,48 +267,14 @@ class GitHubIssueTriageService:
 
     async def process_delivery(self, project_id: str, delivery_id: str) -> dict[str, Any]:
         """Process a previously persisted delivery."""
-        delivery = self.store.get_delivery(project_id, delivery_id)
-        if delivery is None:
-            raise TriageWebhookError(f"Unknown GitHub delivery: {delivery_id}")
-        if delivery.status in {"processed", "ignored", "duplicate"}:
-            return {"status": delivery.status}
-        if delivery.status != "pending":
-            return {"status": delivery.status}
+        return await self._delivery_processor().process(project_id, delivery_id)
 
-        claimed_delivery = self.store.claim_delivery_for_processing(project_id, delivery_id)
-        if claimed_delivery is None:
-            current = self.store.get_delivery(project_id, delivery_id)
-            return {"status": current.status if current else "missing"}
-        delivery = claimed_delivery
-        try:
-            payload = json.loads(delivery.raw_body)
-            repo = _payload_repo(payload)
-            issue_number = _payload_issue_number(payload)
-            if delivery.event != "issues" or delivery.action not in PROCESSABLE_ISSUE_ACTIONS:
-                self.store.update_delivery_status(
-                    project_id, delivery_id, "ignored", processed=True
-                )
-                return {"status": "ignored"}
-            if repo is None or issue_number is None:
-                raise TriageWebhookError("Issue webhook missing repository or issue number")
-            result = await self.triage_issue(
-                project_id,
-                repo,
-                issue_number,
-                source="webhook",
-                issue_data=payload.get("issue"),
-            )
-            self.store.update_delivery_status(project_id, delivery_id, "processed", processed=True)
-            return result
-        except Exception as exc:
-            self.store.update_delivery_status(
-                project_id,
-                delivery_id,
-                "error",
-                error=str(exc),
-                processed=True,
-            )
-            raise
+    async def recover_deliveries(self, project_id: str) -> dict[str, int]:
+        """Recover due retries and expired processing leases for one project."""
+        return await self._delivery_processor().recover(project_id)
+
+    def _delivery_processor(self) -> DeliveryProcessor:
+        return DeliveryProcessor(self.store, self.triage_issue, TriageWebhookError)
 
     async def reconcile_project_repos(self, project_id: str) -> dict[str, int]:
         """Reconcile all configured repositories as a webhook recovery path."""
@@ -372,6 +344,26 @@ class GitHubIssueTriageService:
         return {"scanned": scanned, "triaged": triaged, "errors": errors}
 
     async def triage_issue(
+        self,
+        project_id: str,
+        repo: str,
+        issue_number: int,
+        source: str,
+        *,
+        issue_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Serialize one issue across webhook and reconciliation processors."""
+        lock = GitHubIssueTriageMutation(
+            project_id=project_id,
+            repo=repo,
+            issue_number=issue_number,
+        )
+        async with self.db.advisory_lock(lock):
+            return await self._triage_issue_locked(
+                project_id, repo, issue_number, source, issue_data=issue_data
+            )
+
+    async def _triage_issue_locked(
         self,
         project_id: str,
         repo: str,
@@ -469,12 +461,12 @@ class GitHubIssueTriageService:
         task: Task | None = None
         if outcome.verdict == "implement":
             task = self._create_or_update_task(project_id, issue)
+            await self._run_build(task)
             await self._comment_and_label(
                 issue,
                 outcome.comment or f"Accepted for implementation as Gobby task #{task.seq_num}.",
                 [TRIAGE_ACCEPTED_LABEL, *outcome.labels],
             )
-            await self._run_build(task)
         elif outcome.verdict == "dedup":
             duplicate = outcome.duplicate
             duplicate_text = (
@@ -540,39 +532,29 @@ class GitHubIssueTriageService:
         description = _task_description(issue)
         title = f"Implement externally reported GitHub issue {issue.repo}#{issue.issue_number}"
         labels = sorted(set(issue.labels) | {"github"})
+        existing = self.db.fetchone(
+            "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
+            "AND github_issue_number = %s LIMIT 1",
+            (project_id, issue.repo, issue.issue_number),
+        )
+        if existing:
+            return self.task_manager.update_task(
+                existing["id"], title=title, description=description, labels=labels
+            )
         try:
-            with self.db.transaction_immediate(
-                GitHubIssueTriageMutation(
-                    project_id=project_id,
-                    repo=issue.repo,
-                    issue_number=issue.issue_number,
-                )
-            ) as conn:
-                existing = conn.execute(
-                    "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
-                    "AND github_issue_number = %s LIMIT 1",
-                    (project_id, issue.repo, issue.issue_number),
-                ).fetchone()
-                if existing:
-                    return self.task_manager.update_task(
-                        existing["id"],
-                        title=title,
-                        description=description,
-                        labels=labels,
-                    )
-                return self.task_manager.create_task(
-                    project_id=project_id,
-                    title=title,
-                    description=description,
-                    labels=labels,
-                    category="code",
-                    task_type="feature",
-                    validation_criteria=(
-                        f"GitHub issue {issue.repo}#{issue.issue_number} is implemented and linked."
-                    ),
-                    github_issue_number=issue.issue_number,
-                    github_repo=issue.repo,
-                )
+            return self.task_manager.create_task(
+                project_id=project_id,
+                title=title,
+                description=description,
+                labels=labels,
+                category="code",
+                task_type="feature",
+                validation_criteria=(
+                    f"GitHub issue {issue.repo}#{issue.issue_number} is implemented and linked."
+                ),
+                github_issue_number=issue.issue_number,
+                github_repo=issue.repo,
+            )
         except psycopg.IntegrityError:
             existing = self.db.fetchone(
                 "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
@@ -653,10 +635,13 @@ class GitHubIssueTriageService:
             build_func = _default_build
         try:
             await build_func(f"#{task.seq_num}", options)
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "Build dispatch failed for triaged issue task %s", task.id, exc_info=True
+                "Build dispatch failed for triaged issue task %s (%s)",
+                task.id,
+                type(exc).__name__,
             )
+            raise TransientDeliveryError("GitHub triage build dispatch failed") from None
 
     async def _github_call(
         self,
@@ -697,6 +682,8 @@ class GitHubIssueTriageService:
                     delay,
                 )
                 await self._sleep_func(delay)
+            except (TimeoutError, ConnectionError):
+                raise TransientDeliveryError("GitHub MCP transport failed") from None
             except Exception:
                 raise GitHubMCPError(tool_name=tool_name) from None
 
@@ -816,10 +803,12 @@ def create_github_triage_handler(
             memory_manager=memory_manager,
             secret_store=secret_store,
         )
+        deliveries = await service.recover_deliveries(job.project_id)
         result = await service.reconcile_project_repos(job.project_id)
         return (
             "GitHub triage reconciliation completed: "
-            f"scanned={result['scanned']} triaged={result['triaged']} errors={result['errors']}"
+            f"scanned={result['scanned']} triaged={result['triaged']} errors={result['errors']} "
+            f"deliveries_recovered={deliveries['recovered']}"
         )
 
     return _handler
@@ -844,20 +833,6 @@ def _loads_payload(raw_body: bytes) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TriageWebhookError("GitHub webhook payload must be a JSON object")
     return payload
-
-
-def _payload_repo(payload: dict[str, Any]) -> str | None:
-    repo = payload.get("repository")
-    if isinstance(repo, dict) and repo.get("full_name"):
-        return str(repo["full_name"])
-    return None
-
-
-def _payload_issue_number(payload: dict[str, Any]) -> int | None:
-    issue = payload.get("issue")
-    if isinstance(issue, dict) and issue.get("number") is not None:
-        return int(issue["number"])
-    return None
 
 
 def _initial_delivery_status(

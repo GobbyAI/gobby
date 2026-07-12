@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 from hashlib import sha256
@@ -744,3 +745,251 @@ async def test_user_content_change_retriages_without_rebuilding_existing_task(
     assert len(github.called("add_issue_comment")) == 2
     assert len(github.called("add_labels_to_issue")) == 2
     build_func.assert_awaited_once()
+
+
+async def test_transient_delivery_failure_retries_then_processes(
+    temp_db,
+    sample_project,
+) -> None:
+    raw_body = _payload()
+    _enable_config(temp_db, sample_project["id"])
+    comment_responses = [
+        _mcp_error(503),
+        {},
+    ]
+    github = FakeGitHubMCP({"add_issue_comment": lambda _: comment_responses.pop(0)})
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("escalate", "Reviewed")),
+    )
+    service.accept_webhook_delivery(
+        sample_project["id"],
+        _headers(raw_body, delivery="delivery-retry"),
+        raw_body,
+    )
+
+    retry = await service.process_delivery(sample_project["id"], "delivery-retry")
+    delivery = service.store.get_delivery(sample_project["id"], "delivery-retry")
+
+    assert retry == {"status": "retry", "attempt_count": 1}
+    assert delivery is not None
+    assert delivery.status == "pending"
+    assert delivery.attempt_count == 1
+    assert delivery.next_attempt_at is not None
+    temp_db.execute(
+        "UPDATE gh_triage_deliveries SET next_attempt_at = NOW() - INTERVAL '1 second' "
+        "WHERE project_id = %s AND delivery_id = %s",
+        (sample_project["id"], "delivery-retry"),
+    )
+
+    processed = await service.process_delivery(sample_project["id"], "delivery-retry")
+    delivery = service.store.get_delivery(sample_project["id"], "delivery-retry")
+
+    assert processed["verdict"] == "escalate"
+    assert delivery is not None
+    assert delivery.status == "processed"
+    assert delivery.attempt_count == 2
+
+
+async def test_terminal_delivery_failure_is_not_retried(temp_db, sample_project) -> None:
+    raw_body = json.dumps(
+        {
+            "action": "opened",
+            "issue": {"number": 42, "title": "Missing repository"},
+        }
+    ).encode()
+    _enable_config(temp_db, sample_project["id"])
+    service = GitHubIssueTriageService(db=temp_db, mcp_manager=FakeGitHubMCP())
+    service.accept_webhook_delivery(
+        sample_project["id"],
+        _headers(raw_body, delivery="delivery-terminal"),
+        raw_body,
+    )
+
+    with pytest.raises(TriageWebhookError, match="missing repository"):
+        await service.process_delivery(sample_project["id"], "delivery-terminal")
+
+    delivery = service.store.get_delivery(sample_project["id"], "delivery-terminal")
+    assert delivery is not None
+    assert delivery.status == "error"
+    assert delivery.attempt_count == 1
+    assert await service.process_delivery(sample_project["id"], "delivery-terminal") == {
+        "status": "error"
+    }
+
+
+async def test_transient_delivery_retry_exhaustion_becomes_terminal(
+    temp_db,
+    sample_project,
+) -> None:
+    raw_body = _payload()
+    _enable_config(temp_db, sample_project["id"])
+    github = FakeGitHubMCP(
+        {
+            "add_issue_comment": _mcp_error(
+                429,
+                headers={"Retry-After": "0"},
+            )
+        }
+    )
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("escalate", "Reviewed")),
+    )
+    service.accept_webhook_delivery(
+        sample_project["id"],
+        _headers(raw_body, delivery="delivery-exhausted"),
+        raw_body,
+    )
+
+    for attempt in (1, 2):
+        result = await service.process_delivery(sample_project["id"], "delivery-exhausted")
+        assert result == {"status": "retry", "attempt_count": attempt}
+        temp_db.execute(
+            "UPDATE gh_triage_deliveries SET next_attempt_at = NOW() - INTERVAL '1 second' "
+            "WHERE project_id = %s AND delivery_id = %s",
+            (sample_project["id"], "delivery-exhausted"),
+        )
+
+    with pytest.raises(service_module.GitHubMCPError):
+        await service.process_delivery(sample_project["id"], "delivery-exhausted")
+
+    delivery = service.store.get_delivery(sample_project["id"], "delivery-exhausted")
+    assert delivery is not None
+    assert delivery.status == "error"
+    assert delivery.attempt_count == 3
+
+
+async def test_cancelled_processing_delivery_is_recovered_after_lease_timeout(
+    temp_db,
+    sample_project,
+) -> None:
+    raw_body = _payload()
+    _enable_config(temp_db, sample_project["id"])
+    judge_started = asyncio.Event()
+
+    async def blocking_judge(*_args: Any) -> TriageOutcome:
+        judge_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=FakeGitHubMCP(),
+        judge=blocking_judge,
+    )
+    service.accept_webhook_delivery(
+        sample_project["id"],
+        _headers(raw_body, delivery="delivery-cancelled"),
+        raw_body,
+    )
+    processing = asyncio.create_task(
+        service.process_delivery(sample_project["id"], "delivery-cancelled")
+    )
+    await judge_started.wait()
+    processing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await processing
+
+    delivery = service.store.get_delivery(sample_project["id"], "delivery-cancelled")
+    assert delivery is not None
+    assert delivery.status == "processing"
+    assert delivery.attempt_count == 1
+    temp_db.execute(
+        "UPDATE gh_triage_deliveries SET updated_at = NOW() - INTERVAL '1 hour' "
+        "WHERE project_id = %s AND delivery_id = %s",
+        (sample_project["id"], "delivery-cancelled"),
+    )
+    service.judge = AsyncMock(return_value=TriageOutcome("escalate", "Recovered"))
+
+    recovered = await service.recover_deliveries(sample_project["id"])
+
+    delivery = service.store.get_delivery(sample_project["id"], "delivery-cancelled")
+    assert recovered == {"recovered": 1, "retried": 0, "errors": 0}
+    assert delivery is not None
+    assert delivery.status == "processed"
+    assert delivery.attempt_count == 2
+
+
+async def test_concurrent_triage_serializes_comment_and_build_side_effects(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    first_judged = asyncio.Event()
+    second_judged = asyncio.Event()
+    release_first = asyncio.Event()
+    judge_calls = 0
+
+    async def judge(*_args: Any) -> TriageOutcome:
+        nonlocal judge_calls
+        judge_calls += 1
+        if judge_calls == 1:
+            first_judged.set()
+            await release_first.wait()
+        else:
+            second_judged.set()
+        return TriageOutcome("implement", "Approved")
+
+    github = FakeGitHubMCP()
+    build_func = AsyncMock()
+    services = [
+        GitHubIssueTriageService(
+            db=temp_db,
+            mcp_manager=github,
+            judge=judge,
+            build_func=build_func,
+        )
+        for _ in range(2)
+    ]
+    issue_data = json.loads(_payload().decode())["issue"]
+    first = asyncio.create_task(
+        services[0].triage_issue(
+            sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue_data
+        )
+    )
+    await first_judged.wait()
+    second = asyncio.create_task(
+        services[1].triage_issue(
+            sample_project["id"], "owner/repo", 42, "reconcile", issue_data=issue_data
+        )
+    )
+    try:
+        await asyncio.wait_for(second_judged.wait(), timeout=0.1)
+    except TimeoutError:
+        pass
+    release_first.set()
+
+    await asyncio.gather(first, second)
+
+    assert len(github.called("add_issue_comment")) == 1
+    assert len(github.called("add_labels_to_issue")) == 1
+    build_func.assert_awaited_once()
+
+
+async def test_build_failure_prevents_accepted_comment_and_label(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    github = FakeGitHubMCP()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("implement", "Approved")),
+        build_func=AsyncMock(side_effect=RuntimeError("dispatch unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="build dispatch failed"):
+        await service.triage_issue(
+            sample_project["id"],
+            "owner/repo",
+            42,
+            "webhook",
+            issue_data=json.loads(_payload().decode())["issue"],
+        )
+
+    assert github.called("add_issue_comment") == []
+    assert github.called("add_labels_to_issue") == []
