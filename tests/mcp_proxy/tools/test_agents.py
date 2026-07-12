@@ -1393,13 +1393,20 @@ class TestFireSyntheticStop:
         """Test that _fire_synthetic_stop does nothing when resolver is None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        _fire_synthetic_stop(None, "sess-123")
+        result = _fire_synthetic_stop(None, "sess-123")
+
+        assert result is None
 
     def test_noop_when_resolver_returns_none(self) -> None:
         """Test that _fire_synthetic_stop does nothing when resolver returns None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        _fire_synthetic_stop(lambda: None, "sess-123")
+        resolver = MagicMock(return_value=None)
+
+        result = _fire_synthetic_stop(resolver, "sess-123")
+
+        assert result is None
+        resolver.assert_called_once_with()
 
     def test_calls_evaluate_workflow_rules(self) -> None:
         """Test that _fire_synthetic_stop fires a synthetic STOP event."""
