@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.migrations import BASELINE_VERSION, MigrationUnsupportedError
 
 pytestmark = pytest.mark.unit
@@ -212,9 +213,10 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _postgres_module()
     calls: dict[str, object] = {}
     monkeypatch.delenv("PGAPPNAME", raising=False)
-    monkeypatch.delenv("PGPOOL_MIN", raising=False)
-    monkeypatch.delenv("PGPOOL_MAX", raising=False)
-    monkeypatch.delenv("PGPOOL_TIMEOUT", raising=False)
+    monkeypatch.setenv("PGPOOL_MIN", "99")
+    monkeypatch.setenv("PGPOOL_MAX", "100")
+    monkeypatch.setenv("PGPOOL_TIMEOUT", "101")
+    monkeypatch.setenv("PGPOOL_OPEN_TIMEOUT", "102")
     monkeypatch.setenv("PGCONNECT_TIMEOUT", "99")
 
     class FakePool:
@@ -251,14 +253,14 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["opened"] == (True, 1.5)
 
 
-def test_postgres_pool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _postgres_module()
     calls: dict[str, object] = {}
     monkeypatch.setenv("PGAPPNAME", "gobby-tests")
-    monkeypatch.setenv("PGPOOL_MIN", "4")
-    monkeypatch.setenv("PGPOOL_MAX", "24")
-    monkeypatch.setenv("PGPOOL_TIMEOUT", "7.5")
-    monkeypatch.setenv("PGPOOL_OPEN_TIMEOUT", "12.5")
+    monkeypatch.setenv("PGPOOL_MIN", "99")
+    monkeypatch.setenv("PGPOOL_MAX", "100")
+    monkeypatch.setenv("PGPOOL_TIMEOUT", "101")
+    monkeypatch.setenv("PGPOOL_OPEN_TIMEOUT", "102")
 
     class FakePool:
         def __init__(self, *args, **kwargs) -> None:
@@ -276,7 +278,15 @@ def test_postgres_pool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
 
-    db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+    db = module.PostgresHubDatabase(
+        "postgresql://gobby:secret@localhost/gobby",
+        pool_config=PostgresPoolConfig(
+            min_size=4,
+            max_size=24,
+            acquire_timeout_seconds=7.5,
+            open_timeout_seconds=12.5,
+        ),
+    )
     db.open()
 
     assert calls["constructor_open"] is False

@@ -19,7 +19,7 @@ from gobby.build.workspaces import ensure_task_parent_integration_workspace
 from gobby.dispatch.actions import MergeWorkspaceAction
 from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, IntegrationWorkspaceMutex
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
@@ -37,6 +37,10 @@ GUIDE_ROW_RE = re.compile(
     r"^\| (?P<link>\[[^\]]+\]\((?P<target>[^)]+\.md)\)) \| (?P<description>.*?) \|$"
 )
 logger = logging.getLogger(__name__)
+
+
+class _StaleMergeStateError(RuntimeError):
+    """Raised when an interrupted workspace merge cannot be recovered automatically."""
 
 
 @dataclass(frozen=True)
@@ -88,14 +92,23 @@ def _execute_merge_workspace_sync(
         try:
             _ensure_branch(paths.source_path, source_branch, "source")
             _ensure_branch(paths.target_path, action.target_branch, "target")
+            _recover_stale_merge_state(paths.target_path, "target integration workspace")
             source_commit = _git_stdout(paths.source_path, ["rev-parse", "HEAD"])
             _ensure_target_merge_safe(
                 paths.target_path, source_commit, "target integration workspace"
             )
             if _is_ancestor(paths.target_path, source_commit):
-                _complete_merge_stage(db, action.task_id, source_commit)
+                merge_sha = _git_stdout(paths.target_path, ["rev-parse", "HEAD"])
+                if action.backend == "clone" and not paths.target_is_local:
+                    _sync_source_repo_branch(
+                        db,
+                        action.task_id,
+                        paths.target_path,
+                        action.target_branch,
+                    )
                 _mark_source_merged(action, db=db, source_id=paths.source_id)
-                return source_commit
+                _complete_merge_stage(db, action.task_id, merge_sha)
+                return merge_sha
 
             merge_ref = source_commit
             if action.backend == "clone":
@@ -138,6 +151,11 @@ def _execute_merge_workspace_sync(
             _mark_source_merged(action, db=db, source_id=paths.source_id)
             _complete_merge_stage(db, action.task_id, merge_sha)
             return merge_sha
+        except _StaleMergeStateError as exc:
+            reason = f"stale_merge_state:{exc}"
+            _append_merge_failure_audit(db, action.task_id, reason)
+            _fail_merge_stage(db, action.task_id, reason)
+            return None
         except RuntimeError as exc:
             reason = f"workspace_merge_failed:{exc}"
             _append_merge_failure_audit(db, action.task_id, reason)
@@ -323,6 +341,25 @@ def _ensure_branch(path: str, expected: str, label: str) -> None:
     current = _git_stdout(path, ["rev-parse", "--abbrev-ref", "HEAD"])
     if current != expected:
         raise RuntimeError(f"{label} workspace branch mismatch: {current} != {expected}")
+
+
+def _recover_stale_merge_state(path: str, label: str) -> None:
+    """Abort a merge left behind by an interrupted dispatch before starting another."""
+    merge_head = _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    if merge_head.returncode != 0:
+        return
+
+    abort = _git(Path(path), ["merge", "--abort"])
+    remaining = _git(Path(path), ["rev-parse", "--verify", "-q", "MERGE_HEAD"])
+    if abort.returncode == 0 and remaining.returncode != 0:
+        logger.warning("Recovered interrupted merge in %s", path)
+        return
+
+    detail = abort.stderr.strip() or "MERGE_HEAD remains after git merge --abort"
+    raise _StaleMergeStateError(
+        f"{label} contains an interrupted merge; automatic git merge --abort failed: {detail}. "
+        f"Repair the checkout at {path} and retry dispatch"
+    )
 
 
 def _ensure_target_merge_safe(path: str, source_commit: str, label: str) -> None:
@@ -586,7 +623,18 @@ def _sync_source_repo_branch(
     target_branch: str,
 ) -> None:
     repo_path = _repo_path_for_task(db, task_id)
+    merge_sha = _git_stdout(target_path, ["rev-parse", target_branch])
+    if _branch_contains(repo_path, target_branch, merge_sha):
+        return
     _git_ok(repo_path, ["fetch", target_path, f"{target_branch}:{target_branch}"])
+    if not _branch_contains(repo_path, target_branch, merge_sha):
+        raise RuntimeError(
+            f"source repo branch {target_branch} does not contain integrated commit {merge_sha}"
+        )
+
+
+def _branch_contains(repo_path: Path, branch: str, commit_sha: str) -> bool:
+    return _git(repo_path, ["merge-base", "--is-ancestor", commit_sha, branch]).returncode == 0
 
 
 def _repo_path_for_task(db: HubDatabase, task_id: str) -> Path:
@@ -612,7 +660,7 @@ def _local_target_path_if_checked_out(
 def _acquire_integration_mutex(db: HubDatabase, key: str) -> bool:
     now = datetime.now(UTC)
     until = now + timedelta(seconds=MERGE_TTL_SECONDS)
-    with db.transaction_immediate() as conn:
+    with db.transaction_immediate(IntegrationWorkspaceMutex(integration_key=key)) as conn:
         row = conn.execute(
             "SELECT lease_until, lease_holder FROM integration_workspace_mutex WHERE integration_key = %s",
             (key,),

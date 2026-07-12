@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.utils.env import expand_env_mapping, expand_env_variables
+
 if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
     from gobby.hooks.events import HookEvent
@@ -162,14 +164,15 @@ class WebhookDispatcher:
             "User-Agent": "Gobby-Webhook/1.0",
             "X-Gobby-Event": payload.get("event_type", "unknown"),
         }
-        headers.update(endpoint.headers)
+        headers.update(expand_env_mapping(endpoint.headers) or {})
+        url = expand_env_variables(endpoint.url)
 
         while attempts <= endpoint.retry_count:
             attempts += 1
 
             try:
                 response = await client.post(
-                    endpoint.url,
+                    url,
                     json=payload,
                     headers=headers,
                     timeout=endpoint.timeout,
@@ -213,7 +216,7 @@ class WebhookDispatcher:
                         error=f"HTTP {response.status_code}",
                         attempts=attempts,
                         duration_ms=duration_ms,
-                        decision=decision,
+                        decision="block" if endpoint.can_block and endpoint.fail_closed else None,
                     )
 
                 # 5xx errors are retryable
@@ -256,6 +259,7 @@ class WebhookDispatcher:
             error=last_error,
             attempts=attempts,
             duration_ms=duration_ms,
+            decision="block" if endpoint.can_block and endpoint.fail_closed else None,
         )
 
     async def trigger(self, event: HookEvent) -> list[WebhookResult]:
@@ -334,6 +338,8 @@ class WebhookDispatcher:
                 reason = None
                 if result.response_body:
                     reason = result.response_body.get("reason")
+                if reason is None:
+                    reason = result.error
                 return ("block", reason)
 
         return ("allow", None)

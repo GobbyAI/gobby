@@ -324,3 +324,143 @@ class TestGetSkillTool:
         assert result["success"] is True
         assert result["skill"]["name"] == "plan-methodology"
         assert "Internal content." in result["skill"]["content"]
+
+
+@pytest.fixture
+def leveled_db(db: HubDatabase, storage: LocalSkillManager) -> HubDatabase:
+    """Create database with a leveled skill and a plain (non-leveled) skill."""
+    storage.create_skill(
+        name="leveled-skill",
+        description="A skill with levels",
+        content="# Leveled\n\nContent",
+        metadata={"gobby": {"levels": ["lite", "normal", "max"], "default_level": "normal"}},
+        enabled=True,
+    )
+    storage.create_skill(
+        name="plain-skill",
+        description="A skill without levels",
+        content="# Plain\n\nContent",
+        enabled=True,
+    )
+    return db
+
+
+@pytest.mark.integration
+class TestGetSkillLevels:
+    """Tests for the level parameter on get_skill."""
+
+    def _make_session(self, db: HubDatabase, project_id: str):
+        session_mgr = SessionManager(db)
+        return session_mgr.register(
+            external_id="level-ext-id",
+            machine_id="test-machine",
+            source="claude",
+            project_id=project_id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_level_stamps_content_and_sets_variable(self, leveled_db, project_id):
+        """Valid level stamps content and persists <skill>_level (hyphen -> underscore)."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        session = self._make_session(leveled_db, project_id)
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="leveled-skill", level="max", session_id=session.id)
+
+        assert result["success"] is True
+        assert result["skill"]["content"].startswith("Active level: max\n\n")
+        variables = SessionVariableManager(leveled_db).get_variables(session.id)
+        assert variables["leveled_skill_level"] == "max"
+
+    @pytest.mark.asyncio
+    async def test_omitted_level_uses_default_and_sets_variable(self, leveled_db, project_id):
+        """Omitting level on a leveled skill stamps the default and sets the variable."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        session = self._make_session(leveled_db, project_id)
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="leveled-skill", session_id=session.id)
+
+        assert result["success"] is True
+        assert result["skill"]["content"].startswith("Active level: normal\n\n")
+        variables = SessionVariableManager(leveled_db).get_variables(session.id)
+        assert variables["leveled_skill_level"] == "normal"
+
+    @pytest.mark.asyncio
+    async def test_invalid_level_errors_listing_valid_levels(self, leveled_db):
+        """An unknown level fails and the error names the valid options."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="leveled-skill", level="bogus")
+
+        assert result["success"] is False
+        assert "bogus" in result["error"]
+        assert "lite, normal, max" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_level_on_non_leveled_skill_errors(self, leveled_db):
+        """Passing level to a skill without metadata.gobby.levels fails."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="plain-skill", level="max")
+
+        assert result["success"] is False
+        assert "does not declare levels" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_level_without_session_stamps_but_skips_variable(self, leveled_db):
+        """No session_id: content is stamped, no variable is written, call succeeds."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="leveled-skill", level="lite")
+
+        assert result["success"] is True
+        assert result["skill"]["content"].startswith("Active level: lite\n\n")
+        row = leveled_db.fetchone("SELECT COUNT(*) AS count FROM session_variables", ())
+        assert row["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_non_leveled_skill_without_level_is_unstamped(self, leveled_db):
+        """Non-leveled skills load unchanged when level is omitted."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="plain-skill")
+
+        assert result["success"] is True
+        assert result["skill"]["content"] == "# Plain\n\nContent"
+
+    @pytest.mark.asyncio
+    async def test_ambient_session_context_persists_level(self, leveled_db, project_id):
+        """Wrapper-seeded ambient session context is used when session_id is omitted."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.utils.session_context import session_context_for_test
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        session = self._make_session(leveled_db, project_id)
+        registry = create_skills_registry(leveled_db)
+        tool = registry.get_tool("get_skill")
+
+        with session_context_for_test(session.id):
+            result = await tool(name="leveled-skill", level="max")
+
+        assert result["success"] is True
+        variables = SessionVariableManager(leveled_db).get_variables(session.id)
+        assert variables["leveled_skill_level"] == "max"

@@ -17,7 +17,7 @@ These are enforced by hooks, rules and workflows.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
 11. **NEVER leave options or unanswered questions in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
-12. **ALWAYS choose/present the best approach to solve a problem. The best, most correct fix is *ALWAYS* in scope. NEVER choose or present the simplest approach if it is not the best or most complete/correct approach.**
+12. **ALWAYS solve the whole problem with the least mechanism that solves it.** Correctness and completeness are non-negotiable — a shortcut that dodges the root cause, skips edge cases, or ships a partial fix is a cop-out, not simplicity. Among approaches that fully solve the problem, prefer the one with the least unjustified mechanism. Complexity must earn its place; so must every line of code.
 13. **ALWAYS remember: Rule templates are not rules.** Templates must be installed in the rules engine to function. Templates are enabled by default and sync to the DB on first startup. The DB is the source of truth — before telling the user a rule is disabled, check the installed version in the DB.
 14. **ALWAYS prefer gcode over grep/rg/sed/awk/nl.** gcode is an advanced code index/graph tool and is *FAR* superior to grep/rg/sed/awk/nl for code search and analysis.
 15. **NEVER guess or assume unless explicitly asked.** Only state things you *KNOW* to be true, otherwise challenge your guess or assumption through exploration, research, and/or tool use.
@@ -334,7 +334,7 @@ crates/
 | Path | Purpose |
 | --- | --- |
 | `~/.gobby/bootstrap.yaml` | Pre-DB bootstrap settings, including ports, bind host, and Postgres install metadata |
-| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN (`database_url_ref` is no longer supported) |
+| `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN, stored directly in the owner-only (`0600`) bootstrap file (`database_url_ref` is unsupported) |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
 | `.gobby/tasks.jsonl` | Task sync file (git-native) |
@@ -555,7 +555,7 @@ def test_integration() -> None:
 | Type errors | Run `uv run mypy src/` |
 | Lint errors | Run `uv run ruff check src/ --fix` |
 | Daemon not starting | Check logs in `~/.gobby/logs/` |
-| Postgres connection failures | Run `uv run gobby postgres status` and verify the keyring/bootstrap `database_url` |
+| Postgres connection failures | Run `uv run gobby postgres status` and verify `database_url` in the owner-only (`0600`) `~/.gobby/bootstrap.yaml` |
 | Legacy SQLite hub import | Use `uv run gobby postgres migrate-from-sqlite` |
 | MCP connection issues | Verify daemon is running: `uv run gobby status` |
 

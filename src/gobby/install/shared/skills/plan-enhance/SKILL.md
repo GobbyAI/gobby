@@ -2,7 +2,7 @@
 name: plan-enhance
 description: Constructive pass over a gobby plan — propose Better (polish, robustness, testability, reuse, sharper acceptance, parallelizable sequencing) and Bigger (net-new scope the parent intent justifies) enhancements. Advisory and ranked; never edits the plan, never gates. Use before the adversary review.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: plan enhancement, plan improvement, make plan better, constructive plan pass, plan-enhance
 metadata:

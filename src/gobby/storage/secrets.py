@@ -38,10 +38,13 @@ _KEK_FILENAME = ".secret_kek"
 # these, or envelope decryption breaks (Rust gcore reads GOBBY_HOME/.secret_kek).
 SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (_SALT_FILENAME, _KEK_FILENAME)
 
-SECRET_KEY_ID = "default"
+# Stable key identifier, not a credential.
+SECRET_KEY_ID = "default"  # nosec B105
 POSTURE_KEY_FILE = "key_file"
-POSTURE_SCRYPT_PASSPHRASE = "scrypt_passphrase"
-SECRET_KEK_PASSPHRASE_ENV = "GOBBY_SECRET_KEK_PASSPHRASE"
+# Secret-posture enum value, not a credential.
+POSTURE_SCRYPT_PASSPHRASE = "scrypt_passphrase"  # nosec B105
+# Environment variable name, not a credential.
+SECRET_KEK_PASSPHRASE_ENV = "GOBBY_SECRET_KEK_PASSPHRASE"  # nosec B105
 
 SCRYPT_N = 2**14
 SCRYPT_R = 8

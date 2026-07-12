@@ -190,10 +190,7 @@ async def test_read_mcp_resource(daemon_tools, mock_mcp_manager):
 
 @pytest.mark.asyncio
 async def test_add_mcp_server(daemon_tools, mock_mcp_manager):
-    # The ServerManagementService.add_server creates an MCPServerConfig and adds it
-    # We need to mock add_server_config and connect_all on the mcp_manager
-    mock_mcp_manager.add_server_config = MagicMock()
-    mock_mcp_manager.connect_all = AsyncMock(return_value={"s1": True})
+    mock_mcp_manager.add_server = AsyncMock(return_value={"success": True})
 
     with patch(
         "gobby.utils.project_context.get_project_context",
@@ -203,7 +200,7 @@ async def test_add_mcp_server(daemon_tools, mock_mcp_manager):
             name="s1", transport="http", url="http://localhost:8000"
         )
     assert result["success"] is True
-    mock_mcp_manager.add_server_config.assert_called_once()
+    mock_mcp_manager.add_server.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -520,22 +517,15 @@ async def test_call_tool_resolves_hash_session_in_caller_project_before_target_o
 @pytest.mark.asyncio
 async def test_call_tool_preserves_target_project_id_argument(daemon_tools):
     """arguments.project_id remains a target-tool argument."""
-    from unittest.mock import sentinel
-
     daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
 
     mock_sm = MagicMock()
     mock_sm.db = MagicMock()
     daemon_tools._session_manager = mock_sm
 
-    with (
-        patch(
-            "gobby.utils.project_context.set_project_context_from_ref",
-            return_value=sentinel.token,
-        ),
-        patch(
-            "gobby.utils.project_context.reset_project_context",
-        ),
+    with patch(
+        "gobby.utils.session_context._canonicalize_project_ref",
+        return_value="resolved-project-id",
     ):
         await daemon_tools.call_tool(
             "gobby-tasks",

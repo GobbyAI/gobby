@@ -12,15 +12,14 @@ from .bootstrap_io import (
     update_bootstrap_yaml,
     write_bootstrap_yaml,
 )
+from .postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
 
 InstallMode = Literal["docker"]
-KEYRING_DATABASE_URL_REF = "keyring:gobby:postgres_database_url"
 
 __all__ = [
     "active_install_mode",
     "bootstrap_path",
     "clear_postgres_fields",
-    "KEYRING_DATABASE_URL_REF",
     "read_bootstrap_database_url",
     "read_bootstrap_yaml",
     "set_bootstrap_field",
@@ -41,6 +40,7 @@ def write_postgres_defaults(
         data["database_url"] = database_url
         data.pop("database_url_ref", None)
         data["postgres_install_mode"] = mode
+        data.setdefault("postgres_pool", DEFAULT_POSTGRES_POOL_CONFIG.to_dict())
 
     update_bootstrap_yaml(bootstrap_path(gobby_home), _apply)
 

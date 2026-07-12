@@ -306,6 +306,7 @@ def ensure_project_json_for_isolation(
 
         with open(target_gobby_dir / "project.json", "w") as f:
             json.dump(data, f, indent=2)
+            f.write("\n")
 
         logger.info(f"Wrote project.json with parent reference in {isolated_path}")
     except Exception as e:

@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 
+from gobby.config.url_validation import (
+    HTTP_URL_SCHEMES,
+    WEBSOCKET_URL_SCHEMES,
+    validate_endpoint_url,
+)
+
 
 class ConnectionState(str, Enum):
     """MCP connection state."""
@@ -145,6 +151,14 @@ class MCPServerConfig:
         if self.transport in ("http", "websocket", "sse"):
             if not self.url:
                 raise ValueError(f"{self.transport} transport requires 'url' parameter")
+            allowed_schemes = (
+                WEBSOCKET_URL_SCHEMES if self.transport == "websocket" else HTTP_URL_SCHEMES
+            )
+            self.url = validate_endpoint_url(
+                self.url,
+                field_name=f"{self.transport} transport URL",
+                allowed_schemes=allowed_schemes,
+            )
         elif self.transport == "stdio":
             if not self.command:
                 raise ValueError("stdio transport requires 'command' parameter")

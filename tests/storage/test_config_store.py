@@ -1,6 +1,7 @@
 """Tests for ConfigStore CRUD operations and flatten/unflatten utilities."""
 
 from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,7 @@ from gobby.storage.config_store import (
     unflatten_config,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
@@ -28,6 +30,17 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def store(db) -> ConfigStore:
     return ConfigStore(db)
+
+
+@pytest.fixture
+def secret_store(
+    db: HubDatabase,
+    tmp_path: Path,
+    mock_machine_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> SecretStore:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    return SecretStore(db)
 
 
 # =============================================================================
@@ -176,14 +189,67 @@ class TestConfigStore:
     def test_delete_nonexistent(self, store: ConfigStore):
         assert store.delete("nonexistent") is False
 
-    def test_delete_all(self, store: ConfigStore):
+    def test_delete_all(self, store: ConfigStore, secret_store: SecretStore):
         store.set_many({"a": 1, "b": 2, "c": 3})
-        count = store.delete_all()
+        count = store.delete_all(secret_store)
         assert count == 3
         assert store.get_all() == {}
 
-    def test_delete_all_empty(self, store: ConfigStore):
-        assert store.delete_all() == 0
+    def test_delete_all_empty(self, store: ConfigStore, secret_store: SecretStore):
+        assert store.delete_all(secret_store) == 0
+
+    def test_delete_all_removes_only_config_backed_secrets(
+        self,
+        store: ConfigStore,
+        secret_store: SecretStore,
+    ) -> None:
+        store.set_secret("service.provider_api_key", "config-secret", secret_store)
+        secret_store.set("independent_token", "keep-me")
+
+        assert store.delete_all(secret_store) == 1
+
+        assert store.get_all() == {}
+        assert secret_store.get("provider_api_key") is None
+        assert secret_store.get("independent_token") == "keep-me"
+
+    def test_delete_all_preserves_explicit_incoming_secret_reference(
+        self,
+        store: ConfigStore,
+        secret_store: SecretStore,
+    ) -> None:
+        key = "service.provider_api_key"
+        store.set_secret(key, "preserved", secret_store)
+
+        assert store.delete_all(secret_store, preserved_secret_keys={key}) == 1
+
+        assert store.get_all() == {}
+        assert secret_store.get("provider_api_key") == "preserved"
+
+    def test_delete_all_rolls_back_config_and_secret_deletions(
+        self,
+        store: ConfigStore,
+        secret_store: SecretStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        first_key = "first_secret_token"
+        second_key = "second_secret_token"
+        store.set_secret(first_key, "first", secret_store)
+        store.set_secret(second_key, "second", secret_store)
+        original_delete = secret_store.delete
+
+        def fail_after_first_delete(name: str) -> bool:
+            if name == second_key:
+                raise RuntimeError("injected secret deletion failure")
+            return original_delete(name)
+
+        monkeypatch.setattr(secret_store, "delete", fail_after_first_delete)
+
+        with pytest.raises(RuntimeError, match="injected secret deletion failure"):
+            store.delete_all(secret_store)
+
+        assert store.get_secret_keys() == [first_key, second_key]
+        assert secret_store.get(first_key) == "first"
+        assert secret_store.get(second_key) == "second"
 
     def test_list_keys(self, store: ConfigStore):
         store.set_many({"z": 1, "a": 2, "m": 3})

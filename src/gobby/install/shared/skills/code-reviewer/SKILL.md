@@ -1,7 +1,9 @@
 ---
 name: code-reviewer
 description: How to run code reviews and adversarial reviews. Use when asked to review code, run adversarial review, or when the code review gate blocks.
+version: "1.0.0"
 category: engineering
+triggers: code review, adversarial review, review gate, diff review
 tags:
   - gobby
 metadata:

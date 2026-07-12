@@ -14,9 +14,13 @@ class TestDaemonSandboxConfig:
         config = DaemonConfig()
 
         assert config.web_chat_sandbox.enabled is True
+        assert config.web_chat_sandbox.mode == "permissive"
+        assert config.web_chat_sandbox.allow_network is True
         assert config.web_chat_sandbox.extra_read_paths == []
         assert config.web_chat_sandbox.extra_write_paths == []
         assert config.agent_sandbox.enabled is True
+        assert config.agent_sandbox.mode == "permissive"
+        assert config.agent_sandbox.allow_network is True
         assert config.agent_sandbox.extra_read_paths == []
         assert config.agent_sandbox.extra_write_paths == []
         assert not hasattr(config, "cli_sandbox")
@@ -25,15 +29,27 @@ class TestDaemonSandboxConfig:
         config = DaemonConfig(
             web_chat_sandbox={
                 "enabled": False,
+                "mode": "restrictive",
+                "allow_network": False,
                 "extra_write_paths": ["/tmp/web-chat-cache"],
             },
             agent_sandbox={
                 "enabled": False,
+                "mode": "restrictive",
+                "allow_network": False,
                 "extra_read_paths": ["/tmp/agent-shared"],
             },
         )
 
         assert config.web_chat_sandbox.enabled is False
+        assert config.web_chat_sandbox.mode == "restrictive"
+        assert config.web_chat_sandbox.allow_network is False
         assert config.web_chat_sandbox.extra_write_paths == ["/tmp/web-chat-cache"]
         assert config.agent_sandbox.enabled is False
+        assert config.agent_sandbox.mode == "restrictive"
+        assert config.agent_sandbox.allow_network is False
         assert config.agent_sandbox.extra_read_paths == ["/tmp/agent-shared"]
+
+    def test_rejects_invalid_sandbox_mode(self) -> None:
+        with pytest.raises(ValueError, match="Input should be 'permissive' or 'restrictive'"):
+            DaemonConfig(web_chat_sandbox={"mode": "unrestricted"})

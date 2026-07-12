@@ -613,7 +613,7 @@ class TestRequireClaimedTaskRequiredSkills:
                 "task_claimed": True,
                 "enforce_tdd": False,
                 "claimed_task_required_skills": ["python", "development-discipline"],
-                "loaded_skills": ["python", "development-discipline", "context7"],
+                "loaded_skills": ["python", "development-discipline", "context7", "restraint"],
             },
         )
 

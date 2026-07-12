@@ -8,7 +8,7 @@ rules:
     priority: 18
     when: >
       ((event.data.get('prompt') or event.data.get('user_prompt') or '').strip().lower())
-      in ('stop brevity', 'normal mode')
+      == 'stop brevity'
     effects:
       - type: set_variable
         variable: brevity_disabled
@@ -54,4 +54,4 @@ rules:
     when: "skill_loaded('brevity') and not variables.get('brevity_disabled')"
     effects:
       - type: inject_context
-        template: "Brevity reminder: answer first; keep context tight."
+        template: "Brevity reminder ({{ brevity_level }}): answer first; keep context tight."

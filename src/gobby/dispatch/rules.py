@@ -52,7 +52,7 @@ from gobby.dispatch.actions import (
     EscalateAction,
     StartStageAction,
 )
-from gobby.dispatch.audit import audit_marker_text
+from gobby.dispatch.audit import has_audit_marker
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
 from gobby.dispatch.prompts import PROMPT_BUILDERS as PROMPT_BUILDERS
 
@@ -154,11 +154,10 @@ def holistic_descendant_gate_rule(task: object, context: object) -> Action | Non
     stage = _current_stage(task, context)
     if _stage_name(stage) != "holistic_qa" or _stage_state(stage) not in {"ready", "in_progress"}:
         return None
-    body = _holistic_descendant_gate_body(gate)
-    if audit_marker_text(_HOLISTIC_DESCENDANT_GATE_HEADING, body) in (
-        _field(task, "description", "") or ""
-    ):
+    description = _field(task, "description", "") or ""
+    if has_audit_marker(description, _HOLISTIC_DESCENDANT_GATE_HEADING):
         return None
+    body = _holistic_descendant_gate_body(gate)
     return AppendAuditMarkerAction(
         task_id=_task_id(task),
         heading=_HOLISTIC_DESCENDANT_GATE_HEADING,
@@ -316,8 +315,10 @@ def holistic_qa_rule(task: object, context: object) -> Action | None:
 
 def holistic_qa_review_rule(task: object, context: object) -> Action | None:
     stage = _matching_current_stage(task, context, "holistic_qa", "needs_review")
-    if stage is None or _stage_review_exhausted(stage, context):
+    if stage is None:
         return None
+    if _stage_review_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_review_rounds")
     if not _agent_dispatchable(context, "holistic-reviewer"):
         return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
     return _spawn_stage_agent(task, stage, context, "holistic-reviewer", resume_review=True)
@@ -340,8 +341,7 @@ def pr_work_rule(task: object, context: object) -> Action | None:
 
 
 def pr_review_rule(task: object, context: object) -> Action | None:
-    if _matching_current_stage(task, context, "pr", "needs_review") is None:
-        return None
+    _ = task, context
     return None
 
 

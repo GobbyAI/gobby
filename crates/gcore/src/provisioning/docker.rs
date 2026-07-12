@@ -9,6 +9,7 @@ use std::time::Duration;
 pub struct DockerServiceOptions {
     pub gobby_home: PathBuf,
     pub postgres_port: u16,
+    pub postgres_password: String,
     pub qdrant_http_port: u16,
     pub qdrant_grpc_port: u16,
     pub falkordb_host: String,
@@ -19,9 +20,11 @@ pub struct DockerServiceOptions {
 
 impl DockerServiceOptions {
     pub fn new(gobby_home: PathBuf) -> Self {
+        let postgres_password = resolve_postgres_password(&gobby_home);
         Self {
             gobby_home,
             postgres_port: DEFAULT_POSTGRES_PORT,
+            postgres_password,
             qdrant_http_port: DEFAULT_QDRANT_HTTP_PORT,
             qdrant_grpc_port: DEFAULT_QDRANT_GRPC_PORT,
             falkordb_host: DEFAULT_FALKORDB_HOST.to_string(),
@@ -32,7 +35,7 @@ impl DockerServiceOptions {
     }
 
     pub fn database_url(&self) -> String {
-        default_database_url(self.postgres_port)
+        default_database_url(self.postgres_port, &self.postgres_password)
     }
 
     pub fn qdrant_url(&self) -> String {
@@ -237,7 +240,7 @@ pub fn prepare_service_assets(
             ),
             (
                 "GOBBY_POSTGRES_PASSWORD".to_string(),
-                DEFAULT_POSTGRES_PASSWORD.to_string(),
+                options.postgres_password.clone(),
             ),
             (
                 "GOBBY_QDRANT_HTTP_PORT".to_string(),
@@ -295,6 +298,10 @@ pub fn docker_compose_up_spec(
             (
                 "GOBBY_POSTGRES_PORT".to_string(),
                 options.postgres_port.to_string(),
+            ),
+            (
+                "GOBBY_POSTGRES_PASSWORD".to_string(),
+                options.postgres_password.clone(),
             ),
             (
                 "GOBBY_QDRANT_HTTP_PORT".to_string(),
@@ -358,7 +365,43 @@ fn update_env_file(path: &Path, updates: BTreeMap<String, String>) -> anyhow::Re
         lines.push(format!("{key}={value}"));
     }
     fs::write(path, format!("{}\n", lines.join("\n")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
     Ok(())
+}
+
+fn resolve_postgres_password(gobby_home: &Path) -> String {
+    read_env_value(
+        &services_dir(gobby_home).join(".env"),
+        "GOBBY_POSTGRES_PASSWORD",
+    )
+    .or_else(|| {
+        std::env::var("GOBBY_POSTGRES_PASSWORD")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
+    .unwrap_or_else(fernet::Fernet::generate_key)
+}
+
+fn read_env_value(path: &Path, key: &str) -> Option<String> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            log::warn!("failed to read persisted service credentials from {path:?}: {error}");
+            return None;
+        }
+    };
+    contents.lines().find_map(|line| {
+        let (candidate, value) = line.split_once('=')?;
+        (candidate.trim() == key)
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
 }
 
 fn first_non_empty<'a>(first: &'a str, second: &'a str) -> &'a str {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from gobby.config.embedding_keys import runtime_embedding_config_keys_to_storage
 from gobby.config.persistence import validate_falkordb_password
@@ -13,7 +13,7 @@ from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
-from gobby.storage.secrets import VALID_CATEGORIES
+from gobby.storage.secrets import VALID_CATEGORIES, SecretStore
 
 MASKED_SECRET = "********"
 FALKOR_PASSWORD_KEY = "databases.falkordb.password"
@@ -68,15 +68,24 @@ def mark_secret_keys(config_store: ConfigStore, keys: set[str]) -> None:
     )
 
 
-def delete_all_except(config_store: ConfigStore, preserved_keys: set[str]) -> int:
+def delete_all_except(
+    config_store: ConfigStore,
+    secret_store: SecretStore,
+    preserved_keys: set[str],
+) -> int:
+    """Delete unpreserved config rows and their encrypted secrets atomically."""
     preserved_keys = runtime_embedding_config_keys_to_storage(preserved_keys)
     if not preserved_keys:
-        return config_store.delete_all()
-    placeholders = ",".join("%s" for _ in preserved_keys)
-    cursor = config_store.db.execute(
-        f"DELETE FROM config_store WHERE key NOT IN ({placeholders})",
-        tuple(sorted(preserved_keys)),
-    )
+        return config_store.delete_all(secret_store)
+    with config_store.db.transaction():
+        for key in config_store.get_secret_keys():
+            if key not in preserved_keys:
+                config_store.clear_secret(key, secret_store)
+        placeholders = ",".join("%s" for _ in preserved_keys)
+        cursor = config_store.db.execute(
+            f"DELETE FROM config_store WHERE key NOT IN ({placeholders})",
+            tuple(sorted(preserved_keys)),
+        )
     return cursor.rowcount or 0
 
 
@@ -117,6 +126,18 @@ def validation_flat_for_secret_entries(
 def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register secret management routes."""
 
+    async def require_mutation_auth(request: Request) -> None:
+        """Protect secret mutations independently of the global auth mode."""
+        if context.server.auth_service.is_request_authenticated(request):
+            return
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Authentication required. Supply the local runtime token or log in with "
+                "configured web credentials."
+            ),
+        )
+
     @router.get("/secrets")
     async def list_secrets() -> JSONResponse:
         """List all secrets (metadata only, never values)."""
@@ -135,7 +156,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
             logger.error("Failed to list secrets: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.post("/secrets")
+    @router.post("/secrets", dependencies=[Depends(require_mutation_auth)])
     async def save_secret(request: SaveSecretRequest) -> JSONResponse:
         """Create or update a secret."""
         try:
@@ -155,7 +176,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
             logger.error("Failed to save secret: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.delete("/secrets/{name}")
+    @router.delete("/secrets/{name}", dependencies=[Depends(require_mutation_auth)])
     async def delete_secret(name: str) -> JSONResponse:
         """Delete a secret by name."""
         try:

@@ -10,6 +10,7 @@ from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
+from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
 
@@ -71,7 +72,9 @@ class TestMCPServer:
         assert config["transport"] == "stdio"
         assert config["command"] == "npx"
         assert config["args"] == ["-y", "@test/server"]
-        assert config["env"] == {"API_KEY": "secret"}
+        assert config["env"] == server.env
+        assert server.env is not None
+        assert SecretStore(mcp_manager.db).resolve(server.env["API_KEY"]) == "secret"
         assert config["requires_oauth"] is False
         assert config["connect_timeout"] == 30.0
 
@@ -226,7 +229,10 @@ class TestLocalMCPManager:
         assert server.name == "http-server"
         assert server.transport == "http"
         assert server.url == "http://localhost:8080/mcp"
-        assert server.headers == {"Authorization": "Bearer token"}
+        assert server.headers is not None
+        assert (
+            SecretStore(mcp_manager.db).resolve(server.headers["Authorization"]) == "Bearer token"
+        )
 
     def test_upsert_stdio_server(
         self,
@@ -1741,8 +1747,11 @@ class TestMCPServerFromRow:
 
         # Verify all fields are properly deserialized
         assert server.args == ["-y", "@test/server"]
-        assert server.env == {"API_KEY": "secret"}
-        assert server.headers == {"X-Auth": "token"}
+        assert server.env is not None
+        assert server.headers is not None
+        secret_store = SecretStore(mcp_manager.db)
+        assert secret_store.resolve(server.env["API_KEY"]) == "secret"
+        assert secret_store.resolve(server.headers["X-Auth"]) == "token"
         assert server.description == "Full server"
         assert server.enabled is True
 
@@ -1960,3 +1969,169 @@ class TestMCPServerToConfig:
 
         config = server.to_config()
         assert config["project_id"] == sample_project["id"]
+
+
+class TestMCPServerSecretPersistence:
+    def test_upsert_encrypts_secret_slots_and_keeps_non_secret_values(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        plaintext = "Bearer database-plaintext-token"
+        server = mcp_manager.upsert(
+            name="secure-server",
+            transport="http",
+            url="http://localhost",
+            env={"API_KEY": "database-api-plaintext", "LOG_LEVEL": "debug"},
+            headers={"Authorization": plaintext, "X-Region": "us-east-1"},
+            project_id=sample_project["id"],
+        )
+
+        assert server.env is not None
+        assert server.headers is not None
+        assert server.env["API_KEY"].startswith("$secret:mcp_")
+        assert server.env["LOG_LEVEL"] == "debug"
+        assert server.headers["Authorization"].startswith("$secret:mcp_")
+        assert server.headers["X-Region"] == "us-east-1"
+        row = mcp_manager.db.fetchone(
+            "SELECT env, headers FROM mcp_servers WHERE id = %s",
+            (server.id,),
+        )
+        assert row is not None
+        assert "database-api-plaintext" not in str(row["env"])
+        assert plaintext not in str(row["headers"])
+        store = SecretStore(mcp_manager.db)
+        assert store.resolve(server.env["API_KEY"]) == "database-api-plaintext"
+        assert store.resolve(server.headers["Authorization"]) == plaintext
+
+    def test_update_reuses_slot_ref_and_cleans_removed_managed_secret(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        created = mcp_manager.upsert(
+            name="rotating-server",
+            transport="stdio",
+            command="node",
+            env={"API_KEY": "first-value"},
+            headers={"Authorization": "Bearer old-value"},
+            project_id=sample_project["id"],
+        )
+        assert created.env is not None
+        assert created.headers is not None
+        api_ref = created.env["API_KEY"]
+        removed_ref = created.headers["Authorization"]
+
+        updated = mcp_manager.update_server(
+            "rotating-server",
+            project_id=sample_project["id"],
+            env={"API_KEY": "second-value", "MODE": "safe"},
+            headers={},
+        )
+
+        assert updated is not None
+        assert updated.env == {"API_KEY": api_ref, "MODE": "safe"}
+        assert updated.headers == {}
+        store = SecretStore(mcp_manager.db)
+        assert store.resolve(api_ref) == "second-value"
+        assert store.get(removed_ref.removeprefix("$secret:")) is None
+
+    def test_explicit_reference_is_preserved_without_reowning_secret(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        store = SecretStore(mcp_manager.db)
+        store.set("operator_owned", "operator-value")
+
+        server = mcp_manager.upsert(
+            name="explicit-ref-server",
+            transport="stdio",
+            command="node",
+            env={"API_KEY": "$secret:operator_owned", "MODE": "safe"},
+            project_id=sample_project["id"],
+        )
+
+        assert server.env == {"API_KEY": "$secret:operator_owned", "MODE": "safe"}
+        assert store.get("operator_owned") == "operator-value"
+
+    def test_upsert_failure_rolls_back_new_secret(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original_execute = mcp_manager.db.execute
+
+        def fail_server_insert(sql: str, params: Any = ()) -> Any:
+            if "INSERT INTO mcp_servers" in sql:
+                raise RuntimeError("forced server persistence failure")
+            return original_execute(sql, params)
+
+        monkeypatch.setattr(mcp_manager.db, "execute", fail_server_insert)
+        with pytest.raises(RuntimeError, match="forced server persistence failure"):
+            mcp_manager.upsert(
+                name="rollback-server",
+                transport="stdio",
+                command="node",
+                env={"API_KEY": "must-rollback"},
+                project_id=sample_project["id"],
+            )
+
+        assert SecretStore(mcp_manager.db).list() == []
+
+    def test_update_failure_restores_previous_secret_value(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        created = mcp_manager.upsert(
+            name="rollback-update-server",
+            transport="stdio",
+            command="node",
+            env={"API_KEY": "original-secret-value"},
+            project_id=sample_project["id"],
+        )
+        assert created.env is not None
+        ref = created.env["API_KEY"]
+        original_execute = mcp_manager.db.execute
+
+        def fail_server_update(sql: str, params: Any = ()) -> Any:
+            if "UPDATE mcp_servers SET" in sql:
+                raise RuntimeError("forced server update failure")
+            return original_execute(sql, params)
+
+        monkeypatch.setattr(mcp_manager.db, "execute", fail_server_update)
+        with pytest.raises(RuntimeError, match="forced server update failure"):
+            mcp_manager.update_server(
+                "rollback-update-server",
+                project_id=sample_project["id"],
+                env={"API_KEY": "replacement-secret-value"},
+            )
+
+        persisted = mcp_manager.get_server(
+            "rollback-update-server",
+            project_id=sample_project["id"],
+        )
+        assert persisted is not None
+        assert persisted.env == {"API_KEY": ref}
+        assert SecretStore(mcp_manager.db).resolve(ref) == "original-secret-value"
+
+    def test_remove_deletes_owned_secret(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        server = mcp_manager.upsert(
+            name="removed-server",
+            transport="stdio",
+            command="node",
+            env={"PASSWORD": "remove-this-value"},
+            project_id=sample_project["id"],
+        )
+        assert server.env is not None
+        secret_name = server.env["PASSWORD"].removeprefix("$secret:")
+
+        assert mcp_manager.remove_server("removed-server", sample_project["id"]) is True
+        assert SecretStore(mcp_manager.db).get(secret_name) is None

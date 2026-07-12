@@ -2,11 +2,14 @@
 
 import json
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.manager import MCPServerConfig
+from gobby.storage.mcp_secrets import cleanup_replaced_mcp_secrets, protect_mcp_mapping
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.storage.secrets import SecretStore, write_private_file
 
 __all__ = [
     "DEFAULT_MCP_CONFIG_PATH",
@@ -17,6 +20,14 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_CONFIG_PATH = "~/.gobby/mcp-servers.json"
+
+
+def _string_mapping(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    if not all(isinstance(key, str) and isinstance(item, str) for key, item in value.items()):
+        return None
+    return value
 
 
 class MCPConfigManager:
@@ -49,7 +60,12 @@ class MCPConfigManager:
         }
     """
 
-    def __init__(self, config_path: str | None = None):
+    def __init__(
+        self,
+        config_path: str | None = None,
+        *,
+        secret_store: SecretStore | None = None,
+    ) -> None:
         """
         Initialize MCP configuration manager.
 
@@ -60,6 +76,7 @@ class MCPConfigManager:
             config_path = DEFAULT_MCP_CONFIG_PATH
 
         self.config_path = Path(config_path).expanduser()
+        self._secret_store = secret_store
 
         # Ensure parent directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,49 +219,96 @@ class MCPConfigManager:
             ValueError: If server configuration is invalid
             OSError: If file operations fail
         """
-        # Convert MCPServerConfig objects to dictionaries
-        server_dicts = []
+        old_config = self._read_config()
+        original_bytes = self.config_path.read_bytes()
+        original_mode = self.config_path.stat().st_mode & 0o777
+        transaction = (
+            self._secret_store.db.transaction() if self._secret_store is not None else nullcontext()
+        )
+        try:
+            with transaction:
+                server_dicts: list[dict[str, Any]] = []
+                for server in servers:
+                    server.validate()
+                    server_dict: dict[str, Any] = {
+                        "name": server.name,
+                        "enabled": server.enabled,
+                        "transport": server.transport,
+                    }
 
-        for server in servers:
-            # Validate before saving
-            server.validate()
+                    if server.transport in ("http", "websocket", "sse"):
+                        protected_headers = protect_mcp_mapping(
+                            server.headers,
+                            secret_store=self._secret_store,
+                            persistence="file",
+                            scope=GLOBAL_PROJECT_ID,
+                            server_name=server.name,
+                            field="headers",
+                        )
+                        server_dict["url"] = server.url
+                        if protected_headers:
+                            server_dict["headers"] = protected_headers
+                        if server.requires_oauth:
+                            server_dict["requires_oauth"] = server.requires_oauth
+                            if server.oauth_provider:
+                                server_dict["oauth_provider"] = server.oauth_provider
+                    elif server.transport == "stdio":
+                        protected_env = protect_mcp_mapping(
+                            server.env,
+                            secret_store=self._secret_store,
+                            persistence="file",
+                            scope=GLOBAL_PROJECT_ID,
+                            server_name=server.name,
+                            field="env",
+                        )
+                        server_dict["command"] = server.command
+                        if server.args:
+                            server_dict["args"] = server.args
+                        if protected_env:
+                            server_dict["env"] = protected_env
 
-            server_dict = {
-                "name": server.name,
-                "enabled": server.enabled,
-                "transport": server.transport,
-            }
+                    if server.tools:
+                        server_dict["tools"] = server.tools
+                    if server.description:
+                        server_dict["description"] = server.description
+                    server_dicts.append(server_dict)
 
-            # Add transport-specific fields
-            if server.transport in ("http", "websocket", "sse"):
-                server_dict["url"] = server.url
-                if server.headers:
-                    server_dict["headers"] = server.headers
-                if server.requires_oauth:
-                    server_dict["requires_oauth"] = server.requires_oauth
-                    if server.oauth_provider:
-                        server_dict["oauth_provider"] = server.oauth_provider
-
-            elif server.transport == "stdio":
-                server_dict["command"] = server.command
-                if server.args:
-                    server_dict["args"] = server.args
-                if server.env:
-                    server_dict["env"] = server.env
-
-            # Add tool metadata if available
-            if server.tools:
-                server_dict["tools"] = server.tools
-
-            # Add description if available
-            if server.description:
-                server_dict["description"] = server.description
-
-            server_dicts.append(server_dict)
-
-        # Write to file
-        config = {"servers": server_dicts}
-        self._write_config(config)
+                config = {"servers": server_dicts}
+                self._write_config(config)
+                if self._secret_store is not None:
+                    new_by_name = {
+                        str(server["name"]): server
+                        for server in server_dicts
+                        if isinstance(server.get("name"), str)
+                    }
+                    for old_server in old_config.get("servers", []):
+                        if not isinstance(old_server, dict) or not isinstance(
+                            old_server.get("name"), str
+                        ):
+                            continue
+                        name = old_server["name"]
+                        new_server = new_by_name.get(name, {})
+                        cleanup_replaced_mcp_secrets(
+                            self._secret_store,
+                            persistence="file",
+                            scope=GLOBAL_PROJECT_ID,
+                            server_name=name,
+                            old_env=_string_mapping(old_server.get("env")),
+                            old_headers=_string_mapping(old_server.get("headers")),
+                            new_env=_string_mapping(new_server.get("env")),
+                            new_headers=_string_mapping(new_server.get("headers")),
+                        )
+        except Exception:
+            try:
+                rollback_path = self.config_path.with_suffix(".rollback.tmp")
+                write_private_file(rollback_path, original_bytes)
+                rollback_path.chmod(original_mode)
+                rollback_path.replace(self.config_path)
+            except OSError as rollback_error:
+                raise OSError(
+                    "Failed to restore MCP config after persistence error"
+                ) from rollback_error
+            raise
 
     def add_server(self, server: MCPServerConfig) -> None:
         """

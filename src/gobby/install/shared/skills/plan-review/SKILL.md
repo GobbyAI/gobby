@@ -1,8 +1,8 @@
 ---
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
-version: "1.0.0"
-category: core
+version: "1.1.0"
+category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
 metadata:
@@ -46,11 +46,11 @@ The adversary's only mechanical gate is the post-approval
 below). It validates a different invariant: the appended `## M1 Task Manifest`
 is present, schema-correct, and covers every acceptance item exactly once.
 
-The rejection-message vocabulary, canonical heading regex, and post-parse
-semantic checks below remain authoritative for qualitative findings. When
-surfacing a contract violation the planner gate missed — or one the parser
-cannot detect mechanically (table-row decomposition, traceability gaps) —
-cite the exact rejection cause from the table.
+The rejection-message vocabulary and post-parse semantic checks below remain
+authoritative for qualitative findings. When surfacing a contract violation
+the planner gate missed — or one the parser cannot detect mechanically
+(table-row decomposition, traceability gaps) — cite the exact rejection cause
+from the table.
 
 The planner-side gate and `gobby plans validate` also run deterministic semantic
 lint. `target-coverage`, conservative `table-row-decomposition`, and
@@ -59,11 +59,10 @@ qualitative review findings. If one appears in your prompt or task history,
 require the planner to sweep the whole plan for that same failure class before
 resubmission.
 
-Canonical heading regex:
-
-```regex
-^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
-```
+The canonical heading regex and full contract grammar live in the `plan-draft`
+skill (the contract's authoring surface) and `docs/contracts/plan-coverage.md`
+— do not restate them here; load `plan-draft` when a finding requires quoting
+grammar.
 
 The documented rejection message MUST name the failing cause. Reject on these
 nine cases:
@@ -80,7 +79,9 @@ nine cases:
 | phases missing | `Plan-Coverage Contract rejection: phases missing` |
 | table-row decomposition | `Plan-Coverage Contract rejection: table-row decomposition` |
 
-Mechanical parser-level rejection covers the first seven cases:
+Mechanical parser-level rejection covers the first seven cases (enforced
+upstream by the draft-mode contract gate; the full grammar lives in
+`plan-draft` and `docs/contracts/plan-coverage.md`):
 
 - A heading at level `##` through `######` does not match the canonical regex
   in strict implementation-parse mode.

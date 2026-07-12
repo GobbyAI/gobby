@@ -1,6 +1,7 @@
 ---
 name: intro
 description: "Capture the user's global Gobby working profile once and save it to ~/.gobby/personal/USER.md."
+version: "1.0.0"
 category: core
 triggers:
   - intro

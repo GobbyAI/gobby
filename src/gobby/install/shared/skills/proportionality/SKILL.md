@@ -2,7 +2,7 @@
 name: proportionality
 description: Judge whether mechanism is proportionate to the goal. Flag complexity with no concrete consumer or stated requirement — speculative abstraction, indirection without payoff, single-value config, framework overkill. Ambition and size are never findings. Shared by plan, epic, and leaf review.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: over-engineering, proportionality, rube goldberg, yagni, premature abstraction, gold-plating
 metadata:
@@ -16,6 +16,9 @@ metadata:
 > Internal methodology skill; loaded with `get_skill(name="proportionality")` by
 > `plan-adversary` (plan altitude), `holistic-reviewer` (epic altitude), and
 > `qa-reviewer` (leaf altitude). Not a user-facing command.
+>
+> `restraint` is the authoring-side counterpart: restraint disciplines work
+> being written; proportionality judges work already written.
 
 This skill is the single source of truth for **one question, asked at every
 review altitude**:

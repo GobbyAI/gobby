@@ -47,6 +47,10 @@ def test_append_verification_evidence_preserves_supported_metadata_fields() -> N
         "matcher_id": "pytest",
         "matcher_label": "pytest",
         "project_path": "/repo",
+        "segment_count": 2,
+        "segment_index": 0,
+        "shell_operators": ["||"],
+        "evidence_requires_confirmation": False,
         "success": True,
         "tool_name": "pytest",
     }

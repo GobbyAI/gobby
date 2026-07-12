@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import importlib.resources
 import json
@@ -11,8 +12,8 @@ import re
 import threading
 import uuid
 import weakref
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import ExitStack, contextmanager
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import date, datetime
 from typing import Any, Literal, cast
 
@@ -21,13 +22,17 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
+from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
 from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
+    BuildDryRunMutation,
     ChatAttachmentMutation,
     CronRunAdmission,
     Cursor,
     DispatchMutexRow,
+    GitHubIssueTriageMutation,
+    IntegrationWorkspaceMutex,
     LockAcquisitionOrderError,
     LockTarget,
     Row,
@@ -113,15 +118,22 @@ class PostgresHubDatabase:
 
     dialect: Literal["postgres"] = "postgres"
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
+    ) -> None:
+        self._conninfo = _conninfo_with_utc_session_timezone(dsn)
+        self._application_name = os.getenv("PGAPPNAME", "gobby")
         self._pool = ConnectionPool(
-            conninfo=_conninfo_with_utc_session_timezone(dsn),
+            conninfo=self._conninfo,
             open=False,
-            min_size=int(os.getenv("PGPOOL_MIN", "2")),
-            max_size=int(os.getenv("PGPOOL_MAX", "20")),
-            timeout=float(os.getenv("PGPOOL_TIMEOUT", "5")),
+            min_size=pool_config.min_size,
+            max_size=pool_config.max_size,
+            timeout=pool_config.acquire_timeout_seconds,
             kwargs={
-                "application_name": os.getenv("PGAPPNAME", "gobby"),
+                "application_name": self._application_name,
                 "prepare_threshold": None,
                 "row_factory": dict_row,
             },
@@ -130,6 +142,7 @@ class PostgresHubDatabase:
         self._open_lock = threading.Lock()
         self._pool_opened = False
         self._pool_closed = False
+        self._pool_open_timeout = pool_config.open_timeout_seconds
         _OPEN_DATABASES.add(self)
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
@@ -152,7 +165,7 @@ class PostgresHubDatabase:
                 return
             open_timeout = timeout
             if open_timeout is None:
-                open_timeout = float(os.getenv("PGPOOL_OPEN_TIMEOUT", "30"))
+                open_timeout = self._pool_open_timeout
             open_pool(wait=wait, timeout=open_timeout)
             self._pool_opened = True
 
@@ -202,9 +215,46 @@ class PostgresHubDatabase:
             yield txn
 
     @contextmanager
-    def transaction_immediate(self, lock: LockTarget | None = None) -> Iterator[Transaction]:
+    def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
         with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
             yield txn
+
+    @asynccontextmanager
+    async def advisory_lock(self, lock: LockTarget) -> AsyncIterator[None]:
+        """Hold typed PostgreSQL session locks without an idle transaction."""
+        lock_keys = _advisory_lock_keys(lock)
+        raw_conn, cancellation = await _await_task_completion(
+            asyncio.create_task(asyncio.to_thread(self._open_advisory_lock_connection))
+        )
+        conn = cast(psycopg.Connection[Any], raw_conn)
+        acquired = False
+
+        try:
+            if cancellation is not None:
+                raise cancellation
+            while not acquired:
+                acquired_result, lock_cancellation = await _await_task_completion(
+                    asyncio.create_task(
+                        asyncio.to_thread(_try_session_advisory_locks, conn, lock_keys)
+                    )
+                )
+                acquired = bool(acquired_result)
+                if lock_cancellation is not None:
+                    raise lock_cancellation
+                if not acquired:
+                    await asyncio.sleep(0.05)
+            yield
+        finally:
+            await _close_advisory_lock_connection(conn, lock_keys if acquired else ())
+
+    def _open_advisory_lock_connection(self) -> psycopg.Connection[Any]:
+        """Open lock ownership outside the worker pool used by the protected body."""
+        return psycopg.connect(
+            self._conninfo,
+            application_name=self._application_name,
+            prepare_threshold=None,
+            row_factory=dict_row,
+        )
 
     @contextmanager
     def _native_transaction(
@@ -637,13 +687,96 @@ def _validate_identifier(identifier: str) -> None:
         raise ValueError(f"invalid SQL identifier: {identifier!r}")
 
 
+async def _await_task_completion(
+    task: asyncio.Task[Any],
+) -> tuple[Any, asyncio.CancelledError | None]:
+    """Finish a thread-backed operation before propagating repeated cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return await asyncio.shield(task), cancellation
+        except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise
+            cancellation = exc
+
+
+def _try_session_advisory_locks(
+    conn: psycopg.Connection[Any],
+    lock_keys: tuple[str, ...],
+) -> bool:
+    acquired: list[str] = []
+    try:
+        for lock_key in lock_keys:
+            row = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired",
+                (lock_key,),
+            ).fetchone()
+            if row is not None and bool(row["acquired"]):
+                acquired.append(lock_key)
+                continue
+            if acquired:
+                _release_session_advisory_locks(conn, tuple(acquired))
+            else:
+                conn.commit()
+            return False
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        if acquired:
+            _release_session_advisory_locks(conn, tuple(acquired))
+        raise
+
+
+def _release_session_advisory_locks(
+    conn: psycopg.Connection[Any],
+    lock_keys: tuple[str, ...],
+) -> None:
+    try:
+        for lock_key in reversed(lock_keys):
+            row = conn.execute(
+                "SELECT pg_advisory_unlock(hashtext(%s)) AS released",
+                (lock_key,),
+            ).fetchone()
+            if row is None or not bool(row["released"]):
+                raise RuntimeError(f"PostgreSQL session advisory lock was not held: {lock_key}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+
+
+async def _close_advisory_lock_connection(
+    conn: psycopg.Connection[Any],
+    lock_keys: tuple[str, ...],
+) -> None:
+    def close() -> None:
+        try:
+            if lock_keys:
+                _release_session_advisory_locks(conn, lock_keys)
+        finally:
+            conn.close()
+
+    _, cancellation = await _await_task_completion(asyncio.create_task(asyncio.to_thread(close)))
+    if cancellation is not None:
+        raise cancellation
+
+
 def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
+    if isinstance(lock, BuildDryRunMutation):
+        return (f"build_dry_run:{lock.project_id}",)
     if isinstance(lock, CronRunAdmission):
         return ("cron_run_admission",)
     if isinstance(lock, AgentCapAdmission):
         return (f"agent_cap_admission:{lock.project_id or '*'}",)
     if isinstance(lock, DispatchMutexRow):
         return (f"dispatch_mutex:{lock.task_id}",)
+    if isinstance(lock, GitHubIssueTriageMutation):
+        return (f"github_issue_triage:{lock.project_id}:{lock.repo}#{lock.issue_number}",)
+    if isinstance(lock, IntegrationWorkspaceMutex):
+        return (f"integration_workspace_mutex:{lock.integration_key}",)
     if isinstance(lock, SessionRegistration):
         return (
             "session_register:"

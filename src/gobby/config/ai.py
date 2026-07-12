@@ -13,6 +13,7 @@ from gobby.config.feature_base import (
     FeatureProfile,
     validate_feature_candidates,
 )
+from gobby.config.url_validation import validate_endpoint_url
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,11 @@ class LocalGenerationEndpointConfig(BaseModel):
         if not self.model.strip():
             raise ValueError("model must be set for local generation endpoints")
         return self
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, value: str) -> str:
+        return validate_endpoint_url(value, field_name="api_base")
 
 
 class LocalGenerationConfig(BaseModel):

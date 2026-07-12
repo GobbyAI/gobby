@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.embedding_keys import (
@@ -164,9 +165,24 @@ class ConfigStore:
         cursor = self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
         return bool(cursor.rowcount and cursor.rowcount > 0)
 
-    def delete_all(self) -> int:
-        """Delete all config entries. Returns count deleted."""
-        cursor = self.db.execute("DELETE FROM config_store")
+    def delete_all(
+        self,
+        secret_store: SecretStore,
+        *,
+        preserved_secret_keys: Collection[str] = (),
+    ) -> int:
+        """Delete all config entries and their encrypted secrets atomically.
+
+        ``preserved_secret_keys`` keeps encrypted values that incoming config
+        references will immediately reattach to new config rows.
+        """
+        preserved = set(preserved_secret_keys)
+        with self.db.transaction():
+            secret_keys = self.get_secret_keys()
+            cursor = self.db.execute("DELETE FROM config_store")
+            for key in secret_keys:
+                if key not in preserved:
+                    secret_store.delete(config_key_to_secret_name(key))
         return cursor.rowcount or 0
 
     def list_keys(self, prefix: str | None = None) -> list[str]:

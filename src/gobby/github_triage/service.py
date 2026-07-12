@@ -26,6 +26,7 @@ from gobby.storage.github_triage import (
     GitHubTriageStore,
     TriageVerdict,
 )
+from gobby.storage.hub.protocol import GitHubIssueTriageMutation
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 
@@ -436,7 +437,13 @@ class GitHubIssueTriageService:
         description = _task_description(issue)
         labels = sorted(set(issue.labels) | {"github"})
         try:
-            with self.db.transaction_immediate() as conn:
+            with self.db.transaction_immediate(
+                GitHubIssueTriageMutation(
+                    project_id=project_id,
+                    repo=issue.repo,
+                    issue_number=issue.issue_number,
+                )
+            ) as conn:
                 existing = conn.execute(
                     "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
                     "AND github_issue_number = %s LIMIT 1",

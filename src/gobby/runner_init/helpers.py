@@ -14,6 +14,7 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
+from gobby.config.postgres_pool import PostgresPoolConfig
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class DatabasePathConfig(Protocol):
 
     hub_backend: Literal["postgres"]
     database_url: str | None
+    postgres_pool: PostgresPoolConfig
 
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
@@ -71,7 +73,7 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    postgres_db = PostgresHubDatabase(database_url)
+    postgres_db = PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
     _apply_postgres_migrations_with_startup_retry(postgres_db)
     logger.info("Database: PostgreSQL hub")
     return postgres_db

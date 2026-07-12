@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
+
+from gobby.utils.env import expand_env_mapping
 
 if TYPE_CHECKING:
     from gobby.workflows.definitions import PipelineDefinition
@@ -150,8 +150,7 @@ class WebhookNotifier:
             headers: Request headers (supports ${VAR} expansion)
             payload: JSON payload to send
         """
-        # Expand environment variables in headers
-        expanded_headers = self._expand_env_vars(headers)
+        expanded_headers = expand_env_mapping(headers) or {}
 
         try:
             async with httpx.AsyncClient() as client:
@@ -182,25 +181,3 @@ class WebhookNotifier:
 
         except Exception as e:
             logger.error(f"Failed to send webhook to {url}: {e}")
-
-    def _expand_env_vars(self, headers: dict[str, str]) -> dict[str, str]:
-        """Expand ${VAR} patterns in header values from environment.
-
-        Args:
-            headers: Header dict with potential ${VAR} patterns
-
-        Returns:
-            New dict with expanded values
-        """
-        result = {}
-        pattern = re.compile(r"\$\{([^}]+)\}")
-
-        for key, value in headers.items():
-
-            def replacer(match: re.Match[str]) -> str:
-                var_name = match.group(1)
-                return os.environ.get(var_name, match.group(0))
-
-            result[key] = pattern.sub(replacer, value)
-
-        return result

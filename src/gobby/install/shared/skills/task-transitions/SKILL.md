@@ -1,7 +1,9 @@
 ---
 name: task-transitions
 description: "Pre-transition checklist for closing or reviewing tasks. Covers fresh verification evidence, commits, and memory gates."
+version: "1.0.0"
 category: core
+triggers: close task, submit for review, task transition, commit sha, verification evidence
 metadata:
   gobby:
     audience: all

@@ -74,19 +74,6 @@ class AdvanceStageAction:
 
 
 @dataclass(frozen=True)
-class AdvanceLifecycleAction:
-    """Advance a task from one lifecycle/status tuple to another."""
-
-    task_id: str
-    from_lifecycle: str
-    from_status: str
-    to_lifecycle: str
-    to_status: str
-    reason: str
-    by_actor: str = "dispatcher"
-
-
-@dataclass(frozen=True)
 class AppendAuditMarkerAction:
     """Append a structured audit note to task description."""
 
@@ -110,7 +97,6 @@ type Action = (
     | CreateIsolationAction
     | MergeWorkspaceAction
     | AdvanceStageAction
-    | AdvanceLifecycleAction
     | AppendAuditMarkerAction
     | EscalateAction
 )
@@ -119,7 +105,6 @@ type Action = (
 __all__ = [
     "Action",
     "AdvanceStageAction",
-    "AdvanceLifecycleAction",
     "AppendAuditMarkerAction",
     "CreateIsolationAction",
     "EscalateAction",

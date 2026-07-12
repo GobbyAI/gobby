@@ -2,7 +2,7 @@
 
 import logging
 import shutil
-import subprocess  # nosec B404 - scoped git commands, no shell
+import subprocess  # nosec B404 # scoped git commands with no shell
 from pathlib import Path
 from typing import Any
 

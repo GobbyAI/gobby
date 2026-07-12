@@ -39,6 +39,7 @@ from gobby.dispatch.constants import (
 from gobby.dispatch.context import _field, build_context, reload_candidate
 from gobby.dispatch.daemon_resume import try_resume_daemon_stop_run
 from gobby.dispatch.lease_cleanup import (
+    sweep_expired_integration_workspace_leases,
     sweep_expired_leases,
     sweep_orphan_no_run_dispatch_mutexes,
 )
@@ -100,6 +101,14 @@ _unavailable = dispatch_results.unavailable
 _AGENT_CAP_REACHED = object()
 
 
+def _database_error_aborts_scan(error: psycopg.Error) -> bool:
+    """Return whether a database error means the heartbeat connection is unusable."""
+    sqlstate = error.sqlstate
+    return (sqlstate is None and isinstance(error, psycopg.OperationalError)) or bool(
+        sqlstate and (sqlstate.startswith("08") or sqlstate.startswith("57P0"))
+    )
+
+
 async def run_heartbeat(
     *,
     db: HubDatabase | None = None,
@@ -153,6 +162,15 @@ async def _run_heartbeat_unlocked(
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         await sweep_expired_leases(mutex_storage)
+        expired_integration_leases = await run_db(
+            sweep_expired_integration_workspace_leases,
+            resolved_db,
+        )
+        if expired_integration_leases:
+            logger.info(
+                "Dispatcher cleared %d expired integration workspace lease(s)",
+                expired_integration_leases,
+            )
     orphan_mutexes = await run_db(
         sweep_orphan_no_run_dispatch_mutexes,
         mutex_storage,
@@ -176,7 +194,7 @@ async def _run_heartbeat_unlocked(
     for candidate in candidates:
         if _action_cap_reached(result, max_actions):
             return _cap_reached(result)
-        if await run_db(count_active_agents, resolved_db, project_id=project_id) >= cap:
+        if await run_db(count_active_agents, resolved_db) >= cap:
             return _cap_reached(result)
 
         snapshot_candidate = await run_db(
@@ -255,14 +273,17 @@ async def _run_heartbeat_unlocked(
             ):
                 write_set_guard.reserve(action.task_id)
             result = replace(result, executed=result.executed + 1)
-        except (TypeError, AttributeError, psycopg.Error):
-            await run_db(mutex.release)
-            raise
         except DispatchSpawnUnavailable as exc:
             await run_db(mutex.release)
             logger.info("Dispatcher heartbeat unavailable: %s", exc)
             return _unavailable(result, str(exc))
         except Exception as exc:
+            if isinstance(exc, (TypeError, AttributeError)) or (
+                isinstance(exc, psycopg.Error) and _database_error_aborts_scan(exc)
+            ):
+                if mutex.run_id is None:
+                    await run_db(mutex.release)
+                raise
             logger.exception("Dispatcher heartbeat candidate failed: task_id=%s", candidate.id)
             try:
                 await append_audit_marker(
@@ -273,9 +294,13 @@ async def _run_heartbeat_unlocked(
                 )
             except Exception:
                 logger.debug("Failed to append dispatch failure audit marker", exc_info=True)
-            await run_db(mutex.release)
+            if mutex.run_id is None:
+                await run_db(mutex.release)
             result = _skipped(result)
             continue
+        finally:
+            if mutex.run_id is None:
+                await run_db(mutex.release)
 
     return result
 
@@ -361,21 +386,20 @@ async def _execute_action_with_agent_cap(
         )
 
     spawn_failure: DispatchSpawnFailed | None = None
-    with db.transaction_immediate(AgentCapAdmission(project_id=project_id)):
-        if count_active_agents(db, project_id=project_id) >= cap:
+    async with db.advisory_lock(AgentCapAdmission(project_id=None)):
+        if count_active_agents(db) >= cap:
             mutex.release()
             return _AGENT_CAP_REACHED
-
-    try:
-        return await _execute_action(
-            action,
-            mutex=mutex,
-            db=db,
-            context=context,
-            services=services,
-        )
-    except DispatchSpawnFailed as exc:
-        spawn_failure = exc
+        try:
+            return await _execute_action(
+                action,
+                mutex=mutex,
+                db=db,
+                context=context,
+                services=services,
+            )
+        except DispatchSpawnFailed as exc:
+            spawn_failure = exc
 
     await _handle_spawn_failure(
         action,
@@ -406,6 +430,7 @@ async def _execute_spawn_action(
         spawn_agent=spawn_agent,
         handle_spawn_failure=_handle_spawn_failure,
         cleanup_unattached_spawned_run=_cleanup_unattached_spawned_run,
+        quarantine_unterminated_spawned_run=_quarantine_unterminated_spawned_run,
         try_resume_daemon_stop_run=try_resume_daemon_stop_run,
     )
 
@@ -415,8 +440,28 @@ async def _cleanup_unattached_spawned_run(
     *,
     db: HubDatabase,
     error: str,
+) -> bool:
+    return await _spawn_actions.cleanup_unattached_spawned_run(run_id, db=db, error=error)
+
+
+async def _quarantine_unterminated_spawned_run(
+    action: SpawnAgentAction,
+    *,
+    run_id: str,
+    mutex: RuntimeDispatchMutex,
+    db: HubDatabase,
+    error: str,
 ) -> None:
-    await _spawn_actions.cleanup_unattached_spawned_run(run_id, db=db, error=error)
+    await _spawn_actions.quarantine_unterminated_spawned_run(
+        action,
+        run_id=run_id,
+        mutex=mutex,
+        db=db,
+        error=error,
+        run_db=run_db,
+        append_audit_marker=append_audit_marker,
+        escalate_task=escalate_task,
+    )
 
 
 async def execute_action(

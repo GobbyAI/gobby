@@ -1,9 +1,12 @@
 ---
 name: rust
 description: "Enforces default Rust coding standards for agents writing or refactoring Rust: Cargo and toolchain configuration, ownership, error handling, types, testing, async, and API design. Use before editing Rust unless the repo provides stricter local rules."
-version: "1.2.0"
+version: "1.3.0"
 category: development
 triggers: rust, cargo, cargo.toml, rust-toolchain, clippy, rustfmt, tokio, async rust, lifetime, borrow checker
+sources:
+  - "Primary: Gobby TypeScript language skill reference pattern, adapted for Rust workspace, ownership, and async conventions."
+  - "Secondary: Rust API guidelines, clippy/rustfmt policy, and the tokio/thiserror/anyhow idioms used across Gobby's crates/ workspace."
 ---
 
 # Rust
@@ -68,7 +71,7 @@ For type modeling patterns: `get_skill_file(name="rust", path="references/types.
 - Unit tests in `#[cfg(test)] mod tests` in the same file
 - Integration tests in `tests/` directory, one file per major feature
 - Use `-> Result<()>` for tests with fallible operations instead of `.unwrap()` chains
-- Prefer `cargo nextest run` for normal test execution; run `cargo test --doc` separately because nextest does not run doctests
+- Use the repo's configured test runner — `cargo test`, or `cargo nextest run` where the repo has adopted nextest (then run `cargo test --doc` separately, because nextest does not run doctests)
 - Use `assert_cmd` for CLI subprocess tests, `pretty_assertions` for high-signal equality diffs, and `cargo-llvm-cov` for coverage reports
 - Use `rstest` narrowly for genuine case tables and fixtures; do not replace clear single-case tests or helper loops with parameterization
 - Use `insta` for stable text/JSON snapshots with redactions for nondeterministic fields
@@ -80,7 +83,7 @@ Pytest-to-Rust mapping:
 
 | Python/pytest | Rust default |
 | --- | --- |
-| `pytest` runner | `cargo nextest run` |
+| `pytest` runner | `cargo test` (or `cargo nextest run` if the repo uses nextest) |
 | doctests | `cargo test --doc` |
 | `CliRunner` / subprocess assertions | `assert_cmd` |
 | `@pytest.mark.parametrize` | narrow `rstest` `#[case]` tables |

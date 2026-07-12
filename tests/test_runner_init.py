@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config import DaemonConfig
+from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
@@ -337,12 +338,16 @@ class TestInitHubDatabase:
             config = SimpleNamespace(
                 hub_backend="postgres",
                 database_url="postgresql://gobby:secret@localhost:60891/gobby",
+                postgres_pool=PostgresPoolConfig(min_size=3, max_size=12),
             )
 
             result = helpers.init_hub_database(config)
 
         assert result is db
-        postgres_database.assert_called_once_with("postgresql://gobby:secret@localhost:60891/gobby")
+        postgres_database.assert_called_once_with(
+            "postgresql://gobby:secret@localhost:60891/gobby",
+            pool_config=config.postgres_pool,
+        )
         db.apply_migrations.assert_called_once_with()
 
     def test_postgres_startup_retries_transient_connection_failure(
@@ -359,7 +364,7 @@ class TestInitHubDatabase:
         class FakePostgresDatabase:
             calls = 0
 
-            def __init__(self, _dsn: str) -> None:
+            def __init__(self, _dsn: str, *, pool_config: object) -> None:
                 pass
 
             def apply_migrations(self) -> None:
@@ -375,6 +380,7 @@ class TestInitHubDatabase:
         config = SimpleNamespace(
             hub_backend="postgres",
             database_url="postgresql://gobby:secret@localhost:60891/gobby",
+            postgres_pool=PostgresPoolConfig(),
         )
 
         result = helpers.init_hub_database(config)

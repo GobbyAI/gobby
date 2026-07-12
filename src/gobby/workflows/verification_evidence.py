@@ -45,6 +45,10 @@ class VerificationEvidence(BaseModel):
     normalized_command: str | None = Field(default=None, strict=True)
     normalized_argv: list[str] | None = None
     wrapper_chain: list[str] | None = None
+    segment_index: int | None = Field(default=None, ge=0, strict=True)
+    segment_count: int | None = Field(default=None, ge=1, strict=True)
+    shell_operators: list[str] | None = None
+    evidence_requires_confirmation: bool | None = Field(default=None, strict=True)
     tool_name: str | None = Field(default=None, strict=True)
     exit_code: int | None = Field(default=None, strict=True)
 

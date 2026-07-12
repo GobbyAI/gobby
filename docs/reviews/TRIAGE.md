@@ -502,7 +502,7 @@
 - #16120 (U322, `docs/reviews/config.md`) — Implement ${ENV_VAR} expansion for webhook url/headers at dispatch
 - #16239 (U323, `docs/reviews/config.md`) — Make config reset and delete_all clear orphaned encrypted secrets
 - #16250 (U324, `docs/reviews/config.md`) — Raise BootstrapConfigError on malformed bootstrap scalars instead of resetting
-- #16256 (U325, `docs/reviews/config.md`) — Remove dead KEYRING_DATABASE_URL_REF and document the plaintext 0600 bootstrap DSN contract
+- #16256 (U325, `docs/reviews/config.md`) — Remove the dead bootstrap keyring export and document the plaintext 0600 DSN contract
 - #16262 (U326, `docs/reviews/config.md`) — Refuse or warn on ui.enabled + non-loopback bind + unconfigured auth
 - #16274 (U327, `docs/reviews/config.md`) — Resolve ${VAR}/$secret: in config-file Layer 2 or remove unreachable load_yaml
 - #16280 (U328, `docs/reviews/config.md`) — Store MCP env/headers secrets via SecretStore $secret: refs, not plaintext

@@ -41,16 +41,17 @@ def test_architect_loads_test_architecture_methodology() -> None:
     success_hooks = load_skill.get("on_mcp_success", [])
 
     assert agent["name"] == "architect"
-    assert {"architecture", "test-architecture"}.issubset(set(agent["skills"]["methodology"]))
+    assert "architecture" in set(agent["skills"]["methodology"])
+    assert "test-architecture" not in set(agent["skills"]["methodology"])
     assert "## Architecture Brief" in agent["instructions"]
     assert "## Test Architecture" in agent["instructions"]
-    assert 'get_skill(name="test-architecture")' in load_skill["status_message"]
-    assert any(hook["when"] == "tool_input.name == 'test-architecture'" for hook in success_hooks)
+    assert 'get_skill(name="architecture")' in load_skill["status_message"]
+    assert any(hook["when"] == "tool_input.name == 'architecture'" for hook in success_hooks)
     assert "## Test Architecture" in draft["status_message"]
 
 
 def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() -> None:
-    skill_path = ROOT / "src/gobby/install/shared/skills/test-architecture/SKILL.md"
+    skill_path = ROOT / "src/gobby/install/shared/skills/architecture/SKILL.md"
     skill_text = skill_path.read_text(encoding="utf-8")
 
     assert "## Test Architecture" in skill_text

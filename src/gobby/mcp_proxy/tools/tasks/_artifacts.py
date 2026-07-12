@@ -14,6 +14,7 @@ import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.storage.hub.protocol import TaskLifecycleMutation
 from gobby.storage.tasks import (
     TaskArtifactConstraintError,
     TaskArtifactManager,
@@ -229,7 +230,9 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as error:
             return {"ok": False, "error": "invalid_description_section", "message": str(error)}
 
-        with ctx.task_manager.db.transaction_immediate() as conn:
+        with ctx.task_manager.db.transaction_immediate(
+            TaskLifecycleMutation(task_id=resolved_id)
+        ) as conn:
             row = conn.execute(
                 "SELECT description FROM tasks WHERE id = %s",
                 (resolved_id,),

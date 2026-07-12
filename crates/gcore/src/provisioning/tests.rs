@@ -24,6 +24,7 @@ impl EnvGuard {
             "GOBBY_FALKORDB_PORT",
             "GOBBY_FALKORDB_PASSWORD",
             "GOBBY_POSTGRES_DSN",
+            "GOBBY_POSTGRES_PASSWORD",
             "GOBBY_QDRANT_URL",
             "GOBBY_QDRANT_API_KEY",
         ] {
@@ -368,6 +369,61 @@ fn compose_template_matches_daemon_checkout_when_present() {
     assert_eq!(COMPOSE_TEMPLATE, daemon_template);
 }
 
+#[test]
+fn compose_template_binds_every_published_port_to_loopback() {
+    let compose: serde_yaml::Value =
+        serde_yaml::from_str(COMPOSE_TEMPLATE).expect("parse compose template");
+    let services = compose["services"].as_mapping().expect("services mapping");
+
+    for service in services.values() {
+        let Some(ports) = service["ports"].as_sequence() else {
+            continue;
+        };
+        for port in ports {
+            assert!(
+                port.as_str()
+                    .expect("published port string")
+                    .starts_with("127.0.0.1:"),
+                "published service port must be loopback-bound: {port:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn docker_service_options_generate_persist_and_reuse_postgres_password() {
+    let _env = EnvGuard::new();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join(".gobby");
+    let options = DockerServiceOptions::new(home.clone());
+
+    assert!(options.postgres_password.len() >= 40);
+    let assets = prepare_service_assets(&options).expect("prepare service assets");
+    let env_contents = fs::read_to_string(&assets.env_file).expect("read service env");
+    assert!(env_contents.contains(&format!(
+        "GOBBY_POSTGRES_PASSWORD={}",
+        options.postgres_password
+    )));
+    assert!(options.database_url().contains(&options.postgres_password));
+
+    let reused = DockerServiceOptions::new(home);
+    assert_eq!(reused.postgres_password, options.postgres_password);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        assert_eq!(
+            fs::metadata(assets.env_file)
+                .expect("service env metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
 fn daemon_compose_template_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("GOBBY_DAEMON_COMPOSE_PATH") {
         let path = path.trim();
@@ -400,6 +456,10 @@ fn docker_provisioning_prepares_assets_runs_compose_and_health_checks() {
     assert!(runner.commands[0].args.contains(&"--profile".to_string()));
     assert!(runner.commands[0].args.contains(&"all".to_string()));
     assert_eq!(health.checks, vec!["postgres", "qdrant", "falkordb"]);
+    assert_eq!(
+        runner.commands[0].env.get("GOBBY_POSTGRES_PASSWORD"),
+        Some(&options.postgres_password)
+    );
     assert!(health.endpoints.contains(&(
         "qdrant",
         DEFAULT_QDRANT_HOST.to_string(),
@@ -469,7 +529,7 @@ fn ensure_hub_reuses_then_provisions() {
     .expect("provision fallback hub");
     #[cfg(feature = "postgres")]
     {
-        assert_eq!(database_url, default_database_url(15432));
+        assert_eq!(database_url, options.service_options.database_url());
         assert_eq!(
             report.expect("provisioning report").health_checks,
             vec!["postgres"]
@@ -512,7 +572,7 @@ fn gcore_yaml_database_url_requires_services_stack() {
     )
     .expect("missing services stack should provision fallback hub");
 
-    assert_eq!(database_url, default_database_url(15432));
+    assert_eq!(database_url, options.service_options.database_url());
     assert!(report.is_some());
 }
 

@@ -90,3 +90,26 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     assert cfg.cleanup_clones_on_merge is False
     assert cfg.max_active_agents == 2
     assert cfg.dispatch_interval_seconds == 15
+
+
+@pytest.mark.parametrize("field_name", ["max_active_agents", "dispatch_interval_seconds"])
+@pytest.mark.parametrize("invalid_value", [0, -1])
+def test_load_build_config_rejects_non_positive_dispatch_knobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    invalid_value: int,
+) -> None:
+    from gobby.config import build as build_config
+
+    home = tmp_path / "home"
+    project_root = tmp_path / "project"
+    (project_root / ".gobby").mkdir(parents=True)
+    (project_root / ".gobby" / "build.yaml").write_text(yaml.safe_dump({field_name: invalid_value}))
+    monkeypatch.setattr(build_config.Path, "home", lambda: home)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^{field_name} must be greater than or equal to 1$",
+    ):
+        build_config.load_build_config(project_root=project_root)
