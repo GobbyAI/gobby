@@ -1136,6 +1136,96 @@ class TestHookManagerSessionLookup:
         assert mock_register.called
         assert response.decision == "allow"
 
+    def test_non_start_acp_child_does_not_auto_register_terminal_duplicate(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        manager = hook_manager_with_mocks
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="acp-child-session",
+            source=SessionSource.QWEN,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "tool_name": "Read",
+                "terminal_context": {"gobby_acp_child": "1"},
+            },
+            machine_id="test-machine-id",
+            project_id="project-id",
+        )
+
+        with (
+            patch.object(manager._session_manager, "get_session_id", return_value=None),
+            patch.object(manager._session_manager, "lookup_session_id", return_value=None),
+            patch.object(manager._session_manager, "recover_session", return_value=None),
+            patch.object(
+                manager._session_manager,
+                "register_session",
+                return_value="phantom-terminal-session",
+            ) as mock_register,
+        ):
+            platform_session_id = manager._session_lookup.resolve(event)
+
+        assert platform_session_id is None
+        assert event.metadata["_platform_session_id"] is None
+        mock_register.assert_not_called()
+        row = manager._session_manager.db.fetchone(
+            "SELECT COUNT(*) AS count FROM sessions WHERE external_id = %s",
+            ("acp-child-session",),
+        )
+        assert row is not None
+        assert row["count"] == 0
+
+    def test_acp_child_marker_preserves_existing_web_chat_parent_binding(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        manager = hook_manager_with_mocks
+        project_id = json.loads((temp_dir / ".gobby" / "project.json").read_text())["id"]
+        web_chat_parent = manager._session_manager.register(
+            external_id="acp-parent-session",
+            machine_id="test-machine-id",
+            source="qwen",
+            project_id=project_id,
+            session_type="web_chat",
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="acp-parent-session",
+            source=SessionSource.QWEN,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "tool_name": "Read",
+                "terminal_context": {"gobby_acp_child": "1"},
+            },
+            machine_id="test-machine-id",
+            project_id=project_id,
+        )
+
+        with (
+            patch.object(manager._session_manager, "get_session_id", return_value=None),
+            patch.object(manager._session_manager, "register_session") as mock_register,
+            patch.object(manager._session_lookup, "_revive_expired_terminal_session"),
+            patch.object(manager._session_lookup, "_backfill_terminal_context"),
+            patch.object(manager._session_lookup, "_enrich_task_context"),
+        ):
+            platform_session_id = manager._session_lookup.resolve(event)
+
+        assert platform_session_id == web_chat_parent.id
+        assert event.metadata["_platform_session_id"] == web_chat_parent.id
+        mock_register.assert_not_called()
+        rows = manager._session_manager.db.fetchall(
+            "SELECT id, session_type FROM sessions WHERE external_id = %s",
+            ("acp-parent-session",),
+        )
+        assert [(str(row["id"]), row["session_type"]) for row in rows] == [
+            (web_chat_parent.id, "web_chat")
+        ]
+
     def test_handle_does_not_auto_register_unknown_session_end(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:

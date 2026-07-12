@@ -12,7 +12,11 @@ import psycopg
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
-from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
+from gobby.hooks.terminal_context import (
+    enrich_terminal_context_with_cwd,
+    hook_cwd,
+    is_gobby_acp_child,
+)
 from gobby.sessions.handoff_identity import terminal_contexts_match
 
 from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
@@ -340,13 +344,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
     terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
 
-    if terminal_context and terminal_context.get("gobby_acp_child") == "1":
+    if is_gobby_acp_child(terminal_context):
         handler.logger.info(
             "Skipping session registration for ACP child process",
             extra={
                 "cli": cli_source,
                 "external_id": external_id,
-                "gobby_acp_child": terminal_context.get("gobby_acp_child"),
+                "gobby_acp_child": "1",
             },
         )
         return HookResponse()
