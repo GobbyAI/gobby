@@ -52,6 +52,7 @@ class TestStartDetached:
         # by start_detached, not by the background execute() resume path.
         assert execution.status == ExecutionStatus.RUNNING
         mock_execution_manager.create_execution.assert_called_once()
+
         assert executor._detached_tasks, "background task must be retained"
 
         task = next(iter(executor._detached_tasks))
@@ -69,6 +70,22 @@ class TestStartDetached:
         # The background execute() resumed the pre-created record instead of
         # creating a second one.
         mock_execution_manager.create_execution.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_detached_rejects_disabled_pipeline(
+        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
+    ) -> None:
+        simple_pipeline.enabled = False
+        executor = _make_executor(mock_db, mock_execution_manager, mock_llm_service)
+
+        with pytest.raises(ValueError, match="Pipeline 'test-pipeline' is disabled"):
+            await executor.start_detached(
+                pipeline=simple_pipeline,
+                inputs={},
+                project_id="proj-123",
+            )
+
+        mock_execution_manager.create_execution.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_start_detached_failure_is_logged_and_discarded(
