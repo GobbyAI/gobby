@@ -261,7 +261,7 @@ Entry format:
   gpt-5.5 inside the SONNET arm — authorship contamination. Live vault
   untouched (staging model): still attempt-6 published state, degraded=11.
 - Plan: relaunch as attempt=9 (same command) after the claude weekly
-  reset (2026-07-13 12:00 CDT). Bakeoff timeline slips ~19h unless Josh
+  reset (2026-07-13 12:00 CDT). Bakeoff timeline slips ~23h unless Josh
   provides alternate claude capacity (e.g. API-key billing for daemon
   text-gen) — his call, flagged in session.
 - No new daemon restarts (latest remains 22:27:40 local 07-11, #8155
