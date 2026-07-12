@@ -7,16 +7,20 @@ Keep workspace-level policy in the workspace manifest and package-specific polic
 ```toml
 [workspace]
 members = ["crates/core", "crates/cli"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
-edition = "2021"
-rust-version = "1.78"
+edition = "2024"
+rust-version = "1.88"
 
 [workspace.dependencies]
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
+
+Treat the versions above as illustrative — always match the repo's existing
+`edition`, `rust-version`, `resolver`, and dependency majors rather than
+imposing these.
 
 Package manifests should inherit shared values when the workspace already centralizes them:
 
@@ -60,7 +64,7 @@ Honor `rust-toolchain.toml` and `rust-version` before using newer language or st
 
 ```toml
 [toolchain]
-channel = "1.78.0"
+channel = "stable"        # repos may pin an exact version instead
 components = ["rustfmt", "clippy"]
 targets = ["x86_64-unknown-linux-gnu"]
 ```
@@ -100,7 +104,7 @@ Prefer package-scoped commands for agent validation:
 ```bash
 cargo fmt --check
 cargo clippy -p profile-client --all-targets --all-features -- -D warnings
-cargo nextest run -p profile-client
+cargo test -p profile-client            # or `cargo nextest run -p ...` if the repo uses nextest
 cargo test -p profile-client --doc
 ```
 

@@ -1,0 +1,39 @@
+tags: [restraint, gobby, default]
+
+rules:
+  opt-out-restraint:
+    description: "Allow exact user prompts to disable restraint for the session"
+    event: turn_start
+    enabled: true
+    priority: 19
+    when: >
+      ((event.data.get('prompt') or event.data.get('user_prompt') or '').strip().lower())
+      in ('stop restraint', 'normal mode')
+    effects:
+      - type: set_variable
+        variable: restraint_disabled
+        value: true
+
+  require-restraint-skill:
+    description: "Block first code write/edit until restraint is loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('restraint')
+      and not variables.get('restraint_disabled')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
+    effects:
+      - type: block
+        reason: 'Call get_skill(name="restraint") on gobby-skills through mcp__gobby__ progressive discovery: list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> call_tool("gobby-skills", "get_skill", {"name": "restraint"}). Then continue.'
+
+  remind-restraint-on-turn-start:
+    description: "Reinforce restraint on every turn after the skill is loaded"
+    event: turn_start
+    enabled: true
+    priority: 23
+    when: "skill_loaded('restraint') and not variables.get('restraint_disabled')"
+    effects:
+      - type: inject_context
+        template: "Restraint reminder: least mechanism that fully solves the problem; ladder before new code."
