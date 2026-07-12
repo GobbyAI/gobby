@@ -156,7 +156,7 @@ class MetricsEventStore:
             WHERE {where}
             GROUP BY name
             ORDER BY eval_count DESC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [_round_fields(dict(row), ("avg_latency_ms",)) for row in rows]
@@ -189,7 +189,7 @@ class MetricsEventStore:
             WHERE {where}
             GROUP BY name, event_type
             ORDER BY count DESC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [_round_fields(dict(row), ("avg_latency_ms",)) for row in rows]
@@ -232,7 +232,7 @@ class MetricsEventStore:
             {where}
             ORDER BY created_at DESC
             LIMIT %s
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [dict(row) for row in rows]
@@ -287,7 +287,7 @@ class MetricsEventStore:
             FROM metrics_events
             WHERE {where}
             ORDER BY created_at ASC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         buckets = self._bucket_timeseries_rows(rows, bucket_label)
@@ -375,7 +375,7 @@ class MetricsEventStore:
             FROM metrics_events_archive
             {where}
             ORDER BY call_count DESC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [dict(row) for row in rows]
@@ -388,48 +388,64 @@ class MetricsEventStore:
         """
         cutoff = utc_now() - timedelta(days=retention_days)
 
-        # UPSERT aggregated counts into archive. project_id is a nullable uuid;
-        # the rollup constraint is UNIQUE NULLS NOT DISTINCT, so NULL is a
-        # deterministic conflict target and must not be coalesced to ''.
-        self.db.execute(
-            """
-            INSERT INTO metrics_events_archive (
-                event_type, project_id, server_name, name,
-                call_count, success_count, failure_count,
-                total_latency_ms, block_count, allow_count
-            )
-            SELECT
-                event_type,
-                project_id,
-                COALESCE(server_name, ''),
-                name,
-                COUNT(*),
-                SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END),
-                SUM(CASE WHEN success IS FALSE THEN 1 ELSE 0 END),
-                COALESCE(SUM(latency_ms), 0),
-                SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END)
-            FROM metrics_events
-            WHERE created_at < %s
-            GROUP BY event_type, project_id, COALESCE(server_name, ''), name
-            ON CONFLICT(event_type, project_id, server_name, name) DO UPDATE SET
-                call_count = metrics_events_archive.call_count + excluded.call_count,
-                success_count = metrics_events_archive.success_count + excluded.success_count,
-                failure_count = metrics_events_archive.failure_count + excluded.failure_count,
-                total_latency_ms = metrics_events_archive.total_latency_ms +
-                                   excluded.total_latency_ms,
-                block_count = metrics_events_archive.block_count + excluded.block_count,
-                allow_count = metrics_events_archive.allow_count + excluded.allow_count
-            """,
-            (cutoff,),
-        )
+        # Delete and roll up one statement snapshot. The data-modifying CTE
+        # makes the archived row set exact even when writers insert events
+        # concurrently. The explicit transaction also guarantees rollback if
+        # the process fails after the statement but before commit.
+        with self.db.transaction() as txn:
+            row = txn.execute(
+                """
+                WITH archived AS (
+                    DELETE FROM metrics_events
+                    WHERE created_at < %s
+                    RETURNING
+                        event_type, project_id, server_name, name,
+                        success, latency_ms, result
+                ),
+                rollup AS (
+                    SELECT
+                        event_type,
+                        project_id,
+                        COALESCE(server_name, '') AS server_name,
+                        name,
+                        COUNT(*) AS call_count,
+                        SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END) AS success_count,
+                        SUM(CASE WHEN success IS FALSE THEN 1 ELSE 0 END) AS failure_count,
+                        COALESCE(SUM(latency_ms), 0) AS total_latency_ms,
+                        SUM(CASE WHEN result = 'block' THEN 1 ELSE 0 END) AS block_count,
+                        SUM(CASE WHEN result = 'allow' THEN 1 ELSE 0 END) AS allow_count
+                    FROM archived
+                    GROUP BY event_type, project_id, COALESCE(server_name, ''), name
+                ),
+                upserted AS (
+                    INSERT INTO metrics_events_archive (
+                        event_type, project_id, server_name, name,
+                        call_count, success_count, failure_count,
+                        total_latency_ms, block_count, allow_count
+                    )
+                    SELECT
+                        event_type, project_id, server_name, name,
+                        call_count, success_count, failure_count,
+                        total_latency_ms, block_count, allow_count
+                    FROM rollup
+                    ON CONFLICT(event_type, project_id, server_name, name) DO UPDATE SET
+                        call_count = metrics_events_archive.call_count + excluded.call_count,
+                        success_count = metrics_events_archive.success_count +
+                                        excluded.success_count,
+                        failure_count = metrics_events_archive.failure_count +
+                                        excluded.failure_count,
+                        total_latency_ms = metrics_events_archive.total_latency_ms +
+                                           excluded.total_latency_ms,
+                        block_count = metrics_events_archive.block_count + excluded.block_count,
+                        allow_count = metrics_events_archive.allow_count + excluded.allow_count
+                    RETURNING 1
+                )
+                SELECT COUNT(*) AS deleted_count FROM archived
+                """,
+                (cutoff,),
+            ).fetchone()
 
-        # Delete archived events
-        cursor = self.db.execute(
-            "DELETE FROM metrics_events WHERE created_at < %s",
-            (cutoff,),
-        )
-        deleted = cursor.rowcount if hasattr(cursor, "rowcount") else 0
+        deleted = int(row["deleted_count"]) if row is not None else 0
         if deleted:
             logger.info(f"Archived {deleted} metrics events older than {retention_days} days")
         return deleted

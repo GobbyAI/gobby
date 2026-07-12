@@ -8,6 +8,8 @@ This module tests:
 - Error handling and edge cases
 """
 
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +18,9 @@ from gobby.mcp_proxy.actions import (
     add_mcp_server,
     remove_mcp_server,
 )
-from gobby.mcp_proxy.manager import MCPServerConfig
+from gobby.mcp_proxy.manager import MCPClientManager, MCPServerConfig
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.mcp import LocalMCPManager
 
 pytestmark = pytest.mark.unit
 
@@ -31,6 +35,7 @@ def mock_mcp_manager():
     manager = MagicMock()
     manager.add_server = AsyncMock()
     manager.remove_server = AsyncMock()
+    manager.set_server_description = AsyncMock()
     manager.server_configs = []
     manager.connections = {}
     manager.health = {}
@@ -286,7 +291,7 @@ class TestAddMcpServer:
         ) as mock_gen:
             mock_gen.return_value = "Generated description"
 
-            await add_mcp_server(
+            result = await add_mcp_server(
                 mcp_manager=mock_mcp_manager,
                 name="test-server",
                 transport="http",
@@ -303,6 +308,68 @@ class TestAddMcpServer:
             )
             assert mock_gen.call_count == 1
             assert mock_gen.call_args is not None
+            mock_mcp_manager.set_server_description.assert_awaited_once_with(
+                "test-server", "Generated description"
+            )
+            assert result["description"] == "Generated description"
+
+    @pytest.mark.asyncio
+    async def test_generated_description_persists_across_manager_restart(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Generated descriptions persist in storage and reload into a new manager."""
+        storage = LocalMCPManager(temp_db)
+        project_id = sample_project["id"]
+        manager = MCPClientManager(
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        session = SimpleNamespace(
+            list_tools=AsyncMock(
+                return_value=SimpleNamespace(
+                    tools=[
+                        SimpleNamespace(
+                            name="search",
+                            description="Search stored documents",
+                            inputSchema={"type": "object"},
+                        )
+                    ]
+                )
+            )
+        )
+
+        with (
+            patch.object(manager, "_connect_server", AsyncMock(return_value=session)),
+            patch(
+                "gobby.mcp_proxy.actions.generate_server_description",
+                new=AsyncMock(return_value="Generated description"),
+            ),
+        ):
+            result = await add_mcp_server(
+                mcp_manager=manager,
+                name="described-server",
+                transport="http",
+                project_id=project_id,
+                url="http://localhost:8080",
+            )
+
+        assert result["description"] == "Generated description"
+        assert manager.get_server_config("described-server").description == "Generated description"
+        assert (
+            storage.get_server("described-server", project_id).description
+            == "Generated description"
+        )
+
+        restarted_manager = MCPClientManager(
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        assert (
+            restarted_manager.get_server_config("described-server").description
+            == "Generated description"
+        )
 
     @pytest.mark.asyncio
     async def test_add_server_skips_description_generation_when_provided(self, mock_mcp_manager):

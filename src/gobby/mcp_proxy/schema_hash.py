@@ -17,24 +17,28 @@ from gobby.utils.datetime import normalize_datetime_model, utc_now
 logger = logging.getLogger(__name__)
 
 
-def compute_schema_hash(input_schema: dict[str, Any] | None) -> str:
+def compute_schema_hash(
+    input_schema: dict[str, Any] | None,
+    description: str | None = None,
+) -> str:
     """
-    Compute a deterministic hash of a tool's input schema.
+    Compute a deterministic hash of a tool's searchable definition.
 
     Uses canonical JSON serialization to ensure consistent hashing
     regardless of key ordering.
 
     Args:
-        input_schema: Tool's inputSchema as a dictionary
+        input_schema: Tool's input schema as a dictionary
+        description: Tool description included in its embedded text
 
     Returns:
-        16-character hex hash of the schema
+        16-character hex hash of the description and schema
     """
-    if input_schema is None:
-        return hashlib.sha256(b"null").hexdigest()[:16]
-
-    # Use canonical JSON for deterministic serialization
-    canonical = json.dumps(input_schema, sort_keys=True, separators=(",", ":"))
+    hash_input = {
+        "description": description or "",
+        "input_schema": input_schema,
+    }
+    canonical = json.dumps(hash_input, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
@@ -195,6 +199,7 @@ class SchemaHashManager:
         tool_name: str,
         project_id: str,
         current_schema: dict[str, Any] | None,
+        current_description: str | None = None,
     ) -> bool:
         """
         Check if a tool needs re-indexing based on schema hash.
@@ -204,6 +209,7 @@ class SchemaHashManager:
             tool_name: Tool name
             project_id: Project ID
             current_schema: Current tool inputSchema
+            current_description: Current tool description
 
         Returns:
             True if schema is missing or changed
@@ -212,7 +218,7 @@ class SchemaHashManager:
         if not stored:
             return True
 
-        current_hash = compute_schema_hash(current_schema)
+        current_hash = compute_schema_hash(current_schema, description=current_description)
         return stored.schema_hash != current_hash
 
     def check_tools_for_changes(
@@ -227,7 +233,7 @@ class SchemaHashManager:
         Args:
             server_name: Server name
             project_id: Project ID
-            tools: List of tool dicts with 'name' and 'inputSchema' keys
+            tools: Tool dicts with name, description, and an input-schema key
 
         Returns:
             Dict with 'changed', 'unchanged', 'new' tool lists
@@ -245,8 +251,8 @@ class SchemaHashManager:
 
         for tool in tools:
             tool_name = tool.get("name", "")
-            schema = tool.get("inputSchema") or tool.get("input_schema")
-            current_hash = compute_schema_hash(schema)
+            schema = tool["inputSchema"] if "inputSchema" in tool else tool.get("input_schema")
+            current_hash = compute_schema_hash(schema, description=tool.get("description"))
 
             if tool_name not in stored_hashes:
                 result["new"].append(tool_name)
@@ -340,11 +346,10 @@ class SchemaHashManager:
         if not valid_tool_names:
             return self.delete_hashes_for_server(server_name, project_id)
 
-        # Build placeholders for IN clause
-        placeholders = ",".join("%s" for _ in valid_tool_names)
         cursor = self.db.execute(
-            f"DELETE FROM tool_schema_hashes WHERE project_id = %s AND server_name = %s AND tool_name NOT IN ({placeholders})",  # nosec B608
-            (project_id, server_name, *valid_tool_names),
+            "DELETE FROM tool_schema_hashes "
+            "WHERE project_id = %s AND server_name = %s AND tool_name != ALL(%s)",
+            (project_id, server_name, valid_tool_names),
         )
         return cursor.rowcount
 

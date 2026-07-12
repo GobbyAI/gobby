@@ -1,11 +1,13 @@
 """Tests for GobbyDaemonTools handler class in server.py."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import threading
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+from gobby.utils.session_context import SeededContextTokens
 
 pytestmark = pytest.mark.unit
 
@@ -175,10 +177,14 @@ class TestGobbyDaemonToolsListMcpServers:
         health1 = MagicMock()
         health1.state.value = "connected"
         health2 = MagicMock()
-        health2.state.value = "pending"
+        health2.state.value = "failed"
 
         mock_mcp_manager.server_configs = [config1, config2]
-        mock_mcp_manager.connections = {"server1": MagicMock()}
+        mock_mcp_manager.connections = {
+            "server1": MagicMock(),
+            "server2": MagicMock(),
+        }
+        mock_mcp_manager.is_connected.side_effect = lambda name: name == "server1"
         mock_mcp_manager.health = {"server1": health1, "server2": health2}
 
         handler = GobbyDaemonTools(
@@ -195,7 +201,8 @@ class TestGobbyDaemonToolsListMcpServers:
         assert result["connected"] == 1
 
         assert result["servers"] == ["server1", "server2"]
-        assert result["issues"] == [{"name": "server2", "state": "pending", "transport": "stdio"}]
+        assert result["issues"] == [{"name": "server2", "state": "failed", "transport": "stdio"}]
+        assert mock_mcp_manager.is_connected.call_args_list == [call("server1"), call("server2")]
 
     @pytest.mark.asyncio
     async def test_list_mcp_servers_does_not_emit_proxy_after_tool(self, tools_handler):
@@ -235,6 +242,51 @@ class TestGobbyDaemonToolsCallTool:
         # MCP layer strips "success" from successful responses (server.py:140-142)
         assert "success" not in result
         assert result["result"] == "test output"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_resolves_session_context_off_event_loop(self, tools_handler):
+        """A blocked session lookup must not stall another proxy request."""
+        event_loop_thread = threading.get_ident()
+        resolver_threads: list[int] = []
+        lookup_started = threading.Event()
+        release_lookup = threading.Event()
+
+        def slow_resolver(*_args, **kwargs):
+            resolver_threads.append(threading.get_ident())
+            if kwargs.get("session_ref") == "#123":
+                lookup_started.set()
+                release_lookup.wait(timeout=1)
+            return SeededContextTokens()
+
+        tools_handler.tool_proxy.call_tool = AsyncMock(return_value={"success": True})
+
+        with patch(
+            "gobby.mcp_proxy.server.resolve_and_seed_contexts",
+            side_effect=slow_resolver,
+        ):
+            blocked_call = asyncio.create_task(
+                tools_handler.call_tool(
+                    server_name="test-server",
+                    tool_name="blocked-tool",
+                    session_id="#123",
+                )
+            )
+            try:
+                assert await asyncio.to_thread(lookup_started.wait, 0.5)
+                await asyncio.wait_for(
+                    tools_handler.call_tool(
+                        server_name="test-server",
+                        tool_name="responsive-tool",
+                    ),
+                    timeout=0.2,
+                )
+                assert not blocked_call.done()
+            finally:
+                release_lookup.set()
+                await blocked_call
+
+        assert resolver_threads
+        assert all(thread_id != event_loop_thread for thread_id in resolver_threads)
 
     @pytest.mark.asyncio
     async def test_call_tool_passes_arguments_correctly(self, tools_handler):
@@ -487,7 +539,6 @@ class TestGobbyDaemonToolsGetToolSchema:
         tools_handler.tool_proxy.get_tool_schema.assert_called_once_with(
             "my-server",
             "my-tool",
-            session_id=None,
         )
         assert tools_handler.tool_proxy.get_tool_schema.call_count == 1
         assert tools_handler.tool_proxy.get_tool_schema.call_args is not None
@@ -504,6 +555,10 @@ class TestGobbyDaemonToolsGetToolSchema:
         )
 
         assert result == {"name": "tool"}
+        tools_handler.tool_proxy.get_tool_schema.assert_awaited_once_with(
+            "my-server",
+            "my-tool",
+        )
         assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
 
 
@@ -625,6 +680,23 @@ class TestGobbyDaemonToolsSemanticSearch:
         assert result["success"] is True
         assert result["total_results"] == 1
         assert len(result["results"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_search_tools_prefers_ambient_project_context(self, tools_handler):
+        """Semantic search is scoped to the caller instead of the startup project."""
+        mock_semantic = AsyncMock()
+        mock_semantic.search_tools = AsyncMock(return_value=[])
+        tools_handler._semantic_search = mock_semantic
+        tools_handler._mcp_manager.project_id = "startup-project"
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "caller-project"},
+        ):
+            result = await tools_handler.search_tools(query="find files")
+
+        assert result["success"] is True
+        assert mock_semantic.search_tools.await_args.kwargs["project_id"] == "caller-project"
 
     @pytest.mark.asyncio
     async def test_search_tools_with_server_filter(self, tools_handler):

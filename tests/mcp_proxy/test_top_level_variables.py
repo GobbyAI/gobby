@@ -37,9 +37,14 @@ async def test_set_variable_delegates_correctly() -> None:
         "gobby.mcp_proxy.tools.workflows._variables.set_variable",
         return_value={"success": True, "value": True, "scope": "session"},
     ) as mock_set:
-        result = await handler.set_variable(name="flag", value=True, session_id="#1")
+        result = await handler.set_variable(
+            name="flag",
+            value=True,
+            session_id="#1",
+            workflow="plan-execute",
+        )
 
-    mock_set.assert_called_once_with(sm, sm.db, "flag", True, "#1", workflow=None)
+    mock_set.assert_called_once_with(sm, sm.db, "flag", True, "#1", workflow="plan-execute")
     assert result["success"] is True
 
 
@@ -60,9 +65,13 @@ async def test_get_variable_delegates_correctly() -> None:
             "scope": "session",
         },
     ) as mock_get:
-        result = await handler.get_variable(name="flag", session_id="#1")
+        result = await handler.get_variable(
+            name="flag",
+            session_id="#1",
+            workflow="plan-execute",
+        )
 
-    mock_get.assert_called_once_with(sm, sm.db, "flag", "#1", workflow=None)
+    mock_get.assert_called_once_with(sm, sm.db, "flag", "#1", workflow="plan-execute")
     assert result["success"] is True
     assert result["value"] is True
 
@@ -86,6 +95,9 @@ async def test_get_variable_no_session_manager() -> None:
 def test_tools_registered() -> None:
     handler = _make_handler(session_manager=MagicMock())
     mcp = create_mcp_server(handler)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "set_variable" in tool_names
-    assert "get_variable" in tool_names
+    tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
+
+    for tool_name in ("set_variable", "get_variable"):
+        assert tool_name in tools
+        workflow_schema = tools[tool_name].parameters["properties"]["workflow"]
+        assert workflow_schema["default"] is None

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -38,7 +39,13 @@ class RegisterProxyTools(Protocol):
 
 
 class FastMcpFactory(Protocol):
-    def __call__(self, name: str, *, instructions: str) -> FastMCP: ...
+    def __call__(
+        self,
+        name: str,
+        *,
+        instructions: str,
+        lifespan: Callable[[FastMCP], AbstractAsyncContextManager[None]],
+    ) -> FastMCP: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,11 +94,20 @@ def create_stdio_mcp_server(
         memory_manager=memory_manager,
     )
 
+    proxy = effective_deps.proxy_factory(config.daemon_port)
+
+    @asynccontextmanager
+    async def proxy_lifespan(_server: FastMCP) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await proxy.aclose()
+
     mcp = effective_deps.fast_mcp_factory(
         "gobby",
         instructions=effective_deps.build_gobby_instructions(),
+        lifespan=proxy_lifespan,
     )
-    proxy = effective_deps.proxy_factory(config.daemon_port)
 
     effective_deps.register_proxy_tools(mcp, proxy)
 

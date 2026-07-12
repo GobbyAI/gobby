@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Protocol
 
@@ -17,6 +18,8 @@ class _ToolInventoryManager(Protocol):
     _connections: dict[str, Any]
     _configs: dict[str, Any]
     _lazy_connector: Any
+    _tool_schema_cache: dict[str, list[dict[str, Any]]]
+    _tool_cache_dirty: set[str]
     health: dict[str, Any]
     mcp_db_manager: Any | None
 
@@ -51,11 +54,7 @@ async def list_tools(
     """List tools from one server or all active connections."""
     results: dict[str, list[dict[str, Any]]] = {}
     if server_name:
-        try:
-            return {server_name: await manager._list_tools_for_server(server_name)}
-        except Exception as exc:
-            logger.warning("Failed to list tools for %s: %s", server_name, exc)
-            return {server_name: []}
+        return {server_name: await manager._list_tools_for_server(server_name)}
 
     for name in list(manager._connections.keys()):
         try:
@@ -85,7 +84,7 @@ async def list_tools_for_server(
 
     if server_name in manager.health:
         manager.health[server_name].record_success()
-    manager.cache_discovered_tools(server_name, tool_list)
+    await asyncio.to_thread(manager.cache_discovered_tools, server_name, tool_list)
     return tool_list
 
 
@@ -102,6 +101,7 @@ async def retry_list_tools_after_failure(
         manager.health,
         manager._lazy_connector,
         logger,
+        tool_schema_cache=manager._tool_schema_cache,
     )
     try:
         session = await manager.ensure_connected(server_name)
@@ -118,7 +118,7 @@ async def retry_list_tools_after_failure(
 
     if server_name in manager.health:
         manager.health[server_name].record_success()
-    manager.cache_discovered_tools(server_name, tool_list)
+    await asyncio.to_thread(manager.cache_discovered_tools, server_name, tool_list)
     return tool_list
 
 
@@ -143,17 +143,27 @@ def cache_discovered_tools(
     tools: list[dict[str, Any]],
 ) -> None:
     """Cache discovered full tool schemas and update config summaries."""
+    if (
+        manager._tool_schema_cache.get(server_name) == tools
+        and server_name not in manager._tool_cache_dirty
+    ):
+        return
+    manager._tool_schema_cache[server_name] = tools
+
     config = manager._configs.get(server_name)
-    if not config or not manager.mcp_db_manager or not config.project_id:
+    if not config:
         return
 
     try:
-        manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
         config.tools = [
             {"name": tool["name"], "brief": truncate_tool_brief(tool.get("description"))}
             for tool in tools
         ]
+        if manager.mcp_db_manager and config.project_id:
+            manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
+        manager._tool_cache_dirty.discard(server_name)
     except Exception as exc:
+        manager._tool_cache_dirty.add(server_name)
         logging.getLogger("gobby.mcp.manager").debug(
             "Failed to cache tools for %s: %s",
             server_name,
@@ -177,7 +187,10 @@ async def get_tool_info(
     tool_name: str,
 ) -> dict[str, Any]:
     """Return full tool info for one tool by filtering list_tools output."""
-    server_tools = await manager._list_tools_for_server(server_name)
+    server_tools = manager._tool_schema_cache.get(server_name)
+    if server_tools is None:
+        server_tools = await manager._list_tools_for_server(server_name)
+        manager._tool_schema_cache[server_name] = server_tools
 
     for tool in server_tools:
         if not isinstance(tool, dict):

@@ -511,14 +511,79 @@ def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
     return executable == "gobby" and len(tokens) > 1 and tokens[1] == "build"
 
 
-def completion_evidence_ready(variables: Mapping[str, Any] | None) -> bool:
-    """Return whether current session evidence is sufficient for completion."""
+def _normalized_task_evidence_refs(value: Any) -> set[str]:
+    if not isinstance(value, (str, int)):
+        return set()
+    raw_value = str(value).strip()
+    if not raw_value:
+        return set()
+    if raw_value.startswith("task_id:"):
+        raw_value = raw_value.removeprefix("task_id:").strip()
+    if not raw_value:
+        return set()
+
+    refs = {raw_value}
+    if raw_value.isdigit():
+        refs.add(f"#{raw_value}")
+    elif raw_value.startswith("#") and raw_value[1:].isdigit():
+        refs.add(raw_value[1:])
+    return refs
+
+
+def _evidence_task_refs(evidence: Mapping[str, Any]) -> set[str]:
+    refs = _normalized_task_evidence_refs(evidence.get("task_id"))
+    supports = evidence.get("supports")
+    if isinstance(supports, str) and supports.strip().startswith("task_id:"):
+        refs.update(_normalized_task_evidence_refs(supports))
+    return refs
+
+
+def _target_task_refs(variables: Mapping[str, Any], task_ref: Any) -> set[str]:
+    refs = _normalized_task_evidence_refs(task_ref)
+    claimed_tasks = variables.get("claimed_tasks")
+    if not refs or not isinstance(claimed_tasks, Mapping):
+        return refs
+
+    for task_id, display_ref in claimed_tasks.items():
+        task_id_refs = _normalized_task_evidence_refs(task_id)
+        display_refs = _normalized_task_evidence_refs(display_ref)
+        if refs & (task_id_refs | display_refs):
+            refs.update(task_id_refs)
+            refs.update(display_refs)
+    return refs
+
+
+def completion_evidence_ready(
+    variables: Mapping[str, Any] | None,
+    task_ref: Any = None,
+) -> bool:
+    """Return whether evidence is sufficient for the requested task's completion.
+
+    Task-scoped evidence takes precedence over the shared session stream. When
+    no evidence names the target task, legacy unscoped evidence remains the
+    conservative fallback.
+    """
     if not isinstance(variables, Mapping):
         return False
 
     evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
     if not isinstance(evidence_items, list):
         return False
+
+    target_refs = _target_task_refs(variables, task_ref)
+    if target_refs:
+        matching_evidence: list[Any] = []
+        unscoped_evidence: list[Any] = []
+        for item in evidence_items:
+            if not isinstance(item, Mapping):
+                unscoped_evidence.append(item)
+                continue
+            evidence_refs = _evidence_task_refs(item)
+            if evidence_refs & target_refs:
+                matching_evidence.append(item)
+            elif not evidence_refs:
+                unscoped_evidence.append(item)
+        evidence_items = matching_evidence or unscoped_evidence
 
     successful_evidence_seen = False
     failed_validation_unresolved = False
@@ -556,7 +621,7 @@ def _strip_uv_run_options(tokens: list[str]) -> list[str]:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token == "--":
+        if token == "--":  # nosec B105 # CLI option terminator, not a credential.
             return tokens[index + 1 :]
         if not token.startswith("-"):
             return tokens[index:]
@@ -575,9 +640,9 @@ def _python_module_tokens(tokens: list[str]) -> list[str] | None:
     options_with_value = {"-W", "-X", "--check-hash-based-pycs"}
     while index < len(tokens):
         token = tokens[index]
-        if token == "-m":
+        if token == "-m":  # nosec B105 # Python module flag, not a credential.
             return tokens[index + 1 :]
-        if token == "--":
+        if token == "--":  # nosec B105 # CLI option terminator, not a credential.
             return None
         if token in options_with_value and index + 1 < len(tokens):
             index += 2
