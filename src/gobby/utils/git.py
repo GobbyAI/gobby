@@ -8,16 +8,29 @@ Provides functions to extract git repository information including:
 Handles git worktrees, detached HEAD, and missing remotes gracefully.
 """
 
+import asyncio
 import logging
 import os
 import shutil
 import subprocess  # nosec B404 # subprocess needed for git commands
 from pathlib import Path
 from typing import TypedDict
+from weakref import WeakKeyDictionary
 
 logger = logging.getLogger(__name__)
 
 GIT_FALLBACK_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
+_CHECKOUT_MUTATION_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
+
+
+def get_checkout_mutation_lock(checkout_path: str | Path) -> asyncio.Lock:
+    """Return the current event loop's lock for mutations of a checkout."""
+    loop = asyncio.get_running_loop()
+    loop_locks = _CHECKOUT_MUTATION_LOCKS.setdefault(loop, {})
+    key = str(Path(checkout_path).resolve())
+    return loop_locks.setdefault(key, asyncio.Lock())
 
 
 class GitMetadata(TypedDict, total=False):

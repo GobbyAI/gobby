@@ -1,8 +1,11 @@
 """Tests for merge_worktree tool in _sync.py — worktree_path returns and auto-resolve."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from gobby.utils.git import get_checkout_mutation_lock
 
 pytestmark = pytest.mark.unit
 
@@ -14,6 +17,21 @@ def _make_git_result(returncode: int, stdout: str = "", stderr: str = "") -> Mag
     result.stdout = stdout
     result.stderr = stderr
     return result
+
+
+class _ObservedLock:
+    """Expose when an operation attempts to acquire an underlying lock."""
+
+    def __init__(self, lock: asyncio.Lock) -> None:
+        self._lock = lock
+        self.acquire_attempted = asyncio.Event()
+
+    async def acquire(self) -> bool:
+        self.acquire_attempted.set()
+        return await self._lock.acquire()
+
+    def release(self) -> None:
+        self._lock.release()
 
 
 # Stash sequence: stash list (before), stash push, stash list (after), ... , stash pop
@@ -148,6 +166,35 @@ async def test_merge_worktree_success_returns_worktree_path_and_merge_sha():
     assert result["merge_sha"] == "abc123def456"
     assert result["target_head_sha"] == "abc123def456"
     assert result["commit_sha"] == "abc123def456"
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_waits_for_checkout_mutation_lock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Direct merge does not mutate a checkout while its shared lock is held."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect()
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
+    observed_lock = _ObservedLock(lock)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.worktrees._sync.get_checkout_mutation_lock",
+        lambda _path: observed_lock,
+    )
+
+    await lock.acquire()
+    operation = asyncio.create_task(merge_tool("wt-123"))
+    try:
+        await observed_lock.acquire_attempted.wait()
+        assert operation.done() is False
+    finally:
+        lock.release()
+
+    result = await operation
+    assert result["success"] is True
 
 
 @pytest.mark.asyncio

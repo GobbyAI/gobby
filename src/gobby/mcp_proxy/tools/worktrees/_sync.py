@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.utils.git import get_checkout_mutation_lock
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +356,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "commit_sha": reconciled_target_sha,
             }
 
+        mutation_lock = get_checkout_mutation_lock(merge_cwd)
+        await mutation_lock.acquire()
         try:
             if original_branch != merge_target:
                 checkout_result = await asyncio.to_thread(
@@ -588,20 +591,23 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["auto_resolved"] = auto_resolved
             return result
         finally:
-            if checked_out_target and original_branch != merge_target:
-                restore_branch = await asyncio.to_thread(
-                    resolved_git_mgr.run_git_command,
-                    ["checkout", original_branch],
-                    cwd=merge_cwd,
-                    timeout=30,
-                )
-                if restore_branch.returncode != 0:
-                    logger.warning(
-                        "Failed to restore original branch %s after merge_worktree: %s",
-                        original_branch,
-                        restore_branch.stderr or restore_branch.stdout,
+            try:
+                if checked_out_target and original_branch != merge_target:
+                    restore_branch = await asyncio.to_thread(
+                        resolved_git_mgr.run_git_command,
+                        ["checkout", original_branch],
+                        cwd=merge_cwd,
+                        timeout=30,
                     )
-            await _restore_stash()
+                    if restore_branch.returncode != 0:
+                        logger.warning(
+                            "Failed to restore original branch %s after merge_worktree: %s",
+                            original_branch,
+                            restore_branch.stderr or restore_branch.stdout,
+                        )
+                await _restore_stash()
+            finally:
+                mutation_lock.release()
 
     @registry.tool(
         name="push_branch",

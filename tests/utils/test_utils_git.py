@@ -16,6 +16,7 @@ import pytest
 
 from gobby.utils.git import (
     GitMetadata,
+    get_checkout_mutation_lock,
     get_git_branch,
     get_git_metadata,
     get_github_url,
@@ -27,6 +28,29 @@ from gobby.utils.git import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestCheckoutMutationLock:
+    """Tests for checkout-scoped mutation serialization."""
+
+    @pytest.mark.asyncio
+    async def test_same_canonical_checkout_shares_lock(self, tmp_path: Path) -> None:
+        checkout = tmp_path / "repo"
+        checkout.mkdir()
+
+        direct = get_checkout_mutation_lock(checkout)
+        equivalent = get_checkout_mutation_lock(checkout / ".." / "repo")
+
+        assert direct is equivalent
+
+    @pytest.mark.asyncio
+    async def test_different_checkouts_use_different_locks(self, tmp_path: Path) -> None:
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+
+        assert get_checkout_mutation_lock(first) is not get_checkout_mutation_lock(second)
 
 
 class TestRunGitCommand:

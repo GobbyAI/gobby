@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.clones import Clone, CloneStatus
+from gobby.utils.git import get_checkout_mutation_lock
 
 pytestmark = pytest.mark.integration
 
@@ -53,6 +54,21 @@ def _git_result(
 ) -> MagicMock:
     """Build a completed git command result."""
     return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+class _ObservedLock:
+    """Expose when an operation attempts to acquire an underlying lock."""
+
+    def __init__(self, lock: asyncio.Lock) -> None:
+        self._lock = lock
+        self.acquire_attempted = asyncio.Event()
+
+    async def acquire(self) -> bool:
+        self.acquire_attempted.set()
+        return await self._lock.acquire()
+
+    def release(self) -> None:
+        self._lock.release()
 
 
 @pytest.fixture
@@ -767,6 +783,42 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.assert_called()
 
     @pytest.mark.asyncio
+    async def test_merge_clone_waits_for_checkout_mutation_lock(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Clone merge does not mutate the main checkout while its lock is held."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.return_value = _git_result()
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+        observed_lock = _ObservedLock(lock)
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools._clones_operations.get_checkout_mutation_lock",
+            lambda _path: observed_lock,
+        )
+
+        await lock.acquire()
+        operation = asyncio.create_task(
+            registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+        )
+        try:
+            await observed_lock.acquire_attempted.wait()
+            assert operation.done() is False
+            mock_git_manager.run_git_command.assert_not_called()
+        finally:
+            lock.release()
+
+        result = await operation
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
     async def test_merge_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Merge fails for nonexistent clone."""
         mock_clone_storage.get.return_value = None
@@ -929,9 +981,10 @@ class TestMergeCloneToTarget:
             _git_result(),
             _git_result(stdout=""),
             _git_result(),
-            _git_result(stdout="stash@{0}: gobby merge"),
+            _git_result(stdout="ours"),
             _git_result(),
-            subprocess.TimeoutExpired(["git", "stash", "pop"], 10),
+            _git_result(stdout="stash@{0}\x00ours"),
+            subprocess.TimeoutExpired(["git", "stash", "pop", "stash@{0}"], 10),
         ]
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=False,
@@ -950,9 +1003,63 @@ class TestMergeCloneToTarget:
         assert result["error"] == "Merge conflict in 2 files"
         assert result["warnings"] == [
             "Failed to restore stashed .gobby/ files: "
-            "Command '['git', 'stash', 'pop']' timed out after 10 seconds"
+            "Command '['git', 'stash', 'pop', 'stash@{0}']' timed out after 10 seconds"
         ]
+        assert result["stash_restore_error"] == result["warnings"][0]
         mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_restores_exact_stash_after_interleaved_stash(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """An intervening stash does not change which stash this merge restores."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout="previous"),
+            _git_result(),
+            _git_result(stdout="ours"),
+            _git_result(),
+            _git_result(stdout="stash@{0}\x00interleaved\nstash@{1}\x00ours"),
+            _git_result(),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is True
+        pop_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert pop_call.args[0] == ["stash", "pop", "stash@{1}"]
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_stash_restore_failure_surfaces_after_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A successful merge is reported incomplete when exact stash restore fails."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(),
+            _git_result(stdout="ours"),
+            _git_result(),
+            _git_result(stdout="stash@{0}\x00ours"),
+            _git_result(returncode=1, stderr="restore conflict"),
+        ]
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is False
+        assert result["step"] == "stash_restore"
+        assert result["error"] == "Failed to restore stashed .gobby/ files: restore conflict"
+        assert result["stash_restore_error"] == result["error"]
 
     @pytest.mark.asyncio
     async def test_merge_clone_with_conflicts(

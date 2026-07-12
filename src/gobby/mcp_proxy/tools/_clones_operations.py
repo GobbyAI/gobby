@@ -10,6 +10,7 @@ from typing import Any, Literal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
+from gobby.utils.git import get_checkout_mutation_lock
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,15 @@ def _git_exception_result(
     else:
         message = f"{step.capitalize()} failed: {error}"
     return {"success": False, "error": message, "step": step}
+
+
+def _stash_ref_for_oid(stash_list: str, stash_oid: str) -> str | None:
+    """Resolve the current reflog selector for an exact stash object."""
+    for line in stash_list.splitlines():
+        stash_ref, separator, candidate_oid = line.partition("\0")
+        if separator and candidate_oid == stash_oid:
+            return stash_ref
+    return None
 
 
 def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolRegistry:
@@ -231,6 +241,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         # This avoids pushing to origin (which fails on divergent branches).
         ctx.clone_storage.mark_syncing(clone_id)
         temp_ref = f"clone-merge/{clone.branch_name}"
+        mutation_lock = get_checkout_mutation_lock(git_manager.repo_path)
+        await mutation_lock.acquire()
         try:
             try:
                 fetch_result = await asyncio.to_thread(
@@ -256,15 +268,17 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             ctx.clone_storage.record_sync(clone_id)
 
             # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
-            # Compare stash list before/after to reliably detect if a stash was created.
-            stash_created = False
+            # Record the stash object created by this call so later stashes cannot
+            # change which entry is restored.
+            stash_oid: str | None = None
             warnings: list[str] = []
+            stash_restore_error: str | None = None
             primary_result: dict[str, Any]
             try:
                 try:
-                    stash_list_before = await asyncio.to_thread(
+                    stash_head_before = await asyncio.to_thread(
                         git_manager.run_git_command,
-                        ["stash", "list"],
+                        ["rev-parse", "--verify", "-q", "refs/stash"],
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
@@ -288,13 +302,24 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             output=stash_result.stdout,
                             stderr=stash_result.stderr,
                         )
-                    stash_list_after = await asyncio.to_thread(
+                    stash_head_after = await asyncio.to_thread(
                         git_manager.run_git_command,
-                        ["stash", "list"],
+                        ["rev-parse", "--verify", "-q", "refs/stash"],
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
-                    stash_created = stash_list_after.stdout != stash_list_before.stdout
+                    before_oid = (
+                        stash_head_before.stdout.strip()
+                        if stash_head_before.returncode == 0
+                        else None
+                    )
+                    after_oid = (
+                        stash_head_after.stdout.strip()
+                        if stash_head_after.returncode == 0
+                        else None
+                    )
+                    if after_oid and after_oid != before_oid:
+                        stash_oid = after_oid
                 except subprocess.CalledProcessError as error:
                     detail = (
                         error.stderr or error.output or f"git exited with status {error.returncode}"
@@ -369,11 +394,32 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 except (subprocess.TimeoutExpired, OSError) as error:
                     warnings.append(f"Failed to delete temporary branch {temp_ref}: {error}")
 
-                if stash_created:
+                if stash_oid:
                     try:
+                        stash_list_result = await asyncio.to_thread(
+                            git_manager.run_git_command,
+                            ["stash", "list", "--format=%gd%x00%H"],
+                            cwd=git_manager.repo_path,
+                            timeout=10,
+                        )
+                        if stash_list_result.returncode != 0:
+                            detail = (
+                                stash_list_result.stderr
+                                or stash_list_result.stdout
+                                or f"git exited with status {stash_list_result.returncode}"
+                            )
+                            raise subprocess.CalledProcessError(
+                                stash_list_result.returncode,
+                                ["git", "stash", "list"],
+                                output=stash_list_result.stdout,
+                                stderr=detail,
+                            )
+                        stash_ref = _stash_ref_for_oid(stash_list_result.stdout, stash_oid)
+                        if stash_ref is None:
+                            raise RuntimeError(f"exact stash {stash_oid} is no longer present")
                         pop_result = await asyncio.to_thread(
                             git_manager.run_git_command,
-                            ["stash", "pop"],
+                            ["stash", "pop", stash_ref],
                             cwd=git_manager.repo_path,
                             timeout=10,
                         )
@@ -383,20 +429,39 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                                 or pop_result.stdout
                                 or f"git exited with status {pop_result.returncode}"
                             )
-                            warnings.append(f"Failed to restore stashed .gobby/ files: {detail}")
-                    except (subprocess.TimeoutExpired, OSError) as error:
-                        warnings.append(f"Failed to restore stashed .gobby/ files: {error}")
+                            stash_restore_error = (
+                                f"Failed to restore stashed .gobby/ files: {detail}"
+                            )
+                    except (
+                        subprocess.CalledProcessError,
+                        subprocess.TimeoutExpired,
+                        OSError,
+                        RuntimeError,
+                    ) as error:
+                        stash_restore_error = f"Failed to restore stashed .gobby/ files: {error}"
+
+                    if stash_restore_error:
+                        warnings.append(stash_restore_error)
 
             for warning in warnings:
                 logger.warning(warning)
             if warnings:
                 primary_result["warnings"] = warnings
+            if stash_restore_error:
+                primary_result["stash_restore_error"] = stash_restore_error
+                if primary_result.get("success") is True:
+                    primary_result["success"] = False
+                    primary_result["error"] = stash_restore_error
+                    primary_result["step"] = "stash_restore"
             return primary_result
         finally:
-            ctx.clone_storage.update(
-                clone_id,
-                status=CloneStatus.ACTIVE.value,
-            )
+            try:
+                ctx.clone_storage.update(
+                    clone_id,
+                    status=CloneStatus.ACTIVE.value,
+                )
+            finally:
+                mutation_lock.release()
 
     registry.register(
         name="merge_clone",
