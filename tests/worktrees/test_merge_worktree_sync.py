@@ -43,6 +43,7 @@ def _make_registry_context(
     wt.worktree_path = worktree_path
     wt.branch_name = branch
     wt.base_branch = base
+    wt.status = "active"
     ctx.worktree_storage.get.return_value = wt
     ctx.git_manager = MagicMock()
     ctx.git_manager.repo_path = "/tmp/repo"
@@ -71,11 +72,13 @@ def _local_merge_side_effect(
     unmerged_stdout: str = "",
     status_stdout: str = "",
     incoming_stdout: str = "feature.txt\n",
+    source_already_merged: bool = False,
 ):
     stash_list_calls = 0
+    merge_performed = False
 
     def _run_git(args, cwd=None, timeout=30, check=False):
-        nonlocal stash_list_calls
+        nonlocal merge_performed, stash_list_calls
         if args == ["show-ref", "--verify", "--quiet", f"refs/heads/{target}"]:
             return _make_git_result(0)
         if args == ["show-ref", "--verify", "--quiet", f"refs/heads/{source}"]:
@@ -88,6 +91,8 @@ def _local_merge_side_effect(
             return _make_git_result(0, stdout=target)
         if args == ["rev-parse", "HEAD"]:
             return _make_git_result(0, stdout="abc123def456\n")
+        if args == ["rev-parse", target]:
+            return _make_git_result(0, stdout="abc123def456\n")
         if args == ["stash", "list"]:
             stash_list_calls += 1
             return _make_git_result(0, stdout="" if stash_list_calls == 1 else "stash@{0}")
@@ -96,6 +101,7 @@ def _local_merge_side_effect(
         if args == ["stash", "pop"]:
             return _make_git_result(0)
         if args == ["merge", source, "--no-ff", "--no-edit"]:
+            merge_performed = True
             return merge_result or _make_git_result(0)
         if args == ["diff", "--name-only", "--diff-filter=U"]:
             return _make_git_result(0, stdout=unmerged_stdout)
@@ -103,8 +109,8 @@ def _local_merge_side_effect(
             return _make_git_result(0)
         if args == ["commit", "--no-edit"]:
             return _make_git_result(0)
-        if args == ["merge-base", "--is-ancestor", source, target]:
-            return _make_git_result(0)
+        if args[:2] == ["merge-base", "--is-ancestor"]:
+            return _make_git_result(0 if source_already_merged or merge_performed else 1)
         return _make_git_result(0)
 
     return _run_git
@@ -135,6 +141,35 @@ async def test_merge_worktree_success_returns_worktree_path_and_merge_sha():
     assert result["merge_sha"] == "abc123def456"
     assert result["target_head_sha"] == "abc123def456"
     assert result["commit_sha"] == "abc123def456"
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_retry_reconciles_completed_merge_without_duplicate_commit():
+    """A retry after a lost response reports the merge already present on target."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    ctx.worktree_storage.get.return_value.status = "merged"
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(source_already_merged=True)
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["merged"] is True
+    assert result["reconciled"] is True
+    assert result["merge_sha"] == "abc123def456"
+    assert "already merged" in result["message"]
+    assert ["merge", "feat", "--no-ff", "--no-edit"] not in [
+        call.args[0] for call in ctx.git_manager._run_git.call_args_list
+    ]
+    ctx.worktree_storage.mark_merged.assert_called_once_with("wt-123")
 
 
 @pytest.mark.asyncio

@@ -306,6 +306,49 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 cwd=merge_cwd,
             )
 
+        if worktree.status == "merged" and await _source_is_merged_into_target():
+            target_sha_result = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                ["rev-parse", merge_target],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if target_sha_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": (
+                        "Source is already merged into the local target branch, but failed "
+                        f"to determine target SHA: {target_sha_result.stderr.strip()}"
+                    ),
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                    "merged": True,
+                    "pushed": False,
+                }
+            reconciled_target_sha = target_sha_result.stdout.strip()
+            ctx.worktree_storage.mark_merged(worktree_id)
+            return {
+                "success": True,
+                "message": (
+                    f"{effective_source} is already merged into local {merge_target}; "
+                    "reconciled completed merge"
+                ),
+                "worktree_path": wt_path,
+                "project_path": repo_path,
+                "target_worktree_path": target_worktree_path,
+                "source_branch": effective_source,
+                "target_branch": merge_target,
+                "merged": True,
+                "reconciled": True,
+                "pushed": False,
+                "merge_sha": reconciled_target_sha,
+                "target_head_sha": reconciled_target_sha,
+                "commit_sha": reconciled_target_sha,
+            }
+
         try:
             if original_branch != merge_target:
                 checkout_result = await asyncio.to_thread(
