@@ -227,8 +227,9 @@ class TestToolHandlerEdgeCases:
             patch("gobby.utils.git.is_path_gitignored", return_value=True),
             patch.object(handlers, "_track_session_edited_file") as track,
         ):
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         track.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         mock_dependencies["task_manager"].list_tasks.assert_not_called()
@@ -253,8 +254,9 @@ class TestToolHandlerEdgeCases:
             patch("gobby.utils.git.is_path_gitignored", return_value=False),
             patch.object(handlers, "_track_session_edited_file") as track,
         ):
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         track.assert_called_once()
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
@@ -274,8 +276,9 @@ class TestToolHandlerEdgeCases:
         )
 
         with patch.object(handlers, "_track_session_edited_file") as track:
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         track.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
