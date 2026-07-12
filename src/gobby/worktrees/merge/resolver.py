@@ -443,6 +443,17 @@ class MergeResolver:
         if force_tier == ResolutionTier.FULL_FILE_AI:
             return await self._try_full_file_resolution(worktree_path, conflicts or [{}])
 
+        if any("hunks" in conflict and not conflict["hunks"] for conflict in conflicts):
+            return MergeResult(
+                success=False,
+                tier=ResolutionTier.HUMAN_REVIEW,
+                conflicts=conflicts,
+                resolved_files=[],
+                unresolved_conflicts=conflicts,
+                needs_human_review=True,
+                failure_reason="unparseable_git_conflicts",
+            )
+
         # Tier 2: Conflict-only AI resolution
         if conflicts:
             tier2_result = await self._resolve_conflicts_only(conflicts)
@@ -460,14 +471,15 @@ class MergeResolver:
             # Tier 3: Full-file AI resolution
             return await self._try_full_file_resolution(worktree_path, conflicts)
 
-        # No conflicts from git, but no git result - unusual state
+        # A failed git merge without reported unmerged paths is never a clean merge.
         return MergeResult(
-            success=True,
-            tier=ResolutionTier.GIT_AUTO,
+            success=False,
+            tier=ResolutionTier.HUMAN_REVIEW,
             conflicts=[],
             resolved_files=[],
             unresolved_conflicts=[],
-            needs_human_review=False,
+            needs_human_review=True,
+            failure_reason="git_merge_failed_without_conflicts",
         )
 
     async def _try_full_file_resolution(
@@ -552,19 +564,17 @@ class MergeResolver:
         conflicts = []
         for file_rel_path in conflicted_files:
             file_path = Path(worktree_path) / file_rel_path
+            conflict: dict[str, Any] = {
+                "file": str(file_rel_path),
+                "hunks": [],
+                "worktree_path": worktree_path,
+            }
             try:
                 content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
-                hunks = extract_conflict_hunks(content)
-                if hunks:
-                    conflicts.append(
-                        {
-                            "file": str(file_rel_path),
-                            "hunks": hunks,
-                            "worktree_path": worktree_path,
-                        }
-                    )
+                conflict["hunks"] = extract_conflict_hunks(content)
             except Exception as e:
                 logger.error(f"Failed to parse conflicts in {file_rel_path}: {e}")
+            conflicts.append(conflict)
 
         return {"success": False, "conflicts": conflicts}
 
