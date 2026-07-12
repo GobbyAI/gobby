@@ -346,11 +346,10 @@ class SchemaHashManager:
         if not valid_tool_names:
             return self.delete_hashes_for_server(server_name, project_id)
 
-        # Build placeholders for IN clause
-        placeholders = ",".join("%s" for _ in valid_tool_names)
         cursor = self.db.execute(
-            f"DELETE FROM tool_schema_hashes WHERE project_id = %s AND server_name = %s AND tool_name NOT IN ({placeholders})",  # nosec B608
-            (project_id, server_name, *valid_tool_names),
+            "DELETE FROM tool_schema_hashes "
+            "WHERE project_id = %s AND server_name = %s AND tool_name != ALL(%s)",
+            (project_id, server_name, valid_tool_names),
         )
         return cursor.rowcount
 

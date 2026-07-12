@@ -310,7 +310,13 @@ def test_cleanup_stale_hashes(manager: SchemaHashManager, mock_db: MagicMock) ->
     mock_db.execute.return_value = cursor
 
     result = manager.cleanup_stale_hashes("srv", "proj", ["tool1", "tool2"])
+
     assert result == 2
+    mock_db.execute.assert_called_once_with(
+        "DELETE FROM tool_schema_hashes "
+        "WHERE project_id = %s AND server_name = %s AND tool_name != ALL(%s)",
+        ("proj", "srv", ["tool1", "tool2"]),
+    )
 
 
 def test_cleanup_stale_hashes_empty_valid(manager: SchemaHashManager, mock_db: MagicMock) -> None:
