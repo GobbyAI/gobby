@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from openai import BadRequestError
+from openai import APIConnectionError, AuthenticationError, BadRequestError
 
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm import local_provider_adapters as adapters
@@ -109,7 +109,15 @@ def test_openai_compatible_adapter_uses_openai_sdk() -> None:
     mock_cls.assert_called_once_with(
         base_url="http://localhost:8000/v1",
         api_key="test-key",
+        timeout=adapters._LOCAL_OPENAI_TIMEOUT,
+        max_retries=0,
     )
+    timeout = mock_cls.call_args.kwargs["timeout"]
+    assert timeout.connect == 5.0
+    assert timeout.read == 120.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 5.0
+    assert adapters._LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS == 120.0
 
 
 @pytest.mark.asyncio
@@ -182,7 +190,47 @@ async def test_openai_compatible_adapter_rejects_blank_text_content(
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_json_retries_without_unsupported_reasoning_effort() -> None:
+@pytest.mark.parametrize(
+    "json_mode_error",
+    [
+        pytest.param(
+            BadRequestError(
+                message="response_format json_object not supported",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body=None,
+            ),
+            id="message",
+        ),
+        pytest.param(
+            BadRequestError(
+                message="Invalid request parameter",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "unsupported_value", "param": "response_format"},
+            ),
+            id="code-and-param",
+        ),
+        pytest.param(
+            BadRequestError(
+                message="Invalid request parameter",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "unsupported_response_format"},
+            ),
+            id="specific-code",
+        ),
+    ],
+)
+async def test_openai_compatible_json_retries_once_without_json_mode(
+    json_mode_error: BadRequestError,
+) -> None:
     endpoint = LocalGenerationEndpointConfig(
         provider="openai-compatible",
         api_base="http://localhost:8000/v1",
@@ -191,25 +239,20 @@ async def test_openai_compatible_json_retries_without_unsupported_reasoning_effo
     )
 
     class RejectingCompletions:
-        def __init__(self) -> None:
+        def __init__(self, error: BadRequestError) -> None:
             self.calls: list[dict[str, Any]] = []
+            self.error = error
 
         async def create(self, **kwargs: Any) -> Any:
             self.calls.append(kwargs)
             if len(self.calls) == 1:
-                raise BadRequestError(
-                    message="response_format json_object not supported",
-                    response=httpx.Response(400, request=httpx.Request("POST", "http://test")),
-                    body=None,
-                )
-            if "reasoning_effort" in kwargs:
-                raise RuntimeError("reasoning_effort unsupported")
+                raise self.error
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
                 usage=None,
             )
 
-    completions = RejectingCompletions()
+    completions = RejectingCompletions(json_mode_error)
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     with patch("openai.AsyncOpenAI", return_value=fake_client):
@@ -223,11 +266,107 @@ async def test_openai_compatible_json_retries_without_unsupported_reasoning_effo
     )
 
     assert result == {"ok": True}
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
     assert "response_format" not in completions.calls[1]
-    assert "reasoning_effort" not in completions.calls[2]
+    assert completions.calls[1]["reasoning_effort"] == "low"
     assert completions.calls[1]["messages"][0]["content"] == "custom system"
-    assert completions.calls[2]["messages"][0]["content"] == "custom system"
+
+
+async def test_openai_compatible_json_does_not_retry_failed_fallback() -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    error = BadRequestError(
+        message="response_format json_object not supported",
+        response=httpx.Response(400, request=httpx.Request("POST", "http://test")),
+        body=None,
+    )
+    completions = AsyncMock()
+    completions.create.side_effect = [error, error]
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    with pytest.raises(BadRequestError):
+        await adapter.generate_json(
+            "json",
+            system_prompt=None,
+            model="local-model",
+        )
+
+    assert completions.create.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "request_error",
+    [
+        pytest.param(
+            BadRequestError(
+                message="model does not exist",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "model_not_found", "param": "model"},
+            ),
+            id="unrelated-bad-request",
+        ),
+        pytest.param(
+            BadRequestError(
+                message="response_format json_object not supported",
+                response=httpx.Response(
+                    422,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body=None,
+            ),
+            id="wrong-response-status",
+        ),
+        pytest.param(
+            APIConnectionError(request=httpx.Request("POST", "http://test")),
+            id="transport",
+        ),
+        pytest.param(
+            AuthenticationError(
+                message="invalid token",
+                response=httpx.Response(
+                    401,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "invalid_api_key"},
+            ),
+            id="auth",
+        ),
+    ],
+)
+async def test_openai_compatible_json_unrelated_errors_do_not_retry(
+    request_error: Exception,
+) -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    completions = AsyncMock()
+    completions.create.side_effect = request_error
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    with pytest.raises(type(request_error)):
+        await adapter.generate_json(
+            "json",
+            system_prompt=None,
+            model="local-model",
+        )
+
+    assert completions.create.await_count == 1
 
 
 @pytest.mark.asyncio

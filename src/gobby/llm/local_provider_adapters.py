@@ -36,6 +36,19 @@ _UNSUPPORTED_PARAMETER_MARKERS = (
     "unrecognized",
     "unexpected keyword",
 )
+_LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS = 120.0
+_LOCAL_OPENAI_CONNECT_TIMEOUT_SECONDS = 5.0
+_LOCAL_OPENAI_READ_TIMEOUT_SECONDS = 120.0
+_LOCAL_OPENAI_WRITE_TIMEOUT_SECONDS = 30.0
+_LOCAL_OPENAI_POOL_TIMEOUT_SECONDS = 5.0
+_LOCAL_OPENAI_MAX_RETRIES = 0
+_LOCAL_OPENAI_TIMEOUT = httpx.Timeout(
+    _LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS,
+    connect=_LOCAL_OPENAI_CONNECT_TIMEOUT_SECONDS,
+    read=_LOCAL_OPENAI_READ_TIMEOUT_SECONDS,
+    write=_LOCAL_OPENAI_WRITE_TIMEOUT_SECONDS,
+    pool=_LOCAL_OPENAI_POOL_TIMEOUT_SECONDS,
+)
 
 
 class LocalProviderAdapter(Protocol):
@@ -107,21 +120,24 @@ def _usage_dict(usage: Any) -> dict[str, int] | None:
     return result or None
 
 
-def _is_unsupported_parameter_error(error: BaseException, parameter: str) -> bool:
-    message = str(error).lower()
-    return parameter.lower() in message and any(
-        marker in message for marker in _UNSUPPORTED_PARAMETER_MARKERS
-    )
-
-
 def _is_unsupported_json_mode_error(error: BaseException) -> bool:
+    response = getattr(error, "response", None)
+    if getattr(response, "status_code", None) != 400:
+        return False
+
+    parameter = str(getattr(error, "param", "") or "").lower()
+    code = str(getattr(error, "code", "") or "").lower().replace("_", " ")
+    code_rejects_parameter = any(marker in code for marker in _UNSUPPORTED_PARAMETER_MARKERS) and (
+        parameter == "response_format" or "response format" in code
+    )
     message = str(error).lower()
     mentions_json_mode = (
         "response_format" in message or "json_object" in message or "json mode" in message
     )
-    return mentions_json_mode and any(
+    message_rejection = mentions_json_mode and any(
         marker in message for marker in _UNSUPPORTED_PARAMETER_MARKERS
     )
+    return code_rejects_parameter or message_rejection
 
 
 def _strip_json_fences(content: str) -> str:
@@ -210,6 +226,8 @@ class OpenAICompatibleLocalProviderAdapter:
             self._client = AsyncOpenAI(
                 base_url=endpoint.api_base,
                 api_key=api_key,
+                timeout=_LOCAL_OPENAI_TIMEOUT,
+                max_retries=_LOCAL_OPENAI_MAX_RETRIES,
             )
             logger.debug(
                 "OpenAI-compatible local provider initialised (url=%s, model=%s)",
@@ -288,9 +306,11 @@ class OpenAICompatibleLocalProviderAdapter:
         }
         if reasoning_effort is not None:
             request["reasoning_effort"] = reasoning_effort
+        from openai import BadRequestError
+
         try:
             response = await self._client.chat.completions.create(**request)
-        except Exception as json_mode_err:
+        except BadRequestError as json_mode_err:
             if not _is_unsupported_json_mode_error(json_mode_err):
                 raise
             logger.debug(
@@ -301,20 +321,7 @@ class OpenAICompatibleLocalProviderAdapter:
             request["messages"][0]["content"] = (
                 system_prompt or "You are a helpful assistant. Respond with valid JSON only."
             )
-            try:
-                response = await self._client.chat.completions.create(**request)
-            except Exception as reasoning_err:
-                if reasoning_effort is None or not _is_unsupported_parameter_error(
-                    reasoning_err,
-                    "reasoning_effort",
-                ):
-                    raise
-                logger.debug(
-                    "reasoning_effort rejected (%s), retrying without reasoning_effort",
-                    reasoning_err,
-                )
-                request.pop("reasoning_effort", None)
-                response = await self._client.chat.completions.create(**request)
+            response = await self._client.chat.completions.create(**request)
 
         return _parse_json_response(response.choices[0].message.content)
 
