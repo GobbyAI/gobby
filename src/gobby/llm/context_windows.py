@@ -482,9 +482,10 @@ def _registry_context_window(provider: str | None, model: str) -> int | None:
 
 
 def _registry_lookup_candidates(provider: str | None, model: str) -> list[str]:
-    candidates = [model]
+    candidates = [f"{provider}/{model}" if provider else model, model]
     if provider == "qwen":
-        candidates.append(strip_qwen_auth_suffix(model))
+        stripped = strip_qwen_auth_suffix(model)
+        candidates.extend((f"qwen/{stripped}", stripped))
     return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 

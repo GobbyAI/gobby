@@ -227,9 +227,13 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
     # The 0.5.0 pre-release flatten folded every migration (295-305) into the
-    # baseline schema. Migration 306 is the one recorded post-baseline migration
-    # allowed to reconcile live-hub schema drift.
-    assert _tracked_migration_names(migrations_dir) == ["306_reconcile_live_hub_schema_drift.sql"]
+    # baseline schema. Every later migration remains replayable in version order.
+    assert _tracked_migration_names(migrations_dir) == [
+        "306_reconcile_live_hub_schema_drift.sql",
+        "307_cron_run_scheduler_owner.sql",
+        "308_recall_signal_hub.sql",
+        "309_model_costs_provider_key.sql",
+    ]
 
 
 def test_uuid_cast_migrations_ship_a_preflight_guard() -> None:
@@ -268,9 +272,9 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     import gobby.storage.migrations as module
 
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
-    # 305 take the corrupt_partial backup/recreate path; 306 remains replayable.
+    # 305 take the corrupt_partial backup/recreate path; later versions remain replayable.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 306
+    assert module.latest_known_version() == 309
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:
@@ -745,3 +749,16 @@ def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:
         violations.extend(f"{relative}:{line}" for line in import_lines)
 
     assert violations == []
+
+
+def test_model_costs_uses_provider_scoped_primary_key_in_baseline_and_migration() -> None:
+    baseline = _baseline_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "309_model_costs_provider_key.sql"
+    ).read_text(encoding="utf-8")
+
+    model_costs = _table_definition(baseline, "model_costs")
+    assert "provider TEXT NOT NULL" in model_costs
+    assert "PRIMARY KEY (provider, model)" in model_costs
+    assert "DROP CONSTRAINT IF EXISTS model_costs_pkey" in migration
+    assert "PRIMARY KEY (provider, model)" in migration

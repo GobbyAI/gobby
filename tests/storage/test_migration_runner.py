@@ -93,7 +93,7 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
 
 
-def test_postgres_migration_discovery_finds_reconcile_drift_migration() -> None:
+def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
@@ -101,7 +101,10 @@ def test_postgres_migration_discovery_finds_reconcile_drift_migration() -> None:
     discovered = runner._discover_migrations()
 
     assert [(migration.version, migration.name) for migration in discovered] == [
-        (306, "reconcile_live_hub_schema_drift")
+        (306, "reconcile_live_hub_schema_drift"),
+        (307, "cron_run_scheduler_owner"),
+        (308, "recall_signal_hub"),
+        (309, "model_costs_provider_key"),
     ]
 
 
