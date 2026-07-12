@@ -70,7 +70,7 @@ class TestToolFallbackResolver:
     """Tests for ToolFallbackResolver."""
 
     @pytest.fixture
-    def mock_semantic_search(self):
+    def mock_semantic_search(self) -> MagicMock:
         """Create a mock semantic search."""
         mock = MagicMock()
         mock.search_tools = AsyncMock(return_value=[])
@@ -79,21 +79,28 @@ class TestToolFallbackResolver:
         return mock
 
     @pytest.fixture
-    def mock_metrics_manager(self):
+    def mock_metrics_manager(self) -> MagicMock:
         """Create a mock metrics manager."""
         mock = MagicMock()
         mock.get_tool_success_rate = MagicMock(return_value=0.9)
         return mock
 
     @pytest.fixture
-    def fallback_resolver(self, mock_semantic_search, mock_metrics_manager):
+    def fallback_resolver(
+        self,
+        mock_semantic_search: MagicMock,
+        mock_metrics_manager: MagicMock,
+    ) -> ToolFallbackResolver:
         """Create a fallback resolver with mocks."""
         return ToolFallbackResolver(
             semantic_search=mock_semantic_search,
             metrics_manager=mock_metrics_manager,
         )
 
-    async def test_find_alternatives_no_project_id(self, fallback_resolver):
+    async def test_find_alternatives_no_project_id(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+    ) -> None:
         """Test that find_alternatives returns empty without project_id."""
         result = await fallback_resolver.find_alternatives(
             failed_tool_name="test_tool",
@@ -102,7 +109,11 @@ class TestToolFallbackResolver:
 
         assert result == []
 
-    async def test_find_alternatives_no_matches(self, fallback_resolver, mock_semantic_search):
+    async def test_find_alternatives_no_matches(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test find_alternatives when semantic search returns no results."""
         mock_semantic_search.search_tools = AsyncMock(return_value=[])
 
@@ -113,7 +124,11 @@ class TestToolFallbackResolver:
 
         assert result == []
 
-    async def test_find_alternatives_with_matches(self, fallback_resolver, mock_semantic_search):
+    async def test_find_alternatives_with_matches(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test find_alternatives with matching tools."""
         # Create mock search results
         mock_result = MagicMock()
@@ -135,8 +150,10 @@ class TestToolFallbackResolver:
         assert result[0].similarity == 0.8
 
     async def test_find_alternatives_excludes_failed_tool(
-        self, fallback_resolver, mock_semantic_search
-    ):
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test that the failed tool is excluded from results."""
         mock_result1 = MagicMock()
         mock_result1.server_name = "test-server"
@@ -163,8 +180,10 @@ class TestToolFallbackResolver:
         assert result[0].tool_name == "alt_tool"
 
     async def test_find_alternatives_includes_failed_when_not_excluded(
-        self, fallback_resolver, mock_semantic_search
-    ):
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test that failed tool is included when exclude_failed=False."""
         mock_result = MagicMock()
         mock_result.server_name = "test-server"
@@ -184,7 +203,10 @@ class TestToolFallbackResolver:
         assert len(result) == 1
         assert result[0].tool_name == "test_tool"
 
-    def test_compute_score_with_success_rate(self, fallback_resolver) -> None:
+    def test_compute_score_with_success_rate(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+    ) -> None:
         """Test score computation with success rate."""
         score = fallback_resolver._compute_score(
             similarity=0.8,
@@ -195,7 +217,10 @@ class TestToolFallbackResolver:
         expected = 0.8 * 0.7 + 0.9 * 0.3
         assert abs(score - expected) < 0.001
 
-    def test_compute_score_without_success_rate(self, fallback_resolver) -> None:
+    def test_compute_score_without_success_rate(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+    ) -> None:
         """Test score computation with None success rate uses default."""
         score = fallback_resolver._compute_score(
             similarity=0.8,
@@ -206,7 +231,10 @@ class TestToolFallbackResolver:
         expected = 0.8 * 0.7 + 0.5 * 0.3
         assert abs(score - expected) < 0.001
 
-    def test_build_search_query_basic(self, fallback_resolver) -> None:
+    def test_build_search_query_basic(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+    ) -> None:
         """Test building search query with just tool name."""
         query = fallback_resolver._build_search_query(
             tool_name="test_tool",
@@ -216,7 +244,10 @@ class TestToolFallbackResolver:
 
         assert "test_tool" in query
 
-    def test_build_search_query_with_description(self, fallback_resolver) -> None:
+    def test_build_search_query_with_description(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+    ) -> None:
         """Test building search query with description."""
         query = fallback_resolver._build_search_query(
             tool_name="test_tool",
@@ -227,7 +258,10 @@ class TestToolFallbackResolver:
         assert "test_tool" in query
         assert "A tool for testing" in query
 
-    def test_build_search_query_with_error_context(self, fallback_resolver) -> None:
+    def test_build_search_query_with_error_context(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+    ) -> None:
         """Test building search query with error context."""
         query = fallback_resolver._build_search_query(
             tool_name="test_tool",
@@ -238,7 +272,11 @@ class TestToolFallbackResolver:
         assert "test_tool" in query
         assert "Connection refused" in query
 
-    async def test_find_alternatives_for_error(self, fallback_resolver, mock_semantic_search):
+    async def test_find_alternatives_for_error(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test the convenience method for error handling."""
         mock_result = MagicMock()
         mock_result.server_name = "alt-server"
@@ -261,8 +299,10 @@ class TestToolFallbackResolver:
         assert "score" in result[0]
 
     async def test_find_alternatives_handles_search_error(
-        self, fallback_resolver, mock_semantic_search
-    ):
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test graceful handling of semantic search errors."""
         mock_semantic_search.search_tools = AsyncMock(side_effect=Exception("Search failed"))
 
@@ -273,7 +313,10 @@ class TestToolFallbackResolver:
 
         assert result == []
 
-    def test_get_success_rate_returns_none_without_metrics(self, mock_semantic_search) -> None:
+    def test_get_success_rate_returns_none_without_metrics(
+        self,
+        mock_semantic_search: MagicMock,
+    ) -> None:
         """Test that success rate returns None without metrics manager."""
         resolver = ToolFallbackResolver(
             semantic_search=mock_semantic_search,
@@ -284,7 +327,11 @@ class TestToolFallbackResolver:
 
         assert rate is None
 
-    def test_get_success_rate_handles_error(self, fallback_resolver, mock_metrics_manager) -> None:
+    def test_get_success_rate_handles_error(
+        self,
+        fallback_resolver: ToolFallbackResolver,
+        mock_metrics_manager: MagicMock,
+    ) -> None:
         """Test graceful handling of metrics lookup errors."""
         mock_metrics_manager.get_tool_success_rate = MagicMock(side_effect=Exception("DB error"))
 
@@ -298,9 +345,9 @@ class TestToolFallbackResolver:
     )
     async def test_get_tool_description_logs_database_error(
         self,
-        fallback_resolver,
-        mock_semantic_search,
-        caplog,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
+        caplog: pytest.LogCaptureFixture,
         database_error: Exception,
     ) -> None:
         mock_semantic_search.db.fetchone.side_effect = database_error
@@ -314,8 +361,8 @@ class TestToolFallbackResolver:
 
     async def test_get_tool_description_propagates_programming_errors(
         self,
-        fallback_resolver,
-        mock_semantic_search,
+        fallback_resolver: ToolFallbackResolver,
+        mock_semantic_search: MagicMock,
     ) -> None:
         mock_semantic_search.db.fetchone.side_effect = TypeError("invalid row handling")
 
