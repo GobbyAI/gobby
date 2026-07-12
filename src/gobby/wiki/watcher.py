@@ -44,7 +44,9 @@ class WikiWatcher:
         self._coordinator = coordinator
         self._debounce_interval = debounce_interval
         self._poll_interval = poll_interval
-        self._ignore_globs = ignore_globs or list(DEFAULT_WIKI_IGNORE_GLOBS)
+        self._ignore_globs = (
+            list(DEFAULT_WIKI_IGNORE_GLOBS) if ignore_globs is None else list(ignore_globs)
+        )
         self._pending: dict[str, set[Path]] = {}
         self._pending_since: float | None = None
         self._last_index_time: float | None = None
@@ -122,9 +124,9 @@ class WikiWatcher:
                         self._pending.pop(scope, None)
                 if not self._pending:
                     self._pending_since = None
-                elif degraded:
-                    # Restart the debounce window so retries back off instead of
-                    # re-flushing on every poll tick while gwiki stays degraded.
+                else:
+                    # Restart the debounce window for degraded retries and for
+                    # changes that arrived while this flush was in flight.
                     self._pending_since = time.monotonic()
             if not degraded:
                 self._last_index_time = time.time()

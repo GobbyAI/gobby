@@ -61,6 +61,26 @@ class SequencedHandoffCoordinator:
         return {"index_handoff": {"status": "indexed"}}
 
 
+class BlockingCoordinator(RecordingCoordinator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def handle_local_changes(
+        self, changed_paths_by_scope: dict[str, list[Path]]
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {
+                scope: [path.name for path in paths]
+                for scope, paths in changed_paths_by_scope.items()
+            }
+        )
+        self.started.set()
+        await self.release.wait()
+        return {"index_handoff": {"status": "indexed"}}
+
+
 async def _eventually(predicate: Callable[[], bool]) -> None:
     deadline = asyncio.get_running_loop().time() + 2.0
     while True:
@@ -177,6 +197,49 @@ async def test_scan_ignores_gwiki_written_paths_by_default(tmp_path: Path) -> No
     await watcher.flush_pending()
 
     assert coordinator.calls == [{"project": ["concept.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_ignore_globs_disables_default_ignores(tmp_path: Path) -> None:
+    coordinator = RecordingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=0.01,
+        ignore_globs=[],
+    )
+
+    await watcher.record_change(tmp_path / "raw" / "capture.md")
+    await watcher.flush_pending()
+
+    assert coordinator.calls == [{"project": ["capture.md"]}]
+
+
+@pytest.mark.asyncio
+async def test_successful_flush_restarts_debounce_for_concurrent_changes(
+    tmp_path: Path,
+) -> None:
+    coordinator = BlockingCoordinator()
+    watcher = WikiWatcher(
+        scopes=[WikiWatchScope(name="project", root=tmp_path)],
+        coordinator=coordinator,
+        debounce_interval=60.0,
+    )
+    await watcher.record_change(tmp_path / "first.md")
+    first_pending_since = watcher._pending_since
+
+    flush = asyncio.create_task(watcher.flush_pending())
+    await coordinator.started.wait()
+    await watcher.record_change(tmp_path / "second.md")
+    coordinator.release.set()
+    await flush
+
+    assert coordinator.calls == [{"project": ["first.md"]}]
+    assert watcher.health()["pending_changes"] == 1
+    assert watcher._pending_since is not None
+    assert first_pending_since is not None
+    assert watcher._pending_since > first_pending_since
+    assert watcher._debounce_elapsed() is False
 
 
 @pytest.mark.asyncio
