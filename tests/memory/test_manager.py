@@ -442,15 +442,15 @@ class TestAccessStats:
         # Should still be same count due to debouncing
         assert updated_again.access_count == first_access_count
 
-    def test_update_access_stats_empty_list(self, memory_manager) -> None:
+    async def test_update_access_stats_empty_list(self, memory_manager) -> None:
         """Test _update_access_stats handles empty list."""
         with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
-            result = memory_manager._update_access_stats([])
+            result = await memory_manager._update_access_stats([])
 
         assert result is None
         assert update_access_stats.call_count == 0
 
-    def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
+    async def test_update_access_stats_invalid_timestamp(self, db, memory_config) -> None:
         """Test _update_access_stats handles invalid timestamps gracefully."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -458,9 +458,9 @@ class TestAccessStats:
         memory.id = "mm-test"
         memory.last_accessed_at = "invalid-timestamp"
 
-        assert manager._update_access_stats([memory]) is None
+        assert await manager._update_access_stats([memory]) is None
 
-    def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
+    async def test_update_access_stats_no_timezone(self, db, memory_config) -> None:
         """Test _update_access_stats handles timestamps without timezone."""
         manager = MemoryManager(db=db, config=memory_config)
 
@@ -470,7 +470,7 @@ class TestAccessStats:
         memory.id = real_memory.id
         memory.last_accessed_at = "2024-01-01T00:00:00"
 
-        manager._update_access_stats([memory])
+        await manager._update_access_stats([memory])
 
         updated = manager.get_memory(real_memory.id)
         assert updated.access_count >= 1
@@ -689,7 +689,7 @@ class TestEdgeCases:
         with patch.object(manager.storage, "update_access_stats") as mock_update:
             mock_update.side_effect = Exception("Database error")
 
-            assert manager._update_access_stats([memory]) is None
+            assert await manager._update_access_stats([memory]) is None
             assert mock_update.call_count == 1
 
 

@@ -139,6 +139,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             get_memory=self.get_memory,
             embed_and_upsert=lambda *args, **kwargs: self._embed_and_upsert(*args, **kwargs),
             vector_store_failure_logger=self._log_vector_store_failure,
+            run_db=run_db,
         )
         self._search_service = SearchService(
             storage=self.storage,

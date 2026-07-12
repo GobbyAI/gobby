@@ -47,6 +47,17 @@ class _DigestPersistenceError(RuntimeError):
     """Raised when digest persistence would leave partial session state."""
 
 
+async def _run_sync_io(func: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run synchronous digest/session I/O without blocking the event loop."""
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
+def _render_prompt_template(template: str, values: dict[str, str], db: Any | None) -> str:
+    from gobby.prompts.loader import PromptLoader
+
+    return PromptLoader(db=db).render(template, values)
+
+
 def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) -> dict[str, Any]:
     logger.info(
         "build_turn_and_digest: cancelled during provider shutdown for session %s: %s",
@@ -72,7 +83,7 @@ async def _provider_cancelled_fallback(
     result = _provider_cancelled_result(session_id, exc)
     if not session_manager or not session_id:
         return result
-    session = session_manager.get(session_id)
+    session = await _run_sync_io(session_manager.get, session_id)
     if session is None:
         return result
     if not _can_replace_with_heuristic_title(session):
@@ -85,7 +96,12 @@ async def _provider_cancelled_fallback(
     if not title:
         return result
 
-    updated = session_manager.update_title(session_id, title, title_source="heuristic")
+    updated = await _run_sync_io(
+        session_manager.update_title,
+        session_id,
+        title,
+        title_source="heuristic",
+    )
     if updated is not None:
         result["title"] = title
         result["title_source"] = "heuristic"
@@ -403,7 +419,7 @@ async def bootstrap_session_title(
     if not session_manager or not session_id:
         return None
 
-    session = session_manager.get(session_id)
+    session = await _run_sync_io(session_manager.get, session_id)
     if session is None:
         return None
 
@@ -422,7 +438,8 @@ async def bootstrap_session_title(
     if not title:
         return None
 
-    updated = session_manager.update_title(
+    updated = await _run_sync_io(
+        session_manager.update_title,
         session_id,
         title,
         title_source="heuristic",
@@ -506,12 +523,11 @@ async def _build_turn_record(
         truncated_response = ""
 
     try:
-        from gobby.prompts.loader import PromptLoader
-
-        loader = PromptLoader(db=db)
-        turn_prompt = loader.render(
+        turn_prompt = await _run_sync_io(
+            _render_prompt_template,
             "memory/turn_record",
             {"prompt_text": truncated_prompt, "response_text": truncated_response},
+            db,
         )
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
@@ -633,12 +649,11 @@ async def _synthesize_title(
         return None
 
     try:
-        from gobby.prompts.loader import PromptLoader
-
-        loader = PromptLoader(db=db)
-        title_prompt = loader.render(
+        title_prompt = await _run_sync_io(
+            _render_prompt_template,
             "memory/title_synthesis",
             {"digest_markdown": updated_digest},
+            db,
         )
     except Exception:
         title_prompt = _build_title_synthesis_prompt(updated_digest)
@@ -655,7 +670,8 @@ async def _synthesize_title(
 
     title_str = normalize_title_candidate(title)
     if title_str:
-        updated_session = session_manager.update_title(
+        updated_session = await _run_sync_io(
+            session_manager.update_title,
             session_id,
             title_str,
             title_source="llm",
@@ -719,7 +735,7 @@ async def build_turn_and_digest(
 
     try:
         # 1. Get session
-        session = session_manager.get(session_id) if session_manager else None
+        session = await _run_sync_io(session_manager.get, session_id) if session_manager else None
         if not session:
             logger.warning(f"build_turn_and_digest: Session {session_id} not found")
             return None
@@ -797,7 +813,8 @@ async def build_turn_and_digest(
 
         # 6. Persist digest state only after contract validation succeeds.
         try:
-            updated_session = session_manager.persist_digest_state(
+            updated_session = await _run_sync_io(
+                session_manager.persist_digest_state,
                 session_id,
                 last_turn_markdown=last_turn,
                 digest_markdown=updated_digest,

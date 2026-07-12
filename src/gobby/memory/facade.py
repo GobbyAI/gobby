@@ -106,13 +106,13 @@ class MemoryManagerFacadeMethods:
             content, project_id, memory_type, tags, source_type, source_session_id
         )
 
-    def _enqueue_for_graph(
+    async def _enqueue_for_graph(
         self,
         memory_id: str,
         project_id: str | None = None,
     ) -> None:
         """Queue memory for background KG processing."""
-        self._lifecycle_service.enqueue_for_graph(memory_id, project_id)
+        await self._lifecycle_service.enqueue_for_graph(memory_id, project_id)
 
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:
         return self._lifecycle_service.get_pending_graph_memories(limit=limit)
@@ -186,8 +186,8 @@ class MemoryManagerFacadeMethods:
         )
         return build_memory_context(memories)
 
-    def _update_access_stats(self, memories: list[Memory]) -> None:
-        self._search_service.update_access_stats(memories)
+    async def _update_access_stats(self, memories: list[Memory]) -> None:
+        await self._search_service.update_access_stats(memories)
 
     async def _search_graph_for_memories(
         self,

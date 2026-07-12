@@ -3,8 +3,11 @@
 Relocated from tests/workflows/test_memory_actions.py as part of dead-code cleanup.
 """
 
+import asyncio
 import hashlib
 import logging
+import threading
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -36,6 +39,30 @@ from gobby.memory.title_heuristics import (
     normalize_title_candidate,
 )
 from tests._timing import wait_forever
+
+
+async def _assert_event_loop_progresses[T](
+    operation: Awaitable[T],
+    started: threading.Event,
+    release: threading.Event,
+) -> T:
+    """Prove a deliberately blocked persistence call is not on the event loop."""
+    safety_release = threading.Timer(1.0, release.set)
+    safety_release.start()
+    task = asyncio.ensure_future(operation)
+    try:
+        observed = await asyncio.wait_for(asyncio.to_thread(started.wait, 0.5), timeout=0.75)
+        assert observed, "persistence call did not start"
+        await asyncio.sleep(0)
+        assert not release.is_set(), "persistence blocked the event loop until the safety timeout"
+        release.set()
+        return await task
+    finally:
+        release.set()
+        safety_release.cancel()
+        if not task.done():
+            task.cancel()
+
 
 pytestmark = pytest.mark.unit
 
@@ -980,6 +1007,41 @@ class TestBuildTurnAndDigest:
         assert call_args.kwargs["title_source"] == "llm"
         assert mock_llm_service.call_feature.await_count == 1
         assert mock_llm_service.call_feature.await_args.kwargs["caller"] == "memory.turn_record"
+
+    @pytest.mark.asyncio
+    async def test_digest_persistence_does_not_block_event_loop(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Synchronous digest persistence runs outside the async event loop."""
+        started = threading.Event()
+        release = threading.Event()
+        persisted_session = mock_session_manager.persist_digest_state.return_value
+
+        def blocking_persist(*args, **kwargs):
+            started.set()
+            release.wait(timeout=1.0)
+            return persisted_session
+
+        mock_session_manager.persist_digest_state.side_effect = blocking_persist
+
+        result = await _assert_event_loop_progresses(
+            build_turn_and_digest(
+                memory_manager=mock_memory_manager,
+                session_manager=mock_session_manager,
+                session_id="session-123",
+                prompt_text="Fix the authentication bug in auth.py",
+                llm_service=mock_llm_service,
+                config=_digest_config(),
+            ),
+            started,
+            release,
+        )
+
+        assert result is not None
+        mock_session_manager.persist_digest_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_provider_shutdown_cancellation_returns_cancelled_without_error_log(
