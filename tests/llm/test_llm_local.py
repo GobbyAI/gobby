@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.llm.base import LLMProviderError
 from gobby.llm.local import _CLOUD_MODEL_ALIASES, LocalLLMProvider
 
 pytestmark = pytest.mark.unit
@@ -230,14 +231,14 @@ class TestGenerateText:
             await provider.generate_text("hello")
 
     @pytest.mark.asyncio
-    async def test_empty_response_returns_empty(self, provider: LocalLLMProvider) -> None:
+    async def test_empty_response_raises_provider_error(self, provider: LocalLLMProvider) -> None:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = None
         provider._client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-        result = await provider.generate_text("hello")
-        assert result == ""
+        with pytest.raises(LLMProviderError, match="qwen2.5-coder-7b.*blank content"):
+            await provider.generate_text("hello")
 
 
 # ═══════════════════════════════════════════════════════════════════════

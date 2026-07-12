@@ -16,6 +16,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import (
+    LLMProviderError,
     VisionInputError,
     VisionProviderError,
     VisionProviderUnavailableError,
@@ -410,6 +411,24 @@ class TestPrepareImageData:
 
 class TestGenerateText:
     """Tests for text-generation SDK option plumbing."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content", [None, "", " \t\n"])
+    async def test_generate_text_sdk_rejects_blank_content(
+        self, claude_config: DaemonConfig, content: str | None
+    ) -> None:
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage(content)
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            with pytest.raises(
+                LLMProviderError,
+                match=r"Claude generate_text\[unit-test\] returned blank content",
+            ):
+                await provider.generate_text_result("Generate text", caller="unit-test")
 
     @pytest.mark.asyncio
     async def test_generate_text_sdk_passes_reasoning_effort(

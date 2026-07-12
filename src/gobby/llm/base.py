@@ -23,11 +23,15 @@ class LLMProviderCancellation(RuntimeError):
     """Raised when an LLM provider operation is cancelled by shutdown/termination."""
 
 
+class LLMProviderError(RuntimeError):
+    """Raised when an LLM provider returns an invalid or failed result."""
+
+
 class VisionInputError(ValueError):
     """Raised when an image input is missing or unreadable."""
 
 
-class VisionProviderError(RuntimeError):
+class VisionProviderError(LLMProviderError):
     """Raised when a vision provider cannot produce a description."""
 
 

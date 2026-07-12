@@ -14,6 +14,7 @@ import httpx
 
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm.base import (
+    LLMProviderError,
     LLMTextResult,
     VisionInputError,
     VisionProviderError,
@@ -270,8 +271,14 @@ class OpenAICompatibleLocalProviderAdapter:
         if reasoning_effort is not None:
             request["reasoning_effort"] = reasoning_effort
         response = await self._client.chat.completions.create(**request)
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise LLMProviderError(
+                "OpenAI-compatible provider "
+                f"at {self._endpoint.api_base!r} using model {model!r} returned blank content"
+            )
         return LLMTextResult(
-            text=response.choices[0].message.content or "",
+            text=content,
             usage=_usage_dict(getattr(response, "usage", None)),
         )
 

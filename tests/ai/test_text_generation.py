@@ -10,7 +10,6 @@ from typing import Any, ClassVar
 import pytest
 
 import gobby.ai._text_generation_adapters as text_generation_adapters
-from gobby.adapters.acp_client import StreamEvent
 from gobby.ai import (
     AgyCLITextGenerateAdapter,
     AIAdapterStyle,
@@ -509,7 +508,7 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="qwen",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen-model",),
             ),
@@ -551,7 +550,7 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="qwen",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen-model",),
             ),
@@ -2143,36 +2142,6 @@ async def test_local_text_generate_adapter_forwards_json_request(
         "reasoning_effort": "high",
         "caller": "test",
     }
-
-
-class FakeACPClient:
-    def __init__(self, events: list[StreamEvent] | None = None) -> None:
-        self.started: dict[str, object] | None = None
-        self.sent: list[dict[str, object]] = []
-        self.stopped = False
-        self.events = events or [
-            StreamEvent(event_type="content_delta", data={"content": "hello "}),
-            StreamEvent(event_type="content_delta", data={"content": "world"}),
-            StreamEvent(event_type="result", data={"content": "ignored fallback"}),
-        ]
-
-    async def start(self, **kwargs: object) -> None:
-        self.started = kwargs
-
-    async def stop(self) -> None:
-        self.stopped = True
-
-    async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
-        self.sent.append({"message": message, **kwargs})
-        for event in self.events:
-            yield event
-
-
-class HangingACPClient(FakeACPClient):
-    async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
-        self.sent.append({"message": message, **kwargs})
-        await asyncio.Event().wait()
-        yield StreamEvent(event_type="content_delta", data={"content": "unreachable"})
 
 
 class FakeCodexAppServerClient:
@@ -3854,7 +3823,6 @@ def test_candidate_timeout_selection_by_adapter_style() -> None:
         AIAdapterStyle.CLI,
         AIAdapterStyle.DAEMON,
         AIAdapterStyle.LLM_PROVIDER,
-        AIAdapterStyle.ACP,
     ):
         assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 150.0
 

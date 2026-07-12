@@ -15,6 +15,7 @@ from claude_agent_sdk import (
 )
 
 from gobby.llm.base import (
+    LLMProviderError,
     LLMTextResult,
     VisionProviderError,
     VisionProviderUnavailableError,
@@ -132,6 +133,8 @@ class ClaudeSDKClient:
             result: str = await execute_sdk_query(
                 operation, _run_query, options, self.logger, max_retries=3
             )
+            if not result.strip():
+                raise LLMProviderError(f"Claude {operation} returned blank content")
 
         if max_tokens and len(result) > max_tokens * 4:
             result = result[: max_tokens * 4]

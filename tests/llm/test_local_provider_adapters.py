@@ -14,6 +14,7 @@ from openai import BadRequestError
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm import local_provider_adapters as adapters
 from gobby.llm.base import (
+    LLMProviderError,
     VisionInputError,
     VisionProviderError,
     VisionProviderUnavailableError,
@@ -145,6 +146,39 @@ async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
     assert completions.calls[0]["reasoning_effort"] == "high"
     assert completions.calls[1]["reasoning_effort"] == "low"
     assert completions.calls[1]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [None, "", " \t\n"])
+async def test_openai_compatible_adapter_rejects_blank_text_content(
+    content: str | None,
+) -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    completions = AsyncMock()
+    completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=None,
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    with pytest.raises(
+        LLMProviderError,
+        match=r"OpenAI-compatible provider .*local-model.* returned blank content",
+    ):
+        await adapter.generate_text_result(
+            "hello",
+            system_prompt=None,
+            model="local-model",
+            max_tokens=None,
+        )
 
 
 @pytest.mark.asyncio
