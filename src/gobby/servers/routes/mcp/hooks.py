@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -54,6 +55,11 @@ SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
 NON_CRITICAL_HOOK_TIMEOUT_SECONDS = 25.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
+HOOK_ADAPTER_MAX_WORKERS = 8
+_HOOK_ADAPTER_EXECUTOR = ThreadPoolExecutor(
+    max_workers=HOOK_ADAPTER_MAX_WORKERS,
+    thread_name_prefix="gobby-hook-adapter",
+)
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
 
 
@@ -302,8 +308,14 @@ async def _run_adapter_hook(
     *,
     timeout_seconds: float | None,
 ) -> dict[str, Any]:
-    """Run blocking hook adapter work without occupying the DB executor."""
-    pending = asyncio.to_thread(adapter.handle_native, payload, hook_manager)
+    """Run blocking hook work in the bounded adapter executor."""
+    loop = asyncio.get_running_loop()
+    pending = loop.run_in_executor(
+        _HOOK_ADAPTER_EXECUTOR,
+        adapter.handle_native,
+        payload,
+        hook_manager,
+    )
     if timeout_seconds is None:
         result = await pending
     else:

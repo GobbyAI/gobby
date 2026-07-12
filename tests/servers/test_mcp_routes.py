@@ -22,6 +22,8 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 - Webhooks endpoints
 """
 
+import asyncio
+import concurrent.futures
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -3086,6 +3088,48 @@ class TestHooksEndpoints:
         data = response.json()
         assert data["continue"] is True
         assert "timed out after 0.01s" in data["systemMessage"]
+
+    @pytest.mark.asyncio
+    async def test_adapter_executor_bounds_and_releases_hung_evaluation_workers(self) -> None:
+        from gobby.servers.routes.mcp import hooks as hook_routes
+
+        worker_limit = hook_routes.HOOK_ADAPTER_MAX_WORKERS
+        active_workers = 0
+        peak_workers = 0
+        worker_lock = threading.Lock()
+        never_completed: concurrent.futures.Future[None] = concurrent.futures.Future()
+
+        def bounded_evaluation_wait(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+            nonlocal active_workers, peak_workers
+            with worker_lock:
+                active_workers += 1
+                peak_workers = max(peak_workers, active_workers)
+            try:
+                never_completed.result(timeout=0.03)
+            finally:
+                with worker_lock:
+                    active_workers -= 1
+            return {"continue": True}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = bounded_evaluation_wait
+        results = await asyncio.gather(
+            *(
+                hook_routes._run_adapter_hook(
+                    adapter,
+                    {},
+                    MagicMock(),
+                    timeout_seconds=0.5,
+                )
+                for _ in range(worker_limit + 3)
+            ),
+            return_exceptions=True,
+        )
+
+        assert all(isinstance(result, TimeoutError) for result in results)
+        assert peak_workers <= worker_limit
+        assert active_workers == 0
+        assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
 
     @pytest.mark.parametrize(
         ("source", "hook_type", "critical", "adapter_patch"),

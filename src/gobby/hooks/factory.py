@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stop_registry import StopRegistry
 from gobby.autonomous.stuck_detector import StuckDetector
+from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.health_monitor import HealthMonitor
 from gobby.hooks.session_coordinator import SessionCoordinator
@@ -538,7 +539,7 @@ class HookManagerFactory:
         except Exception as e:
             logger.debug(f"Pipeline executor not available: {e}")
 
-        workflow_timeout = 0.0
+        workflow_timeout = DEFAULT_WORKFLOW_TIMEOUT_SECONDS
         workflow_enabled = True
         if config:
             workflow_timeout = config.workflow.timeout

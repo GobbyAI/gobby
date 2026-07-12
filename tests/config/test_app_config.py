@@ -1862,7 +1862,7 @@ class TestWorkflowConfig:
         """Test default workflow config."""
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 0.0
+        assert config.timeout == 15.0
 
     def test_timeout_validation(self) -> None:
         """Test timeout must be positive."""
