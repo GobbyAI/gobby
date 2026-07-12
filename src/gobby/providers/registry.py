@@ -25,7 +25,6 @@ class ProviderMetadata:
     supports_web_chat: bool = True
     supports_agent_spawn: bool = True
     live_model_discovery: bool = True
-    installed_only: bool = False
     deprecated: bool = False
     deprecation_message: str | None = None
     unavailable_reason: str | None = None
@@ -64,49 +63,11 @@ _PROVIDERS: tuple[ProviderMetadata, ...] = (
         supports_web_chat=False,
         supports_agent_spawn=False,
         live_model_discovery=False,
-        installed_only=True,
         unavailable_reason=AGY_UNAVAILABLE_REASON,
     ),
 )
-_BY_PROVIDER = {entry.provider: entry for entry in _PROVIDERS}
 
 
 def provider_metadata() -> tuple[ProviderMetadata, ...]:
     """Return providers in canonical display/order surfaces use."""
     return _PROVIDERS
-
-
-def provider_ids() -> tuple[str, ...]:
-    """Return canonical provider IDs."""
-    return tuple(entry.provider for entry in _PROVIDERS)
-
-
-def get_provider_metadata(provider: str) -> ProviderMetadata:
-    """Return metadata for a provider ID."""
-    normalized = provider.strip().lower()
-    try:
-        return _BY_PROVIDER[normalized]
-    except KeyError as exc:
-        raise ValueError(f"Unknown provider: {provider!r}") from exc
-
-
-def installed_provider_metadata(provider: str) -> dict[str, object]:
-    """Return provider metadata plus current installation/path facts."""
-    entry = get_provider_metadata(provider)
-    path = entry.path()
-    metadata = entry.api_metadata()
-    metadata.update({"path": path, "installed": path is not None})
-    return metadata
-
-
-def provider_status_metadata(provider: str) -> dict[str, object]:
-    """Return status-only metadata without probing runtime backends."""
-    entry = get_provider_metadata(provider)
-    return {
-        "display_name": entry.display_name,
-        "deprecated": entry.deprecated,
-        "deprecation_message": entry.deprecation_message,
-        "supports_web_chat": entry.supports_web_chat,
-        "supports_agent_spawn": entry.supports_agent_spawn,
-        "unavailable_reason": entry.unavailable_reason,
-    }

@@ -3,19 +3,11 @@
 from gobby.providers.registry import (
     AGY_UNAVAILABLE_REASON,
     ProviderMetadata,
-    get_provider_metadata,
-    installed_provider_metadata,
-    provider_ids,
     provider_metadata,
-    provider_status_metadata,
 )
 
 __all__ = [
     "AGY_UNAVAILABLE_REASON",
     "ProviderMetadata",
-    "get_provider_metadata",
-    "installed_provider_metadata",
-    "provider_ids",
     "provider_metadata",
-    "provider_status_metadata",
 ]
