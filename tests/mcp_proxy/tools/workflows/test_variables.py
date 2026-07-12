@@ -30,6 +30,7 @@ def _make_mocks(
 
     instance_manager = MagicMock()
     instance_manager.get_instance.return_value = instance
+    instance_manager.merge_instance_variables.return_value = instance is not None
 
     session_var_manager = MagicMock()
     session_var_manager.get_variables.return_value = session_variables or {}
@@ -74,12 +75,13 @@ class TestSetVariableScoped:
 
         assert result["success"] is True
         assert result["value"] is True
-        # Verify instance_manager was used to save
-        mocks["instance_manager"].get_instance.assert_called_once_with("uuid-session-1", "dev")
-        mocks["instance_manager"].save_instance.assert_called_once()
-        saved = mocks["instance_manager"].save_instance.call_args[0][0]
-        assert saved.variables["my_flag"] is True
-        assert saved.variables["existing"] == "val"
+        mocks["instance_manager"].merge_instance_variables.assert_called_once_with(
+            "uuid-session-1",
+            "dev",
+            {"my_flag": True},
+        )
+        mocks["instance_manager"].get_instance.assert_not_called()
+        mocks["instance_manager"].save_instance.assert_not_called()
 
     def test_set_variable_without_workflow_writes_to_session_variables(self) -> None:
         """set_variable() without workflow writes to session_variables."""
@@ -143,6 +145,12 @@ class TestSetVariableScoped:
 
         assert result["success"] is False
         assert "unknown" in result["error"]
+        mocks["instance_manager"].merge_instance_variables.assert_called_once_with(
+            "uuid-session-1",
+            "unknown",
+            {"flag": True},
+        )
+        mocks["instance_manager"].get_instance.assert_not_called()
 
 
 class TestGetVariableScoped:

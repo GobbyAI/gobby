@@ -106,6 +106,61 @@ def test_save_instance_upsert(db: HubDatabase) -> None:
     assert result.step_action_count == 5
 
 
+def test_merge_instance_variables_preserves_concurrent_step_transition(
+    db: HubDatabase,
+) -> None:
+    """Variable merges must not overwrite execution state changed after a stale read."""
+    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.state_manager import WorkflowInstanceManager
+
+    _ensure_session(db, S1)
+    mgr = WorkflowInstanceManager(db)
+    mgr.save_instance(
+        WorkflowInstance(
+            id=INST_1,
+            session_id=S1,
+            workflow_name="auto-task",
+            current_step="work",
+            step_action_count=1,
+            total_action_count=2,
+            variables={"existing": "value"},
+        )
+    )
+
+    stale = mgr.get_instance(S1, "auto-task")
+    assert stale is not None
+    db.execute(
+        "UPDATE workflow_instances "
+        "SET current_step = %s, step_action_count = %s, total_action_count = %s "
+        "WHERE session_id = %s AND workflow_name = %s",
+        ("review", 7, 11, S1, "auto-task"),
+    )
+
+    assert mgr.merge_instance_variables(S1, "auto-task", {"new": "value"}) is True
+
+    result = mgr.get_instance(S1, "auto-task")
+    assert result is not None
+    assert result.current_step == "review"
+    assert result.step_action_count == 7
+    assert result.total_action_count == 11
+    assert result.variables == {"existing": "value", "new": "value"}
+
+
+def test_merge_instance_variables_returns_false_for_missing_instance(db: HubDatabase) -> None:
+    from gobby.workflows.state_manager import WorkflowInstanceManager
+
+    _ensure_session(db, S1)
+
+    assert (
+        WorkflowInstanceManager(db).merge_instance_variables(
+            S1,
+            "missing",
+            {"new": "value"},
+        )
+        is False
+    )
+
+
 def test_get_active_instances(db: HubDatabase) -> None:
     """Test get_active_instances returns enabled instances sorted by priority."""
     from gobby.workflows.definitions import WorkflowInstance

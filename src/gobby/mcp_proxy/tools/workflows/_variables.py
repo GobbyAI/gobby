@@ -133,14 +133,15 @@ def set_variable(
     if workflow:
         if not instance_manager:
             return {"success": False, "error": "Workflow-scoped variables require instance_manager"}
-        instance = instance_manager.get_instance(resolved_session_id, workflow)
-        if not instance:
+        if not instance_manager.merge_instance_variables(
+            resolved_session_id,
+            workflow,
+            {name: value},
+        ):
             return {
                 "success": False,
                 "error": f"No workflow instance '{workflow}' found for session",
             }
-        instance.variables[name] = value
-        instance_manager.save_instance(instance)
         return {"success": True, "value": value, "scope": "workflow", "workflow": workflow}
 
     # Session-scoped: write to session_variables table
