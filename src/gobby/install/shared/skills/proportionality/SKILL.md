@@ -16,6 +16,9 @@ metadata:
 > Internal methodology skill; loaded with `get_skill(name="proportionality")` by
 > `plan-adversary` (plan altitude), `holistic-reviewer` (epic altitude), and
 > `qa-reviewer` (leaf altitude). Not a user-facing command.
+>
+> `restraint` is the authoring-side counterpart: restraint disciplines work
+> being written; proportionality judges work already written.
 
 This skill is the single source of truth for **one question, asked at every
 review altitude**:
