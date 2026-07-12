@@ -47,8 +47,6 @@ class _TestHandler(AgentEventHandlerMixin):
     def __init__(self) -> None:
         self.logger = MagicMock()
         self._session_manager = MagicMock()
-        # Prevent real DB calls in handle_subagent_start depth tracking
-        self._session_manager.db.fetchone.return_value = None
         self._session_coordinator = None
         self._message_processor = None
         self._task_manager = None
@@ -1008,6 +1006,8 @@ class TestSubagentEvents:
 
         result = handler.handle_subagent_start(event)
         assert result.decision == "allow"
+        handler._session_manager.db.fetchone.assert_not_called()
+        assert not hasattr(handler, "_pending_subagent_depths")
 
     def test_subagent_start_sets_is_subagent(self) -> None:
         handler = _TestHandler()

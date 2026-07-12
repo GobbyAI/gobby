@@ -676,6 +676,7 @@ class TestSessionMoreCoverage:
             session_id="ext-3",
             data={
                 "source": "clear",
+                "agent_depth": "2",
                 "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
             },
         )
@@ -724,7 +725,7 @@ class TestSessionMoreCoverage:
                 project_path=None,
                 terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
                 workflow_name=None,
-                agent_depth=0,
+                agent_depth=2,
                 sandbox_enabled=None,
             )
             assert handler._session_manager.register_session.call_count >= 1

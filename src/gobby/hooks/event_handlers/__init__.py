@@ -118,7 +118,6 @@ class EventHandlers(
         self._get_machine_id = get_machine_id or (lambda: "unknown-machine")
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger
-        self._pending_subagent_depths: dict[str, int] = {}
         self._dispatch_session_summaries_fn: (
             Callable[[str, bool, threading.Event | None, bool], None] | None
         ) = None
