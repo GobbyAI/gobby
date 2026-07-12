@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -303,8 +305,8 @@ async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
         task_id=None,
         merged_at=None,
     )
-    mock_worktree_storage.get.return_value = wt
-    mock_worktree_storage.claim.return_value = True
+    claimed = replace(wt, agent_session_id="sess-1")
+    mock_worktree_storage.claim_if_available.return_value = claimed
     with patch(
         "gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event",
         return_value={
@@ -318,7 +320,12 @@ async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
         )
     assert result["success"] is True
     assert result["event"]["event_type"] == "worktree_claimed"
-    mock_worktree_storage.claim.assert_called_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "sess-1")
+    mock_worktree_storage.claim_if_available.assert_called_once_with(
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        "sess-1",
+        allowed_existing_session_ids=(None, "sess-1"),
+    )
+    mock_worktree_storage.claim.assert_not_called()
     emit_event.assert_called_once_with(
         "worktree_claimed",
         worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
@@ -343,6 +350,7 @@ async def test_claim_worktree_already_claimed(registry, mock_worktree_storage) -
         task_id=None,
         merged_at=None,
     )
+    mock_worktree_storage.claim_if_available.return_value = None
     mock_worktree_storage.get.return_value = wt
     result = await registry.call(
         "claim_worktree",
@@ -355,12 +363,96 @@ async def test_claim_worktree_already_claimed(registry, mock_worktree_storage) -
 @pytest.mark.asyncio
 async def test_claim_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Test claim_worktree when worktree not found."""
+    mock_worktree_storage.claim_if_available.return_value = None
     mock_worktree_storage.get.return_value = None
     result = await registry.call(
         "claim_worktree", {"worktree_id": "nonexistent", "session_id": "sess-1"}
     )
     assert result["success"] is False
     assert "not found" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_claim_worktree_same_session_is_idempotent(registry, mock_worktree_storage) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        agent_session_id="sess-1",
+        task_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.claim_if_available.return_value = wt
+
+    result = await registry.call(
+        "claim_worktree",
+        {"worktree_id": wt.id, "session_id": "sess-1"},
+    )
+
+    assert result["success"] is True
+    mock_worktree_storage.claim_if_available.assert_called_once_with(
+        wt.id,
+        "sess-1",
+        allowed_existing_session_ids=(None, "sess-1"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_claim_worktree_has_exactly_one_winner(
+    registry, mock_worktree_storage
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        agent_session_id=None,
+        task_id=None,
+        merged_at=None,
+    )
+    owner: str | None = None
+
+    def claim_if_available(
+        worktree_id: str,
+        session_id: str,
+        *,
+        allowed_existing_session_ids: tuple[str | None, ...],
+    ) -> Worktree | None:
+        nonlocal owner
+        assert worktree_id == wt.id
+        if owner not in allowed_existing_session_ids:
+            return None
+        owner = session_id
+        return replace(wt, agent_session_id=session_id)
+
+    def get_worktree(worktree_id: str) -> Worktree:
+        assert worktree_id == wt.id
+        return replace(wt, agent_session_id=owner)
+
+    mock_worktree_storage.claim_if_available.side_effect = claim_if_available
+    mock_worktree_storage.get.side_effect = get_worktree
+
+    results = await asyncio.gather(
+        registry.call("claim_worktree", {"worktree_id": wt.id, "session_id": "sess-1"}),
+        registry.call("claim_worktree", {"worktree_id": wt.id, "session_id": "sess-2"}),
+    )
+
+    assert sum(result["success"] is True for result in results) == 1
+    assert sum(result["success"] is False for result in results) == 1
+    assert owner in {"sess-1", "sess-2"}
+    assert "already claimed" in next(
+        result["error"] for result in results if result["success"] is False
+    )
+    mock_worktree_storage.claim.assert_not_called()
 
 
 @pytest.mark.asyncio

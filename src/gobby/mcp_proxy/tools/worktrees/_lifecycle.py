@@ -52,25 +52,27 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-        worktree = ctx.worktree_storage.get(worktree_id)
-        if not worktree:
-            return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
-
-        if worktree.agent_session_id and worktree.agent_session_id != resolved_session_id:
-            return {
-                "success": False,
-                "error": f"Worktree already claimed by session '{worktree.agent_session_id}'",
-            }
-
-        updated = ctx.worktree_storage.claim(worktree_id, resolved_session_id)
+        updated = ctx.worktree_storage.claim_if_available(
+            worktree_id,
+            resolved_session_id,
+            allowed_existing_session_ids=(None, resolved_session_id),
+        )
         if not updated:
+            worktree = ctx.worktree_storage.get(worktree_id)
+            if not worktree:
+                return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+            if worktree.agent_session_id:
+                return {
+                    "success": False,
+                    "error": f"Worktree already claimed by session '{worktree.agent_session_id}'",
+                }
             return {"success": False, "error": "Failed to claim worktree"}
 
         event = emit_worktree_event(
             "worktree_claimed",
             worktree_id=worktree_id,
-            project_id=worktree.project_id,
-            branch_name=worktree.branch_name,
+            project_id=updated.project_id,
+            branch_name=updated.branch_name,
             session_id=resolved_session_id,
         )
         return {"success": True, "event": event}
