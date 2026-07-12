@@ -1216,6 +1216,37 @@ class TestDaemonProxy:
                 )
 
     @pytest.mark.asyncio
+    async def test_call_tool_uses_default_for_nonnumeric_wait_timeout(self) -> None:
+        """Nonnumeric wait timeouts fall back to the default plus HTTP buffer."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-agents",
+                    "wait_for_agent",
+                    {"run_id": "run-123", "timeout": "5m"},
+                )
+
+                assert result == {"success": True}
+                assert result["success"] is True
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/tools/call",
+                    json={
+                        "server_name": "gobby-agents",
+                        "tool_name": "wait_for_agent",
+                        "arguments": {"run_id": "run-123", "timeout": "5m"},
+                    },
+                    timeout=330.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
     async def test_call_tool_treats_wait_for_summary_as_wait_tool(self) -> None:
         """wait_for_summary uses generic wait-tool proxying and timeout buffering."""
         from gobby.mcp_proxy.stdio import DaemonProxy

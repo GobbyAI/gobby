@@ -279,10 +279,7 @@ class DaemonProxy:
             try:
                 arg_timeout = float(raw_timeout)
             except (TypeError, ValueError):
-                return {
-                    "success": False,
-                    "error": f"Invalid wait timeout: {raw_timeout!r}",
-                }
+                arg_timeout = 300.0
             if not math.isfinite(arg_timeout) or arg_timeout <= 0:
                 return {
                     "success": False,
