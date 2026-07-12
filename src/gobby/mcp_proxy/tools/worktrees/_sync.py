@@ -9,7 +9,6 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
-from gobby.mcp_proxy.tools.worktrees._merge_state import is_branch_ancestor
 
 logger = logging.getLogger(__name__)
 
@@ -298,13 +297,13 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     )
 
         async def _source_is_merged_into_target() -> bool:
-            return await asyncio.to_thread(
-                is_branch_ancestor,
-                resolved_git_mgr,
-                effective_source,
-                merge_target,
+            ancestor_result = await asyncio.to_thread(
+                resolved_git_mgr.run_git_command,
+                ["merge-base", "--is-ancestor", effective_source, merge_target],
                 cwd=merge_cwd,
+                timeout=10,
             )
+            return ancestor_result.returncode == 0
 
         if worktree.status == "merged" and await _source_is_merged_into_target():
             target_sha_result = await asyncio.to_thread(

@@ -73,6 +73,7 @@ def _local_merge_side_effect(
     status_stdout: str = "",
     incoming_stdout: str = "feature.txt\n",
     source_already_merged: bool = False,
+    preexisting_ancestor_pairs: set[tuple[str, str]] | None = None,
 ):
     stash_list_calls = 0
     merge_performed = False
@@ -110,7 +111,13 @@ def _local_merge_side_effect(
         if args == ["commit", "--no-edit"]:
             return _make_git_result(0)
         if args[:2] == ["merge-base", "--is-ancestor"]:
-            return _make_git_result(0 if source_already_merged or merge_performed else 1)
+            ancestor_pair = (args[2], args[3])
+            is_ancestor = (
+                source_already_merged
+                or merge_performed
+                or ancestor_pair in (preexisting_ancestor_pairs or set())
+            )
+            return _make_git_result(0 if is_ancestor else 1)
         return _make_git_result(0)
 
     return _run_git
@@ -167,6 +174,41 @@ async def test_merge_worktree_retry_reconciles_completed_merge_without_duplicate
     assert result["merge_sha"] == "abc123def456"
     assert "already merged" in result["message"]
     assert ["merge", "feat", "--no-ff", "--no-edit"] not in [
+        call.args[0] for call in ctx.git_manager._run_git.call_args_list
+    ]
+    ctx.worktree_storage.mark_merged.assert_called_once_with("wt-123")
+
+
+@pytest.mark.parametrize(
+    "stale_ancestor_pair",
+    [("origin/feat", "main"), ("feat", "origin/main")],
+)
+@pytest.mark.asyncio
+async def test_merge_worktree_retry_does_not_reconcile_from_remote_ref_ancestry(
+    stale_ancestor_pair: tuple[str, str],
+):
+    """Only the verified local source and target refs can prove reconciliation."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    ctx.worktree_storage.get.return_value.status = "merged"
+    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
+        preexisting_ancestor_pairs={stale_ancestor_pair}
+    )
+
+    registry = create_sync_registry(ctx)
+    merge_tool = registry.get_tool("merge_worktree")
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
+    ):
+        result = await merge_tool("wt-123")
+
+    assert result["success"] is True
+    assert result["merged"] is True
+    assert "reconciled" not in result
+    assert ["merge", "feat", "--no-ff", "--no-edit"] in [
         call.args[0] for call in ctx.git_manager._run_git.call_args_list
     ]
     ctx.worktree_storage.mark_merged.assert_called_once_with("wt-123")
