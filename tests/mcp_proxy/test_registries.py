@@ -404,7 +404,7 @@ def test_setup_hub_registry_accepts_project_id(hub_db) -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
     # Create a project in the database for foreign key constraint
-    project_id = "test-project-123"
+    project_id = "11111111-1111-4111-8111-111111111123"
     db.execute(
         "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (%s, %s, %s, %s, NOW(), NOW())",
         (project_id, "Test Project", "/tmp/test", None),
