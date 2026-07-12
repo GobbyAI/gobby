@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -12,6 +13,11 @@ from openai import BadRequestError
 
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm import local_provider_adapters as adapters
+from gobby.llm.base import (
+    VisionInputError,
+    VisionProviderError,
+    VisionProviderUnavailableError,
+)
 from gobby.llm.local_provider_adapters import (
     LMStudioLocalProviderAdapter,
     OllamaLocalProviderAdapter,
@@ -342,3 +348,125 @@ async def test_ollama_adapter_requests_json_format(
 
     assert result == {"ok": True}
     assert fake_client.calls[0][2]["json"]["format"] == "json"
+
+
+def _vision_adapter(provider: str) -> Any:
+    endpoint = LocalGenerationEndpointConfig(
+        provider=provider,
+        api_base={
+            "openai-compatible": "http://localhost:8000/v1",
+            "lmstudio": "http://localhost:1234/v1",
+            "ollama": "http://localhost:11434/v1",
+        }[provider],
+        model="vision-model",
+        api_key="test-key",
+    )
+    if provider == "openai-compatible":
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+        adapter._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=_FakeOpenAICompletions())
+        )
+        return adapter
+    if provider == "lmstudio":
+        return LMStudioLocalProviderAdapter(endpoint)
+    return OllamaLocalProviderAdapter(endpoint)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_missing_file_raises_input_error(provider: str) -> None:
+    adapter = _vision_adapter(provider)
+
+    with pytest.raises(VisionInputError, match="Image not found"):
+        await adapter.describe_image(
+            "/missing/image.png",
+            context=None,
+            model="vision-model",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_unreadable_file_raises_input_error(
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter(provider)
+
+    with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
+        with pytest.raises(VisionInputError, match="Failed to read") as exc_info:
+            await adapter.describe_image(
+                str(image_path),
+                context=None,
+                model="vision-model",
+            )
+
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+
+
+@pytest.mark.asyncio
+async def test_local_vision_uninitialised_client_raises_provider_error(tmp_path: Path) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter("openai-compatible")
+    adapter._client = None
+
+    with pytest.raises(VisionProviderUnavailableError, match="not initialised"):
+        await adapter.describe_image(
+            str(image_path),
+            context=None,
+            model="vision-model",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_provider_failure_raises_structured_error(
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter(provider)
+    if provider == "openai-compatible":
+        completions = AsyncMock()
+        completions.create.side_effect = RuntimeError("provider failed")
+        adapter._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    else:
+        adapter._post_chat = AsyncMock(side_effect=RuntimeError("provider failed"))
+
+    with pytest.raises(VisionProviderError, match="provider failed") as exc_info:
+        await adapter.describe_image(
+            str(image_path),
+            context=None,
+            model="vision-model",
+        )
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_preserves_successful_output(provider: str, tmp_path: Path) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter(provider)
+    expected = "local reply"
+    if provider == "lmstudio":
+        adapter._post_chat = AsyncMock(
+            return_value={"output": [{"type": "message", "content": expected}]}
+        )
+    elif provider == "ollama":
+        adapter._post_chat = AsyncMock(
+            return_value={"message": {"role": "assistant", "content": expected}}
+        )
+
+    result = await adapter.describe_image(
+        str(image_path),
+        context=None,
+        model="vision-model",
+    )
+
+    assert result == expected

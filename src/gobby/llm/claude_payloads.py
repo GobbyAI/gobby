@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.agents.provider_capabilities import provider_reasoning_efforts
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.llm.base import VisionInputError
 
 _SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
@@ -99,21 +100,19 @@ def strip_leading_preamble(text: str) -> str:
     return text.strip()
 
 
-def prepare_image_data(
-    image_path: str, logger: logging.Logger | None = None
-) -> tuple[str, str] | str:
+def prepare_image_data(image_path: str, logger: logging.Logger | None = None) -> tuple[str, str]:
     """Validate and prepare image data for Claude multimodal SDK input."""
     path = Path(image_path)
     if not path.exists():
-        return f"Image not found: {image_path}"
+        raise VisionInputError(f"Image not found: {image_path}")
 
     try:
         image_data = path.read_bytes()
         image_base64 = base64.standard_b64encode(image_data).decode("utf-8")
-    except Exception as exc:  # noqa: BLE001 - user-facing image read diagnostic
+    except OSError as exc:
         if logger is not None:
             logger.error("Failed to read image %s: %s", image_path, exc)
-        return f"Failed to read image: {exc}"
+        raise VisionInputError(f"Failed to read image: {exc}") from exc
 
     mime_type, _ = mimetypes.guess_type(str(path))
     if mime_type not in _SUPPORTED_IMAGE_MIME_TYPES:

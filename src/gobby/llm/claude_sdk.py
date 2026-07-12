@@ -14,7 +14,12 @@ from claude_agent_sdk import (
     query,
 )
 
-from gobby.llm.base import LLMTextResult
+from gobby.llm.base import (
+    LLMTextResult,
+    VisionProviderError,
+    VisionProviderUnavailableError,
+    validate_vision_description,
+)
 from gobby.llm.claude_models import AgenticGenerationResult
 from gobby.llm.claude_payloads import (
     claude_reasoning_options,
@@ -358,12 +363,9 @@ class ClaudeSDKClient:
         """Describe an image using Claude Agent SDK."""
         cli_path = await self._verify_cli_path()
         if not cli_path:
-            return "Image description unavailable (Claude CLI not found)"
+            raise VisionProviderUnavailableError("Claude CLI not found")
 
-        image_result = prepare_image_data(image_path, self.logger)
-        if isinstance(image_result, str):
-            return image_result
-        image_base64, mime_type = image_result
+        image_base64, mime_type = prepare_image_data(image_path, self.logger)
 
         text_prompt = (
             "Please describe this image in detail, focusing on the key visual "
@@ -429,6 +431,9 @@ class ClaudeSDKClient:
             return result_text
 
         try:
-            return str(await execute_sdk_query("describe_image", _run_query, options, self.logger))
+            result = str(
+                await execute_sdk_query("describe_image", _run_query, options, self.logger)
+            )
         except RuntimeError as exc:
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"Claude image description failed: {exc}") from exc
+        return validate_vision_description(result)

@@ -16,17 +16,19 @@ from gobby.ai import (
     VisionExtractService,
 )
 from gobby.config.app import DaemonConfig
+from gobby.llm.base import VisionProviderError
 
 pytestmark = pytest.mark.unit
 
 
 class _FakeVisionAdapter:
-    def __init__(self) -> None:
+    def __init__(self, text: str | None = None) -> None:
         self.requests: list[VisionExtractRequest] = []
+        self.text = text
 
     async def extract(self, request: VisionExtractRequest) -> str:
         self.requests.append(request)
-        return f"extracted:{request.image_path}"
+        return self.text or f"extracted:{request.image_path}"
 
 
 class _FakeNativeVisionProvider:
@@ -96,6 +98,30 @@ async def test_vision_service_does_not_invent_ocr_text_from_description() -> Non
             context="screenshot",
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sentinel",
+    [
+        "Image description unavailable (Claude CLI not found)",
+        "Image description failed: provider crashed",
+        "Image not found: /missing/image.png",
+        "Failed to read image: denied",
+    ],
+)
+async def test_vision_service_never_returns_provider_error_sentinels(sentinel: str) -> None:
+    registry = _registry()
+    service = VisionExtractService(registry, {"local:lm-studio": _FakeVisionAdapter(sentinel)})
+
+    with pytest.raises(VisionProviderError, match="error sentinel"):
+        await service.extract(
+            VisionExtractRequest(
+                image_path="/tmp/image.png",
+                provider="local:lm-studio",
+                model="llava",
+            )
+        )
 
 
 @pytest.mark.asyncio

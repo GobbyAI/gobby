@@ -13,7 +13,13 @@ from urllib.parse import urlparse
 import httpx
 
 from gobby.config.ai import LocalGenerationEndpointConfig
-from gobby.llm.base import LLMTextResult
+from gobby.llm.base import (
+    LLMTextResult,
+    VisionInputError,
+    VisionProviderError,
+    VisionProviderUnavailableError,
+    validate_vision_description,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -160,13 +166,17 @@ def _headers(api_key: str | None) -> dict[str, str]:
 def _image_data(image_path: str) -> tuple[Path, str, str, str]:
     path = Path(image_path)
     if not path.exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
+        raise VisionInputError(f"Image not found: {image_path}")
 
     mime_type, _ = mimetypes.guess_type(str(path))
     if mime_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
         mime_type = "image/png"
 
-    encoded = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+    try:
+        image_bytes = path.read_bytes()
+    except OSError as exc:
+        raise VisionInputError(f"Failed to read image: {exc}") from exc
+    encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
     data_url = f"data:{mime_type};base64,{encoded}"
     return path, mime_type, encoded, data_url
 
@@ -329,7 +339,7 @@ class OpenAICompatibleLocalProviderAdapter:
         model: str,
     ) -> str:
         if not self._client:
-            return "Image description unavailable (local LLM client not initialised)"
+            raise VisionProviderUnavailableError("Local LLM client not initialised")
 
         try:
             _, mime_type, encoded, _ = _image_data(image_path)
@@ -352,10 +362,12 @@ class OpenAICompatibleLocalProviderAdapter:
                 ],
                 max_tokens=1024,
             )
-            return response.choices[0].message.content or "No description generated"
+            return validate_vision_description(response.choices[0].message.content or "")
+        except (VisionInputError, VisionProviderError):
+            raise
         except Exception as exc:
             logger.error("Failed to describe image with local LLM: %s", exc)
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"Local image description failed: {exc}") from exc
 
 
 class LMStudioLocalProviderAdapter:
@@ -427,10 +439,13 @@ class LMStudioLocalProviderAdapter:
                 "store": False,
                 "max_output_tokens": 1024,
             }
-            return _lmstudio_text(await self._post_chat(payload, timeout=300.0))
+            result = _lmstudio_text(await self._post_chat(payload, timeout=300.0))
+            return validate_vision_description(result)
+        except (VisionInputError, VisionProviderError):
+            raise
         except Exception as exc:
             logger.error("Failed to describe image with LM Studio: %s", exc)
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"LM Studio image description failed: {exc}") from exc
 
     async def _post_chat(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
@@ -517,10 +532,13 @@ class OllamaLocalProviderAdapter:
                 "keep_alive": -1,
                 "options": {"num_predict": 1024},
             }
-            return _ollama_text(await self._post_chat(payload, timeout=300.0))
+            result = _ollama_text(await self._post_chat(payload, timeout=300.0))
+            return validate_vision_description(result)
+        except (VisionInputError, VisionProviderError):
+            raise
         except Exception as exc:
             logger.error("Failed to describe image with Ollama: %s", exc)
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"Ollama image description failed: {exc}") from exc
 
     async def _post_chat(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:

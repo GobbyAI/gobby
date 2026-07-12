@@ -29,6 +29,7 @@ from gobby.config.feature_base import (
     FeatureCandidateInput,
     FeatureProfile,
 )
+from gobby.llm.base import validate_vision_description
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -306,9 +307,10 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     caller="llm-vision-route",
                 )
             )
+            description = validate_vision_description(result.text)
             return {
-                "text": result.text,
-                "description": result.text,
+                "text": description,
+                "description": description,
                 "ocr_text": result.ocr_text,
                 "bytes": len(image_bytes),
                 "content_type": file.content_type or "application/octet-stream",
