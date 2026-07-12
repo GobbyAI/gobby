@@ -37,6 +37,7 @@ from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.wait_tools import (
@@ -73,7 +74,7 @@ def _mock_hook_manager() -> MagicMock:
 
 def _hook_envelope(**payload: Any) -> dict[str, Any]:
     envelope = {
-        "schema_version": 1,
+        "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
         "input_data": {},
@@ -3531,7 +3532,10 @@ class TestHooksEndpoints:
             )
 
         assert response.status_code == 400
-        assert "Unsupported schema_version" in response.json()["detail"]
+        assert response.json()["detail"] == (
+            "Unsupported schema_version: 99. "
+            f"Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
+        )
 
     def test_execute_hook_envelope_requires_source(self, session_storage: SessionManager) -> None:
         """Envelope requests still require source after normalization."""
