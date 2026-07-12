@@ -430,7 +430,8 @@ class GitHubIssueTriageService:
             issue,
             outcome,
             source,
-            build_approved=judgment.build_approved and existing_task_id is None,
+            build_approved=judgment.build_approved,
+            dispatch_build=existing_task_id is None,
         )
         task_id = (
             result.get("task_id") if isinstance(result.get("task_id"), str) else existing_task_id
@@ -466,6 +467,7 @@ class GitHubIssueTriageService:
         source: str,
         *,
         build_approved: bool = False,
+        dispatch_build: bool = True,
     ) -> dict[str, Any]:
         """Apply deterministic side effects for a triage outcome."""
         if outcome.verdict == "implement" and not build_approved:
@@ -476,7 +478,8 @@ class GitHubIssueTriageService:
         task: Task | None = None
         if outcome.verdict == "implement":
             task = self._create_or_update_task(project_id, issue)
-            await self._run_build(task)
+            if dispatch_build:
+                await self._run_build(task)
             await self._comment_and_label(
                 issue,
                 outcome.comment or f"Accepted for implementation as Gobby task #{task.seq_num}.",

@@ -738,7 +738,7 @@ async def test_user_content_change_retriages_without_rebuilding_existing_task(
         "webhook",
         issue_data=json.loads(_payload().decode())["issue"],
     )
-    await service.triage_issue(
+    result = await service.triage_issue(
         sample_project["id"],
         "owner/repo",
         42,
@@ -749,6 +749,11 @@ async def test_user_content_change_retriages_without_rebuilding_existing_task(
     assert len(github.called("add_issue_comment")) == 2
     assert len(github.called("add_labels_to_issue")) == 2
     build_func.assert_awaited_once()
+    assert result["verdict"] == "implement"
+    assert github.called("add_labels_to_issue")[-1]["labels"] == ["gobby:accepted"]
+    record = GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
+    assert record is not None
+    assert record.verdict == result["verdict"]
 
 
 async def test_transient_delivery_failure_retries_then_processes(
