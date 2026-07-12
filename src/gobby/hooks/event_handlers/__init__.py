@@ -10,6 +10,7 @@ Classes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import Callable
@@ -70,6 +71,7 @@ class EventHandlers(
         get_machine_id: Callable[[], str] | None = None,
         resolve_project_id: Callable[[str | None, str | None], str] | None = None,
         code_index_trigger: CodeIndexTrigger | None = None,
+        event_loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         """
@@ -90,6 +92,7 @@ class EventHandlers(
             get_machine_id: Function to get machine ID
             resolve_project_id: Function to resolve project ID from cwd
             code_index_trigger: Optional trigger for code indexing on file changes.
+            event_loop: Daemon event loop used to schedule work from hook worker threads.
             logger: Optional logger instance
         """
         if (
@@ -118,6 +121,7 @@ class EventHandlers(
         self._get_machine_id = get_machine_id or (lambda: "unknown-machine")
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger
+        self._event_loop = event_loop
         self._dispatch_session_summaries_fn: (
             Callable[[str, bool, threading.Event | None, bool], None] | None
         ) = None

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
 DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
+DEFAULT_WORKFLOW_AUDIT_RETENTION_DAYS = 7
 
 
 def _log_wiki_watcher_failure(task: asyncio.Task[None]) -> None:
@@ -57,9 +58,11 @@ def _default_loops() -> dict[str, Any]:
         tmux_window_name_repair_loop,
         unmodeled_observation_cleanup_loop,
     )
+    from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
 
     return {
         "metrics_cleanup_loop": metrics_cleanup_loop,
+        "workflow_audit_cleanup_loop": workflow_audit_cleanup_loop,
         "metrics_archive_loop": metrics_archive_loop,
         "span_cleanup_loop": span_cleanup_loop,
         "unmodeled_observation_cleanup_loop": unmodeled_observation_cleanup_loop,
@@ -158,9 +161,24 @@ def start_periodic_tasks(
     """Start all lightweight periodic background tasks."""
     loops = {**_default_loops(), **loops}
     db_executor = getattr(runner, "db_executor", None)
+    session_lifecycle_config = getattr(runner.config, "session_lifecycle", None)
+    workflow_audit_retention_days = getattr(
+        session_lifecycle_config,
+        "workflow_audit_retention_days",
+        DEFAULT_WORKFLOW_AUDIT_RETENTION_DAYS,
+    )
     runner._metrics_cleanup_task = asyncio.create_task(
         loops["metrics_cleanup_loop"](runner.metrics_manager, lambda: runner._shutdown_requested),
         name="metrics-cleanup",
+    )
+    runner._workflow_audit_cleanup_task = asyncio.create_task(
+        loops["workflow_audit_cleanup_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            retention_days=workflow_audit_retention_days,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="workflow-audit-cleanup",
     )
     runner._metrics_archive_task = asyncio.create_task(
         loops["metrics_archive_loop"](
@@ -317,6 +335,7 @@ def start_periodic_tasks(
         1
         for task in (
             runner._metrics_cleanup_task,
+            runner._workflow_audit_cleanup_task,
             runner._metrics_archive_task,
             runner._span_cleanup_task,
             runner._unmodeled_observations_cleanup_task,

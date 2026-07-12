@@ -266,6 +266,7 @@ class HookManagerFactory:
             get_machine_id=get_machine_id,
             resolve_project_id=resolve_project_id,
             code_index_trigger=code_index_trigger,
+            event_loop=loop,
             logger=hook_logger,
         )
 

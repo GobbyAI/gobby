@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import Callable
@@ -45,6 +46,7 @@ class EventHandlersBase:
     _resolve_project_id: Callable[[str | None, str | None], str]
     _code_index_trigger: Any | None
     _dispatch_session_summaries_fn: DispatchSessionSummariesFn | None
+    _event_loop: asyncio.AbstractEventLoop | None
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 
