@@ -305,6 +305,18 @@ class GobbyDaemonTools:
                 ],
                 isError=True,
             )
+        if session_id and tokens.resolved_session_id is None:
+            reset_seeded_contexts(tokens)
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Error: session_id '{session_id}' not found. "
+                        "Use a valid session UUID or local #N reference.",
+                    )
+                ],
+                isError=True,
+            )
         # Propagate only the resolved platform UUID. Falling back to the raw
         # ref would re-poison workflow checks and tool filters.
         effective_session_id = tokens.resolved_session_id

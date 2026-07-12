@@ -239,6 +239,19 @@ async def call_tool(
             "tool_name": tool_name,
         }
 
+    try:
+        effective_session_id = await asyncio.to_thread(
+            service._get_effective_session_id, session_id
+        )
+    except ValueError as exc:
+        return {
+            "success": False,
+            "error": f"Invalid session reference {session_id!r}: {exc}",
+            "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
+            "server_name": server_name,
+            "tool_name": tool_name,
+        }
+
     if enforce_workflow:
         (
             server_name,
@@ -249,13 +262,11 @@ async def call_tool(
             server_name=server_name,
             tool_name=tool_name,
             arguments=arguments,
-            session_id=session_id,
+            session_id=effective_session_id,
         )
         if workflow_error is not None:
             return workflow_error
         arguments = cast("dict[str, Any]", arguments)
-
-    effective_session_id = await asyncio.to_thread(service._get_effective_session_id, session_id)
 
     if service._tool_filter and effective_session_id:
         allowed, reason = await asyncio.to_thread(

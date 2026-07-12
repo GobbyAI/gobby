@@ -1207,8 +1207,8 @@ class TestResolvePlatformSessionId:
             hook_manager_resolver=lambda: hook_manager,
         )
 
-    def test_resolve_platform_session_id_returns_none_on_valueerror(self, caplog) -> None:
-        """ValueError from resolver → warning logged and unresolved ref is rejected."""
+    def test_resolve_platform_session_id_raises_on_explicit_unresolvable_ref(self, caplog) -> None:
+        """An explicit unresolved ref is logged and rejected for the caller to handle."""
         import logging as _logging
 
         session_manager = MagicMock()
@@ -1216,9 +1216,9 @@ class TestResolvePlatformSessionId:
         proxy = self._make_proxy(session_manager)
 
         caplog.set_level(_logging.WARNING, logger="gobby.mcp.server")
-        result = proxy._resolve_platform_session_id("bogus-session-ref")
+        with pytest.raises(ValueError, match="Session not found"):
+            proxy._resolve_platform_session_id("bogus-session-ref")
 
-        assert result is None
         assert any("Could not resolve session reference" in rec.message for rec in caplog.records)
 
     def test_resolve_platform_session_id_propagates_non_valueerror(self) -> None:
