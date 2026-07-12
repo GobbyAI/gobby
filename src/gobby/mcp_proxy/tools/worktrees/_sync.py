@@ -587,17 +587,23 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     }
                 stash_oid = after_oid
 
+            # Git can leave MERGE_HEAD/index state behind even when the command
+            # raises instead of returning a nonzero result (for example, timeout).
+            # Treat the transaction as cleanup-required before starting merge and
+            # clear the flag only after Git proves the merge command succeeded.
+            merge_cleanup_required = True
             merge_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 ["merge", source_ref, "--no-ff", "--no-edit"],
                 cwd=merge_cwd,
                 timeout=60,
             )
+            if merge_result.returncode == 0:
+                merge_cleanup_required = False
             auto_resolved: list[str] = []
             message = f"Merged {effective_source} into local {merge_target}"
 
             if merge_result.returncode != 0:
-                merge_cleanup_required = True
                 # Detect unmerged (conflicted) files via git index — more reliable
                 # than parsing human-readable merge output for "CONFLICT" strings
                 conflicted_files = await run_thread_to_completion(

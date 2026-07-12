@@ -1,6 +1,7 @@
 """Tests for merge_worktree tool in _sync.py — worktree_path returns and auto-resolve."""
 
 import asyncio
+import subprocess
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -765,6 +766,43 @@ async def test_merge_worktree_abort_failure_is_surfaced_and_unlocks():
     ):
         await merge_tool("wt-123")
 
+    assert lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_timeout_aborts_before_unlock():
+    """A merge timeout still aborts any MERGE_HEAD state before unlocking."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    cleanup_calls: list[str] = []
+
+    def timeout_merge(args, cwd=None, timeout=30, check=False):
+        if args == ["merge", "refs/heads/feat", "--no-ff", "--no-edit"]:
+            raise subprocess.TimeoutExpired(args, timeout)
+        if args == ["rev-parse", "--verify", "-q", "MERGE_HEAD"]:
+            cleanup_calls.append("inspect")
+            return _make_git_result(0, stdout="merge-head\n")
+        if args == ["merge", "--abort"]:
+            cleanup_calls.append("abort")
+            return _make_git_result(0)
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = timeout_merge
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+            return_value=(ctx.git_manager, "test-project", None),
+        ),
+        pytest.raises(subprocess.TimeoutExpired),
+    ):
+        await merge_tool("wt-123")
+
+    assert cleanup_calls == ["inspect", "abort"]
     assert lock.locked() is False
 
 
