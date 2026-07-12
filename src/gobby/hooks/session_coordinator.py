@@ -32,6 +32,18 @@ _AUTH_PROMPT_RE = re.compile(
 )
 _NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
 _INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
+_TMUX_CAPTURE_HISTORY_LINES = 2000
+_MAX_TMUX_RESULT_CHARS = 64_000
+_TMUX_TRUNCATION_MARKER = "[... tmux output truncated; showing recent output ...]\n"
+
+
+def _bound_tmux_result(output: str) -> str:
+    """Return stripped tmux output capped to the newest diagnostic context."""
+    stripped = output.strip()
+    if len(stripped) <= _MAX_TMUX_RESULT_CHARS:
+        return stripped
+    retained_chars = _MAX_TMUX_RESULT_CHARS - len(_TMUX_TRUNCATION_MARKER)
+    return f"{_TMUX_TRUNCATION_MARKER}{stripped[-retained_chars:]}"
 
 
 def _format_no_activity_error(result: Any) -> str:
@@ -409,14 +421,23 @@ class SessionCoordinator:
                     from gobby.agents.tmux import get_configured_tmux_command_prefix
 
                     cmd = get_configured_tmux_command_prefix()
-                    cmd.extend(["capture-pane", "-t", tmux_session_name, "-p", "-S", "-"])
+                    cmd.extend(
+                        [
+                            "capture-pane",
+                            "-t",
+                            tmux_session_name,
+                            "-p",
+                            "-S",
+                            f"-{_TMUX_CAPTURE_HISTORY_LINES}",
+                        ]
+                    )
 
                     # The configured tmux binary receives a fixed argument list.
                     proc = subprocess.run(  # nosec B603
                         cmd, capture_output=True, timeout=5, text=True
                     )
                     if proc.returncode == 0 and proc.stdout.strip():
-                        result = proc.stdout.strip()
+                        result = _bound_tmux_result(proc.stdout)
                         self.logger.info(
                             f"Captured result from tmux session '{tmux_session_name}' "
                             f"for agent {agent_run_id} ({len(result)} chars)"

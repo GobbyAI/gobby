@@ -28,7 +28,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
-from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.hooks.session_coordinator import (
+    _MAX_TMUX_RESULT_CHARS,
+    _TMUX_TRUNCATION_MARKER,
+    SessionCoordinator,
+    _bound_tmux_result,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -362,6 +367,54 @@ class TestSessionLifecycleTransitions:
 
 class TestAgentRunCompletion:
     """Test agent run completion logic."""
+
+    def test_bound_tmux_result_preserves_short_output(self) -> None:
+        assert _bound_tmux_result("  short output\n") == "short output"
+
+    def test_bound_tmux_result_retains_newest_output(self) -> None:
+        output = "a" * _MAX_TMUX_RESULT_CHARS + "newest"
+
+        result = _bound_tmux_result(output)
+
+        assert len(result) == _MAX_TMUX_RESULT_CHARS
+        assert result.startswith(_TMUX_TRUNCATION_MARKER)
+        assert result.endswith("newest")
+
+    @patch("gobby.agents.tmux.get_configured_tmux_command_prefix", side_effect=lambda: ["tmux"])
+    @patch("subprocess.run")
+    def test_complete_agent_run_bounds_tmux_capture(
+        self,
+        mock_run: MagicMock,
+        _mock_tmux_prefix: MagicMock,
+    ) -> None:
+        large_output = "old" * _MAX_TMUX_RESULT_CHARS + "newest"
+        mock_run.side_effect = [
+            SimpleNamespace(returncode=0, stdout=large_output),
+            SimpleNamespace(returncode=0, stdout=""),
+        ]
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run_manager.db.fetchone.return_value = None
+        mock_agent_run_manager.get.return_value = MagicMock(
+            status="running",
+            tmux_session_name="agent-run",
+        )
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        session = SimpleNamespace(
+            id="session-id",
+            agent_run_id="run-id",
+            summary_markdown=None,
+            last_assistant_content=None,
+            tool_call_count=1,
+            turn_count=1,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        result = mock_agent_run_manager.complete.call_args.kwargs["result"]
+        assert len(result) == _MAX_TMUX_RESULT_CHARS
+        assert result.endswith("newest")
+        capture_command = mock_run.call_args_list[0].args[0]
+        assert capture_command[-2:] == ["-S", "-2000"]
 
     @pytest.mark.asyncio
     async def test_complete_agent_run_flushes_stats_before_refresh(self) -> None:
