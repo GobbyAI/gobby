@@ -2,7 +2,7 @@
 name: proportionality
 description: Judge whether mechanism is proportionate to the goal. Flag complexity with no concrete consumer or stated requirement — speculative abstraction, indirection without payoff, single-value config, framework overkill. Ambition and size are never findings. Shared by plan, epic, and leaf review.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: over-engineering, proportionality, rube goldberg, yagni, premature abstraction, gold-plating
 metadata:

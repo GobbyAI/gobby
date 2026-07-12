@@ -3,6 +3,7 @@ name: test-driven-development
 description: "Required TDD loop for tasks that need red, green, refactor, final-green, and test-quality evidence."
 version: "1.0.0"
 category: core
+internal: true
 triggers: tdd, test-driven development, red green refactor
 metadata:
   gobby:

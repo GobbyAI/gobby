@@ -2,7 +2,7 @@
 name: expansion-agent-selection
 description: Select the best bundled developer agent for automated expansion leaves and document fallback decisions.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: expansion agent selection, assigned agent, automated leaves
 metadata:

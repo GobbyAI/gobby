@@ -2,7 +2,7 @@
 name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
 version: "1.1.0"
-category: core
+category: methodology
 internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
 metadata:

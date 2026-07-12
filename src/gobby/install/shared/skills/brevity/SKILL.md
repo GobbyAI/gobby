@@ -1,6 +1,7 @@
 ---
 name: brevity
 description: "Anti-slop output mode. Kills filler, summary-stamps, negation framing, follow-up menus, and plain-language restatement. Three compression levels: lite, full, ultra."
+version: "1.0.0"
 category: optimization
 triggers:
   - brevity

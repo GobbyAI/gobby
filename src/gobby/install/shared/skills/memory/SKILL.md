@@ -1,6 +1,7 @@
 ---
 name: memory
 description: When and how to use Gobby's persistent memory system effectively. Covers decision frameworks for what to remember, how to write durable memories, and maintenance patterns.
+version: "1.0.0"
 category: core
 alwaysApply: false
 triggers: remember, recall, forget, memory

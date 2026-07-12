@@ -3,6 +3,7 @@ name: development-discipline
 description: "Developer-agent discipline for test judgment, validation evidence, and TDD-required task escalation."
 version: "1.0.0"
 category: core
+internal: true
 triggers: development discipline, developer validation, test judgment
 metadata:
   gobby:

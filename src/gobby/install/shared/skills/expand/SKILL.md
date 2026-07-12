@@ -1,6 +1,7 @@
 ---
 name: expand
 description: "Use when the user asks to expand a task into a concrete task tree."
+version: "1.0.0"
 category: core
 triggers: expand task, break down, subtask, decompose
 metadata:

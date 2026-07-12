@@ -2,7 +2,7 @@
 name: plan-draft
 description: Methodology for drafting a gobby plan document — phases, task format, TDD compatibility, categories, hierarchy, and dependency notation. Use when drafting or revising a plan artifact.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: plan drafting, plan format, plan specification
 metadata:

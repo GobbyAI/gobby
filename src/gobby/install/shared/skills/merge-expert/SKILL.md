@@ -2,7 +2,7 @@
 name: merge-expert
 description: Methodology for PR-aware delivery — probe branch protection, open/gate PRs, land via GitHub when required, or run the direct multi-worktree merge campaign.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: merge campaign, multi-worktree merge, merge orchestrator, surgical merge
 metadata:

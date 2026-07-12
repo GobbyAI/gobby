@@ -1,6 +1,7 @@
 ---
 name: source-control
 description: Commit message format and release PR process. Use when ready to commit or push a release; use task-transitions for task close/review gates.
+version: "1.0.0"
 category: core
 triggers: commit, git commit, commit changes, release, push release, create pr, pull request
 metadata:

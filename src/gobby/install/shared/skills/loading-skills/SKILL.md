@@ -1,7 +1,9 @@
 ---
 name: loading-skills
 description: "How to discover and load skills. Covers local skill search, hub search, and when to proactively look for skills."
+version: "1.0.0"
 category: core
+triggers: skills, load skill, find skill, skill hub, discover skills
 metadata:
   gobby:
     audience: all
