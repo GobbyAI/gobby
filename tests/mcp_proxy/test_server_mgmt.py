@@ -4,9 +4,81 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
+from gobby.storage.mcp import LocalMCPManager
 
 pytestmark = pytest.mark.unit
+
+
+class TestServerManagementServicePersistence:
+    """Tests durable add/remove behavior through MCPClientManager."""
+
+    async def test_add_and_remove_survive_manager_restarts(
+        self,
+        temp_db,
+        sample_project,
+    ) -> None:
+        project_id = sample_project["id"]
+        storage = LocalMCPManager(temp_db)
+        manager = MCPClientManager(
+            server_configs=[],
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        service = ServerManagementService(manager, config_manager=MagicMock())
+
+        added = await service.add_server(
+            "durable-server",
+            "http",
+            url="https://mcp.example.test",
+            enabled=False,
+            project_id=project_id,
+        )
+
+        assert added["success"] is True
+        assert storage.get_server("durable-server", project_id) is not None
+        restarted = MCPClientManager(
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        assert restarted.has_server("durable-server")
+
+        removed = await ServerManagementService(
+            restarted,
+            config_manager=MagicMock(),
+        ).remove_server("durable-server")
+
+        assert removed["success"] is True
+        assert storage.get_server("durable-server", project_id) is None
+        restarted_again = MCPClientManager(
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        assert not restarted_again.has_server("durable-server")
+
+    async def test_duplicate_add_raises_value_error(
+        self,
+        temp_db,
+        sample_project,
+    ) -> None:
+        project_id = sample_project["id"]
+        storage = LocalMCPManager(temp_db)
+        manager = MCPClientManager(
+            server_configs=[],
+            project_id=project_id,
+            mcp_db_manager=storage,
+        )
+        service = ServerManagementService(manager, config_manager=MagicMock())
+        kwargs = {
+            "url": "https://mcp.example.test",
+            "enabled": False,
+            "project_id": project_id,
+        }
+        await service.add_server("duplicate-server", "http", **kwargs)
+
+        with pytest.raises(ValueError, match="already exists"):
+            await service.add_server("duplicate-server", "http", **kwargs)
 
 
 class TestServerManagementServiceImport:

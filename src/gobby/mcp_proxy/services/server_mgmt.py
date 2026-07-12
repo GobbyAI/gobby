@@ -5,10 +5,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
-from gobby.mcp_proxy.services._manager_compat import (
-    disconnect_manager_server,
-    manager_is_connected,
-)
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -87,6 +83,8 @@ class ServerManagementService:
 
             try:
                 await self._mcp_manager.add_server(server_config)
+            except ValueError:
+                raise
             except Exception as e:
                 if self._mcp_manager.has_server(name):
                     logger.warning(f"Added server {name} but connection failed: {e}")
@@ -103,6 +101,8 @@ class ServerManagementService:
                 "connected": enabled,
             }
 
+        except ValueError:
+            raise
         except Exception as e:
             logger.exception(f"Unexpected error adding server {name}")
             return {"success": False, "error": str(e)}
@@ -113,21 +113,7 @@ class ServerManagementService:
         Disconnects the server first if connected, then removes the configuration.
         """
         try:
-            # First disconnect if connected
-            if await manager_is_connected(self._mcp_manager, name):
-                try:
-                    await disconnect_manager_server(self._mcp_manager, name)
-                    logger.info(f"Disconnected server {name} before removal")
-                except Exception as e:
-                    logger.warning(f"Error disconnecting server {name}: {e}")
-                    # Continue with removal even if disconnect fails
-
-            # Remove from runtime config
-            self._mcp_manager.remove_server_config(name)
-
-            # Persist
-            # self._config_manager.remove_mcp_server(name)
-
+            await self._mcp_manager.remove_server(name)
             return {"success": True, "message": f"Server {name} removed"}
         except Exception as e:
             logger.error(f"Failed to remove server {name}: {e}")
