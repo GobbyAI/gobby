@@ -257,9 +257,7 @@ async def call_tool(
                 "tool_name": tool_name,
             }
 
-    should_check_schema = service._validate_arguments and (
-        bool(arguments) or effective_session_id is not None or project_id_from_context
-    )
+    should_check_schema = service._validate_arguments
     if should_check_schema:
         validation_schema_result: dict[str, Any] | None = None
         try:
@@ -275,15 +273,6 @@ async def call_tool(
                     effective_session_id,
                 )
                 _inject_required_project_id_argument(arguments, input_schema, project_id)
-                if not arguments:
-                    return await _execute_tool_dispatch(
-                        service=service,
-                        server_name=server_name,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        effective_session_id=effective_session_id,
-                        emit_after_workflow=enforce_workflow,
-                    )
                 if strip_unknown:
                     properties = input_schema.get("properties", {})
                     unknown_keys = [k for k in arguments if k not in properties]

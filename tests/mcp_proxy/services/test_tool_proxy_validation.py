@@ -492,20 +492,62 @@ class TestCallToolPreValidation:
         assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_no_validation_for_empty_arguments(self, tool_proxy, mock_mcp_manager):
-        """Verify no validation is performed when arguments are empty."""
+    async def test_empty_arguments_dispatch_when_schema_has_no_required_params(
+        self, tool_proxy, mock_mcp_manager
+    ):
+        """Empty arguments remain valid when the schema requires nothing."""
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {
+                    "name": "test_tool",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"optional": {"type": "string"}},
+                    },
+                },
+            }
+        )
         mock_mcp_manager.call_tool.return_value = {"success": True}
 
-        await tool_proxy.call_tool(
+        result = await tool_proxy.call_tool(
             server_name="test-server",
             tool_name="test_tool",
-            arguments={},  # Empty args
+            arguments={},
         )
 
-        # Should pass through - empty args don't trigger validation
-        mock_mcp_manager.call_tool.assert_called_once()
-        assert mock_mcp_manager.call_tool.call_count == 1
-        assert mock_mcp_manager.call_tool.call_args is not None
+        assert result == {"success": True}
+        mock_mcp_manager.call_tool.assert_awaited_once_with(
+            "test-server", "test_tool", {}, session_id=None
+        )
+
+    async def test_empty_arguments_reject_missing_required_params(
+        self, tool_proxy, mock_mcp_manager
+    ):
+        """Empty arguments must not bypass required-parameter validation."""
+        input_schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {"name": "test_tool", "inputSchema": input_schema},
+            }
+        )
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="test_tool",
+            arguments={},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "INVALID_ARGUMENTS"
+        assert result["validation_errors"] == ["Missing required parameter 'name'"]
+        assert result["schema"] == input_schema
+        mock_mcp_manager.call_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_schema_fetch_failure_allows_execution(self, tool_proxy, mock_mcp_manager):
