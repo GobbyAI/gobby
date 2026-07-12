@@ -89,6 +89,77 @@ def test_register_github_triage_cron_disables_existing_job_when_config_disabled(
     assert job.enabled is False
 
 
+def test_handler_registration_failure_does_not_create_enabled_job(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    GitHubTriageStore(temp_db).upsert_config(
+        GitHubTriageConfig(
+            project_id=sample_project["id"],
+            enabled=True,
+            repositories=("owner/repo",),
+        )
+    )
+    storage = CronJobStorage(temp_db)
+    executor = CronExecutor(storage=storage)
+    monkeypatch.setattr(
+        executor,
+        "register_handler",
+        MagicMock(side_effect=RuntimeError("handler registration failed")),
+    )
+
+    count = register_github_triage_cron(
+        cron_storage=storage,
+        cron_executor=executor,
+        db=temp_db,
+        mcp_manager=MagicMock(),
+        task_manager=LocalTaskManager(temp_db),
+        project_id=sample_project["id"],
+    )
+
+    assert count == 0
+    assert storage.get_job_by_name(github_triage_job_name(sample_project["id"])) is None
+
+
+def test_handler_registration_failure_disables_existing_enabled_job(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    GitHubTriageStore(temp_db).upsert_config(
+        GitHubTriageConfig(
+            project_id=sample_project["id"],
+            enabled=True,
+            repositories=("owner/repo",),
+        )
+    )
+    storage, _executor, _count = _register(temp_db, sample_project)
+    existing = storage.get_job_by_name(github_triage_job_name(sample_project["id"]))
+    assert existing is not None
+    assert existing.enabled is True
+
+    executor = CronExecutor(storage=storage)
+    monkeypatch.setattr(
+        executor,
+        "register_handler",
+        MagicMock(side_effect=RuntimeError("handler registration failed")),
+    )
+    count = register_github_triage_cron(
+        cron_storage=storage,
+        cron_executor=executor,
+        db=temp_db,
+        mcp_manager=MagicMock(),
+        task_manager=LocalTaskManager(temp_db),
+        project_id=sample_project["id"],
+    )
+
+    job = storage.get_job_by_name(github_triage_job_name(sample_project["id"]))
+    assert count == 0
+    assert job is not None
+    assert job.enabled is False
+
+
 def test_registration_failure_for_one_project_does_not_abort_later_projects(
     temp_db,
     sample_project,

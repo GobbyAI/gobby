@@ -138,6 +138,21 @@ def _register_project(
             logger.info("Disabled system cron job: %s", job_name)
         return False
 
+    handler = create_github_triage_handler(
+        db=db,
+        mcp_manager=mcp_manager,
+        task_manager=task_manager,
+        memory_manager=memory_manager,
+        secret_store=secret_store,
+    )
+    try:
+        cron_executor.register_handler(handler_name, handler)
+    except Exception:
+        if existing and existing.enabled:
+            cron_storage.update_job(existing.id, enabled=False)
+            cron_storage.update_system_job_bookkeeping(existing.id, next_run_at=None)
+        raise
+
     if existing is None:
         cron_storage.create_job(
             project_id=project.id,
@@ -179,14 +194,6 @@ def _register_project(
                 enabled=True,
             )
 
-    handler = create_github_triage_handler(
-        db=db,
-        mcp_manager=mcp_manager,
-        task_manager=task_manager,
-        memory_manager=memory_manager,
-        secret_store=secret_store,
-    )
-    cron_executor.register_handler(handler_name, handler)
     return True
 
 
