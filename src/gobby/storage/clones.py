@@ -213,24 +213,40 @@ class LocalCloneManager:
 
     def get(self, clone_id: str) -> Clone | None:
         """Get clone by ID."""
+        clone = self._get_any(clone_id)
+        if clone and clone.status == CloneStatus.CLEANUP.value:
+            return None
+        return clone
+
+    def _get_any(self, clone_id: str) -> Clone | None:
+        """Get a clone by ID, including terminal cleanup records."""
         row = self.db.fetchone("SELECT * FROM clones WHERE id = %s", (clone_id,))
         return Clone.from_row(row) if row else None
 
     def get_by_task(self, task_id: str) -> Clone | None:
         """Get clone linked to a task."""
-        row = self.db.fetchone("SELECT * FROM clones WHERE task_id = %s", (task_id,))
+        row = self.db.fetchone(
+            "SELECT * FROM clones WHERE task_id = %s AND status != %s",
+            (task_id, CloneStatus.CLEANUP.value),
+        )
         return Clone.from_row(row) if row else None
 
     def get_by_path(self, clone_path: str) -> Clone | None:
         """Get clone by path."""
-        row = self.db.fetchone("SELECT * FROM clones WHERE clone_path = %s", (clone_path,))
+        row = self.db.fetchone(
+            "SELECT * FROM clones WHERE clone_path = %s AND status != %s",
+            (clone_path, CloneStatus.CLEANUP.value),
+        )
         return Clone.from_row(row) if row else None
 
     def get_by_branch(self, project_id: str, branch_name: str) -> Clone | None:
         """Get clone by project and branch name."""
         row = self.db.fetchone(
-            "SELECT * FROM clones WHERE project_id = %s AND branch_name = %s",
-            (project_id, branch_name),
+            """
+            SELECT * FROM clones
+            WHERE project_id = %s AND branch_name = %s AND status != %s
+            """,
+            (project_id, branch_name, CloneStatus.CLEANUP.value),
         )
         return Clone.from_row(row) if row else None
 
@@ -253,8 +269,8 @@ class LocalCloneManager:
         Returns:
             List of Clone instances
         """
-        conditions = []
-        params: list[Any] = []
+        conditions = ["status != %s"]
+        params: list[Any] = [CloneStatus.CLEANUP.value]
 
         if project_id:
             conditions.append("project_id = %s")
@@ -269,13 +285,10 @@ class LocalCloneManager:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
 
+        query = f"SELECT * FROM clones WHERE {where_clause} "  # nosec
+        query += "ORDER BY created_at DESC LIMIT %s"
         rows = self.db.fetchall(
-            f"""
-            SELECT * FROM clones
-            WHERE {where_clause}
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,  # nosec B608
+            query,
             tuple(params),
         )
         return [Clone.from_row(row) for row in rows]
@@ -329,12 +342,10 @@ class LocalCloneManager:
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [clone_id]
 
-        self.db.execute(
-            f"UPDATE clones SET {set_clause} WHERE id = %s",  # nosec B608
-            tuple(values),
-        )
+        query = f"UPDATE clones SET {set_clause} WHERE id = %s"  # nosec
+        self.db.execute(query, tuple(values))
 
-        return self.get(clone_id)
+        return self._get_any(clone_id)
 
     def delete(self, clone_id: str) -> bool:
         """
@@ -425,9 +436,21 @@ class LocalCloneManager:
             session_id: Session ID claiming ownership
 
         Returns:
-            Updated Clone or None if not found
+            Updated Clone, or None if the clone is missing or owned by another session
         """
-        return self.update(clone_id, agent_session_id=session_id)
+        cursor = self.db.execute(
+            """
+            UPDATE clones
+            SET agent_session_id = %s, updated_at = %s
+            WHERE id = %s
+              AND (agent_session_id IS NULL OR agent_session_id = %s)
+              AND status != %s
+            """,
+            (session_id, utc_now(), clone_id, session_id, CloneStatus.CLEANUP.value),
+        )
+        if cursor.rowcount <= 0:
+            return None
+        return self.get(clone_id)
 
     def release(self, clone_id: str) -> Clone | None:
         """

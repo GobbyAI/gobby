@@ -1,5 +1,6 @@
 """Tests for local clone storage manager."""
 
+import threading
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -7,6 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.clones import Clone, CloneStatus, LocalCloneManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -346,6 +349,14 @@ class TestLocalCloneManagerGet:
 
         assert clone is None
 
+    def test_get_hides_terminal_cleanup_record(self, manager, mock_db) -> None:
+        """Terminal cleanup rows behave as removed from normal lookups."""
+        mock_db.fetchone.return_value = _clone_row(status=CloneStatus.CLEANUP.value)
+
+        clone = manager.get("clone-123456")
+
+        assert clone is None
+
 
 class TestLocalCloneManagerGetByTask:
     """Tests for LocalCloneManager.get_by_task method."""
@@ -457,6 +468,16 @@ class TestLocalCloneManagerList:
         query = call_args[0][0]
         assert "project_id = %s" in query
         assert "status = %s" in query
+
+    def test_list_excludes_terminal_cleanup_records(self, manager, mock_db) -> None:
+        """Normal clone listings never expose terminal cleanup rows."""
+        mock_db.fetchall.return_value = []
+
+        manager.list_clones()
+
+        query, params = mock_db.fetchall.call_args.args
+        assert "status != %s" in query
+        assert params[0] == CloneStatus.CLEANUP.value
 
 
 class TestLocalCloneManagerUpdate:
@@ -611,6 +632,7 @@ class TestLocalCloneManagerStatusMethods:
 
     def test_claim(self, manager, mock_db) -> None:
         """claim sets agent_session_id."""
+        mock_db.execute.return_value.rowcount = 1
         mock_db.fetchone.return_value = {
             "id": "clone-123",
             "project_id": "proj-abc",
@@ -634,6 +656,22 @@ class TestLocalCloneManagerStatusMethods:
         call_args = mock_db.execute.call_args
         query = call_args[0][0]
         assert "agent_session_id = %s" in query
+        assert "agent_session_id IS NULL OR agent_session_id = %s" in query
+        assert call_args[0][1][0] == "sess-1"
+        assert call_args[0][1][2:] == (
+            "clone-123",
+            "sess-1",
+            CloneStatus.CLEANUP.value,
+        )
+
+    def test_claim_returns_none_when_owned_by_another_session(self, manager, mock_db) -> None:
+        """claim reports a conditional update that matched no rows."""
+        mock_db.execute.return_value.rowcount = 0
+
+        result = manager.claim("clone-123", "sess-1")
+
+        assert result is None
+        mock_db.fetchone.assert_not_called()
 
     def test_release(self, manager, mock_db) -> None:
         """release clears agent_session_id."""
@@ -661,6 +699,61 @@ class TestLocalCloneManagerStatusMethods:
         params = call_args[0][1]
         # None should be in the params (clearing agent_session_id)
         assert None in params
+
+
+class TestLocalCloneManagerClaimAtomicity:
+    """Regression tests for competing clone claims."""
+
+    def test_concurrent_claims_have_exactly_one_winning_session(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+        session_manager: SessionManager,
+    ) -> None:
+        """A single conditional update prevents competing owners from both winning."""
+        manager = LocalCloneManager(temp_db)
+        clone = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/atomic-clone-claim",
+            clone_path="/tmp/clones/atomic-clone-claim",
+        )
+        sessions = [
+            session_manager.register(
+                external_id=f"atomic-clone-claim-{index}",
+                machine_id="atomic-clone-claim-machine",
+                source="codex",
+                project_id=str(sample_project["id"]),
+            )
+            for index in range(2)
+        ]
+        barrier = threading.Barrier(2)
+        winners: list[str] = []
+        errors: list[BaseException] = []
+        result_lock = threading.Lock()
+
+        def claim(session_id: str) -> None:
+            try:
+                barrier.wait(timeout=5)
+                claimed = LocalCloneManager(temp_db).claim(clone.id, session_id)
+                if claimed is not None:
+                    with result_lock:
+                        winners.append(session_id)
+            except BaseException as exc:  # pragma: no cover - asserted below
+                with result_lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=claim, args=(session.id,)) for session in sessions]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert errors == []
+        assert len(winners) == 1
+        stored = manager.get(clone.id)
+        assert stored is not None
+        assert stored.agent_session_id == winners[0]
 
 
 class TestLocalCloneManagerCountByStatus:

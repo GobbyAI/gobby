@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.clones import CloneStatus
+from gobby.utils.git import run_to_completion
 
 
 def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegistry:
@@ -75,10 +78,11 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
         func=detect_stale_clones,
     )
 
-    async def cleanup_stale_clones(
+    async def _cleanup_stale_clones_impl(
         hours: int | str = 24,
         dry_run: bool | str = True,
         delete_files: bool | str = False,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Mark and optionally delete stale clones.
@@ -106,30 +110,102 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
         )
 
         results = []
+        cleanup_succeeded = True
         for c in stale:
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
             result_item: dict[str, Any] = {
                 "id": c.id,
                 "branch_name": c.branch_name,
                 "clone_path": c.clone_path,
                 "marked_stale": not dry_run,
                 "files_deleted": False,
+                "record_deleted": False,
             }
 
             if delete_files and not dry_run and ctx.git_manager:
-                git_result = ctx.git_manager.delete_clone(c.clone_path, force=True)
-                result_item["files_deleted"] = git_result.success
-                if not git_result.success:
-                    result_item["delete_error"] = git_result.error or "Unknown error"
+                try:
+                    terminal = ctx.clone_storage.mark_cleanup(c.id)
+                except Exception as error:
+                    terminal = None
+                    result_item["record_terminal_error"] = str(error)
+                if terminal is None:
+                    cleanup_succeeded = False
+                    result_item.setdefault(
+                        "record_terminal_error",
+                        "Clone record disappeared before cleanup could mark it terminal",
+                    )
+                    results.append(result_item)
+                    continue
+
+                result_item["record_terminal"] = True
+                delete_error: str | None
+                try:
+                    git_result = await asyncio.to_thread(
+                        ctx.git_manager.delete_clone,
+                        c.clone_path,
+                        force=True,
+                    )
+                except Exception as error:
+                    delete_error = str(error)
+                    result_item["files_deleted"] = False
+                else:
+                    delete_error = (
+                        None if git_result.success else git_result.error or "Unknown error"
+                    )
+                    result_item["files_deleted"] = git_result.success
+
+                if delete_error is None:
+                    try:
+                        deleted = ctx.clone_storage.delete(c.id)
+                    except Exception as error:
+                        result_item["record_delete_error"] = str(error)
+                        cleanup_succeeded = False
+                    else:
+                        # False means the row was already absent, which is also a
+                        # consistent terminal state after file removal.
+                        result_item["record_deleted"] = True
+                        if not deleted:
+                            result_item["record_already_missing"] = True
+                else:
+                    result_item["delete_error"] = delete_error
+                    cleanup_succeeded = False
+                    try:
+                        restored = ctx.clone_storage.update(
+                            c.id,
+                            status=CloneStatus.STALE.value,
+                        )
+                    except Exception as error:
+                        result_item["record_restore_error"] = str(error)
+                    else:
+                        result_item["record_terminal"] = False
+                        result_item["record_restored"] = restored is not None
 
             results.append(result_item)
 
         return {
-            "success": True,
+            "success": cleanup_succeeded,
             "dry_run": dry_run,
             "cleaned": results,
             "count": len(results),
             "threshold_hours": hours,
         }
+
+    async def cleanup_stale_clones(
+        hours: int | str = 24,
+        dry_run: bool | str = True,
+        delete_files: bool | str = False,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _cleanup_stale_clones_impl(
+                hours,
+                dry_run,
+                delete_files,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     registry.register(
         name="cleanup_stale_clones",
