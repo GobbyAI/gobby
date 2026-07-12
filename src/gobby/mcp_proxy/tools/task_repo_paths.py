@@ -79,7 +79,13 @@ def _task_allowed_roots(
     task_ids = {ancestor.id for ancestor in tasks}
     for ancestor in tasks:
         yield from _artifact_roots(task_manager, ancestor.id)
-    yield from _registered_isolation_roots(task_manager, task.project_id, task_ids)
+    shared_epic_id = tasks[-1].id if tasks and tasks[-1].task_type == "epic" else None
+    yield from _registered_isolation_roots(
+        task_manager,
+        task.project_id,
+        task_ids,
+        shared_epic_id=shared_epic_id,
+    )
 
 
 def _task_and_ancestors(task_manager: LocalTaskManager, task: Task) -> Iterable[Task]:
@@ -107,14 +113,49 @@ def _registered_isolation_roots(
     task_manager: LocalTaskManager,
     project_id: str,
     task_ids: set[str],
+    *,
+    shared_epic_id: str | None,
 ) -> Iterable[str]:
     db = task_manager.db
     for worktree in LocalWorktreeManager(db).list_worktrees(project_id=project_id, limit=1000):
-        if worktree.task_id in task_ids:
+        if _is_allowed_isolation_task(
+            task_manager,
+            worktree.task_id,
+            task_ids,
+            shared_epic_id=shared_epic_id,
+        ):
             yield worktree.worktree_path
     for clone in LocalCloneManager(db).list_clones(project_id=project_id, limit=1000):
-        if clone.task_id in task_ids:
+        if _is_allowed_isolation_task(
+            task_manager,
+            clone.task_id,
+            task_ids,
+            shared_epic_id=shared_epic_id,
+        ):
             yield clone.clone_path
+
+
+def _is_allowed_isolation_task(
+    task_manager: LocalTaskManager,
+    isolation_task_id: str | None,
+    task_ids: set[str],
+    *,
+    shared_epic_id: str | None,
+) -> bool:
+    if not isolation_task_id:
+        return False
+    if isolation_task_id in task_ids:
+        return True
+    if shared_epic_id is None:
+        return False
+    try:
+        isolation_task = task_manager.get_task(isolation_task_id)
+    except (TaskNotFoundError, ValueError):
+        return False
+    return any(
+        ancestor.id == shared_epic_id
+        for ancestor in _task_and_ancestors(task_manager, isolation_task)
+    )
 
 
 def _registered_project_roots(project_manager: LocalProjectManager | None) -> Iterable[str]:
