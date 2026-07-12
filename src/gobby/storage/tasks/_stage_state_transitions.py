@@ -76,6 +76,7 @@ class StageStateTransitions:
         artifact_updates: Mapping[str, str] | None = None,
         validation_override_reason: str | None = None,
         cited_subtasks: Sequence[str] | None = None,
+        preheld_mutex_run_id: str | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         session_uuid = _session_uuid_or_none(by_session_id)
@@ -86,6 +87,7 @@ class StageStateTransitions:
             holder,
             f"{stage_name}:{verb}",
             expected_stage=snapshot,
+            preheld_run_id=preheld_mutex_run_id,
         ):
             current = self.rows.current_stage(task_id)
             row = self.rows.get(task_id, stage_name)
@@ -340,7 +342,7 @@ class StageStateTransitions:
                   JOIN subtree ON tasks.parent_task_id = subtree.id
             )
             SELECT id FROM subtree WHERE id IN ({placeholders})
-            """,  # nosec B608 # placeholder count is derived from cited_ids length.
+                """,  # nosec B608 # placeholder count is derived from cited_ids length.
             (task_id, *cited_ids),
         ).fetchall()
         descendant_ids = {str(row["id"]) for row in rows}
@@ -438,7 +440,7 @@ class StageStateTransitions:
                    updated_at = %s
              WHERE task_id IN ({placeholders})
                AND status = 'merged'
-            """,  # nosec B608 # placeholder count is derived from cited_subtasks length.
+                """,  # nosec B608 # placeholder count is derived from cited_subtasks length.
             (now, *cited_subtasks),
         )
 

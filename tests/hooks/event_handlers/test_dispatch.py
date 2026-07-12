@@ -169,6 +169,47 @@ def test_pipeline_completed_submits_required_stage_for_review(temp_db, sample_pr
     assert storage.get_mutex(task.id) is None
 
 
+def test_pipeline_transition_holds_mutex_until_stage_update(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.hooks.event_handlers import _dispatch
+
+    manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
+    stage_states = manager.stage_states
+    submit_for_review = stage_states.submit_for_review
+    transition_observed = False
+
+    def assert_mutex_held(*args: Any, **kwargs: Any) -> object:
+        nonlocal transition_observed
+        transition_observed = True
+        assert not storage.acquire_mutex(
+            task.id,
+            holder="competing-dispatcher",
+            kind="heartbeat",
+            ttl_seconds=30,
+        )
+        return submit_for_review(*args, **kwargs)
+
+    monkeypatch.setattr(stage_states, "submit_for_review", assert_mutex_held)
+    monkeypatch.setattr(_dispatch, "_stage_states", lambda _db: stage_states)
+
+    _dispatch.on_pipeline_completed(
+        {"execution_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342"},
+        db=temp_db,
+        storage=storage,
+    )
+
+    assert transition_observed
+    assert storage.acquire_mutex(
+        task.id,
+        holder="competing-dispatcher",
+        kind="heartbeat",
+        ttl_seconds=30,
+    )
+
+
 def test_pipeline_failed_returns_stage_to_ready(temp_db, sample_project) -> None:
     from gobby.hooks.event_handlers import _dispatch
 

@@ -161,7 +161,9 @@ def _handle_stage_pipeline_terminal(
     if not run_id:
         return None
     resolved_storage = _storage_from_db(db, storage)
-    mutex = resolved_storage.get_mutex_by_run_id(str(run_id)) if resolved_storage else None
+    if resolved_storage is None:
+        return None
+    mutex = resolved_storage.get_mutex_by_run_id(str(run_id))
     if mutex is None or not str(mutex.action_kind or "").startswith("stage-pipeline:"):
         return None
     if db is None:
@@ -172,38 +174,59 @@ def _handle_stage_pipeline_terminal(
     if manager is None:
         _release_run_mutex(str(run_id), storage=resolved_storage)
         return None
-    stage = _current_stage_for_task(manager, mutex.task_id)
-    _release_run_mutex(str(run_id), storage=resolved_storage)
-    if stage is None or stage.stage_name != stage_name or stage.state != "in_progress":
+    if not mutex.lease_holder or not resolved_storage.refresh_mutex_for_run(
+        mutex.task_id,
+        str(run_id),
+        mutex.lease_holder,
+        ttl_seconds=30,
+    ):
         return None
-    if status == "completed":
-        try:
-            if stage.review_policy == "required":
-                return manager.submit_for_review(mutex.task_id, stage_name, by_session_id=None)
-            return manager.complete_stage(mutex.task_id, stage_name, by_session_id=None)
-        except IllegalStageTransitionError:
+    try:
+        stage = _current_stage_for_task(manager, mutex.task_id)
+        if stage is None or stage.stage_name != stage_name or stage.state != "in_progress":
             return None
-    if status == "cancelled":
+        if status == "completed":
+            try:
+                if stage.review_policy == "required":
+                    return manager.submit_for_review(
+                        mutex.task_id,
+                        stage_name,
+                        by_session_id=None,
+                        preheld_mutex_run_id=str(run_id),
+                    )
+                return manager.complete_stage(
+                    mutex.task_id,
+                    stage_name,
+                    by_session_id=None,
+                    preheld_mutex_run_id=str(run_id),
+                )
+            except IllegalStageTransitionError:
+                return None
+        if status == "cancelled":
+            try:
+                return manager.fail_stage(
+                    mutex.task_id,
+                    stage_name,
+                    reason="pipeline_cancelled",
+                    needs_human=True,
+                    by_session_id=None,
+                    preheld_mutex_run_id=str(run_id),
+                )
+            except IllegalStageTransitionError:
+                return None
+        reason = _event_value(event, "error") or _event_value(event, "reason") or "pipeline_failed"
         try:
             return manager.fail_stage(
                 mutex.task_id,
                 stage_name,
-                reason="pipeline_cancelled",
-                needs_human=True,
+                reason=str(reason),
                 by_session_id=None,
+                preheld_mutex_run_id=str(run_id),
             )
         except IllegalStageTransitionError:
             return None
-    reason = _event_value(event, "error") or _event_value(event, "reason") or "pipeline_failed"
-    try:
-        return manager.fail_stage(
-            mutex.task_id,
-            stage_name,
-            reason=str(reason),
-            by_session_id=None,
-        )
-    except IllegalStageTransitionError:
-        return None
+    finally:
+        _release_run_mutex(str(run_id), storage=resolved_storage)
 
 
 def _current_stage_for_task(manager: StageStatesManager, task_id: str) -> Any | None:
