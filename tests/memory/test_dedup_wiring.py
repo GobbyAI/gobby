@@ -117,6 +117,7 @@ class TestBackgroundDedupTask:
         manager._dedup_service.process.assert_called_once()
         assert manager._dedup_service.process.call_count == 1
         assert manager._dedup_service.process.call_args is not None
+        assert manager._dedup_service.process.call_args.kwargs["exclude_memory_id"] == "mem-1"
 
     @pytest.mark.asyncio
     async def test_background_task_tracked_and_cleaned(self) -> None:

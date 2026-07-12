@@ -97,6 +97,7 @@ class DedupService:
         tags: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
+        exclude_memory_id: str | None = None,
     ) -> DedupResult:
         """
         Run vector similarity dedup on content.
@@ -108,6 +109,8 @@ class DedupService:
             tags: Optional tags
             source_type: Origin of memory
             source_session_id: Origin session
+            exclude_memory_id: Memory already stored by the caller, which must not deduplicate
+                against itself
 
         Returns:
             DedupResult with lists of added, updated, and deleted memories
@@ -151,6 +154,9 @@ class DedupService:
 
         # Deterministic threshold decisions
         for memory_id, score in search_results:
+            if memory_id == exclude_memory_id:
+                continue
+
             if score > NEAR_EXACT_THRESHOLD:
                 # Near-exact duplicate → NOOP
                 logger.debug(f"Near-exact duplicate found (score={score:.3f}), skipping")

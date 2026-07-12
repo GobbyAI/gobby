@@ -105,6 +105,7 @@ class MemoryLifecycleService:
         tags: list[str] | None,
         source_type: str,
         source_session_id: str | None,
+        exclude_memory_id: str | None = None,
     ) -> None:
         """Fire a background dedup task."""
 
@@ -120,6 +121,7 @@ class MemoryLifecycleService:
                     tags=tags,
                     source_type=source_type,
                     source_session_id=source_session_id,
+                    exclude_memory_id=exclude_memory_id,
                 )
             except Exception as e:
                 logger.warning(f"Background dedup failed: {e}")
@@ -204,6 +206,7 @@ class MemoryLifecycleService:
                 tags=tags,
                 source_type=source_type,
                 source_session_id=source_session_id,
+                exclude_memory_id=memory.id,
             )
 
         if self._kg_service_provider():

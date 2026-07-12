@@ -143,6 +143,35 @@ class TestProcess:
         )
 
     @pytest.mark.asyncio
+    async def test_process_skips_excluded_self_match_and_updates_distinct_duplicate(
+        self,
+        dedup_service: DedupService,
+        mock_vector_store: Any,
+        mock_storage: Any,
+    ) -> None:
+        """A just-created memory does not hide an older duplicate behind its self-match."""
+        content = "Much longer and more detailed fact about something"
+        mock_vector_store.search.return_value = [("mem-new", 1.0), ("mem-old", 0.90)]
+
+        mock_existing = MagicMock()
+        mock_existing.content = "Short fact"
+        mock_storage.get_memory.return_value = mock_existing
+
+        mock_updated = MagicMock()
+        mock_updated.id = "mem-old"
+        mock_storage.update_memory.return_value = mock_updated
+
+        result = await dedup_service.process(
+            content=content,
+            project_id="proj-1",
+            exclude_memory_id="mem-new",
+        )
+
+        assert result.updated == [mock_updated]
+        mock_storage.get_memory.assert_called_once_with("mem-old")
+        mock_storage.update_memory.assert_called_once_with("mem-old", content=content)
+
+    @pytest.mark.asyncio
     async def test_process_similar_noop_when_existing_sufficient(
         self,
         dedup_service: DedupService,
