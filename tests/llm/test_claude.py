@@ -198,6 +198,17 @@ class TestRetryAsync:
     """Tests for _retry_async method."""
 
     @pytest.mark.asyncio
+    async def test_retry_rejects_zero_attempts_without_calling_operation(self) -> None:
+        from gobby.llm.claude_runtime import retry_async
+
+        operation = AsyncMock(return_value="unused")
+
+        with pytest.raises(ValueError, match="max_retries must be at least 1"):
+            await retry_async(operation, max_retries=0)
+
+        operation.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_retry_succeeds_first_attempt(self, claude_config: DaemonConfig) -> None:
         """No retries needed when first attempt succeeds."""
         from gobby.llm.claude_runtime import retry_async
@@ -284,6 +295,37 @@ class TestExecuteSdkQuery:
     """Tests for SDK query execution failure classification."""
 
     @pytest.mark.asyncio
+    async def test_failure_diagnostics_keep_only_bounded_stderr_tail(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = MockClaudeAgentOptions()
+
+        async def failure_with_stderr() -> str:
+            assert callable(options.stderr)
+            for index in range(205):
+                options.stderr(f"stderr-{index}")
+            raise RuntimeError("401 Unauthorized")
+
+        with (
+            caplog.at_level(logging.ERROR, logger="gobby.llm.claude"),
+            pytest.raises(RuntimeError, match="stderr-204") as exc_info,
+        ):
+            await execute_sdk_query(
+                "generate_json",
+                failure_with_stderr,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=1,
+            )
+
+        assert "stderr-0\n" not in str(exc_info.value)
+        assert "stderr-4\n" not in str(exc_info.value)
+        assert "stderr-5\n" in str(exc_info.value)
+        assert "stderr-204" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_sigterm_exit_does_not_retry_or_warn(
         self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -347,7 +389,7 @@ class TestExecuteSdkQuery:
                 grouped_failure,
                 options,
                 logging.getLogger("gobby.llm.claude"),
-                max_retries=0,
+                max_retries=1,
                 retry_delay=0.01,
             )
 

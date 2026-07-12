@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import random
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.llm.claude_errors import ClaudeSDKProviderFailure, classify_result_message
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
+_STDERR_MAX_LINES = 200
 
 
 class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
@@ -128,6 +130,9 @@ async def retry_async[T](
     on_retry: Callable[[int, Exception], None] | None = None,
 ) -> T:
     """Execute an async operation with retry logic and error classification."""
+    if max_retries < 1:
+        raise ValueError("max_retries must be at least 1")
+
     for attempt in range(max_retries):
         try:
             return await operation()
@@ -141,7 +146,7 @@ async def retry_async[T](
                 await asyncio.sleep(backoff)
             else:
                 raise
-    raise RuntimeError("retry_async exhausted without returning or raising")
+    raise AssertionError("retry_async exhausted without returning or raising")
 
 
 async def execute_sdk_query[T](
@@ -159,7 +164,7 @@ async def execute_sdk_query[T](
     if not options.setting_sources:
         options.setting_sources = []
 
-    stderr_lines: list[str] = []
+    stderr_lines: deque[str] = deque(maxlen=_STDERR_MAX_LINES)
     options.stderr = lambda line: stderr_lines.append(line)
 
     def _on_retry(attempt: int, error: Exception) -> None:
@@ -169,7 +174,7 @@ async def execute_sdk_query[T](
                 operation,
                 attempt + 1,
                 error,
-                stderr_lines,
+                list(stderr_lines),
             )
         else:
             logger.warning(
