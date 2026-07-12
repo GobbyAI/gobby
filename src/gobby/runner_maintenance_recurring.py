@@ -17,6 +17,18 @@ logger = logging.getLogger("gobby.runner_maintenance")
 _MAINTENANCE_STARTUP_WINDOW_SECONDS = 5 * 60
 
 
+async def _run_sync_maintenance(
+    run_db: Callable[..., Awaitable[Any]] | None,
+    func: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run synchronous maintenance work away from the daemon event loop."""
+    if run_db is not None:
+        return await run_db(func, *args, **kwargs)
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
 def _deterministic_startup_delay(name: str, *, window_seconds: int) -> float:
     """Return a stable offset in ``[1, window_seconds]`` for a maintenance loop."""
     if window_seconds <= 0:
@@ -53,6 +65,7 @@ async def metrics_cleanup_loop(
     metrics_manager: ToolMetricsManager,
     is_shutdown_requested: Callable[[], bool],
     *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
     interval_seconds: int = 24 * 60 * 60,
     startup_delay_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
@@ -69,7 +82,10 @@ async def metrics_cleanup_loop(
 
     while True:
         try:
-            deleted = metrics_manager.cleanup_old_metrics()
+            deleted = await _run_sync_maintenance(
+                run_db,
+                metrics_manager.cleanup_old_metrics,
+            )
             if deleted > 0:
                 logger.info(f"Periodic metrics cleanup: removed {deleted} old entries")
         except asyncio.CancelledError:
@@ -89,6 +105,7 @@ async def metrics_archive_loop(
     is_shutdown_requested: Callable[[], bool],
     retention_days: int = 30,
     *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
     interval_seconds: int = 24 * 60 * 60,
     startup_delay_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
@@ -105,7 +122,11 @@ async def metrics_archive_loop(
 
     while True:
         try:
-            archived = event_store.archive_old_events(retention_days=retention_days)
+            archived = await _run_sync_maintenance(
+                run_db,
+                event_store.archive_old_events,
+                retention_days=retention_days,
+            )
             if archived > 0:
                 logger.info(
                     f"Metrics archive: rolled up {archived} events older than {retention_days} days"

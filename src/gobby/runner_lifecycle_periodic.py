@@ -160,12 +160,18 @@ def start_periodic_tasks(
     loops = {**_default_loops(), **loops}
     db_executor = getattr(runner, "db_executor", None)
     runner._metrics_cleanup_task = asyncio.create_task(
-        loops["metrics_cleanup_loop"](runner.metrics_manager, lambda: runner._shutdown_requested),
+        loops["metrics_cleanup_loop"](
+            runner.metrics_manager,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
         name="metrics-cleanup",
     )
     runner._metrics_archive_task = asyncio.create_task(
         loops["metrics_archive_loop"](
-            runner.metrics_event_store, lambda: runner._shutdown_requested
+            runner.metrics_event_store,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
         ),
         name="metrics-archive",
     )
