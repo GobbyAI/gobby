@@ -168,10 +168,11 @@ class TestVerificationRunner:
         runner = VerificationRunner(hooks_config=mock_hooks_config)
         result = runner.run_stage("pre-commit")
 
-        assert result.skipped is True
-        # Skipping verification is not a failure - it's a successful skip
-        assert result.success is True
-        assert "No verification commands defined" in result.skip_reason
+        assert result.skipped is False
+        assert result.success is False
+        assert [item.name for item in result.results] == ["lint", "test"]
+        assert result.failed_count == 2
+        assert all("not defined" in (item.error or "") for item in result.results)
 
     @patch("gobby.hooks.verification_runner.run_command")
     def test_run_stage_success(
@@ -199,9 +200,12 @@ class TestVerificationRunner:
 
         result = runner.run_stage("pre-commit")
 
+        assert result.success is False
         assert len(result.results) == 1
-        assert result.results[0].skipped is True
-        assert "not defined" in result.results[0].skip_reason
+        assert result.results[0].success is False
+        assert result.results[0].skipped is False
+        assert result.results[0].error == "Command 'unknown' not defined in verification config"
+        assert result.failed_count == 1
 
     @patch("gobby.hooks.verification_runner.run_command")
     def test_run_stage_fail_fast(

@@ -214,11 +214,19 @@ class VerificationRunner:
 
         # Check if verification config exists
         if not self.verification_config:
+            command_names = stage_config.run[:1] if stage_config.fail_fast else stage_config.run
             return StageResult(
                 stage=stage,
-                success=True,
-                skipped=True,
-                skip_reason="No verification commands defined in project.json",
+                success=False,
+                results=[
+                    VerificationResult(
+                        name=cmd_name,
+                        command="",
+                        success=False,
+                        error=f"Command '{cmd_name}' not defined in verification config",
+                    )
+                    for cmd_name in command_names
+                ],
             )
 
         # Run each command
@@ -229,16 +237,18 @@ class VerificationRunner:
             command = self.verification_config.get_command(cmd_name)
 
             if not command:
-                # Command not defined - skip with warning
+                error = f"Command '{cmd_name}' not defined in verification config"
                 results.append(
                     VerificationResult(
                         name=cmd_name,
                         command="",
-                        success=True,
-                        skipped=True,
-                        skip_reason=f"Command '{cmd_name}' not defined in verification config",
+                        success=False,
+                        error=error,
                     )
                 )
+                overall_success = False
+                if stage_config.fail_fast:
+                    break
                 continue
 
             # Run the command
