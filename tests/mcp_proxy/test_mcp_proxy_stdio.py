@@ -1314,7 +1314,7 @@ class TestDaemonProxyMethods:
         with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy.get_tool_schema("srv", "tool")
 
@@ -1347,7 +1347,7 @@ class TestDaemonProxyMethods:
         ):
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
@@ -1379,7 +1379,7 @@ class TestDaemonProxyMethods:
             mock_bootstrap.return_value = "bootstrapped-session"
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
@@ -1412,7 +1412,7 @@ class TestDaemonProxyMethods:
         ):
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
@@ -1443,7 +1443,7 @@ class TestDaemonProxyMethods:
         ):
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
