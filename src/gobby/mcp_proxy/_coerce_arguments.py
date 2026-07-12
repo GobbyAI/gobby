@@ -19,6 +19,7 @@ def coerce_string_arguments(value: str) -> dict[str, Any] | None:
     1. Attempt a straight ``json.loads``.
     2. If that fails and the string contains literal ``\\"`` sequences, strip
        them to plain ``"`` and retry.
+    3. Fall back to ``unicode_escape`` decoding for legacy double-encoded input.
 
     Returns the parsed dict, or ``None`` if every attempt fails (caller
     decides what error to surface).
@@ -34,16 +35,17 @@ def coerce_string_arguments(value: str) -> dict[str, Any] | None:
     # Fallback — literal backslash-escaped quotes
     if '\\"' in value:
         candidates: list[str] = []
+
+        replaced = value.replace('\\"', '"')
+        if replaced != value:
+            candidates.append(replaced)
+
         try:
             decoded = codecs.decode(value, "unicode_escape")
             if decoded != value:
                 candidates.append(decoded)
         except (UnicodeDecodeError, ValueError):
             pass
-
-        replaced = value.replace('\\"', '"')
-        if replaced != value:
-            candidates.append(replaced)
 
         for candidate in candidates:
             try:
