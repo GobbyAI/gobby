@@ -8,16 +8,63 @@ Provides functions to extract git repository information including:
 Handles git worktrees, detached HEAD, and missing remotes gracefully.
 """
 
+import asyncio
 import logging
 import os
 import shutil
 import subprocess  # nosec B404 # subprocess needed for git commands
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypedDict
+from weakref import WeakKeyDictionary
 
 logger = logging.getLogger(__name__)
 
 GIT_FALLBACK_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
+_CHECKOUT_MUTATION_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
+
+
+def get_checkout_mutation_lock(checkout_path: str | Path) -> asyncio.Lock:
+    """Return the current event loop's lock for mutations of a checkout."""
+    loop = asyncio.get_running_loop()
+    loop_locks = _CHECKOUT_MUTATION_LOCKS.setdefault(loop, {})
+    key = str(Path(checkout_path).resolve())
+    return loop_locks.setdefault(key, asyncio.Lock())
+
+
+async def run_to_completion[T](awaitable: Awaitable[T]) -> T:
+    """Keep work alive through caller cancellation, then propagate cancellation."""
+    worker = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        if not worker.cancelled():
+            try:
+                worker.result()
+            except BaseException as error:
+                logger.warning(
+                    "Offloaded work failed after its caller was cancelled: %s",
+                    error,
+                    exc_info=True,
+                )
+        raise
+
+
+async def run_thread_to_completion[**P, T](
+    func: Callable[P, T],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Run blocking work without releasing its caller's lock before completion."""
+    return await run_to_completion(asyncio.to_thread(func, *args, **kwargs))
 
 
 class GitMetadata(TypedDict, total=False):

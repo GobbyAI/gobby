@@ -1355,6 +1355,8 @@ async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
     mock_worktree_storage.get.return_value = wt
 
     def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return MagicMock(returncode=0, stdout="main", stderr="")
         if args[:2] == ["merge-base", "--is-ancestor"]:
             return MagicMock(returncode=1, stdout="", stderr="")
         return MagicMock(returncode=0, stdout="", stderr="")
@@ -1562,6 +1564,8 @@ async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git
     mock_worktree_storage.get.return_value = wt
 
     def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
             return MagicMock(returncode=0, stdout="", stderr="")
         if args[0] == "merge" and "--no-edit" in args:
@@ -1613,6 +1617,8 @@ async def test_merge_worktree_non_conflict_failure(
     mock_worktree_storage.get.return_value = wt
 
     def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
             return MagicMock(returncode=0, stdout="", stderr="")
         if args[0] == "merge" and "--no-edit" in args:
