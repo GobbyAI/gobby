@@ -149,17 +149,14 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "source_branch": source_branch or worktree.base_branch,
         }
 
-    @registry.tool(
-        name="merge_worktree",
-        description="Merge a worktree's branch into its base branch (or a specified target).",
-    )
-    async def merge_worktree(
+    async def _merge_worktree_impl(
         worktree_id: str,
         source_branch: str | None = None,
         target_branch: str | None = None,
         push: bool = False,
         prefer_remote: bool = False,
         project_path: str | None = None,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """Merge a worktree branch into the local target branch.
 
@@ -379,6 +376,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         mutation_lock = get_checkout_mutation_lock(merge_cwd)
         await mutation_lock.acquire()
         try:
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
             if original_branch != merge_target:
                 checkout_result = await run_thread_to_completion(
                     resolved_git_mgr.run_git_command,
@@ -688,6 +687,32 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 await _restore_stash()
             finally:
                 mutation_lock.release()
+
+    @registry.tool(
+        name="merge_worktree",
+        description="Merge a worktree's branch into its base branch (or a specified target).",
+    )
+    async def merge_worktree(
+        worktree_id: str,
+        source_branch: str | None = None,
+        target_branch: str | None = None,
+        push: bool = False,
+        prefer_remote: bool = False,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _merge_worktree_impl(
+                worktree_id,
+                source_branch,
+                target_branch,
+                push,
+                prefer_remote,
+                project_path,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     @registry.tool(
         name="push_branch",

@@ -43,12 +43,23 @@ def stash_ref_for_oid(stash_list: str, stash_oid: str) -> str | None:
     return None
 
 
-async def run_to_completion[T](awaitable: Awaitable[T]) -> T:
-    """Keep work alive through caller cancellation, then propagate cancellation."""
+async def run_to_completion[T](
+    awaitable: Awaitable[T],
+    *,
+    on_cancel: Callable[[], None] | None = None,
+) -> T:
+    """Keep work alive through caller cancellation, then propagate cancellation.
+
+    ``on_cancel`` lets a shielded transaction observe the cancellation request at
+    its commit boundary. Work that has not started mutating shared state can stop;
+    work past that boundary continues through cleanup before cancellation escapes.
+    """
     worker = asyncio.ensure_future(awaitable)
     try:
         return await asyncio.shield(worker)
     except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
         if worker.done() and worker.cancelled():
             raise
 

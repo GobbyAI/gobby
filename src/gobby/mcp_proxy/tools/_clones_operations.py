@@ -13,6 +13,7 @@ from gobby.storage.clones import CloneStatus
 from gobby.utils.git import (
     get_checkout_mutation_lock,
     run_thread_to_completion,
+    run_to_completion,
     stash_ref_for_oid,
 )
 
@@ -198,9 +199,10 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         func=sync_clone,
     )
 
-    async def merge_clone(
+    async def _merge_clone_impl(
         clone_id: str,
         target_branch: str = "main",
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Merge clone branch to target branch in main repository.
@@ -239,6 +241,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         mutation_lock = get_checkout_mutation_lock(git_manager.repo_path)
         await mutation_lock.acquire()
         try:
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
             try:
                 fetch_result = await run_thread_to_completion(
                     git_manager.run_git_command,
@@ -469,6 +473,20 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 )
             finally:
                 mutation_lock.release()
+
+    async def merge_clone(
+        clone_id: str,
+        target_branch: str = "main",
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _merge_clone_impl(
+                clone_id,
+                target_branch,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     registry.register(
         name="merge_clone",

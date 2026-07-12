@@ -824,18 +824,19 @@ class TestMergeCloneToTarget:
         mock_clone_storage: Any,
         mock_git_manager: Any,
     ) -> None:
-        """Cancellation cannot release the checkout lock around a live Git worker."""
+        """Fetch cancellation waits for transaction cleanup before unlocking."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        mock_git_manager.run_git_command.return_value = _git_result()
         worker_started = threading.Event()
         release_worker = threading.Event()
 
-        def blocking_merge(**_kwargs: object) -> MagicMock:
-            worker_started.set()
-            assert release_worker.wait(timeout=5)
-            return MagicMock(success=True)
+        def blocking_fetch(args: list[str], **_kwargs: object) -> Any:
+            if args and args[0] == "fetch":
+                worker_started.set()
+                assert release_worker.wait(timeout=5)
+            return _git_result()
 
-        mock_git_manager.merge_branch.side_effect = blocking_merge
+        mock_git_manager.run_git_command.side_effect = blocking_fetch
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
         lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
         operation = asyncio.create_task(
             registry.call(
@@ -863,6 +864,72 @@ class TestMergeCloneToTarget:
             await operation
         await asyncio.wait_for(contender, timeout=2)
         lock.release()
+        mock_clone_storage.update.assert_called_with(
+            "clone-123",
+            status=CloneStatus.ACTIVE.value,
+        )
+        commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
+        assert ["branch", "-D", "clone-merge/feature/test"] in commands
+        mock_git_manager.merge_branch.assert_called_once()
+
+    async def test_merge_clone_stash_cancellation_restores_exact_stash_before_unlock(
+        self,
+        registry: Any,
+        mock_clone_storage: Any,
+        mock_git_manager: Any,
+    ) -> None:
+        """A cancelled stash push still completes merge cleanup and exact restore."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        identity_calls = 0
+
+        def blocking_stash(args: list[str], **_kwargs: object) -> Any:
+            nonlocal identity_calls
+            if args == ["stash", "list", "-1", "--format=%H"]:
+                identity_calls += 1
+                return _git_result(stdout="" if identity_calls == 1 else "operation-stash")
+            if args[:2] == ["stash", "push"]:
+                worker_started.set()
+                assert release_worker.wait(timeout=5)
+                return _git_result()
+            if args == ["stash", "list", "--format=%gd%x00%H"]:
+                return _git_result(stdout="stash@{0}\0operation-stash")
+            return _git_result()
+
+        mock_git_manager.run_git_command.side_effect = blocking_stash
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+        lock = get_checkout_mutation_lock(mock_git_manager.repo_path)
+        operation = asyncio.create_task(
+            registry.call(
+                "merge_clone",
+                {"clone_id": "clone-123", "target_branch": "main"},
+            )
+        )
+
+        assert await asyncio.to_thread(worker_started.wait, 2)
+        operation.cancel()
+        contender_started = asyncio.Event()
+
+        async def acquire_lock() -> None:
+            contender_started.set()
+            await lock.acquire()
+
+        contender = asyncio.create_task(acquire_lock())
+        await contender_started.wait()
+        assert operation.done() is False
+        assert contender.done() is False
+
+        release_worker.set()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        await asyncio.wait_for(contender, timeout=2)
+        lock.release()
+
+        commands = [call.args[0] for call in mock_git_manager.run_git_command.call_args_list]
+        assert ["stash", "pop", "stash@{0}"] in commands
+        assert ["branch", "-D", "clone-merge/feature/test"] in commands
+        mock_git_manager.merge_branch.assert_called_once()
         mock_clone_storage.update.assert_called_with(
             "clone-123",
             status=CloneStatus.ACTIVE.value,

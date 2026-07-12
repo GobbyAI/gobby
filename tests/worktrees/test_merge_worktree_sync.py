@@ -199,18 +199,26 @@ async def test_merge_worktree_waits_for_checkout_mutation_lock(
 
 
 async def test_merge_worktree_cancellation_waits_for_git_worker_before_unlock():
-    """Cancellation cannot release the checkout lock around a live Git worker."""
+    """Cancellation waits for merge abort and exact stash restore before unlock."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
     regular_git = _local_merge_side_effect()
     worker_started = threading.Event()
     release_worker = threading.Event()
+    identity_calls = 0
 
     def blocking_git(args, cwd=None, timeout=30, check=False):
-        if args and args[0] == "merge":
+        nonlocal identity_calls
+        if args == ["stash", "list", "-1", "--format=%H"]:
+            identity_calls += 1
+            return _make_git_result(0, stdout="" if identity_calls == 1 else "operation-stash")
+        if args == ["stash", "list", "--format=%gd%x00%H"]:
+            return _make_git_result(0, stdout="stash@{0}\0operation-stash")
+        if args[:1] == ["merge"] and args[1:2] != ["--abort"]:
             worker_started.set()
             assert release_worker.wait(timeout=5)
+            return _make_git_result(1, stderr="merge failed")
         return regular_git(args, cwd=cwd, timeout=timeout, check=check)
 
     ctx.git_manager._run_git.side_effect = blocking_git
@@ -237,6 +245,57 @@ async def test_merge_worktree_cancellation_waits_for_git_worker_before_unlock():
         await operation
     await asyncio.wait_for(contender, timeout=2)
     lock.release()
+    commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
+    assert ["merge", "--abort"] in commands
+    assert ["stash", "pop", "stash@{0}"] in commands
+
+
+async def test_merge_worktree_checkout_cancellation_restores_original_branch_before_unlock():
+    """A cancelled checkout commits to full transaction cleanup before unlock."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def blocking_checkout(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return _make_git_result(0, stdout="develop")
+        if args == ["checkout", "main"]:
+            worker_started.set()
+            assert release_worker.wait(timeout=5)
+            return _make_git_result(0)
+        if args == ["checkout", "develop"]:
+            return _make_git_result(0)
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = blocking_checkout
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
+    operation = asyncio.create_task(merge_tool("wt-123"))
+
+    assert await asyncio.to_thread(worker_started.wait, 2)
+    operation.cancel()
+    contender_started = asyncio.Event()
+
+    async def acquire_lock() -> None:
+        contender_started.set()
+        await lock.acquire()
+
+    contender = asyncio.create_task(acquire_lock())
+    await contender_started.wait()
+    assert operation.done() is False
+    assert contender.done() is False
+
+    release_worker.set()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+    await asyncio.wait_for(contender, timeout=2)
+    lock.release()
+    commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
+    assert ["checkout", "main"] in commands
+    assert ["checkout", "develop"] in commands
 
 
 @pytest.mark.asyncio
