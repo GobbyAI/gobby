@@ -44,7 +44,7 @@ def _session_id(ctx: RegistryContext) -> str | None:
     try:
         return ctx.resolve_session_id(session_ref)
     except Exception:
-        return session_ref
+        return None
 
 
 def _dispatch_run_kwargs(
