@@ -24,22 +24,70 @@ from gobby.storage.sessions import SessionManager
 pytestmark = pytest.mark.unit
 
 
-def _required_auth_middleware_app() -> FastAPI:
-    server = SimpleNamespace(auth_service=MagicMock(enabled=True))
-    server.auth_service.is_request_authenticated.return_value = False
+def _required_auth_middleware_app(
+    *,
+    bind_host: str = "localhost",
+    auth_enabled: bool = True,
+) -> FastAPI:
+    server = SimpleNamespace(
+        auth_service=MagicMock(enabled=auth_enabled),
+        services=SimpleNamespace(config=SimpleNamespace(bind_host=bind_host)),
+    )
+    server.auth_service.is_request_authenticated.side_effect = (
+        lambda request: request.headers.get("Authorization") == "Bearer shared-token"
+    )
     app = FastAPI()
     app.add_middleware(AuthMiddleware, server=server)
     return app
 
 
-def _required_auth_app() -> FastAPI:
-    app = _required_auth_middleware_app()
+def _required_auth_app(
+    *,
+    bind_host: str = "localhost",
+    auth_enabled: bool = True,
+) -> FastAPI:
+    app = _required_auth_middleware_app(
+        bind_host=bind_host,
+        auth_enabled=auth_enabled,
+    )
 
     @app.api_route("/{path:path}", methods=["GET", "POST"])
     async def echo_path(path: str) -> dict[str, str]:
         return {"path": path}
 
     return app
+
+
+def test_non_loopback_hooks_require_auth_when_auth_mode_is_disabled() -> None:
+    client = TestClient(_required_auth_app(bind_host="0.0.0.0", auth_enabled=False))
+
+    response = client.post("/api/hooks/execute")
+
+    assert response.status_code == 401
+
+
+def test_non_loopback_hooks_accept_shared_token_when_auth_mode_is_disabled() -> None:
+    client = TestClient(
+        _required_auth_app(
+            bind_host="0.0.0.0",
+            auth_enabled=False,
+        )
+    )
+
+    response = client.post(
+        "/api/hooks/execute",
+        headers={"Authorization": "Bearer shared-token"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_loopback_hooks_remain_open_when_auth_mode_is_disabled() -> None:
+    client = TestClient(_required_auth_app(bind_host="127.0.0.1", auth_enabled=False))
+
+    response = client.post("/api/hooks/execute")
+
+    assert response.status_code == 200
 
 
 def test_required_by_default(temp_db: HubDatabase) -> None:
