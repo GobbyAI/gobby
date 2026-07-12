@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.hooks.event_handlers._session import (
-    AgentActivationResult,
-    SessionEventHandlerMixin,
-)
+from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
@@ -572,7 +570,19 @@ class TestSessionStartAndHelpers:
 class TestSessionMoreCoverage:
     """Extra tests for hitting the rest of the lines in _session.py."""
 
-    def test_activate_default_agent(self) -> None:
+    @pytest.mark.parametrize(
+        ("listed_skills", "active_skills", "expected_skills"),
+        [
+            ([], {"skill1"}, ["skill1"]),
+            ([SimpleNamespace(name="all-skill")], None, ["all-skill"]),
+        ],
+    )
+    def test_activate_default_agent(
+        self,
+        listed_skills: list[SimpleNamespace],
+        active_skills: set[str] | None,
+        expected_skills: list[str],
+    ) -> None:
         handler = _TestHandler()
 
         with (
@@ -582,7 +592,10 @@ class TestSessionMoreCoverage:
                 "gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager.list_all",
                 return_value=[],
             ),
-            patch("gobby.skills.manager.SkillManager.list_skills", return_value=[]),
+            patch(
+                "gobby.skills.manager.SkillManager.list_skills",
+                return_value=listed_skills,
+            ),
             patch.object(handler, "_build_agent_changes") as mock_build,
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
@@ -602,7 +615,7 @@ class TestSessionMoreCoverage:
             mock_build.return_value = (
                 {"_agent_type": "test-agent", "var1": "val1"},
                 {"rule1"},
-                {"skill1"},
+                active_skills,
             )
 
             result = handler._activate_default_agent("sess-1", "claude", "proj-1")
@@ -610,6 +623,8 @@ class TestSessionMoreCoverage:
             assert result is not None
             assert result.agent_name == "test-agent"
             assert result.rules_count == 1
+            assert result.skills_count == len(expected_skills)
+            assert result.injected_skill_names == expected_skills
             assert result.variables_count == 1
             # Context now contains identity only (role + personality),
             # instructions and skills are deferred to first before_agent
@@ -805,26 +820,14 @@ class TestComposeSessionResponse:
             external_id="ext-1",
             parent_session_id="parent-1",
             machine_id="m-1",
-            session_source="clear",
         )
         # system_message is now session ID banner only — parent info in metadata
         assert "#42" in result.system_message
         assert result.metadata["parent_session_id"] == "parent-1"
 
-    def test_with_agent_info(self) -> None:
+    def test_session_banner_omits_agent_tree(self) -> None:
         handler = _TestHandler()
         session = _make_session(seq_num=42)
-        agent_info = AgentActivationResult(
-            context="agent context",
-            agent_name="default",
-            description="A default agent",
-            role="developer",
-            goal="write tests",
-            rules_count=5,
-            skills_count=3,
-            variables_count=2,
-            injected_skill_names=["commit"],
-        )
 
         result = handler._compose_session_response(
             session=session,
@@ -832,7 +835,6 @@ class TestComposeSessionResponse:
             external_id="ext-1",
             parent_session_id=None,
             machine_id="m-1",
-            agent_info=agent_info,
         )
         # Agent tree removed from system_message — just session ID banner
         assert "#42" in result.system_message
@@ -888,20 +890,18 @@ class TestComposeSessionResponse:
         handler = _TestHandler()
         session = _make_session()
 
-        claimed = [
-            ("#42", "in_progress", "Fix auth bug"),
-            ("#43", "open", "Write tests"),
-        ]
+        claimed_context = "## Claimed Tasks\n- #42 [in_progress] Fix auth bug"
         result = handler._compose_session_response(
             session=session,
             session_id="sess-uuid-1",
             external_id="ext-1",
             parent_session_id=None,
             machine_id="m-1",
-            claimed_tasks_info=claimed,
+            additional_context=[claimed_context],
         )
         # Claimed tasks removed from system_message (handled by build_claimed_task_context)
         assert "Claimed Tasks" not in result.system_message
+        assert result.context == claimed_context
 
 
 # ---------------------------------------------------------------------------

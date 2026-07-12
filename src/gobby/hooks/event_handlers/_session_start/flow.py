@@ -23,7 +23,6 @@ from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import find_parent_session, populate_handoff_session_variables
 from .profile import seed_user_profile_content
-from .types import AgentActivationResult
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
@@ -562,11 +561,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     )
 
     _t_activate = time.monotonic()
-    agent_result: AgentActivationResult | None = None
     if session_id and not input_data.get("skip_default_agent_activation"):
         try:
             agent_override = input_data.get("agent_name_override")
-            agent_result = handler._activate_default_agent(
+            handler._activate_default_agent(
                 session_id,
                 cli_source,
                 project_id,
@@ -649,8 +647,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             target_session=session_obj,
         )
 
-    claimed_tasks_info = handler._get_claimed_task_info(session_id, project_id)
-
     def _ms(a: float, b: float) -> int:
         return int((b - a) * 1000)
 
@@ -692,9 +688,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             task_id=event.task_id,
             additional_context=additional_context,
             terminal_context=terminal_context,
-            agent_info=agent_result,
-            session_source=session_source,
-            claimed_tasks_info=claimed_tasks_info,
         ),
     )
     if context_decision.mode == "full":
@@ -786,7 +779,6 @@ def handle_pre_created_session(
             handler.logger.warning(f"Failed to seed memory recall vars: {e}")
         _seed_wiki_overview_var(handler, session_id, session_obj.project_id)
 
-    agent_result: AgentActivationResult | None = None
     input_data = event.data if event else {}
     session_source = input_data.get("source", "startup")
     context_decision = classify_session_start_context(
@@ -800,7 +792,7 @@ def handle_pre_created_session(
     if not input_data.get("skip_default_agent_activation"):
         try:
             agent_override = input_data.get("agent_name_override")
-            agent_result = handler._activate_default_agent(
+            handler._activate_default_agent(
                 session_id,
                 cli_source,
                 session_obj.project_id,
@@ -843,8 +835,6 @@ def handle_pre_created_session(
         if claimed_ctx:
             additional_context.append(claimed_ctx)
 
-    claimed_tasks_info = handler._get_claimed_task_info(session_id, session_obj.project_id)
-
     _consume_pending_compact_self_continuation(
         handler,
         pending_session_id=session_id,
@@ -874,9 +864,6 @@ def handle_pre_created_session(
             additional_context=additional_context,
             is_pre_created=True,
             terminal_context=session_obj.terminal_context,
-            agent_info=agent_result,
-            session_source=session_source,
-            claimed_tasks_info=claimed_tasks_info,
         ),
     )
     if context_decision.mode == "full":
