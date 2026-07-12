@@ -459,6 +459,32 @@ def is_validation_command(command: Any) -> bool:
     return _config_is_validation_command(command)
 
 
+def _validation_evidence_categories(item: Mapping[str, Any]) -> frozenset[str]:
+    """Return structured validation categories, classifying legacy commands if needed."""
+    categories = item.get("categories")
+    if isinstance(categories, (list, tuple, set, frozenset)):
+        normalized = frozenset(
+            category.strip()
+            for category in categories
+            if isinstance(category, str) and category.strip()
+        )
+        if normalized:
+            return normalized
+
+    matcher_id = item.get("matcher_id")
+    if isinstance(matcher_id, str) and matcher_id.strip():
+        return frozenset({f"matcher:{matcher_id.strip()}"})
+
+    from gobby.config.validation_detection import classify_validation_command
+
+    match = classify_validation_command(item.get("command"))
+    if match is None:
+        return frozenset()
+    if match.categories:
+        return frozenset(match.categories)
+    return frozenset({f"matcher:{match.matcher_id}"})
+
+
 def is_gobby_build_command(command: Any) -> bool:
     """Return whether a shell command directly invokes ``gobby build``."""
     if not isinstance(command, str) or not command.strip():
@@ -521,7 +547,8 @@ def completion_evidence_ready(variables: Mapping[str, Any] | None) -> bool:
         return False
 
     successful_evidence_seen = False
-    failed_validation_unresolved = False
+    failed_validation_categories: set[str] = set()
+    uncategorized_validation_failed = False
 
     for item in evidence_items:
         if not isinstance(item, Mapping):
@@ -532,16 +559,26 @@ def completion_evidence_ready(variables: Mapping[str, Any] | None) -> bool:
 
         success = item.get("success")
         if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
+            categories = _validation_evidence_categories(item)
             if success is True:
                 successful_evidence_seen = True
-                failed_validation_unresolved = False
+                if categories:
+                    failed_validation_categories.difference_update(categories)
+                else:
+                    uncategorized_validation_failed = False
             elif success is False:
-                failed_validation_unresolved = True
+                if categories:
+                    failed_validation_categories.update(categories)
+                else:
+                    uncategorized_validation_failed = True
             continue
 
         if success is True:
             successful_evidence_seen = True
 
+    failed_validation_unresolved = bool(
+        failed_validation_categories or uncategorized_validation_failed
+    )
     return successful_evidence_seen and not failed_validation_unresolved
 
 
