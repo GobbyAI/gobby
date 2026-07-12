@@ -461,6 +461,7 @@ class TestMCPClientManagerAddServer:
 
         assert result["success"] is True
         assert result["name"] == "new-server"
+        assert result["connected"] is False
         assert result["full_tool_schemas"] == []
         assert manager.has_server("new-server")
 
@@ -540,8 +541,51 @@ class TestMCPClientManagerAddServer:
             result = await manager.add_server(config)
 
         assert result["success"] is True
+        assert result["connected"] is True
         assert len(result["full_tool_schemas"]) == 1
         assert result["full_tool_schemas"][0]["name"] == "test-tool"
+
+    @pytest.mark.asyncio
+    async def test_add_server_keeps_config_when_initial_connection_fails(self) -> None:
+        """A persisted config remains available for a later lazy connection."""
+        mock_db = MagicMock()
+        manager = MCPClientManager(
+            server_configs=[],
+            mcp_db_manager=mock_db,
+            max_connection_retries=0,
+        )
+        config = MCPServerConfig(
+            name="recovering-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            enabled=True,
+        )
+        recovered_session = AsyncMock()
+        connect_server = AsyncMock(
+            side_effect=[RuntimeError("target unreachable"), recovered_session]
+        )
+
+        with patch.object(manager, "_connect_server", new=connect_server):
+            result = await manager.add_server(config)
+
+            assert result == {
+                "success": True,
+                "name": "recovering-server",
+                "connected": False,
+                "error": "target unreachable",
+                "full_tool_schemas": [],
+            }
+            stored_config = manager.get_server_config("recovering-server")
+            assert stored_config is not None
+            assert stored_config.url == config.url
+            assert stored_config.enabled is True
+            mock_db.upsert.assert_called_once()
+
+            session = await manager.ensure_connected("recovering-server")
+
+        assert session is recovered_session
+        assert connect_server.await_count == 2
 
     @pytest.mark.asyncio
     async def test_set_server_enabled_connects_and_caches_listed_tools(self) -> None:

@@ -205,15 +205,27 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
             raise
 
     tool_schemas: list[dict[str, Any]] = []
+    connected = False
+    connection_error: str | None = None
     if config.enabled:
-        session = await manager._connect_server(config)
-        tool_schemas = await _discover_and_cache_tools(manager, config, session)
+        try:
+            session = await manager._connect_server(config)
+        except Exception as exc:
+            connection_error = str(exc)
+            LOGGER.warning("Failed to connect newly added MCP server %s: %s", config.name, exc)
+        else:
+            connected = session is not None
+            tool_schemas = await _discover_and_cache_tools(manager, config, session)
 
-    return {
+    result: dict[str, Any] = {
         "success": True,
         "name": config.name,
+        "connected": connected,
         "full_tool_schemas": tool_schemas,
     }
+    if connection_error is not None:
+        result["error"] = connection_error
+    return result
 
 
 async def remove_server(
