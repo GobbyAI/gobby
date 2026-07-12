@@ -10,7 +10,7 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.workflows._agents import (
@@ -160,14 +160,27 @@ def create_workflows_registry(
 
     @registry.tool(
         name="list_workflows",
-        description="List available workflow definitions from project and global directories.",
+        description=(
+            "List visible step or lifecycle workflow definitions for the current project."
+        ),
     )
     def _list_workflows(
-        project_path: str | None = None,
-        workflow_type: str | None = None,
+        workflow_type: Literal["step", "lifecycle"] | None = None,
         global_only: bool = False,
     ) -> dict[str, Any]:
-        return list_workflows(_loader, project_path, workflow_type, global_only, db=_db)
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        project_path = None
+        if project_ctx:
+            project_path = project_ctx.get("project_path") or project_ctx.get("path")
+        return list_workflows(
+            _loader,
+            project_path,
+            workflow_type,
+            global_only,
+            db=_db,
+            project_id=project_id,
+        )
 
     @registry.tool(
         name="get_workflow_status",

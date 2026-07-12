@@ -22,6 +22,7 @@ from tests._timing import drain_asyncio_tasks
 pytestmark = pytest.mark.integration
 
 PROJECT_ID = "11111111-1111-4111-8111-111111110001"
+OTHER_PROJECT_ID = "33333333-3333-4333-8333-333333330003"
 SESSION_ID = "22222222-2222-4222-8222-222222220002"
 
 
@@ -124,3 +125,72 @@ async def test_project_scoped_pipeline_is_retrievable_and_runnable_from_context(
     assert execution is not None
     assert execution.project_id == PROJECT_ID
     execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_workflows_returns_only_visible_workflow_kinds(
+    temp_db: HubDatabase,
+) -> None:
+    _create_project(temp_db)
+    temp_db.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (OTHER_PROJECT_ID, "Other Project"),
+    )
+    definitions = LocalWorkflowDefinitionManager(temp_db)
+
+    def create_definition(
+        name: str,
+        *,
+        workflow_type: str = "workflow",
+        definition_type: str = "step",
+        project_id: str | None = PROJECT_ID,
+    ) -> None:
+        definitions.create(
+            name=name,
+            workflow_type=workflow_type,
+            project_id=project_id,
+            definition_json=json.dumps({"name": name, "type": definition_type, "version": "1.0.0"}),
+        )
+
+    create_definition("global-step", project_id=None)
+    create_definition("shadowed", project_id=None)
+    create_definition("shadowed", definition_type="lifecycle")
+    create_definition("project-lifecycle", definition_type="lifecycle")
+    create_definition("other-project-step", project_id=OTHER_PROJECT_ID)
+    for definition_type in ("agent", "pipeline", "rule", "variable"):
+        create_definition(
+            f"project-{definition_type}",
+            workflow_type=definition_type,
+            definition_type=definition_type,
+        )
+
+    loader = WorkflowLoader(db=temp_db)
+    loader.global_dirs = []
+    registry = create_workflows_registry(db=temp_db, loader=loader)
+
+    with _project_tool_context():
+        all_workflows = await registry.call("list_workflows", {})
+        lifecycle_workflows = await registry.call("list_workflows", {"workflow_type": "lifecycle"})
+        global_workflows = await registry.call("list_workflows", {"global_only": True})
+        invalid_filter = await registry.call("list_workflows", {"workflow_type": "pipeline"})
+
+    assert {item["name"] for item in all_workflows["workflows"]} == {
+        "global-step",
+        "project-lifecycle",
+        "shadowed",
+    }
+    shadowed = next(item for item in all_workflows["workflows"] if item["name"] == "shadowed")
+    assert shadowed["type"] == "lifecycle"
+    assert {item["name"] for item in lifecycle_workflows["workflows"]} == {
+        "project-lifecycle",
+        "shadowed",
+    }
+    assert {item["name"] for item in global_workflows["workflows"]} == {
+        "global-step",
+        "shadowed",
+    }
+    assert invalid_filter == {
+        "success": False,
+        "error": "workflow_type must be 'step' or 'lifecycle'",
+    }

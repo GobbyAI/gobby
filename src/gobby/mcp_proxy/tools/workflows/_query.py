@@ -2,9 +2,10 @@
 Query tools for workflows.
 """
 
+import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -19,6 +20,9 @@ from gobby.workflows.state_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+WorkflowKind = Literal["step", "lifecycle"]
+_WORKFLOW_KINDS = frozenset({"step", "lifecycle"})
 
 
 async def get_workflow(
@@ -87,9 +91,10 @@ async def get_workflow(
 def list_workflows(
     loader: WorkflowLoader,
     project_path: str | None = None,
-    workflow_type: str | None = None,
+    workflow_type: WorkflowKind | None = None,
     global_only: bool = False,
     db: Any = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     List available workflows.
@@ -101,14 +106,21 @@ def list_workflows(
     Args:
         loader: WorkflowLoader instance
         project_path: Project directory path. Auto-discovered from cwd if not provided.
-        workflow_type: Filter by type ("step" or "lifecycle")
+        workflow_type: Filter by workflow kind ("step" or "lifecycle")
         global_only: If True, only show global workflows (ignore project)
         db: Optional database for querying stored definitions
+        project_id: Caller project UUID used to scope DB definitions
 
     Returns:
         List of workflows with name, type, description, and source
     """
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+    if workflow_type is not None and workflow_type not in _WORKFLOW_KINDS:
+        return {
+            "success": False,
+            "error": "workflow_type must be 'step' or 'lifecycle'",
+        }
 
     # Auto-discover project path if not provided
     if not project_path:
@@ -123,21 +135,44 @@ def list_workflows(
     if db is not None:
         try:
             mgr = LocalWorkflowDefinitionManager(db)
-            db_rows = mgr.list_all(workflow_type=workflow_type)
+            db_rows = mgr.list_all(
+                project_id=project_id if not global_only else None,
+                workflow_type="workflow",
+            )
+            if global_only or project_id is None:
+                db_rows = [row for row in db_rows if row.project_id is None]
+            else:
+                db_rows = [row for row in db_rows if row.project_id in {None, project_id}]
+                db_rows.sort(key=lambda row: row.project_id is None)
             for row in db_rows:
+                if row.workflow_type != "workflow":
+                    continue
                 if row.name in seen_names:
+                    continue
+                seen_names.add(row.name)
+                try:
+                    definition_data = json.loads(row.definition_json)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Skipping malformed workflow definition row %s", row.id)
+                    continue
+                if not isinstance(definition_data, dict):
+                    logger.warning("Skipping non-object workflow definition row %s", row.id)
+                    continue
+                definition_type = definition_data.get("type", "step")
+                if not isinstance(definition_type, str) or definition_type not in _WORKFLOW_KINDS:
+                    continue
+                if workflow_type and definition_type != workflow_type:
                     continue
                 workflows.append(
                     {
                         "name": row.name,
-                        "type": row.workflow_type,
+                        "type": definition_type,
                         "description": row.description or "",
                         "source": row.source,
                         "enabled": row.enabled,
                         "priority": row.priority,
                     }
                 )
-                seen_names.add(row.name)
         except Exception as e:
             logger.warning(
                 f"DB workflow query failed, falling back to filesystem: {e}", exc_info=True
@@ -173,6 +208,8 @@ def list_workflows(
 
                 wf_type = data.get("type", "step")
 
+                if not isinstance(wf_type, str) or wf_type not in _WORKFLOW_KINDS:
+                    continue
                 if workflow_type and wf_type != workflow_type:
                     continue
 
