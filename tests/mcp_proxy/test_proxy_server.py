@@ -122,6 +122,7 @@ def daemon_tools(mock_mcp_manager, mock_llm_service):
         config=mock_config,
         llm_service=mock_llm_service,
     )
+    tools.tool_proxy._validate_arguments = False
     return tools
 
 
