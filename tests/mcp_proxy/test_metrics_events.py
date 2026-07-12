@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -513,6 +513,51 @@ class TestMCPTools:
             metrics_manager=manager,
             event_store=manager.event_store,
         )
+
+    @pytest.mark.asyncio
+    async def test_reset_metrics_requires_project_context(self) -> None:
+        from gobby.mcp_proxy.tools.metrics import create_metrics_registry
+
+        manager = MagicMock()
+        registry = create_metrics_registry(metrics_manager=manager)
+
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
+            result = await registry.call("reset_metrics", {})
+
+        assert result["success"] is False
+        assert "project context" in result["error"]
+        manager.reset_metrics.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reset_metrics_tools_force_calling_project_scope(self) -> None:
+        from gobby.mcp_proxy.tools.metrics import create_metrics_registry
+
+        manager = MagicMock()
+        manager.reset_metrics.side_effect = [3, 2, 1]
+        registry = create_metrics_registry(metrics_manager=manager)
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "calling-project"},
+        ):
+            reset_result = await registry.call("reset_metrics", {"server_name": "server-a"})
+            tool_result = await registry.call(
+                "reset_tool_metrics",
+                {"server_name": "server-a", "tool_name": "tool-a"},
+            )
+            cross_project_result = await registry.call(
+                "reset_metrics",
+                {"project_id": "other-project"},
+            )
+
+        assert reset_result["success"] is True
+        assert tool_result["success"] is True
+        assert cross_project_result["success"] is True
+        assert manager.reset_metrics.call_args_list == [
+            call(project_id="calling-project", server_name="server-a", tool_name=None),
+            call(project_id="calling-project", server_name="server-a", tool_name="tool-a"),
+            call(project_id="calling-project", server_name=None, tool_name=None),
+        ]
 
     @pytest.mark.asyncio
     async def test_get_session_tools(self, registry, temp_db: "HubDatabase") -> None:

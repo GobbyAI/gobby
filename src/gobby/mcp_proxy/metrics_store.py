@@ -285,29 +285,38 @@ class ToolMetricsStore:
         """
         Reset/delete metrics in the hub database.
         """
-        conditions = []
-        params: list[Any] = []
-
+        filters: list[tuple[str, str]] = []
         if project_id:
-            conditions.append("project_id = %s")
-            params.append(project_id)
+            filters.append(("project_id", project_id))
         if server_name:
-            conditions.append("server_name = %s")
-            params.append(server_name)
+            filters.append(("server_name", server_name))
         if tool_name:
-            conditions.append("tool_name = %s")
-            params.append(tool_name)
+            filters.append(("tool_name", tool_name))
 
-        if conditions:
-            where_clause = " AND ".join(conditions)
-            cursor = self.db.execute(
-                f"DELETE FROM tool_metrics WHERE {where_clause}",  # nosec B608
-                tuple(params),
-            )
-        else:
-            cursor = self.db.execute("DELETE FROM tool_metrics")
+        if not filters:
+            raise ValueError("reset_metrics requires at least one filter")
 
-        return cursor.rowcount
+        params = tuple(value for _, value in filters)
+        deleted_tool_metrics = 0
+        with self.db.transaction() as txn:
+            for table, tool_column in (
+                ("tool_metrics", "tool_name"),
+                ("tool_metrics_daily", "tool_name"),
+                ("metrics_events", "name"),
+            ):
+                conditions = [
+                    f"{tool_column if column == 'tool_name' else column} = %s"
+                    for column, _ in filters
+                ]
+                where_clause = " AND ".join(conditions)
+                cursor = txn.execute(
+                    f"DELETE FROM {table} WHERE {where_clause}",  # nosec B608
+                    params,
+                )
+                if table == "tool_metrics":
+                    deleted_tool_metrics = cursor.rowcount
+
+        return deleted_tool_metrics
 
     def aggregate_to_daily(self, retention_days: int = DEFAULT_RETENTION_DAYS) -> int:
         """

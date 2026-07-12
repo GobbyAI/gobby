@@ -445,16 +445,16 @@ class TestGetFailingTools:
 class TestResetMetrics:
     """Tests for reset_metrics method."""
 
-    def test_reset_all_metrics(self, metrics_manager: ToolMetricsManager) -> None:
-        """Test resetting all metrics."""
+    def test_reset_all_metrics_requires_filter(self, metrics_manager: ToolMetricsManager) -> None:
+        """An unfiltered reset cannot delete metrics across all projects."""
         metrics_manager.record_call("server1", "tool1", PROJECT_1, 100.0, True)
         metrics_manager.record_call("server2", "tool2", PROJECT_2, 100.0, True)
 
-        deleted = metrics_manager.reset_metrics()
-        assert deleted == 2
+        with pytest.raises(ValueError, match="at least one filter"):
+            metrics_manager.reset_metrics()
 
         result = metrics_manager.get_metrics()
-        assert result["summary"]["total_calls"] == 0
+        assert result["summary"]["total_calls"] == 2
 
     def test_reset_by_project(self, metrics_manager: ToolMetricsManager) -> None:
         """Test resetting metrics for specific project."""

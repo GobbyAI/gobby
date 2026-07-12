@@ -1,10 +1,11 @@
 """Tests for ToolMetricsStore."""
 
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -127,11 +128,107 @@ class TestToolMetricsStore:
         assert failing[0]["tool_name"] == "fail"
 
     def test_reset_metrics(self, metrics_store: ToolMetricsStore) -> None:
-        """Test resetting metrics."""
-        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0)
-        deleted = metrics_store.reset_metrics(project_id=PROJECT_1)
+        """Reset cascades across metric stores without affecting another project."""
+        for project_id in (PROJECT_1, PROJECT_2):
+            metrics_store.record_call("s1", "t1", project_id, 100.0)
+            metrics_store.db.execute(
+                """
+                INSERT INTO tool_metrics_daily (
+                    project_id, server_name, tool_name, date, call_count
+                ) VALUES (%s, %s, %s, CURRENT_DATE, 1)
+                """,
+                (project_id, "s1", "t1"),
+            )
+            metrics_store.db.execute(
+                """
+                INSERT INTO metrics_events (event_type, project_id, server_name, name)
+                VALUES ('tool_call', %s, %s, %s)
+                """,
+                (project_id, "s1", "t1"),
+            )
+
+        deleted = metrics_store.reset_metrics(
+            project_id=PROJECT_1,
+            server_name="s1",
+            tool_name="t1",
+        )
+
         assert deleted == 1
-        assert len(metrics_store.get_metrics()) == 0
+        for table, tool_column in (
+            ("tool_metrics", "tool_name"),
+            ("tool_metrics_daily", "tool_name"),
+            ("metrics_events", "name"),
+        ):
+            deleted_project_count = metrics_store.db.fetchone(
+                f"SELECT COUNT(*) AS count FROM {table} "  # nosec B608
+                f"WHERE project_id = %s AND server_name = %s AND {tool_column} = %s",
+                (PROJECT_1, "s1", "t1"),
+            )
+            preserved_project_count = metrics_store.db.fetchone(
+                f"SELECT COUNT(*) AS count FROM {table} "  # nosec B608
+                f"WHERE project_id = %s AND server_name = %s AND {tool_column} = %s",
+                (PROJECT_2, "s1", "t1"),
+            )
+            assert deleted_project_count["count"] == 0
+            assert preserved_project_count["count"] == 1
+
+    def test_reset_metrics_rejects_unfiltered_delete(self, metrics_store: ToolMetricsStore) -> None:
+        with pytest.raises(ValueError, match="at least one filter"):
+            metrics_store.reset_metrics()
+
+    def test_reset_metrics_rolls_back_all_tables_on_failure(
+        self,
+        metrics_store: ToolMetricsStore,
+        temp_db: "HubDatabase",
+    ) -> None:
+        metrics_store.record_call("s1", "t1", PROJECT_1, 100.0)
+        temp_db.execute(
+            """
+            INSERT INTO tool_metrics_daily (
+                project_id, server_name, tool_name, date, call_count
+            ) VALUES (%s, %s, %s, CURRENT_DATE, 1)
+            """,
+            (PROJECT_1, "s1", "t1"),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO metrics_events (event_type, project_id, server_name, name)
+            VALUES ('tool_call', %s, %s, %s)
+            """,
+            (PROJECT_1, "s1", "t1"),
+        )
+        original_transaction = temp_db.transaction
+
+        @contextmanager
+        def interrupted_transaction() -> Iterator[Any]:
+            with original_transaction() as txn:
+                original_execute = txn.execute
+
+                def execute_then_interrupt(
+                    sql: str,
+                    params: tuple[Any, ...] = (),
+                ) -> Any:
+                    cursor = original_execute(sql, params)
+                    if "tool_metrics_daily" in sql:
+                        raise RuntimeError("simulated reset interruption")
+                    return cursor
+
+                with patch.object(txn, "execute", side_effect=execute_then_interrupt):
+                    yield txn
+
+        with (
+            patch.object(temp_db, "transaction", side_effect=interrupted_transaction),
+            pytest.raises(RuntimeError, match="reset interruption"),
+        ):
+            metrics_store.reset_metrics(project_id=PROJECT_1)
+
+        assert len(metrics_store.get_metrics(project_id=PROJECT_1)) == 1
+        assert metrics_store.get_daily_metrics(project_id=PROJECT_1)[0]["call_count"] == 1
+        event_count = temp_db.fetchone(
+            "SELECT COUNT(*) AS count FROM metrics_events WHERE project_id = %s",
+            (PROJECT_1,),
+        )
+        assert event_count["count"] == 1
 
     def test_cleanup_and_aggregate(
         self, metrics_store: ToolMetricsStore, temp_db: "HubDatabase"
