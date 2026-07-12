@@ -19,6 +19,9 @@ from gobby.storage.clones import Clone, CloneStatus
 
 pytestmark = pytest.mark.integration
 
+RECENT_TIMESTAMP = "2026-01-02T03:04:05+00:00"
+STALE_TIMESTAMP = "2025-01-02T03:04:05+00:00"
+
 
 @pytest.fixture
 def mock_clone_storage() -> MagicMock:
@@ -83,8 +86,8 @@ class TestCreateClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call(
@@ -132,8 +135,8 @@ class TestCreateClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call(
@@ -164,8 +167,8 @@ class TestCreateClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call(
@@ -212,8 +215,8 @@ class TestGetClone:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call("get_clone", {"clone_id": "clone-123"})
@@ -252,8 +255,8 @@ class TestListClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="now",
-                updated_at="now",
+                created_at=RECENT_TIMESTAMP,
+                updated_at=RECENT_TIMESTAMP,
             ),
             Clone(
                 id="clone-2",
@@ -267,8 +270,8 @@ class TestListClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="now",
-                updated_at="now",
+                created_at=RECENT_TIMESTAMP,
+                updated_at=RECENT_TIMESTAMP,
             ),
         ]
 
@@ -323,8 +326,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.delete.return_value = True
@@ -365,8 +368,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.delete.return_value = True
@@ -397,8 +400,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.get.return_value = original_clone
         mock_git_manager.delete_clone.return_value = MagicMock(
@@ -435,8 +438,8 @@ class TestDeleteClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.delete.side_effect = RuntimeError("database unavailable")
@@ -472,8 +475,8 @@ class TestSyncClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.sync_clone.return_value = MagicMock(success=True)
 
@@ -499,8 +502,8 @@ class TestSyncClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.sync_clone.return_value = MagicMock(success=True)
 
@@ -535,8 +538,8 @@ class TestSyncClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_git_manager.sync_clone.return_value = MagicMock(success=False, error="Network error")
 
@@ -568,8 +571,8 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.update.return_value = MagicMock()
 
@@ -624,8 +627,8 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         # Fetch from clone path fails
@@ -661,8 +664,8 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         # Fetch succeeds
@@ -703,8 +706,8 @@ class TestMergeCloneToTarget:
             remote_url="https://github.com/user/repo.git",
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.update.return_value = MagicMock()
 
@@ -746,8 +749,8 @@ class TestClaimClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.claim.return_value = MagicMock()
 
@@ -776,8 +779,8 @@ class TestClaimClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         from gobby.utils.session_context import session_context_for_test
@@ -804,8 +807,8 @@ class TestClaimClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.claim.return_value = MagicMock()
 
@@ -848,8 +851,8 @@ class TestReleaseClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.release.return_value = MagicMock()
 
@@ -887,8 +890,8 @@ class TestGetCloneByTask:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
 
         result = await registry.call("get_clone_by_task", {"task_id": "task-456"})
@@ -929,8 +932,8 @@ class TestLinkTaskToClone:
             remote_url=None,
             last_sync_at=None,
             cleanup_after=None,
-            created_at="now",
-            updated_at="now",
+            created_at=RECENT_TIMESTAMP,
+            updated_at=RECENT_TIMESTAMP,
         )
         mock_clone_storage.update.return_value = MagicMock()
 
@@ -1007,8 +1010,8 @@ class TestDetectStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -1054,8 +1057,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -1086,8 +1089,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
 
@@ -1116,8 +1119,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
@@ -1150,8 +1153,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at="old",
-                updated_at="old",
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(
