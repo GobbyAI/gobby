@@ -609,16 +609,6 @@ class GitHubIssueTriageService:
         self, issue: IssueSnapshot, comment: str, labels: list[str]
     ) -> None:
         owner, repo_name = parse_github_repo(issue.repo)
-        await self._github_call(
-            "add_issue_comment",
-            {
-                "owner": owner,
-                "repo": repo_name,
-                "issue_number": issue.issue_number,
-                "body": comment,
-            },
-            required=False,
-        )
         deduped_labels = sorted({label for label in labels if label})
         if deduped_labels:
             await self._github_call(
@@ -631,6 +621,16 @@ class GitHubIssueTriageService:
                 },
                 required=False,
             )
+        await self._github_call(
+            "add_issue_comment",
+            {
+                "owner": owner,
+                "repo": repo_name,
+                "issue_number": issue.issue_number,
+                "body": comment,
+            },
+            required=False,
+        )
 
     async def _close_issue(self, issue: IssueSnapshot) -> None:
         owner, repo_name = parse_github_repo(issue.repo)
