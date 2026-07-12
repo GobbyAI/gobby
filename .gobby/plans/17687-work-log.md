@@ -266,3 +266,21 @@ Entry format:
   text-gen) — his call, flagged in session.
 - No new daemon restarts (latest remains 22:27:40 local 07-11, #8155
   coordinated). ARM_S_HEAL_ABORT annotation appended to arm-sonnet.log.
+
+## 2026-07-12 ~21:25Z — circuits stale, not quota: restart + attempt=9
+
+- Josh challenged the quota diagnosis ("we have plenty of usage on both").
+  He was right. Verification: claude CLI account josh@gamegoblins.com (same
+  subscription this session used all day without limits); after a daemon
+  restart cleared the in-memory circuit breakers, direct probes through
+  /api/llm/generate succeeded for BOTH claude/sonnet and codex/gpt-5.5
+  ("OK" responses). The morning 429s ("weekly limit resets Jul 13 12pm")
+  were transient/stale — actual upstream cause unconfirmed, but current
+  capacity is fine. Correction to the previous entry's assessment.
+- DAEMON RESTART (disclose): 2026-07-12 ~21:21Z, sender=this session
+  (#7921), purpose: clear open claude:sonnet/codex circuits (retry timers
+  ~23.5h) that outlived whatever transient tripped them. Own restart-trap
+  caught it as designed.
+- Heal attempt=9 launched ~21:25Z ("post-circuit-clear" stamp), same
+  command (sonnet@xhigh aggregate candidate), caffeinate armed, trap
+  re-armed. Timeline slip from the false quota block: ~4h, not ~23h.
