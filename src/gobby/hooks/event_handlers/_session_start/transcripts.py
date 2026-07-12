@@ -136,6 +136,12 @@ def find_json_session_transcript(
             handler.logger.debug("Found %s transcript by prefix: %s", cli_label, matches[0])
             return str(matches[0])
 
+    fallback_matches = list(chats_dir.glob("session-*.json"))
+    if fallback_matches:
+        most_recent = max(fallback_matches, key=lambda path: path.stat().st_mtime)
+        handler.logger.debug("Found most recent %s transcript: %s", cli_label, most_recent)
+        return str(most_recent)
+
     handler.logger.debug(
         "No %s session file matching prefix %s in %s",
         cli_label,

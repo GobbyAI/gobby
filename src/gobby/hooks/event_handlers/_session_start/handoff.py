@@ -33,12 +33,15 @@ def find_parent_session(
     ):
         return parent_session_id, session_source
 
+    child_terminal_context = input_data.get("terminal_context")
     try:
         parent = handler._session_manager.find_parent(
             machine_id=machine_id,
             project_id=project_id,
             source=cli_source,
             status="handoff_ready",
+            terminal_context=child_terminal_context,
+            candidate_limit=8,
         )
 
         if not parent:
@@ -50,6 +53,8 @@ def find_parent_session(
                     project_id=project_id,
                     source=cli_source,
                     status="handoff_ready",
+                    terminal_context=child_terminal_context,
+                    candidate_limit=8,
                 )
                 if parent:
                     handler.logger.debug(f"Found handoff_ready parent after backoff: {parent.id}")
@@ -60,8 +65,9 @@ def find_parent_session(
                 return None, "startup"
 
         if parent:
-            child_terminal_context = input_data.get("terminal_context")
-            if not terminal_context_matches_session(parent, child_terminal_context):
+            if child_terminal_context and not terminal_context_matches_session(
+                parent, child_terminal_context
+            ):
                 handler.logger.warning(
                     "Ignoring %s handoff parent %s; terminal context does not match child",
                     session_source,

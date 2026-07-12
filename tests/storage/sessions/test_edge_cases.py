@@ -240,6 +240,66 @@ class TestSessionEdgeCases:
         assert parent is not None
         assert parent.id == session2.id
 
+    def test_find_parent_scans_newest_candidates_for_matching_terminal(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        matching_parent = session_manager.register(
+            external_id="matching-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+        )
+        session_manager.update_status(matching_parent.id, "handoff_ready")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '1 minute' WHERE id = %s",
+            (matching_parent.id,),
+        )
+        newer_wrong_parent = session_manager.register(
+            external_id="newer-wrong-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={"tmux_pane": "%2", "tmux_socket_path": "/tmp/tmux"},
+        )
+        session_manager.update_status(newer_wrong_parent.id, "handoff_ready")
+
+        parent = session_manager.find_parent(
+            machine_id="machine",
+            project_id=sample_project["id"],
+            source="claude",
+            terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+            candidate_limit=8,
+        )
+
+        assert parent is not None
+        assert parent.id == matching_parent.id
+
+    def test_find_parent_without_terminal_context_rejects_ambiguous_candidates(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        for external_id in ("ambiguous-parent-1", "ambiguous-parent-2"):
+            session = session_manager.register(
+                external_id=external_id,
+                machine_id="machine",
+                source="claude",
+                project_id=sample_project["id"],
+            )
+            session_manager.update_status(session.id, "handoff_ready")
+
+        parent = session_manager.find_parent(
+            machine_id="machine",
+            project_id=sample_project["id"],
+            source="claude",
+            candidate_limit=8,
+        )
+
+        assert parent is None
+
     def test_count_with_all_filters(
         self,
         session_manager: SessionManager,
