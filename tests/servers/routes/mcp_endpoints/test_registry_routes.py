@@ -8,6 +8,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.servers.routes.dependencies import get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 
@@ -181,6 +183,28 @@ class TestMCPRegistryRoutes:
         assert data["total_servers"] == 1
         assert data["connected_servers"] == 0
         assert data["server_health"]["github"]["failures"] == 3
+
+    def test_status_failed_transport_is_not_reported_connected(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        config = MCPServerConfig(
+            name="failed-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        failed_connection = MagicMock()
+        failed_connection.is_connected = False
+        manager._connections[config.name] = failed_connection
+        mock_server.mcp_manager = manager
+
+        response = client.get("/api/mcp/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_servers"] == 1
+        assert data["connected_servers"] == 0
 
     def test_status_external_no_health(self, client: TestClient, mock_server: MagicMock) -> None:
         """External server with no health data."""

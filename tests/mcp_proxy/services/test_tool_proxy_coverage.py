@@ -7,10 +7,37 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.models import MCPError
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService, safe_truncate
 
 pytestmark = pytest.mark.unit
+
+
+class TestListServers:
+    @pytest.mark.asyncio
+    async def test_failed_transport_is_not_reported_connected(self) -> None:
+        config = MCPServerConfig(
+            name="failed-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        failed_connection = MagicMock()
+        failed_connection.is_connected = False
+        manager._connections[config.name] = failed_connection
+
+        result = await ToolProxyService(mcp_manager=manager).list_servers()
+
+        assert result["connected"] == 0
+        assert result["servers"] == [
+            {
+                "name": "failed-server",
+                "state": "unknown",
+                "transport": "http",
+            }
+        ]
 
 
 class TestSafeTruncate:

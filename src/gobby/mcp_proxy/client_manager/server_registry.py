@@ -112,8 +112,12 @@ def get_server_config(manager: Any, name: str) -> MCPServerConfig | None:
 
 
 def list_connections(manager: Any) -> list[MCPServerConfig]:
-    """List configs for currently tracked connections."""
-    return [manager._configs[name] for name in manager._connections.keys()]
+    """List configs for live transport connections."""
+    return [
+        manager._configs[name]
+        for name, connection in manager._connections.items()
+        if connection.is_connected
+    ]
 
 
 def get_available_servers(manager: Any) -> list[str]:
@@ -136,8 +140,9 @@ def has_server(manager: Any, server_name: str) -> bool:
 
 
 def is_connected(manager: Any, server_name: str) -> bool:
-    """Return whether a server has a tracked runtime connection."""
-    return server_name in manager._connections
+    """Return whether a server has a live transport connection."""
+    connection = manager._connections.get(server_name)
+    return bool(connection is not None and connection.is_connected)
 
 
 async def _discover_and_cache_tools(

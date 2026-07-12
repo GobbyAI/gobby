@@ -1066,6 +1066,7 @@ class TestMCPClientManagerConnectServer:
 
         mock_connection = AsyncMock()
         mock_connection.connect.side_effect = Exception("Connection failed")
+        mock_connection.is_connected = False
 
         with patch(
             "gobby.mcp_proxy.manager.create_transport_connection",
@@ -1075,6 +1076,8 @@ class TestMCPClientManagerConnectServer:
                 await manager._connect_server(config)
 
         assert manager.health["test-server"].state == ConnectionState.FAILED
+        assert manager.is_connected("test-server") is False
+        assert manager.list_connections() == []
 
 
 class TestMCPClientManagerDisconnect:
