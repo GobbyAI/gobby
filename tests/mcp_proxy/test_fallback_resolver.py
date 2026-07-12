@@ -1,8 +1,11 @@
 """Tests for the ToolFallbackResolver module."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import psycopg
 import pytest
+from psycopg_pool import PoolTimeout
 
 from gobby.mcp_proxy.services.fallback import FallbackSuggestion, ToolFallbackResolver
 
@@ -288,3 +291,33 @@ class TestToolFallbackResolver:
         rate = fallback_resolver._get_success_rate("server", "tool", "project")
 
         assert rate is None
+
+    @pytest.mark.parametrize(
+        "database_error",
+        [psycopg.OperationalError("database unavailable"), PoolTimeout("pool exhausted")],
+    )
+    async def test_get_tool_description_logs_database_error(
+        self,
+        fallback_resolver,
+        mock_semantic_search,
+        caplog,
+        database_error: Exception,
+    ) -> None:
+        mock_semantic_search.db.fetchone.side_effect = database_error
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.services.fallback"):
+            result = await fallback_resolver._get_tool_description("server", "tool")
+
+        assert result is None
+        assert "Failed to look up description for server.tool" in caplog.text
+        assert str(database_error) in caplog.text
+
+    async def test_get_tool_description_propagates_programming_errors(
+        self,
+        fallback_resolver,
+        mock_semantic_search,
+    ) -> None:
+        mock_semantic_search.db.fetchone.side_effect = TypeError("invalid row handling")
+
+        with pytest.raises(TypeError, match="invalid row handling"):
+            await fallback_resolver._get_tool_description("server", "tool")

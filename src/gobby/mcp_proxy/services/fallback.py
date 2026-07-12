@@ -10,6 +10,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+from psycopg_pool import PoolTimeout
+
 from gobby.memory.vectorstore import (
     VECTORSTORE_WARNING_INTERVAL_SECONDS,
     is_recoverable_vector_store_error,
@@ -325,5 +328,12 @@ class ToolFallbackResolver:
                 (server_name, tool_name),
             )
             return row["description"] if row else None
-        except Exception:
+        except (psycopg.Error, PoolTimeout) as exc:
+            logger.debug(
+                "Failed to look up description for %s.%s: %s",
+                server_name,
+                tool_name,
+                exc,
+                exc_info=True,
+            )
             return None
