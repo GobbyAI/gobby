@@ -10,6 +10,10 @@ import shutil
 logger = logging.getLogger(__name__)
 
 
+def _is_usable_cli_path(cli_path: str) -> bool:
+    return os.path.exists(cli_path) and os.access(cli_path, os.X_OK)
+
+
 def find_cli_path() -> str | None:
     """
     Find Claude CLI path.
@@ -48,19 +52,24 @@ async def verify_cli_path(cached_path: str | None) -> str | None:
     Returns:
         Valid CLI path if found, None otherwise.
     """
+    if cached_path is None:
+        cli_path = shutil.which("claude")
+        return cli_path if cli_path and _is_usable_cli_path(cli_path) else None
+
     cli_path = cached_path
 
-    # Validate cached path still exists
-    # Retry with backoff if missing (may be in the middle of npm install)
-    if cli_path and not os.path.exists(cli_path):
-        logger.warning(f"Cached CLI path no longer exists (may have been reinstalled): {cli_path}")
+    # Retry with backoff if the cached executable disappeared or became unusable.
+    if not _is_usable_cli_path(cli_path):
+        logger.warning(
+            f"Cached CLI path is no longer usable (may have been reinstalled): {cli_path}"
+        )
         # Try to find CLI again with retry logic for npm install race condition
         max_retries = 3
         retry_delays = [0.5, 1.0, 2.0]  # Exponential backoff
 
         for attempt, delay in enumerate(retry_delays, 1):
             cli_path = shutil.which("claude")
-            if cli_path and os.path.exists(cli_path):
+            if cli_path and _is_usable_cli_path(cli_path):
                 logger.debug(
                     f"Found Claude CLI at new location after {attempt} attempt(s): {cli_path}"
                 )
