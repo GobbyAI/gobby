@@ -16,6 +16,7 @@ import subprocess  # nosec B404 # subprocess needed for git commands
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypedDict
+from uuid import uuid4
 from weakref import WeakKeyDictionary
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,20 @@ def stash_ref_for_oid(stash_list: str, stash_oid: str) -> str | None:
         stash_ref, separator, candidate_oid = line.partition("\0")
         if separator and candidate_oid == stash_oid:
             return stash_ref
+    return None
+
+
+def new_stash_marker(operation: str) -> str:
+    """Return a collision-resistant marker for one operation-owned stash."""
+    return f"gobby-{operation}:{uuid4().hex}"
+
+
+def stash_oid_for_marker(stash_list: str, marker: str) -> str | None:
+    """Resolve the stash object whose reflog subject ends with an exact marker."""
+    for line in stash_list.splitlines():
+        stash_oid, separator, subject = line.partition("\0")
+        if separator and subject.endswith(marker):
+            return stash_oid
     return None
 
 

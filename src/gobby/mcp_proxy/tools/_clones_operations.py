@@ -12,8 +12,10 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
 from gobby.utils.git import (
     get_checkout_mutation_lock,
+    new_stash_marker,
     run_thread_to_completion,
     run_to_completion,
+    stash_oid_for_marker,
     stash_ref_for_oid,
 )
 
@@ -302,6 +304,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             try:
                 ctx.clone_storage.record_sync(clone_id)
                 try:
+                    stash_marker = new_stash_marker("merge-clone")
                     stash_head_before = await run_thread_to_completion(
                         git_manager.run_git_command,
                         ["stash", "list", "-1", "--format=%H"],
@@ -321,7 +324,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                             "stash",
                             "push",
                             "-m",
-                            "gobby-merge-clone: auto-stash sync files",
+                            stash_marker,
                             "--",
                             ".gobby/",
                         ],
@@ -337,27 +340,29 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         )
                     stash_head_after = await run_thread_to_completion(
                         git_manager.run_git_command,
-                        ["stash", "list", "-1", "--format=%H"],
+                        ["stash", "list", "--format=%H%x00%gs"],
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
                     if stash_head_after.returncode != 0:
                         raise subprocess.CalledProcessError(
                             stash_head_after.returncode,
-                            ["git", "stash", "list", "-1", "--format=%H"],
+                            ["git", "stash", "list", "--format=%H%x00%gs"],
                             output=stash_head_after.stdout,
                             stderr=stash_head_after.stderr,
                         )
                     before_oid = stash_head_before.stdout.strip() or None
-                    after_oid = stash_head_after.stdout.strip() or None
-                    if after_oid != before_oid:
-                        if after_oid is None:
-                            raise subprocess.CalledProcessError(
-                                1,
-                                ["git", "stash", "list", "-1", "--format=%H"],
-                                stderr="stash identity disappeared after stash push",
-                            )
-                        stash_oid = after_oid
+                    after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
+                    stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
+                    if stash_oid is None and after_oid != before_oid:
+                        raise subprocess.CalledProcessError(
+                            1,
+                            ["git", "stash", "list", "--format=%H%x00%gs"],
+                            stderr=(
+                                "stash head changed after push but the operation-owned "
+                                "stash marker was not found"
+                            ),
+                        )
                 except subprocess.CalledProcessError as error:
                     detail = (
                         error.stderr or error.output or f"git exited with status {error.returncode}"

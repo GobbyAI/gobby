@@ -14,8 +14,10 @@ from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.utils.git import (
     get_checkout_mutation_lock,
+    new_stash_marker,
     run_thread_to_completion,
     run_to_completion,
+    stash_oid_for_marker,
     stash_ref_for_oid,
 )
 
@@ -509,6 +511,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     }
 
             # Stash dirty .gobby/ sync files and retain the exact object identity.
+            stash_marker = new_stash_marker("merge-worktree")
             stash_head_before = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 ["stash", "list", "-1", "--format=%H"],
@@ -533,7 +536,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
             stash_push = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
-                ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
+                ["stash", "push", "-m", stash_marker, "--", ".gobby/"],
                 cwd=merge_cwd,
                 timeout=10,
             )
@@ -551,7 +554,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
             stash_head_after = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
-                ["stash", "list", "-1", "--format=%H"],
+                ["stash", "list", "--format=%H%x00%gs"],
                 cwd=merge_cwd,
                 timeout=10,
             )
@@ -572,20 +575,22 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "target_branch": merge_target,
                 }
             before_oid = stash_head_before.stdout.strip() or None
-            after_oid = stash_head_after.stdout.strip() or None
-            if after_oid != before_oid:
-                if after_oid is None:
-                    return {
-                        "success": False,
-                        "error": "Stash changed but its exact object could not be identified",
-                        "step": "stash",
-                        "worktree_path": wt_path,
-                        "project_path": repo_path,
-                        "target_worktree_path": target_worktree_path,
-                        "source_branch": effective_source,
-                        "target_branch": merge_target,
-                    }
-                stash_oid = after_oid
+            after_oid = stash_head_after.stdout.partition("\0")[0].strip() or None
+            stash_oid = stash_oid_for_marker(stash_head_after.stdout, stash_marker)
+            if stash_oid is None and after_oid != before_oid:
+                return {
+                    "success": False,
+                    "error": (
+                        "Stash head changed after push but the operation-owned "
+                        "stash marker was not found"
+                    ),
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
 
             # Git can leave MERGE_HEAD/index state behind even when the command
             # raises instead of returning a nonzero result (for example, timeout).

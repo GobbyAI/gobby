@@ -82,14 +82,23 @@ def mock_git_manager() -> MagicMock:
     """Create mock git manager."""
     manager = MagicMock()
     manager.repo_path = Path("/tmp/repo")
+    manager.run_git_command.return_value = _git_result()
     return manager
 
 
 @pytest.fixture
-def registry(mock_clone_storage: Any, mock_git_manager: Any) -> Any:
+def registry(
+    mock_clone_storage: Any,
+    mock_git_manager: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Any:
     """Create registry with clone tools."""
     from gobby.mcp_proxy.tools.clones import create_clones_registry
 
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools._clones_operations.new_stash_marker",
+        lambda _operation: "test-stash-marker",
+    )
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,
@@ -885,7 +894,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.return_value = MagicMock()
 
         # Mock fetch from clone path (returncode=0 = success)
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = _git_result()
         # Mock merge operation
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
@@ -1011,11 +1020,13 @@ class TestMergeCloneToTarget:
             nonlocal identity_calls
             if args == ["stash", "list", "-1", "--format=%H"]:
                 identity_calls += 1
-                return _git_result(stdout="" if identity_calls == 1 else "operation-stash")
+                return _git_result(stdout="")
             if args[:2] == ["stash", "push"]:
                 worker_started.set()
                 assert release_worker.wait(timeout=5)
                 return _git_result()
+            if args == ["stash", "list", "--format=%H%x00%gs"]:
+                return _git_result(stdout="operation-stash\x00On main: test-stash-marker")
             if args == ["stash", "list", "--format=%gd%x00%H"]:
                 return _git_result(stdout="stash@{0}\0operation-stash")
             return _git_result()
@@ -1222,18 +1233,12 @@ class TestMergeCloneToTarget:
     ) -> None:
         """A successful stash push still requires an exact post-push identity."""
         mock_clone_storage.get.return_value = _merge_test_clone()
-        identity_calls = 0
 
         def failing_identity_lookup(args, **_kwargs):
-            nonlocal identity_calls
-            if args in (
-                ["rev-parse", "--verify", "-q", "refs/stash"],
-                ["stash", "list", "-1", "--format=%H"],
-            ):
-                identity_calls += 1
-                if args[0] == "rev-parse" or identity_calls == 2:
-                    return _git_result(returncode=1, stderr="cannot resolve refs/stash")
+            if args == ["stash", "list", "-1", "--format=%H"]:
                 return _git_result(stdout="")
+            if args == ["stash", "list", "--format=%H%x00%gs"]:
+                return _git_result(stdout="other\x00On main: other-operation")
             return _git_result()
 
         mock_git_manager.run_git_command.side_effect = failing_identity_lookup
@@ -1246,7 +1251,7 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is False
         assert result["step"] == "stash"
-        assert "cannot resolve refs/stash" in result["error"]
+        assert "operation-owned stash marker was not found" in result["error"]
         mock_git_manager.merge_branch.assert_not_called()
         cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
         assert cleanup_call.args[0][:2] == ["branch", "-D"]
@@ -1289,7 +1294,7 @@ class TestMergeCloneToTarget:
             _git_result(),
             _git_result(stdout=""),
             _git_result(),
-            _git_result(stdout="ours"),
+            _git_result(stdout="ours\x00On main: test-stash-marker"),
             _git_result(),
             _git_result(stdout="stash@{0}\x00ours"),
             subprocess.TimeoutExpired(["git", "stash", "pop", "stash@{0}"], 10),
@@ -1326,7 +1331,11 @@ class TestMergeCloneToTarget:
             _git_result(),
             _git_result(stdout="previous"),
             _git_result(),
-            _git_result(stdout="ours"),
+            _git_result(
+                stdout=(
+                    "interleaved\x00On main: other-operation\nours\x00On main: test-stash-marker"
+                )
+            ),
             _git_result(),
             _git_result(stdout="stash@{0}\x00interleaved\nstash@{1}\x00ours"),
             _git_result(),
@@ -1352,7 +1361,7 @@ class TestMergeCloneToTarget:
             _git_result(),
             _git_result(stdout=""),
             _git_result(),
-            _git_result(stdout="ours"),
+            _git_result(stdout="ours\x00On main: test-stash-marker"),
             _git_result(),
             _git_result(stdout="stash@{0}\x00ours"),
             _git_result(returncode=1, stderr="restore conflict"),
@@ -1393,7 +1402,7 @@ class TestMergeCloneToTarget:
         )
 
         # Fetch succeeds
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = _git_result()
         # Merge has conflicts - error="merge_conflict" signals conflict
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=False,
@@ -1436,7 +1445,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.return_value = MagicMock()
 
         # Fetch succeeds
-        mock_git_manager.run_git_command.return_value = MagicMock(returncode=0, stderr="")
+        mock_git_manager.run_git_command.return_value = _git_result()
         mock_git_manager.merge_branch.return_value = MagicMock(
             success=True,
             has_conflicts=False,

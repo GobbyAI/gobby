@@ -23,8 +23,10 @@ from gobby.utils.git import (
     git_subprocess_env,
     is_path_gitignored,
     is_valid_sha_format,
+    new_stash_marker,
     normalize_commit_sha,
     run_git_command,
+    stash_oid_for_marker,
 )
 
 pytestmark = pytest.mark.unit
@@ -51,6 +53,28 @@ class TestCheckoutMutationLock:
         second.mkdir()
 
         assert get_checkout_mutation_lock(first) is not get_checkout_mutation_lock(second)
+
+
+class TestStashMarkers:
+    """Tests for operation-owned stash marker helpers."""
+
+    def test_new_marker_is_unique_and_namespaced(self) -> None:
+        first = new_stash_marker("merge-clone")
+        second = new_stash_marker("merge-clone")
+
+        assert first.startswith("gobby-merge-clone:")
+        assert second.startswith("gobby-merge-clone:")
+        assert first != second
+
+    def test_resolves_marker_below_interleaved_head(self) -> None:
+        stash_list = (
+            "other-oid\x00On main: other-operation\nowned-oid\x00On main: exact-operation-marker\n"
+        )
+
+        assert stash_oid_for_marker(stash_list, "exact-operation-marker") == "owned-oid"
+
+    def test_missing_marker_returns_none(self) -> None:
+        assert stash_oid_for_marker("other-oid\x00On main: other", "missing") is None
 
 
 class TestRunGitCommand:

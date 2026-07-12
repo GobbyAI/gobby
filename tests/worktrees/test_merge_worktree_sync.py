@@ -12,6 +12,15 @@ from gobby.utils.git import get_checkout_mutation_lock
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _deterministic_stash_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep operation marker assertions deterministic in merge tests."""
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.worktrees._sync.new_stash_marker",
+        lambda _operation: "test-stash-marker",
+    )
+
+
 def _make_git_result(returncode: int, stdout: str = "", stderr: str = "") -> MagicMock:
     """Create a mock git subprocess result."""
     result = MagicMock()
@@ -319,7 +328,12 @@ async def test_merge_worktree_cancellation_waits_for_git_worker_before_unlock():
         nonlocal identity_calls
         if args == ["stash", "list", "-1", "--format=%H"]:
             identity_calls += 1
-            return _make_git_result(0, stdout="" if identity_calls == 1 else "operation-stash")
+            return _make_git_result(0, stdout="")
+        if args == ["stash", "list", "--format=%H%x00%gs"]:
+            return _make_git_result(
+                0,
+                stdout="operation-stash\x00On main: test-stash-marker",
+            )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(0, stdout="stash@{0}\0operation-stash")
         if args[:1] == ["merge"] and args[1:2] != ["--abort"]:
@@ -423,9 +437,11 @@ async def test_merge_worktree_original_branch_restore_failure_is_surfaced_after_
             return _make_git_result(1, stderr="restore blocked")
         if args == ["stash", "list", "-1", "--format=%H"]:
             stash_head_calls += 1
+            return _make_git_result(0, stdout="")
+        if args == ["stash", "list", "--format=%H%x00%gs"]:
             return _make_git_result(
                 0,
-                stdout="" if stash_head_calls == 1 else "stash-ours\n",
+                stdout="stash-ours\x00On main: test-stash-marker\n",
             )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
@@ -459,11 +475,16 @@ async def test_merge_worktree_stash_cancellation_restores_exact_stash_before_unl
         nonlocal identity_calls
         if args == ["stash", "list", "-1", "--format=%H"]:
             identity_calls += 1
-            return _make_git_result(0, stdout="" if identity_calls == 1 else "operation-stash")
+            return _make_git_result(0, stdout="")
         if args[:2] == ["stash", "push"]:
             worker_started.set()
             assert release_worker.wait(timeout=5)
             return _make_git_result(0)
+        if args == ["stash", "list", "--format=%H%x00%gs"]:
+            return _make_git_result(
+                0,
+                stdout="operation-stash\x00On main: test-stash-marker",
+            )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(0, stdout="stash@{0}\0operation-stash")
         return regular_git(args, cwd=cwd, timeout=timeout, check=check)
@@ -1010,9 +1031,14 @@ async def test_merge_worktree_stash_restores_on_success():
         nonlocal stash_head_calls
         if args == ["stash", "list", "-1", "--format=%H"]:
             stash_head_calls += 1
+            return _make_git_result(0, stdout="previous\n")
+        if args == ["stash", "list", "--format=%H%x00%gs"]:
             return _make_git_result(
                 0,
-                stdout="" if stash_head_calls == 1 else "stash-ours\n",
+                stdout=(
+                    "stash-other\x00On main: other-operation\n"
+                    "stash-ours\x00On main: test-stash-marker\n"
+                ),
             )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(
@@ -1066,17 +1092,12 @@ async def test_merge_worktree_stash_identity_lookup_failure_aborts_before_merge(
 
     ctx = _make_registry_context()
     regular_git = _local_merge_side_effect()
-    identity_calls = 0
 
     def failing_identity_lookup(args, cwd=None, timeout=30, check=False):
-        nonlocal identity_calls
-        if args == ["rev-parse", "--verify", "-q", "refs/stash"]:
-            return _make_git_result(1, stderr="cannot resolve stash identity")
         if args == ["stash", "list", "-1", "--format=%H"]:
-            identity_calls += 1
-            if identity_calls == 2:
-                return _make_git_result(1, stderr="cannot resolve stash identity")
             return _make_git_result(0, stdout="")
+        if args == ["stash", "list", "--format=%H%x00%gs"]:
+            return _make_git_result(0, stdout="other\x00On main: other-operation")
         return regular_git(args, cwd=cwd, timeout=timeout, check=check)
 
     ctx.git_manager._run_git.side_effect = failing_identity_lookup
@@ -1086,7 +1107,7 @@ async def test_merge_worktree_stash_identity_lookup_failure_aborts_before_merge(
 
     assert result["success"] is False
     assert result["step"] == "stash"
-    assert "cannot resolve stash identity" in result["error"]
+    assert "operation-owned stash marker was not found" in result["error"]
     assert not any(call.args[0][0] == "merge" for call in ctx.git_manager._run_git.call_args_list)
 
 
@@ -1102,9 +1123,11 @@ async def test_merge_worktree_stash_restore_failure_is_surfaced():
         nonlocal stash_head_calls
         if args == ["stash", "list", "-1", "--format=%H"]:
             stash_head_calls += 1
+            return _make_git_result(0, stdout="")
+        if args == ["stash", "list", "--format=%H%x00%gs"]:
             return _make_git_result(
                 0,
-                stdout="" if stash_head_calls == 1 else "stash-ours\n",
+                stdout="stash-ours\x00On main: test-stash-marker\n",
             )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
