@@ -233,6 +233,7 @@ async def remove_server(
     if name in manager._connections:
         await manager._connections[name].disconnect()
         del manager._connections[name]
+    manager._tool_schema_cache.pop(name, None)
 
     del manager._configs[name]
     manager.health.pop(name, None)
@@ -274,6 +275,7 @@ async def update_server(
     if name in manager._connections:
         await manager._connections[name].disconnect()
         del manager._connections[name]
+    manager._tool_schema_cache.pop(name, None)
     manager.health.pop(name, None)
     manager._lazy_connector.unregister_server(name)
 
@@ -327,6 +329,7 @@ async def set_server_enabled(
         return {"success": True, "name": name, "enabled": enabled}
 
     if enabled:
+        manager._tool_schema_cache.pop(name, None)
         session = await manager._connect_server(config)
         await _discover_and_cache_tools(manager, config, session)
         if manager.mcp_db_manager and effective_project_id:
@@ -342,6 +345,8 @@ async def set_server_enabled(
                         "Failed to clean up MCP server connection after enable rollback",
                         exc_info=True,
                     )
+                finally:
+                    manager._tool_schema_cache.pop(name, None)
                 manager.health.pop(name, None)
                 raise
         config.enabled = True
@@ -353,6 +358,7 @@ async def set_server_enabled(
         if name in manager._connections:
             await manager._connections[name].disconnect()
             del manager._connections[name]
+        manager._tool_schema_cache.pop(name, None)
         manager.health.pop(name, None)
         manager._lazy_connector.unregister_server(name)
 
@@ -390,3 +396,4 @@ def remove_server_config(manager: Any, name: str, logger: logging.Logger) -> Non
 
     if name in manager._configs:
         del manager._configs[name]
+    manager._tool_schema_cache.pop(name, None)

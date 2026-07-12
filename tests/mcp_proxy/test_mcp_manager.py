@@ -465,10 +465,12 @@ class TestMCPClientManagerConnections:
     async def test_disconnect_all_empty(self):
         """Test disconnect_all when no connections exist."""
         manager = MCPClientManager(server_configs=[])
+        manager._tool_schema_cache["stale-server"] = [{"name": "test-tool"}]
 
         # Should not raise
         await manager.disconnect_all()
         assert manager.connections == {}
+        assert manager._tool_schema_cache == {}
 
 
 class TestMCPClientManagerHealth:

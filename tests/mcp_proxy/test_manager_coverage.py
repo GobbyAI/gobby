@@ -638,12 +638,14 @@ class TestMCPClientManagerAddServer:
             enabled=True,
         )
         manager = MCPClientManager(server_configs=[config])
+        manager._tool_schema_cache["existing-server"] = [{"name": "test-tool"}]
 
         result = await manager.set_server_enabled("existing-server", False)
 
         assert result == {"success": True, "name": "existing-server", "enabled": False}
         assert config.enabled is False
         assert manager._lazy_connector.get_state("existing-server") is None
+        assert "existing-server" not in manager._tool_schema_cache
 
     @pytest.mark.asyncio
     async def test_add_server_handles_list_tools_failure(self):
@@ -686,6 +688,7 @@ class TestMCPClientManagerRemoveServer:
         # Add mock connection and health
         mock_connection = AsyncMock()
         manager._connections["test-server"] = mock_connection
+        manager._tool_schema_cache["test-server"] = [{"name": "test-tool"}]
         manager.health["test-server"] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
@@ -696,6 +699,7 @@ class TestMCPClientManagerRemoveServer:
         assert result["success"] is True
         assert "test-server" not in manager._configs
         assert "test-server" not in manager._connections
+        assert "test-server" not in manager._tool_schema_cache
         assert "test-server" not in manager.health
         mock_connection.disconnect.assert_called_once()
 
@@ -1514,6 +1518,51 @@ class TestMCPClientManagerGetToolInputSchema:
             with pytest.raises(MCPError, match="Tool nonexistent not found"):
                 await manager.get_tool_input_schema("test-server", "nonexistent")
 
+    def test_cache_discovered_tools_writes_only_when_inventory_changes(self) -> None:
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        mock_db = MagicMock()
+        manager = MCPClientManager(server_configs=[config], mcp_db_manager=mock_db)
+        tools = [
+            {
+                "name": "test-tool",
+                "description": "Test tool",
+                "inputSchema": {"type": "object"},
+            }
+        ]
+
+        manager.cache_discovered_tools("test-server", tools)
+        manager.cache_discovered_tools("test-server", [dict(tools[0])])
+
+        mock_db.cache_tools.assert_called_once_with(
+            "test-server",
+            tools,
+            project_id="test-project",
+        )
+
+        changed_tools = [*tools, {"name": "other-tool", "inputSchema": {}}]
+        manager.cache_discovered_tools("test-server", changed_tools)
+        assert mock_db.cache_tools.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_disconnect_server_invalidates_schema_cache(self) -> None:
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        manager._tool_schema_cache["test-server"] = [{"name": "test-tool"}]
+
+        await manager.disconnect_server("test-server")
+
+        assert "test-server" not in manager._tool_schema_cache
+
 
 class TestMCPClientManagerHealthCheck:
     """Tests for health_check_all method."""
@@ -1589,6 +1638,7 @@ class TestMCPClientManagerReconnect:
         old_conn = AsyncMock()
         old_conn.is_connected = False
         manager._connections["test-server"] = old_conn
+        manager._tool_schema_cache["test-server"] = [{"name": "test-tool"}]
         manager.health["test-server"] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTING,
@@ -1598,6 +1648,7 @@ class TestMCPClientManagerReconnect:
             await manager._reconnect("test-server")
 
         old_conn.disconnect.assert_awaited_once()
+        assert "test-server" not in manager._tool_schema_cache
         assert old_conn.disconnect.await_count == 1
         assert old_conn.disconnect.await_args is not None
 

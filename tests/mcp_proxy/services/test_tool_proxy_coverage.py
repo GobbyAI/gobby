@@ -40,6 +40,51 @@ class TestListServers:
         ]
 
 
+class TestExternalSchemaCache:
+    @pytest.mark.asyncio
+    async def test_repeated_call_tool_lists_downstream_tools_once(self) -> None:
+        config = MCPServerConfig(
+            name="external-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        manager._list_tools_for_server = AsyncMock(
+            return_value=[
+                {
+                    "name": "echo",
+                    "description": "Echo a string",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                }
+            ]
+        )
+        manager.call_tool = AsyncMock(return_value={"success": True})
+        proxy = ToolProxyService(mcp_manager=manager, validate_arguments=True)
+
+        first = await proxy.call_tool(
+            "external-server",
+            "echo",
+            {"value": "one"},
+            enforce_workflow=False,
+        )
+        second = await proxy.call_tool(
+            "external-server",
+            "echo",
+            {"value": "two"},
+            enforce_workflow=False,
+        )
+
+        assert first["success"] is True
+        assert second["success"] is True
+        assert manager._list_tools_for_server.await_count == 1
+        assert manager.call_tool.await_count == 2
+
+
 class TestSafeTruncate:
     """Tests for safe_truncate helper function."""
 

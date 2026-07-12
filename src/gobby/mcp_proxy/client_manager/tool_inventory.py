@@ -17,6 +17,7 @@ class _ToolInventoryManager(Protocol):
     _connections: dict[str, Any]
     _configs: dict[str, Any]
     _lazy_connector: Any
+    _tool_schema_cache: dict[str, list[dict[str, Any]]]
     health: dict[str, Any]
     mcp_db_manager: Any | None
 
@@ -98,6 +99,7 @@ async def retry_list_tools_after_failure(
         manager.health,
         manager._lazy_connector,
         logger,
+        tool_schema_cache=manager._tool_schema_cache,
     )
     try:
         session = await manager.ensure_connected(server_name)
@@ -139,16 +141,21 @@ def cache_discovered_tools(
     tools: list[dict[str, Any]],
 ) -> None:
     """Cache discovered full tool schemas and update config summaries."""
+    if manager._tool_schema_cache.get(server_name) == tools:
+        return
+    manager._tool_schema_cache[server_name] = tools
+
     config = manager._configs.get(server_name)
-    if not config or not manager.mcp_db_manager or not config.project_id:
+    if not config:
         return
 
     try:
-        manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
         config.tools = [
             {"name": tool["name"], "brief": truncate_tool_brief(tool.get("description"))}
             for tool in tools
         ]
+        if manager.mcp_db_manager and config.project_id:
+            manager.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
     except Exception as exc:
         logging.getLogger("gobby.mcp.manager").debug(
             "Failed to cache tools for %s: %s",
@@ -173,7 +180,10 @@ async def get_tool_info(
     tool_name: str,
 ) -> dict[str, Any]:
     """Return full tool info for one tool by filtering list_tools output."""
-    server_tools = await manager._list_tools_for_server(server_name)
+    server_tools = manager._tool_schema_cache.get(server_name)
+    if server_tools is None:
+        server_tools = await manager._list_tools_for_server(server_name)
+        manager._tool_schema_cache[server_name] = server_tools
 
     for tool in server_tools:
         if not isinstance(tool, dict):

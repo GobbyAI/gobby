@@ -34,6 +34,7 @@ class _Manager:
             )
         }
         self._connections: dict[str, object] = {}
+        self._tool_schema_cache: dict[str, list[dict[str, object]]] = {}
         self.health: dict[str, object] = {"custom": object()}
         self._lazy_connector = _LazyConnector()
         self.mcp_db_manager = None
@@ -42,6 +43,7 @@ class _Manager:
 @pytest.mark.asyncio
 async def test_update_server_does_not_mutate_input_config() -> None:
     manager = _Manager()
+    manager._tool_schema_cache["custom"] = [{"name": "old-tool"}]
     caller_config = MCPServerConfig(
         name="custom",
         transport="stdio",
@@ -65,3 +67,4 @@ async def test_update_server_does_not_mutate_input_config() -> None:
     assert updated is not caller_config
     assert updated.enabled is True
     assert updated.project_id == "route-project"
+    assert "custom" not in manager._tool_schema_cache

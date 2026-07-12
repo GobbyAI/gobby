@@ -170,6 +170,7 @@ async def disconnect_all(manager: Any, logger: logging.Logger) -> None:
             reconnect_tasks=manager._reconnect_tasks,
             health_check_task=manager._health_check_task,
             logger=logger,
+            tool_schema_cache=manager._tool_schema_cache,
         )
     finally:
         manager._health_check_task = None
@@ -182,6 +183,7 @@ async def disconnect_server(manager: Any, name: str, logger: logging.Logger) -> 
         manager._connections,
         manager.health,
         manager._lazy_connector,
+        tool_schema_cache=manager._tool_schema_cache,
     )
     if connection is not None:
         await disconnect_connection(name, connection, logger)
@@ -273,6 +275,7 @@ async def reconnect(manager: Any, server_name: str, logger: logging.Logger) -> N
     if server_name not in manager._configs:
         return
 
+    manager._tool_schema_cache.pop(server_name, None)
     old_connection = manager._connections.pop(server_name, None)
     if old_connection is not None:
         try:

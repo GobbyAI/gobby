@@ -74,6 +74,7 @@ class MCPClientManager:
     ):
         self._connections: dict[str, BaseTransportConnection] = {}
         self._configs: dict[str, MCPServerConfig] = {}
+        self._tool_schema_cache: dict[str, list[dict[str, Any]]] = {}
         self.health: dict[str, MCPConnectionHealth] = {}
         self._health_check_interval = health_check_interval
         self._health_check_task: asyncio.Task[None] | None = None

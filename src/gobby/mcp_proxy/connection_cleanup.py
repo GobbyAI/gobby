@@ -21,9 +21,13 @@ def clear_connection_state(
     connections: MutableMapping[str, Any],
     health: MutableMapping[str, Any],
     lazy_connector: Any,
+    *,
+    tool_schema_cache: MutableMapping[str, Any] | None = None,
 ) -> Any | None:
     """Remove cached connection state and mark lazy/health state disconnected."""
     connection = connections.pop(name, None)
+    if tool_schema_cache is not None:
+        tool_schema_cache.pop(name, None)
     if name in health:
         health[name].state = ConnectionState.DISCONNECTED
     lazy_state = lazy_connector.get_state(name)
@@ -56,9 +60,17 @@ async def discard_connection(
     health: MutableMapping[str, Any],
     lazy_connector: Any,
     logger: logging.Logger,
+    *,
+    tool_schema_cache: MutableMapping[str, Any] | None = None,
 ) -> None:
     """Drop a cached connection and best-effort disconnect the old transport."""
-    connection = clear_connection_state(name, connections, health, lazy_connector)
+    connection = clear_connection_state(
+        name,
+        connections,
+        health,
+        lazy_connector,
+        tool_schema_cache=tool_schema_cache,
+    )
     if connection is not None:
         await disconnect_connection(name, connection, logger)
 
@@ -71,6 +83,7 @@ async def finalize_disconnect_all(
     reconnect_tasks: set[asyncio.Task[None]],
     health_check_task: asyncio.Task[None] | None,
     logger: logging.Logger,
+    tool_schema_cache: MutableMapping[str, Any] | None = None,
 ) -> None:
     """Disconnect all manager connections and finalize state under cancellation."""
     reconnect_snapshot = list(reconnect_tasks)
@@ -120,7 +133,15 @@ async def finalize_disconnect_all(
         reconnect_tasks.clear()
 
         for name in list(connections):
-            clear_connection_state(name, connections, health, lazy_connector)
+            clear_connection_state(
+                name,
+                connections,
+                health,
+                lazy_connector,
+                tool_schema_cache=tool_schema_cache,
+            )
+        if tool_schema_cache is not None:
+            tool_schema_cache.clear()
 
         if cleanup_tasks:
             try:
