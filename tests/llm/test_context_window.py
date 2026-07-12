@@ -20,12 +20,46 @@ import pytest
 
 from gobby.llm.context_windows import (
     coerce_context_length,
+    provider_catalog_context_length_for_model,
     resolve_context_window,
     resolve_context_window_with_source,
+    static_context_length_for_model,
 )
 from gobby.servers.provider_models import ProviderModelCatalog
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("model", "provider", "expected"),
+    [
+        ("sonnet", None, 1_000_000),
+        ("sonnet", "claude", 1_000_000),
+        ("claude-sonnet-4-6", None, 1_000_000),
+        ("claude-sonnet-4-6-20260410", "claude", 1_000_000),
+        ("anthropic/claude-sonnet-4-6", "claude", 1_000_000),
+        ("claude/claude-sonnet-4-6", "claude", 1_000_000),
+        ("claude-sonnet-4-5", "claude", 200_000),
+        ("anthropic/claude-sonnet-4-5-20250929", "claude", 200_000),
+    ],
+)
+def test_sonnet_static_context_windows(
+    model: str,
+    provider: str | None,
+    expected: int,
+) -> None:
+    assert static_context_length_for_model(provider, model) == expected
+
+
+def test_droid_sonnet_context_window_remains_provider_owned() -> None:
+    assert provider_catalog_context_length_for_model("droid", "claude-sonnet-4-6") == 200_000
+
+
+def test_sonnet_static_window_drives_context_pressure_ratio() -> None:
+    context_window = static_context_length_for_model("claude", "claude-sonnet-4-6")
+
+    assert ContextUsageSnapshot.calculate_ratio(200_000, context_window) == 0.2
 
 
 def _mock_lookup(model: str) -> int | None:
@@ -150,10 +184,10 @@ class TestResolveContextWindow:
     @pytest.mark.parametrize(
         ("model", "provider", "expected"),
         [
-            # Bare aliases must resolve exactly as before (additive change).
+            # Bare aliases resolve through their current family defaults.
             ("opus", None, 1_000_000),
             ("opus", "claude", 1_000_000),
-            ("sonnet", None, 200_000),
+            ("sonnet", None, 1_000_000),
             ("haiku", None, 200_000),
             ("fable", None, 1_000_000),
             ("fable", "claude", 1_000_000),
@@ -171,8 +205,8 @@ class TestResolveContextWindow:
             ("claude-opus-4-8-context-1m", "claude", 1_000_000),
             # Future dated Opus versions resolve without a per-version table.
             ("claude-opus-4-9", "claude", 1_000_000),
-            # Sonnet/Haiku families stay at 200k.
-            ("claude-sonnet-4-6", "claude", 200_000),
+            # Current Sonnet is 1M; Haiku stays at 200k.
+            ("claude-sonnet-4-6", "claude", 1_000_000),
             ("claude-haiku-4-5", "claude", 200_000),
         ],
     )
@@ -191,9 +225,9 @@ class TestResolveContextWindow:
             ("claude-sonnet-4-6[1m]", "claude", 1_000_000),
             ("anthropic/claude-haiku-4-5[1m]", "claude", 1_000_000),
             ("claude-opus-4-8[1m]", "claude", 1_000_000),
-            ("sonnet", None, 200_000),
+            ("sonnet", None, 1_000_000),
             ("haiku", "claude", 200_000),
-            ("anthropic/claude-sonnet-4-6", "claude", 200_000),
+            ("anthropic/claude-sonnet-4-6", "claude", 1_000_000),
         ],
     )
     def test_one_million_marker_floors_base_window_only(

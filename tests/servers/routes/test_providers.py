@@ -150,7 +150,7 @@ class TestProviderModelsRoute:
         }
         claude_by_id = {m["value"]: m for m in providers["claude"]["models"]}
         assert claude_by_id["fable"]["context_length"] == 1_000_000
-        assert claude_by_id["sonnet"]["context_length"] == 200_000
+        assert claude_by_id["sonnet"]["context_length"] == 1_000_000
 
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
@@ -239,6 +239,7 @@ class TestProviderModelsRoute:
             "default_effort": "high",
         }
         assert droid_by_id["claude-opus-4-7"]["context_length"] == 1_000_000
+        assert droid_by_id["claude-sonnet-4-6"]["context_length"] == 200_000
         assert droid_by_id["gpt-5.4"]["context_length"] == 200_000
         assert droid_by_id["gemini-3.5-flash"]["label"] == "Gemini 3.5 Flash"
         assert droid_by_id["gemini-3.5-flash"]["context_length"] == 1_048_576

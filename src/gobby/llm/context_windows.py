@@ -81,7 +81,7 @@ logger = logging.getLogger(__name__)
 # Generic fallback defaults. These are intentionally last-resort values.
 _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "opus": 1_000_000,
-    "sonnet": 200_000,
+    "sonnet": 1_000_000,
     "haiku": 200_000,
     "fable": 1_000_000,
     "claude-fable-5": 1_000_000,
@@ -89,7 +89,7 @@ _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "claude-opus-4-6": 1_000_000,
     "claude-opus-4-6-fast": 1_000_000,
     "claude-opus-4-5": 1_000_000,
-    "claude-sonnet-4-6": 200_000,
+    "claude-sonnet-4-6": 1_000_000,
     "claude-sonnet-4-5": 200_000,
     "claude-haiku-4-5": 200_000,
     "gpt-5.5": 258_400,
