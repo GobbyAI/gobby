@@ -973,6 +973,8 @@ async def test_sync_worktree(registry, mock_worktree_storage, mock_git_manager) 
     mock_git_manager.sync_from_main.assert_called_with(
         "/tmp/p1", base_branch="main", strategy="merge", source_branch=None
     )
+    mock_worktree_storage.touch.assert_called_once_with(wt.id)
+    mock_worktree_storage.update.assert_not_called()
 
 
 async def test_sync_worktree_explicit_source_branch(
@@ -1045,6 +1047,7 @@ async def test_sync_worktree_failure(registry, mock_worktree_storage, mock_git_m
     )
     assert result["success"] is False
     assert "Sync failed" in result["error"]
+    mock_worktree_storage.touch.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -322,6 +322,14 @@ class LocalWorktreeManager:
 
         return self.get(worktree_id)
 
+    def touch(self, worktree_id: str) -> Worktree | None:
+        """Refresh a worktree's activity timestamp."""
+        self.db.execute(
+            "UPDATE worktrees SET updated_at = %s WHERE id = %s",
+            (utc_now(), worktree_id),
+        )
+        return self.get(worktree_id)
+
     def delete(self, worktree_id: str) -> bool:
         """
         Delete worktree record.

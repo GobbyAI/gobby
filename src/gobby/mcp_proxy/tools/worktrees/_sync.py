@@ -133,7 +133,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not result.success:
             return {"success": False, "error": result.error or "Sync failed"}
 
-        ctx.worktree_storage.update(worktree_id)
+        ctx.worktree_storage.touch(worktree_id)
 
         return {
             "success": True,
