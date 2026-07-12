@@ -199,7 +199,8 @@ def _git(
     subprocess_env = git_subprocess_env()
     if env is not None:
         subprocess_env = {**(subprocess_env if subprocess_env is not None else os.environ), **env}
-    return subprocess.run(  # nosec B603 # git args are fixed by callers.
+    # The executable is fixed to Git and subprocess.run never enables a shell.
+    return subprocess.run(  # nosec B603, B607
         ["git", *args],
         cwd=repo_path,
         capture_output=True,

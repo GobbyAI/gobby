@@ -210,11 +210,12 @@ def write_session_wiki_page(session: Any, summary_markdown: str | None) -> dict[
     """
     if not is_summary_markdown_valid(summary_markdown):
         return {"written": False, "skipped": "invalid_summary"}
+    if summary_markdown is None:
+        return {"written": False, "skipped": "invalid_summary"}
     skip = _skip_reason(session)
     if skip is not None:
         return {"written": False, "skipped": skip}
 
-    assert isinstance(summary_markdown, str)  # narrowed by is_summary_markdown_valid
     tags: list[str] = []
     frontmatter = _build_frontmatter(session, tags)
     page = f"{frontmatter}\n\n{summary_markdown.strip()}\n"

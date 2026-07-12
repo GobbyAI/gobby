@@ -214,7 +214,8 @@ def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
     import urllib.request
 
     # Normalize wildcard addresses to localhost for health check
-    if host in ("0.0.0.0", "::", ""):
+    # These wildcard strings are compared and normalized, never used as bind targets.
+    if host in ("0.0.0.0", "::", ""):  # nosec B104
         host = "localhost"
     elif ":" in host and not host.startswith("["):
         host = f"[{host}]"

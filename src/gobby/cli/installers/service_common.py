@@ -25,7 +25,11 @@ _TEMPLATE_OPTIONS: dict[str, Any] = {
     "lstrip_blocks": True,
     "keep_trailing_newline": True,
 }
-_TEXT_TEMPLATE_ENV = Environment(autoescape=False, **_TEMPLATE_OPTIONS)
+# Launcher templates are plaintext and must not receive markup escaping.
+_TEXT_TEMPLATE_ENV = Environment(  # nosec B701
+    autoescape=False,
+    **_TEMPLATE_OPTIONS,
+)
 _XML_TEMPLATE_ENV = Environment(autoescape=True, **_TEMPLATE_OPTIONS)
 
 # Service identifiers

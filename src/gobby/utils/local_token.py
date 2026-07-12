@@ -4,7 +4,8 @@ from pathlib import Path
 
 from gobby.paths import get_gobby_home
 
-LOCAL_API_TOKEN_FILENAME = "local_cli_token"
+# This is a filename, not a credential value.
+LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
 
 
 def local_token_path() -> Path:

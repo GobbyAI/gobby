@@ -434,11 +434,13 @@ class PipelineExecutionStorageMixin:
         """
         now = utc_now()
         project_clause, project_params = self._project_predicate()
+        # project_clause is generated internally by _project_predicate, not caller input.
+        query = (
+            "UPDATE pipeline_executions SET review_json = %s, updated_at = %s "
+            f"WHERE id = %s AND {project_clause}"  # nosec B608
+        )
         self.db.execute(
-            (
-                "UPDATE pipeline_executions SET review_json = %s, updated_at = %s "
-                f"WHERE id = %s AND {project_clause}"
-            ),  # nosec B608
+            query,
             (review_json, now, execution_id, *project_params),
         )
 

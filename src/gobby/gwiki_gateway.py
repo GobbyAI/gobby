@@ -433,8 +433,9 @@ class GwikiGateway:
             raise GwikiReadSelectorError("Provide exactly one non-empty path or title")
         if path_value:
             return ["--path", path_value]
-        assert title_value is not None
-        return ["--title", title_value]
+        if title_value:
+            return ["--title", title_value]
+        raise GwikiReadSelectorError("Provide exactly one non-empty path or title")
 
     async def _run_command(
         self,
