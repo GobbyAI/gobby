@@ -41,15 +41,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def salt_dir(tmp_path: Path) -> Path:
-    """Provide temp secret key files, patching SALT_FILE and KEK_FILE."""
-    salt_file = tmp_path / ".secret_salt"
-    kek_file = tmp_path / ".secret_kek"
-    with (
-        patch("gobby.storage.secrets.SALT_FILE", salt_file),
-        patch("gobby.storage.secrets.KEK_FILE", kek_file),
-    ):
-        yield tmp_path
+def salt_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Provide a temporary Gobby home for secret key files."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     return tmp_path
 
 
@@ -181,6 +175,55 @@ class TestGetOrCreateKekFile:
         kek_file = salt_dir / ".secret_kek"
         mode = oct(kek_file.stat().st_mode & 0o777)
         assert mode == "0o600"
+
+
+def test_secret_material_paths_follow_gobby_home_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each operation resolves secret material against the current Gobby home."""
+    fallback_home = tmp_path / "fallback-home"
+    first_home = tmp_path / "first-home"
+    second_home = tmp_path / "second-home"
+    monkeypatch.setenv("HOME", str(fallback_home))
+
+    monkeypatch.setenv("GOBBY_HOME", str(first_home))
+    first_salt = _get_or_create_salt()
+    first_kek = _get_or_create_kek_file_key()
+
+    monkeypatch.setenv("GOBBY_HOME", str(second_home))
+    second_salt = _get_or_create_salt()
+    second_kek = _get_or_create_kek_file_key()
+
+    assert (first_home / ".secret_salt").read_bytes() == first_salt
+    assert (first_home / ".secret_kek").read_bytes() == first_kek
+    assert (second_home / ".secret_salt").read_bytes() == second_salt
+    assert (second_home / ".secret_kek").read_bytes() == second_kek
+    assert first_salt != second_salt
+    assert first_kek != second_kek
+    assert not (fallback_home / ".gobby").exists()
+
+    monkeypatch.setenv("GOBBY_HOME", str(first_home))
+    assert _get_or_create_salt() == first_salt
+    assert _get_or_create_kek_file_key() == first_kek
+    monkeypatch.setenv("GOBBY_HOME", str(second_home))
+    assert _get_or_create_salt() == second_salt
+    assert _get_or_create_kek_file_key() == second_kek
+
+
+def test_secret_material_paths_treat_blank_gobby_home_as_unset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("GOBBY_HOME", " \t")
+
+    salt = _get_or_create_salt()
+    kek = _get_or_create_kek_file_key()
+
+    assert (user_home / ".gobby" / ".secret_salt").read_bytes() == salt
+    assert (user_home / ".gobby" / ".secret_kek").read_bytes() == kek
 
 
 # =============================================================================
