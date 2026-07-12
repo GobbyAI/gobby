@@ -1000,7 +1000,7 @@ async def test_memory_dream_service_persists_interrupted_status_on_cancellation(
     service._stream_sweep = AsyncMock(side_effect=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
-        await service.execute_run(run_id, DreamRunOptions(project_id="proj-1"))
+        await service.execute_run(run_id, DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     run = service.store.get_run(run_id)
     assert run is not None
@@ -1502,7 +1502,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
         memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
     )
 
-    result = await service.run(DreamRunOptions(project_id="proj-1"))
+    result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     assert result["success"] is True
     summary = result["run"]["summary"]
@@ -1512,7 +1512,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     assert summary["actions"].get("keep") == 5
     assert all(row["last_dreamed_at"] is not None for row in db.memories.values())
 
-    rerun = await service.run(DreamRunOptions(project_id="proj-1"))
+    rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     # Everything was just stamped inside the cooldown window, so the re-run is a no-op.
     assert rerun["success"] is True
@@ -1539,7 +1539,7 @@ async def test_streaming_sweep_soft_hides_obsolete_and_keeps_current() -> None:
     }
 
     with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
-        result = await service.run(DreamRunOptions(project_id="proj-1"))
+        result = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
 
     assert result["success"] is True
     assert db.memories["obsolete"]["deleted_at"] is not None
@@ -1594,7 +1594,7 @@ async def test_global_only_run_persists_null_scope_and_selects_only_global() -> 
         memory_manager=manager, dream_config=_sweep_config(page_size=10), llm_service=None
     )
 
-    result = await service.run(DreamRunOptions(global_only=True))
+    result = await service.run(DreamRunOptions(dry_run=False, global_only=True))
 
     assert result["success"] is True
     run = result["run"]
@@ -1862,16 +1862,16 @@ async def test_full_sweep_ignores_cooldown_and_reviews_all() -> None:
         memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
     )
 
-    first = await service.run(DreamRunOptions(project_id="proj-1"))
+    first = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
     assert first["run"]["summary"]["candidates_reviewed"] == 5
 
     # A default rerun is a no-op: everything was just stamped inside the cooldown.
-    cooldown_rerun = await service.run(DreamRunOptions(project_id="proj-1"))
+    cooldown_rerun = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1"))
     assert cooldown_rerun["run"]["summary"]["candidates_reviewed"] == 0
 
     # full_sweep bypasses the cooldown and reviews the whole corpus again, draining
     # to completion (the page loop still terminates via per-page stamping).
-    full = await service.run(DreamRunOptions(project_id="proj-1", full_sweep=True))
+    full = await service.run(DreamRunOptions(dry_run=False, project_id="proj-1", full_sweep=True))
     assert full["success"] is True
     assert full["run"]["summary"]["candidates_reviewed"] == 5
     assert full["run"]["summary"]["pages"] == 3  # ceil(5 / 2)

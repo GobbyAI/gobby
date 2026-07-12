@@ -50,7 +50,7 @@ _ALL_MEMORIES_CUTOFF = "9999-12-31T23:59:59+00:00"
 
 @dataclass(frozen=True)
 class DreamRunOptions:
-    dry_run: bool = False
+    dry_run: bool = True
     # Vestigial: cross-memory consolidation is out of scope for the GC sweep, so
     # the planner always runs (merge is suppressed by passing no duplicate groups).
     skip_consolidation: bool = False

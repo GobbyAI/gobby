@@ -162,6 +162,7 @@ class TestMemoryDreamConfig:
         from gobby.config.persistence import MemoryDreamConfig
 
         config = MemoryDreamConfig()
+        assert config.allow_unattended_mutations is False
         assert config.page_size == 200
         assert config.redream_after_hours == 20
         assert config.purge_delete_after_days == 30
