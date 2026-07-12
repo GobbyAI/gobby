@@ -287,6 +287,55 @@ class TestValidateTaskTool:
         assert result["status"] == "invalid"
         assert "still open" in result["feedback"].lower()
 
+    async def test_validate_task_parent_paginates_past_one_thousand_children(
+        self, mock_task_manager, validation_registry
+    ):
+        """An open child on the last page prevents parent completion."""
+        parent_task = _task(
+            id="t1",
+            title="Large epic",
+            project_id="p1",
+            status="in_progress",
+            priority=2,
+            task_type="epic",
+            created_at="now",
+            updated_at="now",
+        )
+        mock_task_manager.get_task.return_value = parent_task
+        children = [
+            _task(
+                id=f"c{index}",
+                title=f"Child {index}",
+                project_id="p1",
+                status="closed" if index < 1000 else "open",
+                priority=2,
+                task_type="task",
+                created_at="now",
+                updated_at="now",
+            )
+            for index in range(1001)
+        ]
+
+        def list_tasks(*, limit: int, offset: int, **_filters):
+            return children[offset : offset + limit]
+
+        mock_task_manager.list_tasks.side_effect = list_tasks
+
+        result = await validation_registry.call("validate_task", {"task_id": "t1"})
+
+        assert result["is_valid"] is False
+        assert result["status"] == "invalid"
+        assert "1 of 1001 child tasks still open" in result["feedback"]
+        assert "c1000" in result["feedback"]
+        assert [call.kwargs["offset"] for call in mock_task_manager.list_tasks.call_args_list] == [
+            0,
+            200,
+            400,
+            600,
+            800,
+            1000,
+        ]
+
     @pytest.mark.asyncio
     async def test_validate_task_not_found(self, mock_task_manager, validation_registry):
         """Test validate_task with non-existent task."""
