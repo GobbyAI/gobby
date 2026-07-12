@@ -405,6 +405,13 @@ class GitHubIssueTriageService:
         existing = self.store.get_issue_record(project_id, repo, issue_number)
         current_hash = content_hash(issue)
         existing_task_id = existing.task_id if existing else None
+        if existing_task_id is None:
+            linked_task = self.db.fetchone(
+                "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
+                "AND github_issue_number = %s LIMIT 1",
+                (project_id, issue.repo, issue.issue_number),
+            )
+            existing_task_id = str(linked_task["id"]) if linked_task else None
 
         indexer = self._indexer()
         duplicates = await indexer.find_duplicates(issue)

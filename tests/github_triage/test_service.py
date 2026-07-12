@@ -13,6 +13,7 @@ import pytest
 from gobby.github_triage import service as service_module
 from gobby.github_triage.service import (
     GitHubIssueTriageService,
+    GitHubMCPError,
     TriageOutcome,
     TriageWebhookError,
     WebhookAuthenticationError,
@@ -477,6 +478,43 @@ async def test_reconcile_counts_side_effect_failures_without_recording_success(
     assert result == {"scanned": 1, "triaged": 0, "errors": 1}
     record = GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
     assert record is None
+
+
+async def test_retry_after_comment_failure_does_not_dispatch_build_twice(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    issue = json.loads(_payload().decode())["issue"]
+    comment_responses = [_mcp_error(503), {}]
+    github = FakeGitHubMCP({"add_issue_comment": lambda _: comment_responses.pop(0)})
+    build_func = AsyncMock()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("implement", "Approved")),
+        build_func=build_func,
+    )
+
+    with pytest.raises(GitHubMCPError):
+        await service.triage_issue(
+            sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+        )
+    assert (
+        GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42) is None
+    )
+
+    result = await service.triage_issue(
+        sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+    )
+
+    build_func.assert_awaited_once()
+    assert len(github.called("add_issue_comment")) == 2
+    assert len(github.called("add_labels_to_issue")) == 1
+    assert result["verdict"] == "implement"
+    record = GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
+    assert record is not None
+    assert record.task_id == result["task_id"]
 
 
 async def test_github_mcp_error_preserves_only_safe_rate_limit_metadata(
