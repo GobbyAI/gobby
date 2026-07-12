@@ -64,6 +64,15 @@ class TriageWebhookError(TriageError):
     """Webhook validation failed."""
 
 
+class WebhookAuthenticationError(TriageWebhookError):
+    """Webhook authentication failed without exposing project state."""
+
+    detail = "GitHub webhook authentication failed"
+
+    def __init__(self) -> None:
+        super().__init__(self.detail)
+
+
 class TriageDisabledError(TriageError):
     """Triage is disabled for the project."""
 
@@ -223,18 +232,24 @@ class GitHubIssueTriageService:
     ) -> WebhookAcceptance:
         """Validate HMAC and persist a webhook delivery for idempotent processing."""
         normalized_headers = _normalize_headers(headers)
-        event = _required_header(normalized_headers, "x-github-event")
-        delivery_id = _required_header(normalized_headers, "x-github-delivery")
-
         project = self.project_manager.get(project_id)
         if not project or project.deleted_at:
-            raise TriageWebhookError(f"Unknown project: {project_id}")
+            try:
+                self._validate_signature(_UNVERIFIABLE_HMAC_KEY, normalized_headers, raw_body)
+            except TriageWebhookError:
+                pass
+            raise WebhookAuthenticationError
 
         config = self.store.get_config(project_id, fallback_repo=project.github_repo)
+        try:
+            self._validate_signature(config.webhook_secret_ref, normalized_headers, raw_body)
+        except TriageWebhookError:
+            raise WebhookAuthenticationError from None
         if not config.enabled or not config.webhook_enabled:
-            raise TriageDisabledError("GitHub issue triage webhooks are disabled")
+            raise WebhookAuthenticationError
 
-        self._validate_signature(config.webhook_secret_ref, normalized_headers, raw_body)
+        event = _required_header(normalized_headers, "x-github-event")
+        delivery_id = _required_header(normalized_headers, "x-github-delivery")
         payload = _loads_payload(raw_body)
         action = payload.get("action")
         repo = payload_repo(payload)
@@ -812,6 +827,9 @@ def create_github_triage_handler(
         )
 
     return _handler
+
+
+_UNVERIFIABLE_HMAC_KEY = sha256(b"gobby webhook authentication sentinel").hexdigest()
 
 
 def _normalize_headers(headers: dict[str, str]) -> dict[str, str]:

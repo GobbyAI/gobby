@@ -15,6 +15,7 @@ from gobby.github_triage.service import (
     GitHubIssueTriageService,
     TriageOutcome,
     TriageWebhookError,
+    WebhookAuthenticationError,
     create_github_triage_handler,
 )
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
@@ -152,7 +153,10 @@ def test_webhook_rejects_bad_signature(temp_db, sample_project) -> None:
     headers["X-Hub-Signature-256"] = "sha256=bad"
     service = GitHubIssueTriageService(db=temp_db)
 
-    with pytest.raises(TriageWebhookError, match="Invalid GitHub webhook signature"):
+    with pytest.raises(
+        WebhookAuthenticationError,
+        match="GitHub webhook authentication failed",
+    ):
         service.accept_webhook_delivery(sample_project["id"], headers, raw_body)
 
 
