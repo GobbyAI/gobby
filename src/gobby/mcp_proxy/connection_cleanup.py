@@ -59,7 +59,7 @@ async def discard_connection(
 ) -> None:
     """Drop a cached connection and best-effort disconnect the old transport."""
     connection = clear_connection_state(name, connections, health, lazy_connector)
-    if connection is not None and getattr(connection, "is_connected", False):
+    if connection is not None:
         await disconnect_connection(name, connection, logger)
 
 
@@ -88,10 +88,9 @@ async def finalize_disconnect_all(
         reconnect_tasks.clear()
 
         for name, connection in list(connections.items()):
-            if getattr(connection, "is_connected", False):
-                disconnect_tasks.append(
-                    asyncio.create_task(disconnect_connection(name, connection, logger))
-                )
+            disconnect_tasks.append(
+                asyncio.create_task(disconnect_connection(name, connection, logger))
+            )
             if name in health:
                 health[name].state = ConnectionState.DISCONNECTED
 

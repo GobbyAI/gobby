@@ -1110,6 +1110,24 @@ class TestMCPClientManagerDisconnect:
         assert len(manager._reconnect_tasks) == 0
 
     @pytest.mark.asyncio
+    async def test_disconnect_all_tears_down_connecting_transport(self):
+        """Shutdown must tear down transports that have not reached CONNECTED."""
+        manager = MCPClientManager(server_configs=[])
+        connection = AsyncMock()
+        connection.is_connected = False
+        manager._connections["connecting-server"] = connection
+        manager.health["connecting-server"] = MCPConnectionHealth(
+            name="connecting-server",
+            state=ConnectionState.CONNECTING,
+        )
+
+        await manager.disconnect_all()
+
+        connection.disconnect.assert_awaited_once_with()
+        assert manager._connections == {}
+        assert manager.health["connecting-server"].state is ConnectionState.DISCONNECTED
+
+    @pytest.mark.asyncio
     async def test_disconnect_all_handles_timeout(self):
         """Test disconnect_all handles disconnect timeout."""
         config = MCPServerConfig(
@@ -1566,8 +1584,12 @@ class TestMCPClientManagerReconnect:
         manager = MCPClientManager(server_configs=[config])
 
         old_conn = AsyncMock()
-        old_conn.is_connected = True
+        old_conn.is_connected = False
         manager._connections["test-server"] = old_conn
+        manager.health["test-server"] = MCPConnectionHealth(
+            name="test-server",
+            state=ConnectionState.CONNECTING,
+        )
 
         with patch.object(manager, "_connect_server", return_value=MagicMock()):
             await manager._reconnect("test-server")
