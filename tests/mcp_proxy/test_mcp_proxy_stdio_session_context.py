@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +12,9 @@ from gobby.mcp_proxy.stdio import DaemonProxy
 pytestmark = pytest.mark.unit
 
 
-def test_project_id_reads_nearest_parent_project_json(tmp_path, monkeypatch) -> None:
+def test_project_id_reads_nearest_parent_project_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project_root = tmp_path / "repo"
     nested = project_root / "src" / "pkg"
     nested.mkdir(parents=True)
@@ -25,7 +28,9 @@ def test_project_id_reads_nearest_parent_project_json(tmp_path, monkeypatch) -> 
     assert proxy._project_id == "project-from-parent"
 
 
-def test_project_id_env_overrides_project_json(tmp_path, monkeypatch) -> None:
+def test_project_id_env_overrides_project_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / ".gobby").mkdir()
     (tmp_path / ".gobby" / "project.json").write_text(json.dumps({"id": "project-from-file"}))
     monkeypatch.chdir(tmp_path)
@@ -47,7 +52,7 @@ def _mock_http_client(
 ) -> AsyncMock:
     client = AsyncMock()
     client.request = AsyncMock(return_value=_mock_response(payload))
-    mock_client_cls.return_value.__aenter__.return_value = client
+    mock_client_cls.return_value = client
     return client
 
 
