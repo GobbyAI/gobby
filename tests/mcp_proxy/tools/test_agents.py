@@ -18,7 +18,9 @@ This file tests the agent-related MCP tools:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,9 +29,13 @@ from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.events import CompletionEventRegistry
 from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agents import create_agents_registry
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 pytestmark = pytest.mark.unit
+
+_RUN_STARTED_AT = datetime(2026, 5, 20, tzinfo=UTC)
+_RUN_COMPLETED_AT = datetime(2026, 5, 20, 0, 1, tzinfo=UTC)
 
 
 def _make_mock_agent_run(
@@ -39,7 +45,7 @@ def _make_mock_agent_run(
     status: str = "running",
     pid: int | None = None,
     provider: str = "claude",
-    **kwargs,
+    **kwargs: Any,
 ) -> MagicMock:
     """Create a mock AgentRun with to_dict() and to_brief() methods."""
     run = MagicMock()
@@ -181,8 +187,8 @@ class TestGetAgentResult:
         mock_run.prompt = "Do the thing"
         mock_run.tool_calls_count = 5
         mock_run.turns_used = 3
-        mock_run.started_at = "2024-01-01T00:00:00Z"
-        mock_run.completed_at = "2024-01-01T00:01:00Z"
+        mock_run.started_at = _RUN_STARTED_AT
+        mock_run.completed_at = _RUN_COMPLETED_AT
         mock_run.child_session_id = "child-sess-456"
 
         runner = MagicMock()
@@ -219,8 +225,8 @@ class TestWaitForAgent:
         mock_run.prompt = "merge"
         mock_run.tool_calls_count = 4
         mock_run.turns_used = 2
-        mock_run.started_at = "2026-05-20T00:00:00Z"
-        mock_run.completed_at = "2026-05-20T00:01:00Z"
+        mock_run.started_at = _RUN_STARTED_AT
+        mock_run.completed_at = _RUN_COMPLETED_AT
         mock_run.child_session_id = "child-session"
         mock_run.terminal_reason = None
 
@@ -252,7 +258,7 @@ class TestWaitForAgent:
         mock_run.prompt = "merge"
         mock_run.tool_calls_count = 1
         mock_run.turns_used = 1
-        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.started_at = _RUN_STARTED_AT
         mock_run.completed_at = None
         mock_run.child_session_id = "child-session"
         mock_run.terminal_reason = None
@@ -290,7 +296,7 @@ class TestWaitForAgent:
         mock_run.prompt = "merge"
         mock_run.tool_calls_count = 1
         mock_run.turns_used = 1
-        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.started_at = _RUN_STARTED_AT
         mock_run.completed_at = None
         mock_run.child_session_id = "child-session"
         mock_run.terminal_reason = None
@@ -329,7 +335,7 @@ class TestWaitForAgent:
         mock_run.prompt = "merge"
         mock_run.tool_calls_count = 1
         mock_run.turns_used = 1
-        mock_run.started_at = "2026-05-20T00:00:00Z"
+        mock_run.started_at = _RUN_STARTED_AT
         mock_run.completed_at = None
         mock_run.child_session_id = "child-session"
         mock_run.terminal_reason = None
@@ -365,7 +371,7 @@ class TestWaitForAgent:
         running_run.prompt = "merge"
         running_run.tool_calls_count = 1
         running_run.turns_used = 1
-        running_run.started_at = "2026-05-20T00:00:00Z"
+        running_run.started_at = _RUN_STARTED_AT
         running_run.completed_at = None
         running_run.child_session_id = "child-session"
         running_run.terminal_reason = None
@@ -380,8 +386,8 @@ class TestWaitForAgent:
         completed_run.prompt = "merge"
         completed_run.tool_calls_count = 3
         completed_run.turns_used = 2
-        completed_run.started_at = "2026-05-20T00:00:00Z"
-        completed_run.completed_at = "2026-05-20T00:01:00Z"
+        completed_run.started_at = _RUN_STARTED_AT
+        completed_run.completed_at = _RUN_COMPLETED_AT
         completed_run.child_session_id = "child-session"
         completed_run.terminal_reason = None
 
@@ -432,7 +438,7 @@ class TestListAgentRuns:
         mock_run.model = "claude-3"
         mock_run.workflow_name = "plan-execute"
         mock_run.prompt = "A" * 200  # Long prompt
-        mock_run.started_at = "2024-01-01T00:00:00Z"
+        mock_run.started_at = _RUN_STARTED_AT
         mock_run.completed_at = None
 
         runner = MagicMock()
@@ -502,7 +508,7 @@ class TestStopAgent:
         runner = _make_runner_with_run_storage()
         runner.get_run.return_value = _make_mock_agent_run(status="running")
         runner.cancel_run.return_value = True
-        runtime_db = object()
+        runtime_db = MagicMock(spec=HubDatabase)
 
         registry = create_agents_registry(runner, db=runtime_db)
         stop_agent = registry._tools["stop_agent"].func
@@ -1149,7 +1155,7 @@ class TestEndAgentRun:
             events.append(("complete", run_id, None))
             return True
 
-        async def kill_process(*args, **kwargs):
+        async def kill_process(*args: Any, **kwargs: Any) -> dict[str, bool]:
             run = args[0]
             events.append(("kill", run.id, kwargs.get("close_terminal")))
             return {"success": True}
@@ -1188,7 +1194,7 @@ class TestEndAgentRun:
 
     @pytest.mark.asyncio
     async def test_unsubscribed_memory_helper_end_agent_run_does_not_notify_parent(
-        self, temp_db
+        self, temp_db: HubDatabase
     ) -> None:
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1383,21 +1389,19 @@ class TestRunningAgentStats:
 class TestFireSyntheticStop:
     """Tests for _fire_synthetic_stop helper."""
 
-    def test_noop_when_no_resolver(self):
+    def test_noop_when_no_resolver(self) -> None:
         """Test that _fire_synthetic_stop does nothing when resolver is None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        result = _fire_synthetic_stop(None, "sess-123")
-        assert result is None
+        _fire_synthetic_stop(None, "sess-123")
 
-    def test_noop_when_resolver_returns_none(self):
+    def test_noop_when_resolver_returns_none(self) -> None:
         """Test that _fire_synthetic_stop does nothing when resolver returns None."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
-        result = _fire_synthetic_stop(lambda: None, "sess-123")
-        assert result is None
+        _fire_synthetic_stop(lambda: None, "sess-123")
 
-    def test_calls_evaluate_workflow_rules(self):
+    def test_calls_evaluate_workflow_rules(self) -> None:
         """Test that _fire_synthetic_stop fires a synthetic STOP event."""
         from gobby.hooks.events import HookEventType
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
@@ -1412,7 +1416,7 @@ class TestFireSyntheticStop:
         assert event_arg.event_type == HookEventType.STOP
         assert event_arg.metadata["_platform_session_id"] == "sess-123"
 
-    def test_legacy_gemini_source_becomes_unknown(self):
+    def test_legacy_gemini_source_becomes_unknown(self) -> None:
         """Synthetic stop tolerates stale persisted Gemini sources."""
         from gobby.hooks.events import SessionSource
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
@@ -1431,15 +1435,14 @@ class TestFireSyntheticStop:
         event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
         assert event_arg.source is SessionSource.UNKNOWN
 
-    def test_catches_exceptions(self):
+    def test_catches_exceptions(self) -> None:
         """Test that _fire_synthetic_stop catches and logs exceptions."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
         mock_hook_mgr = MagicMock()
         mock_hook_mgr.evaluate_workflow_rules.side_effect = RuntimeError("boom")
 
-        result = _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
-        assert result is None
+        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
         assert mock_hook_mgr.evaluate_workflow_rules.call_count == 1
 
     @pytest.mark.asyncio
