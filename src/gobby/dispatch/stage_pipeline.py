@@ -37,7 +37,7 @@ RetryNeutralPipelineDispatch = Callable[
 RenderDispatchInputs = Callable[[StartPipelineAction, object | None, object | None], dict[str, Any]]
 CreatePipelineExecution = Callable[..., str]
 ExecutePipelineBackground = Callable[..., Coroutine[Any, Any, Any]]
-RegisterBackgroundTask = Callable[[asyncio.Task[Any]], object]
+RegisterBackgroundTask = Callable[[str, asyncio.Task[Any]], object]
 EscalateTask = Callable[..., bool]
 StageStatesManagerFactory = Callable[..., Any]
 
@@ -133,7 +133,7 @@ async def start_pipeline_action(
         ),
         name=f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}",
     )
-    register_background_task(task)
+    register_background_task(execution_id, task)
     return {"success": True, "execution_id": execution_id, "status": "running"}
 
 
