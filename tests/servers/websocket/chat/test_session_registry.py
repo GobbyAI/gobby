@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat.session_registry import (
@@ -243,6 +244,7 @@ class _LifecycleHost(ChatLifecycleMixin):
         self.inter_session_msg_manager: MagicMock | None = None
         self.mcp_manager: MagicMock | None = None
         self.internal_manager: MagicMock | None = None
+        self.tool_proxy_getter: Any = None
         self.captured_events: list[HookEvent] = []
         self.captured_mcp_calls: list[dict[str, Any]] = []
 
@@ -257,9 +259,10 @@ class _LifecycleHost(ChatLifecycleMixin):
         self,
         mcp_calls: list[dict[str, Any]],
         event: HookEvent,
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         self.captured_events.append(event)
         self.captured_mcp_calls.extend(mcp_calls)
+        return []
 
 
 def _web_chat_session(
@@ -311,6 +314,109 @@ class TestWebChatLifecycle:
 
         assert result is not None
         assert captured[0].metadata["session_type"] == "web_chat"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_mcp_gate_matches_cli_blocking_decision(self) -> None:
+        host = _LifecycleHost()
+        host._chat_sessions["conv-1"] = _web_chat_session()
+        mcp_call = {
+            "server": "gobby-tasks",
+            "tool": "gate",
+            "arguments": {},
+            "background": False,
+            "inject_result": False,
+            "block_on_failure": True,
+            "block_on_success": False,
+        }
+        workflow_handler = MagicMock()
+        workflow_handler.evaluate.return_value = HookResponse(
+            decision="allow",
+            metadata={"mcp_calls": [mcp_call]},
+        )
+        host.workflow_handler = workflow_handler
+
+        proxy = MagicMock()
+        proxy.call_tool = AsyncMock(return_value={"success": False, "error": "gate failed"})
+        host.tool_proxy_getter = lambda: proxy
+        host._dispatch_mcp_calls = ChatLifecycleMixin._dispatch_mcp_calls.__get__(
+            host,
+            _LifecycleHost,
+        )
+
+        web_result = await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.BEFORE_TOOL,
+            {"tool_name": "Bash", "prompt": "check gate"},
+        )
+        cli_result = WorkflowRuleEvaluator._block_for_failed_call(
+            {
+                **mcp_call,
+                "success": False,
+                "result": {"success": False, "error": "gate failed"},
+            },
+            [],
+        )
+
+        assert web_result is not None
+        assert web_result["decision"] == cli_result.decision == "block"
+        assert web_result["reason"] == cli_result.reason
+        proxy.call_tool.assert_awaited_once_with(
+            "gobby-tasks",
+            "gate",
+            {
+                "session_id": "db-id",
+                "prompt_text": "check gate",
+                "project_path": "/tmp/test-project",
+                "query": "check gate",
+            },
+            session_id="db-id",
+            strip_unknown=True,
+            enforce_workflow=False,
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_mcp_success_gate_injects_result_before_blocking(self) -> None:
+        host = _LifecycleHost()
+        host._chat_sessions["conv-1"] = _web_chat_session()
+        workflow_handler = MagicMock()
+        workflow_handler.evaluate.return_value = HookResponse(
+            decision="allow",
+            metadata={
+                "mcp_calls": [
+                    {
+                        "server": "gobby-memory",
+                        "tool": "lookup",
+                        "arguments": {},
+                        "inject_result": True,
+                        "block_on_success": True,
+                    }
+                ]
+            },
+        )
+        host.workflow_handler = workflow_handler
+
+        proxy = MagicMock()
+        proxy.call_tool = AsyncMock(return_value={"success": True, "value": "found"})
+        host.tool_proxy_getter = lambda: proxy
+        host._dispatch_mcp_calls = ChatLifecycleMixin._dispatch_mcp_calls.__get__(
+            host,
+            _LifecycleHost,
+        )
+
+        result = await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.BEFORE_TOOL,
+            {"tool_name": "Bash", "prompt": "look it up"},
+        )
+
+        assert result is not None
+        assert result["decision"] == "block"
+        assert result["reason"] == "Intercepted by gobby-memory/lookup — see context below."
+        assert result["context"] is not None
+        assert "**lookup result:**" in result["context"]
+        assert '"value": "found"' in result["context"]
 
     @pytest.mark.asyncio
     @pytest.mark.integration

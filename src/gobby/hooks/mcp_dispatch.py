@@ -35,7 +35,7 @@ async def dispatch_mcp_calls(
     event: HookEvent,
     call_tool_fn: CallToolFn,
     logger: logging.Logger,
-) -> None:
+) -> list[dict[str, Any]]:
     """Dispatch ``mcp_call`` effects from a rule engine evaluation.
 
     Each call dict has the shape::
@@ -53,12 +53,21 @@ async def dispatch_mcp_calls(
         call_tool_fn: Async callable ``(server, tool, args) -> result``,
             typically ``mcp_manager.call_tool``.
         logger: Logger for diagnostics.
+
+    Returns:
+        Captured results for calls using ``inject_result``,
+        ``block_on_failure``, or ``block_on_success``.
     """
+    dispatch_results: list[dict[str, Any]] = []
     for call in mcp_calls:
         server = call.get("server")
         tool = call.get("tool")
         arguments = dict(call.get("arguments") or {})
         background = call.get("background", False)
+        inject_result = call.get("inject_result", False)
+        block_on_failure = call.get("block_on_failure", False)
+        block_on_success = call.get("block_on_success", False)
+        needs_capture = inject_result or block_on_failure or block_on_success
 
         if not server or not tool:
             logger.warning(f"dispatch_mcp_calls: skipping call with missing server or tool: {call}")
@@ -71,6 +80,33 @@ async def dispatch_mcp_calls(
             arguments["prompt_text"] = event.data.get("prompt") if event.data else None
         if "project_path" not in arguments and event.metadata.get("project_path"):
             arguments["project_path"] = event.metadata["project_path"]
+        if "query" not in arguments and arguments.get("prompt_text"):
+            arguments["query"] = arguments["prompt_text"]
+
+        if needs_capture:
+            try:
+                result = await asyncio.wait_for(
+                    _safe_call(call_tool_fn, server, tool, arguments, logger),
+                    timeout=30.0,
+                )
+            except TimeoutError:
+                logger.error(f"dispatch_mcp_calls: blocking call {server}/{tool} timed out")
+                result = None
+            success = mcp_call_succeeded(result)
+            dispatch_results.append(
+                {
+                    "server": server,
+                    "tool": tool,
+                    "inject_result": inject_result,
+                    "block_on_failure": block_on_failure,
+                    "block_on_success": block_on_success,
+                    "success": success,
+                    "result": result,
+                }
+            )
+            if block_on_failure and not success:
+                break
+            continue
 
         if background:
             create_background_task(_safe_call(call_tool_fn, server, tool, arguments, logger))
@@ -83,6 +119,8 @@ async def dispatch_mcp_calls(
             except TimeoutError:
                 logger.error(f"dispatch_mcp_calls: blocking call {server}/{tool} timed out")
 
+    return dispatch_results
+
 
 async def _safe_call(
     call_tool_fn: CallToolFn,
@@ -90,7 +128,7 @@ async def _safe_call(
     tool: str,
     arguments: dict[str, Any],
     logger: logging.Logger,
-) -> None:
+) -> Any:
     """Execute a single MCP call, logging errors without propagating."""
     session_token = _set_session_context_from_arguments(arguments)
     try:
@@ -100,8 +138,10 @@ async def _safe_call(
                 f"dispatch_mcp_calls: {server}/{tool} returned failure: "
                 f"{result.get('error', 'unknown') if isinstance(result, dict) else 'no result'}",
             )
+        return result
     except Exception as exc:
         logger.error(f"dispatch_mcp_calls: {server}/{tool} failed: {exc}", exc_info=True)
+        return {"success": False, "error": str(exc)}
     finally:
         if session_token is not None:
             reset_session_context(session_token)

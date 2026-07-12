@@ -84,6 +84,19 @@ class TestContextInjection:
         assert args["project_path"] == "/repo/project"
 
     @pytest.mark.asyncio
+    async def test_maps_prompt_text_to_query(self) -> None:
+        call_tool = AsyncMock(return_value={"success": True})
+
+        await dispatch_mcp_calls(
+            [{"server": "gobby-memory", "tool": "search_memories", "arguments": {}}],
+            _make_event(prompt="remember this"),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert call_tool.call_args.args[2]["query"] == "remember this"
+
+    @pytest.mark.asyncio
     async def test_seeds_session_context_for_internal_callers(self) -> None:
         seen_contexts: list[str | None] = []
 
@@ -236,6 +249,61 @@ class TestBlockingDispatch:
         call_tool.assert_called_once()
         assert call_tool.call_count == 1
         assert call_tool.call_args is not None
+
+
+class TestCapturedDispatch:
+    @pytest.mark.asyncio
+    async def test_returns_result_for_injection(self) -> None:
+        call_tool = AsyncMock(return_value={"success": True, "result": {"items": [1]}})
+
+        results = await dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-memory",
+                    "tool": "search_memories",
+                    "arguments": {},
+                    "inject_result": True,
+                }
+            ],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert results == [
+            {
+                "server": "gobby-memory",
+                "tool": "search_memories",
+                "inject_result": True,
+                "block_on_failure": False,
+                "block_on_success": False,
+                "success": True,
+                "result": {"success": True, "result": {"items": [1]}},
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_block_on_failure_stops_later_calls(self) -> None:
+        call_tool = AsyncMock(return_value={"success": False, "error": "gate failed"})
+
+        results = await dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-tasks",
+                    "tool": "gate",
+                    "arguments": {},
+                    "block_on_failure": True,
+                },
+                {"server": "gobby-tasks", "tool": "must-not-run", "arguments": {}},
+            ],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        assert call_tool.await_count == 1
 
 
 class TestMultipleCalls:

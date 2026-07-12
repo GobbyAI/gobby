@@ -79,6 +79,7 @@ class WebSocketServer(
         daemon_config: Any = None,
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
+        tool_proxy_getter: Callable[[], Any | None] | None = None,
     ):
         """
         Initialize WebSocket server.
@@ -94,12 +95,14 @@ class WebSocketServer(
             daemon_config: Optional DaemonConfig for voice and other features.
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
             web_chat_session_registry: Shared live web-chat session registry.
+            tool_proxy_getter: Lazy accessor for schema-validating internal tool dispatch.
         """
         self.config = config
         self.mcp_manager = mcp_manager
         self.auth_callback = auth_callback
         self.stop_registry = stop_registry
         self.internal_manager = internal_manager
+        self.tool_proxy_getter = tool_proxy_getter
         self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
         self.daemon_config = daemon_config
