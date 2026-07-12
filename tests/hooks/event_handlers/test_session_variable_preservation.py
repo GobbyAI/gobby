@@ -545,3 +545,54 @@ def test_variables_seeded_in_pre_created_session_flow(
     assert "memory_recall_helper_enabled" not in seen_during_activation
     assert variables["parent_turn_seq"] == 0
     assert "memory_recall_helper_enabled" not in variables
+
+
+def test_pre_created_web_chat_seeds_profile_when_activation_skipped(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Web-chat pickup seeds profile content without forcing default-agent activation."""
+    project_id = _make_project(temp_db, tmp_path)
+    session_id = _register_session(temp_db, project_id, tmp_path)
+    session_manager = SessionManager(temp_db)
+    session_manager.update(session_id, session_type="web_chat")
+    existing_session = session_manager.get(session_id)
+    assert existing_session is not None
+    assert existing_session.session_type == "web_chat"
+
+    handlers = EventHandlers(
+        session_manager=session_manager,  # type: ignore[arg-type]
+        get_machine_id=lambda: "machine-1",
+        logger=logging.getLogger("test"),
+    )
+    event = _make_hook_event(
+        {"skip_default_agent_activation": True},
+        external_id="external-pre",
+    )
+
+    with (
+        patch.object(handlers, "_derive_transcript_path", return_value=None),
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_activate_default_agent", return_value=None) as activate,
+        patch(
+            "gobby.hooks.event_handlers._session_start.profile.read_user_profile_content",
+            return_value="Prefers concise status updates.",
+        ),
+        patch.object(
+            handlers,
+            "_compose_session_response",
+            return_value=HookResponse(decision="allow"),
+        ),
+    ):
+        handlers._handle_pre_created_session(
+            existing_session=existing_session,
+            external_id="external-pre",
+            transcript_path=None,
+            cli_source="claude",
+            event=event,
+            cwd=str(tmp_path),
+        )
+
+    activate.assert_not_called()
+    variables = SessionVariableManager(temp_db).get_variables(session_id)
+    assert variables["user_profile_content"] == "Prefers concise status updates."

@@ -793,19 +793,26 @@ def handle_pre_created_session(
         is_existing_session=True,
     )
 
-    try:
-        agent_override = input_data.get("agent_name_override")
-        agent_result = handler._activate_default_agent(
-            session_id,
-            cli_source,
-            session_obj.project_id,
-            agent_name_override=agent_override,
-        )
-    except Exception as e:
-        handler.logger.error(
-            f"Failed to activate default agent for pre-created session: {e}",
-            exc_info=True,
-        )
+    if not input_data.get("skip_default_agent_activation"):
+        try:
+            agent_override = input_data.get("agent_name_override")
+            agent_result = handler._activate_default_agent(
+                session_id,
+                cli_source,
+                session_obj.project_id,
+                agent_name_override=agent_override,
+            )
+        except Exception as e:
+            handler.logger.error(
+                f"Failed to activate default agent for pre-created session: {e}",
+                exc_info=True,
+            )
+
+    if handler._session_manager is not None:
+        try:
+            seed_user_profile_content(handler, session_id)
+        except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
+            handler.logger.warning(f"Failed to seed user profile vars: {e}")
 
     event.metadata["_platform_session_id"] = session_id
 
