@@ -8,6 +8,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
 
 if TYPE_CHECKING:
@@ -80,7 +81,7 @@ def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
     if run_storage is None:
         return set()
     try:
-        runs = run_storage.list_active()
+        runs = _list_active_agent_runs_once(runner)
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return set()

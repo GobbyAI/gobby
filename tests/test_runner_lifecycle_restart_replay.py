@@ -297,7 +297,8 @@ class TestAgentRestartReconciliation:
         assert mutex is not None
         assert mutex.run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
         assert mutex.lease_holder == "dispatcher"
-        assert datetime.fromisoformat(mutex.lease_until) > datetime.now(UTC)
+        assert mutex.lease_until is not None
+        assert mutex.lease_until > datetime.now(UTC)
 
     @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_run_does_not_refresh_expired_mutex(
@@ -349,7 +350,8 @@ class TestAgentRestartReconciliation:
         mutex = mutexes.get_mutex(task.id)
         assert reconciled == 2
         assert mutex is not None
-        assert datetime.fromisoformat(mutex.lease_until) < datetime.now(UTC)
+        assert mutex.lease_until is not None
+        assert mutex.lease_until < datetime.now(UTC)
         assert run_storage.get(run.id).tmux_session_name == "gobby-run-1"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:

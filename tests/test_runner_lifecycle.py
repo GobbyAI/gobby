@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
+import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby.agents.readiness import spawn_readiness_blocker
@@ -1645,6 +1646,37 @@ class TestShutdownDaemonServices:
         assert pane.terminated is False
         assert unrelated_tmux.terminated is True
         assert worker.terminated is True
+
+    def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
+        run_count = 1_005
+        runs = [
+            SimpleNamespace(
+                id=f"run-{index}",
+                pid=10_000 + index,
+                tmux_session_name=f"agent-{index}",
+            )
+            for index in range(run_count)
+        ]
+        list_active = MagicMock(
+            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        )
+        runner = SimpleNamespace(
+            agent_runner=SimpleNamespace(
+                run_storage=SimpleNamespace(list_active=list_active),
+            )
+        )
+
+        preserved_pids = runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
+
+        assert preserved_pids == {10_000 + index for index in range(run_count)}
+        assert [invocation.kwargs for invocation in list_active.call_args_list] == [
+            {"limit": runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE, "offset": offset}
+            for offset in range(
+                0,
+                run_count,
+                runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE,
+            )
+        ]
 
 
 class TestRunGobbyFunction:

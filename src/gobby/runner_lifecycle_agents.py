@@ -368,7 +368,7 @@ async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
     from gobby.agents.kill import kill_agent as _kill_agent_process
 
     cancelled = 0
-    for run in runner.agent_runner.run_storage.list_active(limit=1000):
+    for run in _list_active_agent_runs_once(runner):
         _register_persisted_completion_subscribers(
             runner,
             run.id,
