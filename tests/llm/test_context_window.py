@@ -183,6 +183,58 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
             assert resolve_context_window(model, provider=provider) == expected
 
+    @pytest.mark.parametrize(
+        ("model", "provider", "expected"),
+        [
+            ("sonnet[1m]", None, 1_000_000),
+            ("haiku[1m]", "claude", 1_000_000),
+            ("claude-sonnet-4-6[1m]", "claude", 1_000_000),
+            ("anthropic/claude-haiku-4-5[1m]", "claude", 1_000_000),
+            ("claude-opus-4-8[1m]", "claude", 1_000_000),
+            ("sonnet", None, 200_000),
+            ("haiku", "claude", 200_000),
+            ("anthropic/claude-sonnet-4-6", "claude", 200_000),
+        ],
+    )
+    def test_one_million_marker_floors_base_window_only(
+        self, model: str, provider: str | None, expected: int
+    ) -> None:
+        """The marker raises sub-1M aliases and prefixes without changing unmarked models."""
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            assert resolve_context_window(model, provider=provider) == expected
+
+    @pytest.mark.parametrize(
+        ("kwargs", "registry_value", "expected_source"),
+        [
+            ({"overrides": {"sonnet": 200_000}}, None, "override"),
+            ({"provider_reported_context_window": 200_000}, None, "provider_reported"),
+            (
+                {
+                    "catalog": _SourceCatalog(
+                        {(None, "claude-sonnet-4-6[1m]"): (200_000, "provider_catalog")}
+                    )
+                },
+                None,
+                "provider_catalog",
+            ),
+            ({"catalog": _FakeCatalog({})}, 200_000, "registry"),
+            ({"catalog": _FakeCatalog({})}, None, "static_default"),
+        ],
+    )
+    def test_one_million_marker_floors_all_sources_without_changing_attribution(
+        self,
+        kwargs: dict[str, object],
+        registry_value: int | None,
+        expected_source: str,
+    ) -> None:
+        """Every winning source honors the marker and retains its attribution."""
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=registry_value):
+            result = resolve_context_window_with_source("claude-sonnet-4-6[1m]", **kwargs)
+
+        assert result is not None
+        assert result.value == 1_000_000
+        assert result.source == expected_source
+
     def test_grok_composer_static_fallback_uses_current_window(self) -> None:
         """Grok Composer 2.5 Fast has a 200k static fallback."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):

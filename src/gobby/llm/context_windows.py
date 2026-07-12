@@ -67,6 +67,7 @@ _CONTEXT_WINDOW_MARKER_RE = re.compile(
     r"(?:\[(?:context[-_]?)?1m\]|[-_](?:context[-_])?1m)$",
     re.IGNORECASE,
 )
+_ONE_MILLION_CONTEXT_WINDOW = 1_000_000
 _VALID_CONTEXT_LENGTH_SOURCES: frozenset[str] = frozenset(
     {"provider_reported", "provider_catalog", "registry", "static_default"}
 )
@@ -145,6 +146,15 @@ class ResolvedContextWindow:
 
     value: int
     source: ContextWindowSource
+
+
+def _apply_context_window_marker_floor(
+    resolved: ResolvedContextWindow,
+    has_one_million_marker: bool,
+) -> ResolvedContextWindow:
+    if not has_one_million_marker or resolved.value >= _ONE_MILLION_CONTEXT_WINDOW:
+        return resolved
+    return ResolvedContextWindow(_ONE_MILLION_CONTEXT_WINDOW, resolved.source)
 
 
 @dataclass(frozen=True)
@@ -311,11 +321,14 @@ def resolve_context_window_with_source(
     if not model:
         return None
 
+    has_one_million_marker = _CONTEXT_WINDOW_MARKER_RE.search(model.strip()) is not None
     model_lower = model.lower()
     for substr, window in (overrides or {}).items():
         context_window = coerce_context_length(window)
         if context_window is not None and substr.lower() in model_lower:
-            return ResolvedContextWindow(context_window, "override")
+            return _apply_context_window_marker_floor(
+                ResolvedContextWindow(context_window, "override"), has_one_million_marker
+            )
 
     reported = coerce_context_length(provider_reported_context_window)
     if reported is None and isinstance(provider_metadata, dict):
@@ -324,7 +337,9 @@ def resolve_context_window_with_source(
             PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS,
         )
     if reported is not None:
-        return ResolvedContextWindow(reported, "provider_reported")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(reported, "provider_reported"), has_one_million_marker
+        )
 
     provider_name = provider.strip().lower() if isinstance(provider, str) else None
     catalog_static: ResolvedContextWindow | None = None
@@ -334,24 +349,31 @@ def resolve_context_window_with_source(
         model,
     )
     if catalog_result and catalog_result.source in _AUTHORITATIVE_CATALOG_SOURCES:
-        return catalog_result
+        return _apply_context_window_marker_floor(catalog_result, has_one_million_marker)
     if catalog_result and catalog_result.source == "static_default":
         catalog_static = catalog_result
 
     provider_catalog_value = provider_catalog_context_length_for_model(provider_name, model)
     if provider_catalog_value is not None:
-        return ResolvedContextWindow(provider_catalog_value, "provider_catalog")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(provider_catalog_value, "provider_catalog"),
+            has_one_million_marker,
+        )
 
     registry_value = _registry_context_window(provider_name, model)
     if registry_value is not None:
-        return ResolvedContextWindow(registry_value, "registry")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(registry_value, "registry"), has_one_million_marker
+        )
 
     if catalog_static is not None:
-        return catalog_static
+        return _apply_context_window_marker_floor(catalog_static, has_one_million_marker)
 
     static_value = static_context_length_for_model(provider_name, model)
     if static_value is not None:
-        return ResolvedContextWindow(static_value, "static_default")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(static_value, "static_default"), has_one_million_marker
+        )
 
     return None
 
