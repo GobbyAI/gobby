@@ -338,8 +338,19 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
 }
 
 for _support in EVENT_TYPE_CLI_SUPPORT.values():
+    _support.setdefault("droid", None)
     _support.setdefault("agy", None)
     _support.setdefault("grok", None)
+
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["droid"] = "SessionStart"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["droid"] = "SessionEnd"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_AGENT]["droid"] = "UserPromptSubmit"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.NOTIFICATION]["droid"] = "Notification"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.STOP]["droid"] = "Stop"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_STOP]["droid"] = "SubagentStop"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["droid"] = "PreCompact"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["droid"] = "PreToolUse"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["droid"] = "PostToolUse"
 
 EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["grok"] = "session_start"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["grok"] = "session_end"

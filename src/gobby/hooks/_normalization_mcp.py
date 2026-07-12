@@ -159,7 +159,7 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
             data.setdefault("mcp_tool", parts[2])
 
     # 1b. Extract MCP info from nested tool_input for call_tool calls
-    if tool_name in ("call_tool", "mcp__gobby__call_tool", "mcp_gobby_call_tool"):
+    if tool_name in ("call_tool", "mcp__gobby__call_tool"):
         inner_server, inner_tool = _call_tool_route(tool_input)
         if tool_name.startswith("mcp__") and (inner_server or inner_tool):
             # The gobby call_tool wrapper is not the semantic target. Clear
