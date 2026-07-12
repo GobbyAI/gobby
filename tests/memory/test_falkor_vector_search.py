@@ -106,10 +106,10 @@ class TestEnsureVectorIndex:
 class TestVectorSearch:
     """Tests for vector_search."""
 
-    async def test_vector_search_uses_falkordb_query_nodes_signature(
+    async def test_vector_search_filters_project_before_exact_cosine_ranking(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """FalkorDB vector search uses label and property, not Neo4j index name."""
+        """Project scope is applied before distance ranking and limiting."""
         client = _client(monkeypatch)
         client.query.return_value = [
             {
@@ -132,20 +132,23 @@ class TestVectorSearch:
 
         assert [row["entity_key"] for row in results] == ["wanted"]
         cypher, params = client.query.call_args.args
-        assert "CALL db.idx.vector.queryNodes('_Entity', 'embedding'," in cypher
+        assert "MATCH (node:_Entity)" in cypher
+        assert "node.project_id = $project_id" in cypher
+        assert "$include_global AND node.project_id IS NULL" in cypher
+        assert cypher.index("node.project_id = $project_id") < cypher.index("vec.cosineDistance")
+        assert "CALL db.idx.vector.queryNodes" not in cypher
         assert "vecf32($embedding)" in cypher
-        assert "db.index.vector.queryNodes" not in cypher
+        assert "ORDER BY distance ASC LIMIT $limit" in cypher
         assert params["embedding"] == [0.1, 0.2, 0.3]
-        assert params["candidate_limit"] > 5
+        assert params["project_id"] == "proj-1"
+        assert params["include_global"] is True
+        assert params["limit"] == 5
         assert params["min_score"] == 0.5
 
     async def test_vector_search_converts_cosine_distance_to_similarity(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """FalkorDB's cosine index returns a DISTANCE (0.0 == identical); vector_search
-        must convert it to similarity so `min_score` is a similarity floor and callers
-        get a higher-is-better score. Regression guard for the inverted-filter bug where
-        a query-identical entity (distance 0.0) was excluded by `score >= min_score`."""
+        """Exact cosine distance is converted to higher-is-better similarity."""
         client = _client(monkeypatch)
         client.query.return_value = []
 
@@ -157,30 +160,62 @@ class TestVectorSearch:
         )
 
         cypher, _params = client.query.call_args.args
-        assert "(1.0 - score) >= $min_score" in cypher
-        assert "(1.0 - score) AS score" in cypher
-        assert "WHERE score >= $min_score" not in cypher
+        assert "vec.cosineDistance(node.embedding, vecf32($embedding)) AS distance" in cypher
+        assert "(1.0 - distance) >= $min_score" in cypher
+        assert "(1.0 - distance) AS score" in cypher
 
-    async def test_vector_search_filters_project_after_overfetch(
+    async def test_project_match_survives_two_hundred_closer_foreign_neighbors(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Project filtering keeps exact-project and global hits after overfetch."""
+        """A global top-200 window cannot displace an in-scope result."""
         client = _client(monkeypatch)
-        client.query.return_value = [
-            {"entity_key": "other", "project_id": "proj-2", "score": 0.99},
-            {"entity_key": "global", "project_id": None, "score": 0.97},
-            {"entity_key": "wanted-1", "project_id": "proj-1", "score": 0.95},
-            {"entity_key": "wanted-2", "project_id": "proj-1", "score": 0.91},
+        foreign_neighbors = [
+            {
+                "entity_key": f"foreign-{index}",
+                "project_id": "proj-2",
+                "distance": index / 1000,
+            }
+            for index in range(200)
         ]
+        wanted = {"entity_key": "wanted", "project_id": "proj-1", "distance": 0.9}
+        assert (
+            wanted
+            not in sorted([*foreign_neighbors, wanted], key=lambda row: row["distance"])[:200]
+        )
+
+        def execute_project_scoped_query(_cypher, params):
+            scoped = [
+                row
+                for row in [*foreign_neighbors, wanted]
+                if row["project_id"] == params["project_id"]
+                or (params["include_global"] and row["project_id"] is None)
+            ]
+            return [
+                {
+                    "entity_key": row["entity_key"],
+                    "project_id": row["project_id"],
+                    "score": 1.0 - row["distance"],
+                }
+                for row in sorted(scoped, key=lambda row: row["distance"])[: params["limit"]]
+            ]
+
+        client.query.side_effect = execute_project_scoped_query
 
         results = await client.vector_search(
             query_embedding=[0.1, 0.2, 0.3],
-            limit=2,
-            min_score=0.5,
+            limit=1,
+            min_score=0.0,
             project_id="proj-1",
         )
 
-        assert [row["entity_key"] for row in results] == ["global", "wanted-1"]
+        assert [row["entity_key"] for row in results] == ["wanted"]
+        cypher, params = client.query.call_args.args
+        assert "node.project_id = $project_id" in cypher
+        assert "$include_global AND node.project_id IS NULL" in cypher
+        assert "CALL db.idx.vector.queryNodes" not in cypher
+        assert params["project_id"] == "proj-1"
+        assert params["include_global"] is True
+        assert params["limit"] == 1
 
     async def test_vector_search_returns_empty_for_non_positive_limit(
         self, monkeypatch: pytest.MonkeyPatch

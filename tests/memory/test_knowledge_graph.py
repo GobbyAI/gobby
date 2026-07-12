@@ -1094,7 +1094,12 @@ class TestMemoryNodeProjectIdScoping:
         await service.search_entities_by_vector(
             query_embedding=[0.1, 0.2],
             project_id="proj-A",
+            include_global=False,
         )
+
+        vector_kwargs = mock_falkor.vector_search.await_args.kwargs
+        assert vector_kwargs["project_id"] == "proj-A"
+        assert vector_kwargs["include_global"] is False
 
         # Find the MENTIONED_IN query
         mem_queries = [c for c in mock_falkor.query.call_args_list if "MENTIONED_IN" in str(c)]
@@ -1105,7 +1110,7 @@ class TestMemoryNodeProjectIdScoping:
         assert "OR ($include_global AND m.project_id IS NULL)" in cypher
         assert "OR ($include_global AND e.project_id IS NULL)" in cypher
         assert params["project_id"] == "proj-A"
-        assert params["include_global"] is True
+        assert params["include_global"] is False
 
     @pytest.mark.asyncio
     async def test_find_related_memory_ids_filters_by_project_id(

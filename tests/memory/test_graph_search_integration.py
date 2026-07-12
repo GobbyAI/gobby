@@ -492,6 +492,7 @@ class TestSearchGraphUpgraded:
             limit=10,
             min_score=0.3,
             project_id="project-a",
+            include_global=True,
         )
 
     async def test_falls_back_to_substring_on_vector_failure(

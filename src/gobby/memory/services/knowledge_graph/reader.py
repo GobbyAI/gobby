@@ -158,6 +158,7 @@ class KnowledgeGraphReader:
                 limit=limit,
                 min_score=min_score,
                 project_id=project_id,
+                include_global=include_global,
             )
             allowed_project_ids: set[str | None] = set()
             if project_id is not None:
