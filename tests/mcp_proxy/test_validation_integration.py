@@ -86,6 +86,9 @@ def _stage(task_id: str, state: str) -> StageState:
     )
 
 
+TEST_TIMESTAMP = "2024-01-01T00:00:00+00:00"
+
+
 def _task(**kwargs) -> Task:
     status = kwargs.pop("status", "open")
     task_id = kwargs["id"]
@@ -96,6 +99,9 @@ def _task(**kwargs) -> Task:
         kwargs.setdefault("escalated_at", "now")
     elif status in {"ready", "in_progress", "needs_review", "review_approved"}:
         kwargs.setdefault("stages", (_stage(task_id, status),))
+    for field in ("created_at", "updated_at", "closed_at", "escalated_at"):
+        if kwargs.get(field) == "now":
+            kwargs[field] = TEST_TIMESTAMP
     return Task(**kwargs)
 
 
