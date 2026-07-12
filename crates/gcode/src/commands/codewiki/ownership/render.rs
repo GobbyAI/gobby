@@ -3,7 +3,7 @@ use std::fmt::Write;
 
 use serde::Serialize;
 
-use super::super::{file_wikilink, module_wikilink};
+use super::super::{file_wikilink, module_ancestors, module_wikilink};
 use super::analysis::retain_deterministic_identity;
 use super::{FileOwnership, OwnershipContributor, OwnershipStatus};
 
@@ -98,13 +98,20 @@ pub(super) fn write_modules(
     doc: &mut String,
     by_file: &BTreeMap<String, FileOwnership>,
     file_modules: &HashMap<String, String>,
+    emitted_modules: &BTreeSet<String>,
 ) {
     let mut modules: BTreeMap<String, Vec<(&String, &FileOwnership)>> = BTreeMap::new();
     for (file, ownership) in by_file {
-        modules
-            .entry(file_modules.get(file).cloned().unwrap_or_default())
-            .or_default()
-            .push((file, ownership));
+        let raw = file_modules.get(file).cloned().unwrap_or_default();
+        // Clustering can produce module names (synthetic cross-directory
+        // clusters, renamed/merged spans) that this run never emits as module
+        // pages; linking them would dangle and fail publish closed (#18005).
+        // Attribute such files to the nearest ancestor that has a page.
+        let module = module_ancestors(&raw)
+            .into_iter()
+            .find(|candidate| emitted_modules.contains(candidate))
+            .unwrap_or_default();
+        modules.entry(module).or_default().push((file, ownership));
     }
     doc.push_str("## Modules\n\n");
     for (module, files) in modules {
