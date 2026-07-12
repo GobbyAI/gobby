@@ -20,9 +20,18 @@ from gobby.integrations.github import GitHubIntegration
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
 
-__all__ = ["GitHubMCPHelper", "parse_github_repo"]
+__all__ = ["GitHubMCPHelper", "GitHubMCPToolError", "parse_github_repo"]
 
 logger = logging.getLogger(__name__)
+
+
+class GitHubMCPToolError(RuntimeError):
+    """The GitHub MCP server returned an in-band tool failure."""
+
+    def __init__(self, tool_name: str, detail: str) -> None:
+        self.tool_name = tool_name
+        self.detail = detail
+        super().__init__(f"GitHub MCP tool {tool_name!r} failed: {detail}")
 
 
 def parse_github_repo(github_repo: str) -> tuple[str, str]:
@@ -98,6 +107,14 @@ class GitHubMCPHelper:
         """
         session = await self.mcp_manager.get_client_session("github")
         result = await session.call_tool(tool_name, arguments)
+
+        if getattr(result, "isError", False):
+            details = [
+                item.text
+                for item in getattr(result, "content", [])
+                if isinstance(getattr(item, "text", None), str)
+            ]
+            raise GitHubMCPToolError(tool_name, "\n".join(details) or "unknown error")
 
         if hasattr(result, "content") and result.content:
             for item in result.content:
