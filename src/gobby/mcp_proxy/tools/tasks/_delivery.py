@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess  # nosec B404 # used for fixed git push/current-branch commands.
@@ -177,7 +178,8 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 effective_source_branch = source_branch
             else:
                 repo_path = _repo_path(ctx, project_id, worktree)
-                effective_source_branch = _resolve_source_branch(
+                effective_source_branch = await asyncio.to_thread(
+                    _resolve_source_branch,
                     source_branch=source_branch,
                     worktree=worktree,
                     repo_path=repo_path,
@@ -216,7 +218,8 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if push:
                 if repo_path is None:
                     repo_path = _repo_path(ctx, project_id, worktree)
-                _push_branch(
+                await asyncio.to_thread(
+                    _push_branch,
                     repo_path=repo_path,
                     source_branch=effective_source_branch,
                     remote_branch=effective_source_branch,

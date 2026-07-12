@@ -8,6 +8,7 @@ Tests for:
 """
 
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -618,6 +619,47 @@ class TestUpdateObservedFiles:
         affected_files.set_files.assert_called_once_with(
             "task-1", ["src/a.py", "src/b.py", "src/c.py"], "observed"
         )
+
+    @pytest.mark.asyncio
+    async def test_registry_call_offloads_git_subprocess(self) -> None:
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
+
+        ctx = self._make_ctx()
+        task = MagicMock()
+        task.id = "task-1"
+        task.project_id = "project-1"
+        task.commits = ["abc123"]
+        ctx.task_manager.get_task.return_value = task
+        ctx.get_project_repo_path.return_value = "/repo"
+        affected_files = MagicMock()
+        event_loop_thread = threading.get_ident()
+        subprocess_threads: list[int] = []
+
+        def run_side(*_args: object, **_kwargs: object) -> MagicMock:
+            subprocess_threads.append(threading.get_ident())
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "src/a.py"
+            return result
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager",
+                return_value=affected_files,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.resolve_task_id_for_mcp",
+                return_value="task-1",
+            ),
+            patch("subprocess.run", side_effect=run_side),
+        ):
+            registry = create_core_affected_files_registry(ctx)
+            result = await registry.call("update_observed_files", {"task_id": "task-1"})
+
+        assert result["files"] == ["src/a.py"]
+        assert len(subprocess_threads) == 1
+        assert subprocess_threads[0] != event_loop_thread
+        affected_files.set_files.assert_called_once_with("task-1", ["src/a.py"], "observed")
 
     def test_invalid_task_id_returns_error(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
