@@ -1,7 +1,11 @@
 """Tests for ToolMetricsStore."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -146,16 +150,119 @@ class TestToolMetricsStore:
             (OLD_METRICS_ID, PROJECT_1, "s1", "t1", old_time, old_time, old_time),
         )
 
-        aggregated = metrics_store.aggregate_to_daily(retention_days=7)
-        assert aggregated == 1
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        deleted = metrics_store.cleanup_old_metrics(cutoff)
+        assert deleted == 1
 
         daily = metrics_store.get_daily_metrics(project_id=PROJECT_1)
         assert len(daily) == 1
         assert daily[0]["call_count"] == 10
 
-        deleted = metrics_store.cleanup_old_metrics(retention_days=7)
-        assert deleted == 1
         assert len(metrics_store.get_metrics()) == 0
+
+    def test_cleanup_rolls_back_if_commit_is_interrupted(
+        self, metrics_store: ToolMetricsStore, temp_db: "HubDatabase"
+    ) -> None:
+        old_time = datetime.now(UTC) - timedelta(days=10)
+        temp_db.execute(
+            """
+            INSERT INTO tool_metrics (
+                id, project_id, server_name, tool_name,
+                call_count, success_count, failure_count,
+                total_latency_ms, avg_latency_ms,
+                last_called_at, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, 10, 8, 2, 1000.0, 100.0, %s, %s, %s)
+            """,
+            (OLD_METRICS_ID, PROJECT_1, "s1", "t1", old_time, old_time, old_time),
+        )
+        original_transaction = temp_db.transaction
+
+        @contextmanager
+        def interrupted_transaction():
+            with original_transaction() as txn:
+                original_execute = txn.execute
+
+                def execute_then_interrupt(sql, params=()):
+                    original_execute(sql, params)
+                    raise RuntimeError("simulated process interruption before commit")
+
+                with patch.object(txn, "execute", side_effect=execute_then_interrupt):
+                    yield txn
+
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        with (
+            patch.object(temp_db, "transaction", side_effect=interrupted_transaction),
+            pytest.raises(RuntimeError, match="process interruption"),
+        ):
+            metrics_store.cleanup_old_metrics(cutoff)
+
+        assert len(metrics_store.get_metrics()) == 1
+        assert metrics_store.get_daily_metrics(project_id=PROJECT_1) == []
+
+    def test_cleanup_preserves_concurrent_writer(
+        self, metrics_store: ToolMetricsStore, temp_db: "HubDatabase"
+    ) -> None:
+        old_time = datetime.now(UTC) - timedelta(days=10)
+        temp_db.execute(
+            """
+            INSERT INTO tool_metrics (
+                id, project_id, server_name, tool_name,
+                call_count, success_count, failure_count,
+                total_latency_ms, avg_latency_ms,
+                last_called_at, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, 10, 8, 2, 1000.0, 100.0, %s, %s, %s)
+            """,
+            (OLD_METRICS_ID, PROJECT_1, "s1", "t1", old_time, old_time, old_time),
+        )
+        rollup_finished = threading.Event()
+        release_commit = threading.Event()
+        writer_transaction_open = threading.Event()
+        original_transaction = temp_db.transaction
+
+        @contextmanager
+        def coordinated_transaction():
+            with original_transaction() as txn:
+                if threading.current_thread().name.startswith("metrics-cleanup"):
+                    original_execute = txn.execute
+
+                    def execute_and_signal(sql, params=()):
+                        cursor = original_execute(sql, params)
+                        rollup_finished.set()
+                        return cursor
+
+                    with patch.object(txn, "execute", side_effect=execute_and_signal):
+                        yield txn
+                    assert release_commit.wait(timeout=5)
+                else:
+                    writer_transaction_open.set()
+                    yield txn
+
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        with (
+            patch.object(temp_db, "transaction", side_effect=coordinated_transaction),
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="metrics-cleanup") as cleanup_pool,
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="metrics-writer") as writer_pool,
+        ):
+            cleanup_future = cleanup_pool.submit(metrics_store.cleanup_old_metrics, cutoff)
+            assert rollup_finished.wait(timeout=5)
+            writer_future = writer_pool.submit(
+                metrics_store.record_call,
+                "s1",
+                "t1",
+                PROJECT_1,
+                50.0,
+                True,
+            )
+            assert writer_transaction_open.wait(timeout=5)
+            release_commit.set()
+            assert cleanup_future.result(timeout=5) == 1
+            writer_future.result(timeout=5)
+
+        daily = metrics_store.get_daily_metrics(project_id=PROJECT_1)
+        assert daily[0]["call_count"] == 10
+        current = metrics_store.get_metrics(project_id=PROJECT_1)
+        assert len(current) == 1
+        assert current[0]["call_count"] == 1
 
 
 class TestPostgresToolMetricsStore:

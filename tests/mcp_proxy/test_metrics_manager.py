@@ -483,6 +483,16 @@ class TestResetMetrics:
 class TestCleanupOldMetrics:
     """Tests for cleanup_old_metrics method."""
 
+    def test_cleanup_passes_one_cutoff_to_store(self, metrics_manager: ToolMetricsManager) -> None:
+        now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+        with (
+            patch("gobby.mcp_proxy.metrics.utc_now", return_value=now),
+            patch.object(metrics_manager.store, "cleanup_old_metrics", return_value=3) as cleanup,
+        ):
+            assert metrics_manager.cleanup_old_metrics(retention_days=7) == 3
+
+        cleanup.assert_called_once_with(now - timedelta(days=7))
+
     def test_cleanup_old_metrics(
         self, metrics_manager: ToolMetricsManager, temp_db: "HubDatabase"
     ) -> None:

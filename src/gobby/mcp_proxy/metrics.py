@@ -1,12 +1,14 @@
 """Tool metrics tracking for MCP proxy."""
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.metrics_store import ToolMetrics, ToolMetricsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.telemetry.instruments import get_telemetry_metrics
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -208,10 +210,8 @@ class ToolMetricsManager:
         Aggregate and delete metrics older than the retention period.
         Delegates to ToolMetricsStore.
         """
-        # First aggregate to daily table
-        self.store.aggregate_to_daily(retention_days)
-        # Then cleanup
-        return self.store.cleanup_old_metrics(retention_days)
+        cutoff = utc_now() - timedelta(days=retention_days)
+        return self.store.cleanup_old_metrics(cutoff)
 
     def get_daily_metrics(
         self,
