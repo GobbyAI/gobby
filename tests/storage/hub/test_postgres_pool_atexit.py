@@ -7,6 +7,7 @@ import subprocess
 import sys
 import textwrap
 import weakref
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,6 +24,19 @@ def test_new_database_is_tracked_for_atexit_close() -> None:
         assert db in postgres._OPEN_DATABASES
     finally:
         db.close()
+
+
+@pytest.mark.unit
+def test_close_caps_pool_worker_wait_within_daemon_shutdown_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = PostgresHubDatabase(_DUMMY_DSN)
+    close_pool = MagicMock()
+    monkeypatch.setattr(db._pool, "close", close_pool)
+
+    db.close()
+
+    close_pool.assert_called_once_with(timeout=postgres._POOL_CLOSE_TIMEOUT_SECONDS)
 
 
 @pytest.mark.unit
