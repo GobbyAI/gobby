@@ -6,6 +6,7 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -15,6 +16,7 @@ from websockets.exceptions import ConnectionClosed
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
+_BROADCAST_SEND_TIMEOUT_SECONDS = 2.0
 
 
 class BroadcastMixin:
@@ -102,22 +104,32 @@ class BroadcastMixin:
             return
 
         message_str = json_dumps(message)
-        sent_count = 0
-        failed_count = 0
 
-        for websocket in list(self.clients.keys()):
+        async def send_one(websocket: Any) -> bool | None:
             try:
                 if not self._is_subscribed(websocket, message):
-                    continue
+                    return None
 
-                await websocket.send(message_str)
-                sent_count += 1
+                await asyncio.wait_for(
+                    websocket.send(message_str),
+                    timeout=_BROADCAST_SEND_TIMEOUT_SECONDS,
+                )
+                return True
+            except TimeoutError:
+                logger.warning("Broadcast timed out for client")
             except ConnectionClosed:
-                # Client disconnecting, will be cleaned up in handler
-                failed_count += 1
+                pass
             except Exception as e:
                 logger.warning(f"Broadcast failed for client: {e}")
-                failed_count += 1
+            return False
+
+        websockets = list(self.clients)
+        outcomes = await asyncio.gather(*(send_one(websocket) for websocket in websockets))
+        sent_count = sum(outcome is True for outcome in outcomes)
+        failed_count = sum(outcome is False for outcome in outcomes)
+        for websocket, outcome in zip(websockets, outcomes, strict=True):
+            if outcome is False:
+                self.clients.pop(websocket, None)
 
         if sent_count > 0 or failed_count > 0:
             logger.debug(
