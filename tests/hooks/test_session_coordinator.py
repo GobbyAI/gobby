@@ -16,13 +16,14 @@ Test categories:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
 import uuid
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -361,6 +362,64 @@ class TestSessionLifecycleTransitions:
 
 class TestAgentRunCompletion:
     """Test agent run completion logic."""
+
+    @pytest.mark.asyncio
+    async def test_complete_agent_run_flushes_stats_before_refresh(self) -> None:
+        """A short run uses stats and result persisted by the awaited flush."""
+        agent_run_manager = MagicMock()
+        agent_run_manager.get.return_value = MagicMock(status="running", tmux_session_name=None)
+        agent_run_manager.db.fetchone.return_value = None
+        message_processor = MagicMock()
+        flush_completed = False
+
+        async def flush_session(session_id: str) -> None:
+            nonlocal flush_completed
+            assert session_id == "sess-short"
+            await asyncio.sleep(0)
+            flush_completed = True
+
+        message_processor.flush_session = AsyncMock(side_effect=flush_session)
+        refreshed_session = SimpleNamespace(
+            id="sess-short",
+            agent_run_id="run-short",
+            summary_markdown="Fresh summary",
+            last_assistant_content="",
+            tool_call_count=2,
+            turn_count=1,
+        )
+        session_manager = MagicMock()
+
+        def get_refreshed_session(session_id: str) -> SimpleNamespace:
+            assert session_id == "sess-short"
+            assert flush_completed is True
+            return refreshed_session
+
+        session_manager.get.side_effect = get_refreshed_session
+        coordinator = SessionCoordinator(
+            session_storage=session_manager,
+            message_processor=message_processor,
+            agent_run_manager=agent_run_manager,
+        )
+        coordinator.set_completion_registry(MagicMock())
+        original_session = SimpleNamespace(
+            id="sess-short",
+            agent_run_id="run-short",
+            summary_markdown="Stale summary",
+            last_assistant_content="",
+            tool_call_count=0,
+            turn_count=0,
+        )
+
+        await asyncio.to_thread(coordinator.complete_agent_run, original_session)
+
+        message_processor.flush_session.assert_awaited_once_with("sess-short")
+        agent_run_manager.fail.assert_not_called()
+        agent_run_manager.complete.assert_called_once_with(
+            run_id="run-short",
+            result="Fresh summary",
+            tool_calls_count=2,
+            turns_used=1,
+        )
 
     def test_complete_agent_run_updates_status(self) -> None:
         """Test completing an agent run updates its status."""

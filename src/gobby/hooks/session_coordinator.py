@@ -441,16 +441,13 @@ class SessionCoordinator:
             session_id = session.id
             if self._message_processor:
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        flush_task = asyncio.ensure_future(
-                            self._message_processor.flush_session(session_id)
-                        )
-                        loop.call_later(
-                            5.0, lambda: flush_task.cancel() if not flush_task.done() else None
-                        )
-                    else:
-                        loop.run_until_complete(self._message_processor.flush_session(session_id))
+                    if not self._event_loop or not self._event_loop.is_running():
+                        raise RuntimeError("daemon event loop is not available")
+                    flush_future = asyncio.run_coroutine_threadsafe(
+                        self._message_processor.flush_session(session_id),
+                        self._event_loop,
+                    )
+                    flush_future.result(timeout=5)
                 except Exception as e:
                     self.logger.debug(f"Failed to flush session stats for {session_id}: {e}")
 
@@ -458,6 +455,11 @@ class SessionCoordinator:
                 refreshed = self._session_manager.get(session_id) if self._session_manager else None
                 if refreshed:
                     session = refreshed
+                    result = (
+                        getattr(session, "summary_markdown", None)
+                        or getattr(session, "last_assistant_content", None)
+                        or result
+                    )
 
             # Count tool calls and turns from session stats
             tool_calls_count = getattr(session, "tool_call_count", 0)
