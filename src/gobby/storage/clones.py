@@ -425,9 +425,20 @@ class LocalCloneManager:
             session_id: Session ID claiming ownership
 
         Returns:
-            Updated Clone or None if not found
+            Updated Clone, or None if the clone is missing or owned by another session
         """
-        return self.update(clone_id, agent_session_id=session_id)
+        cursor = self.db.execute(
+            """
+            UPDATE clones
+            SET agent_session_id = %s, updated_at = %s
+            WHERE id = %s
+              AND (agent_session_id IS NULL OR agent_session_id = %s)
+            """,
+            (session_id, utc_now(), clone_id, session_id),
+        )
+        if cursor.rowcount <= 0:
+            return None
+        return self.get(clone_id)
 
     def release(self, clone_id: str) -> Clone | None:
         """

@@ -900,12 +900,14 @@ class TestClaimClone:
 
         assert result["success"] is True
         mock_clone_storage.claim.assert_called_once_with("clone-123", "sess-1")
+        mock_clone_storage.get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_clone_already_claimed(
         self, registry: Any, mock_clone_storage: Any
     ) -> None:
         """Claim fails when clone is already claimed by another session."""
+        mock_clone_storage.claim.return_value = None
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
             project_id="11111111-1111-4111-8111-111111110001",
@@ -929,7 +931,7 @@ class TestClaimClone:
 
         assert result["success"] is False
         assert "already claimed" in result["error"]
-        mock_clone_storage.claim.assert_not_called()
+        mock_clone_storage.claim.assert_called_once_with("clone-123", "sess-1")
 
     @pytest.mark.asyncio
     async def test_claim_clone_same_session(self, registry: Any, mock_clone_storage: Any) -> None:
@@ -957,10 +959,12 @@ class TestClaimClone:
             result = await registry.call("claim_clone", {"clone_id": "clone-123"})
 
         assert result["success"] is True
+        mock_clone_storage.get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Claim fails when clone not found."""
+        mock_clone_storage.claim.return_value = None
         mock_clone_storage.get.return_value = None
 
         from gobby.utils.session_context import session_context_for_test
@@ -970,6 +974,7 @@ class TestClaimClone:
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
+        mock_clone_storage.claim.assert_called_once_with("nonexistent", "sess-1")
 
 
 class TestReleaseClone:
