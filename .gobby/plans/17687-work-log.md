@@ -284,3 +284,24 @@ Entry format:
 - Heal attempt=9 launched ~21:25Z ("post-circuit-clear" stamp), same
   command (sonnet@xhigh aggregate candidate), caffeinate armed, trap
   re-armed. Timeline slip from the false quota block: ~4h, not ~23h.
+
+## 2026-07-12 ~22:30Z — attempts 9/10 lost, attempt=11 verbose and progressing
+
+- attempt=9 (21:22:49Z) killed ~4min in by Claude Code /exit (clean exit
+  tears down tracked background tasks; unlike crashes, gcode does not
+  survive). No END stamp; annotated in arm log.
+- attempt=10 (21:30:24Z) killed by me at 22:21:36Z (exit=143) after ~50min
+  with zero staged writes. Post-mortem: the kill was based on a bad health
+  signal — completed file docs do not hit the stage dir immediately, and
+  fresh sonnet file-page generations take ~3-4 min each, so a silent run
+  is not a stuck run. Extensive daemon forensics during this window
+  (probes of /api/llm/generate in every request shape: plain, structured
+  candidate sonnet@xhigh, profile=feature_high, 150KB body) all succeeded
+  in seconds; live sonnet spawns for file pages were observed completing.
+  Nothing was actually wrong daemon-side.
+- attempt=11 launched 22:21:48Z with --verbose: per-file progress lines
+  now stream to arm-sonnet.log ("generating file doc file N/2608 <path>"),
+  the correct health signal going forward. Confirmed progressing: file 6
+  (crates/gcode/src/cli.rs, fresh generation ~4min) completed, reuse
+  continuing, file 10 generating. 2608 files total; today's commits +
+  the 11 degraded pages + aggregates are the regen scope.
