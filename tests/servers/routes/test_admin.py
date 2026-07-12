@@ -7,10 +7,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.config.persistence import DatabasesConfig
+from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.servers.routes.admin import create_admin_router
 from gobby.shutdown_intent import ShutdownIntent, read_shutdown_intent, write_shutdown_intent
 
 pytestmark = pytest.mark.unit
+
+
+def _hook_runtime_diagnostic(state: GhookRuntimeState) -> GhookRuntimeDiagnostic:
+    return GhookRuntimeDiagnostic(
+        state=state,
+        stamp_path="/tmp/.ghook-runtime.json",
+        detail=f"runtime state: {state.value}",
+        schema_version=99 if state is GhookRuntimeState.SCHEMA_MISMATCH else 1,
+        ghook_version="0.1.0" if state is GhookRuntimeState.STALE_VERSION else "0.7.1",
+    )
 
 
 class RunnerShutdownStub:
@@ -143,6 +154,33 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_surfaces_hook_runtime_schema_mismatch(
+        self,
+        mock_to_thread: MagicMock,
+        mock_psutil: MagicMock,
+        client: TestClient,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
+        mock_process.num_threads.return_value = 1
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.0
+        diagnostic = _hook_runtime_diagnostic(GhookRuntimeState.SCHEMA_MISMATCH)
+
+        with patch(
+            "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
+            return_value=diagnostic,
+        ):
+            response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert data["hook_runtime"]["state"] == "schema_mismatch"
+        assert data["hook_runtime"]["compatible"] is False
 
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
@@ -570,18 +608,34 @@ class TestHealthEndpoint:
         app.include_router(router)
         return TestClient(app)
 
-    def test_health_returns_ok(self, client) -> None:
-        response = client.get("/api/admin/health")
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+    @pytest.mark.parametrize(
+        ("runtime_state", "expected_health"),
+        [
+            (GhookRuntimeState.ABSENT, "ok"),
+            (GhookRuntimeState.COMPATIBLE, "ok"),
+            (GhookRuntimeState.MALFORMED, "degraded"),
+            (GhookRuntimeState.SCHEMA_MISMATCH, "degraded"),
+            (GhookRuntimeState.STALE_VERSION, "degraded"),
+        ],
+    )
+    def test_health_surfaces_typed_hook_runtime_state(
+        self,
+        client: TestClient,
+        runtime_state: GhookRuntimeState,
+        expected_health: str,
+    ) -> None:
+        diagnostic = _hook_runtime_diagnostic(runtime_state)
 
-    def test_health_is_lightweight(self, client) -> None:
-        """Health check should return quickly with no I/O."""
-        response = client.get("/api/admin/health")
+        with patch(
+            "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
+            return_value=diagnostic,
+        ) as mock_read:
+            response = client.get("/api/admin/health")
+
         assert response.status_code == 200
-        data = response.json()
-        # Should only have a single key
-        assert list(data.keys()) == ["status"]
+        assert response.json()["status"] == expected_health
+        assert response.json()["hook_runtime"]["state"] == runtime_state.value
+        mock_read.assert_called_once_with()
 
 
 class TestWorkflowsReloadEndpoint:

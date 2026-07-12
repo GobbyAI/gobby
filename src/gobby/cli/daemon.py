@@ -115,7 +115,7 @@ def _services_start(gobby_home: Path) -> None:
     cmd.extend(["up", "-d"])
 
     try:
-        result = subprocess.run(  # nosec B603 B607 # hardcoded docker command
+        result = subprocess.run(  # nosec B603 # hardcoded docker command
             cmd,
             capture_output=True,
             text=True,
@@ -801,8 +801,8 @@ def health(ctx: click.Context) -> None:
         try:
             with open(pid_file) as f:
                 pid = int(f.read().strip())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not read daemon PID file for health check: %s", exc, exc_info=True)
 
     if pid is None:
         svc = get_service_status()

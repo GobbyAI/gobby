@@ -26,6 +26,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     read_envelope_marker,
 )
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.servers.responses import JSONResponse
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
@@ -49,7 +50,6 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
     "AskUserQuestion": "AskUserQuestion",
 }
 
-SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 # Fail-safe hook calls are synchronous CLI-path gates; keep this short enough
 # that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0

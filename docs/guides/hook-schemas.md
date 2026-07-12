@@ -109,6 +109,22 @@ critical. Gobby task #17962 tracks aligning the external binary and release with
 the policy above. Gemini is retired and is not a supported source or a `ghook`
 CLI.
 
+### Runtime Schema Compatibility
+
+Running `ghook --version` writes
+`$GOBBY_HOME/bin/.ghook-runtime.json` with the binary's `schema_version` and
+`ghook_version`. The daemon reads this stamp for `/api/admin/health` and
+`/api/admin/status`, and `gobby status` renders incompatible states as health
+issues. Diagnostics use explicit `absent`, `compatible`, `malformed`,
+`schema_mismatch`, and `stale_version` states.
+
+An absent stamp does not degrade health so existing installations continue to
+run until ghook has emitted runtime metadata. A malformed stamp, envelope schema
+mismatch, or ghook version below the managed minimum does degrade health. The
+daemon currently accepts envelope schema `1`; its ghook floor comes directly
+from the managed binary version policy (`0.7.1` at this verification date), so a
+pin update also updates the runtime compatibility threshold.
+
 ## Native To Workflow Mapping
 
 ### Semantic Rule Events
