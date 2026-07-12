@@ -285,13 +285,10 @@ class LocalCloneManager:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
 
+        query = f"SELECT * FROM clones WHERE {where_clause} "  # nosec
+        query += "ORDER BY created_at DESC LIMIT %s"
         rows = self.db.fetchall(
-            f"""
-            SELECT * FROM clones
-            WHERE {where_clause}
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,  # nosec B608
+            query,
             tuple(params),
         )
         return [Clone.from_row(row) for row in rows]
@@ -345,10 +342,8 @@ class LocalCloneManager:
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [clone_id]
 
-        self.db.execute(
-            f"UPDATE clones SET {set_clause} WHERE id = %s",  # nosec B608
-            tuple(values),
-        )
+        query = f"UPDATE clones SET {set_clause} WHERE id = %s"  # nosec
+        self.db.execute(query, tuple(values))
 
         return self._get_any(clone_id)
 
