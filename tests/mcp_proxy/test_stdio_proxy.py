@@ -44,6 +44,95 @@ async def test_request_auth_retry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_preserves_explicit_nulls_in_tool_results() -> None:
+    payload = {
+        "success": True,
+        "result": {
+            "content": [{"type": "text", "text": None}],
+            "structuredContent": {"value": None, "nested": [None, {"item": None}]},
+        },
+    }
+    client = AsyncMock()
+    client.request = AsyncMock(return_value=_response(200, payload))
+    proxy = DaemonProxy(60887)
+
+    with patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient") as client_cls:
+        client_cls.return_value.__aenter__.return_value = client
+        result = await proxy._request(
+            "POST",
+            "/api/mcp/example/tools/nullable_result",
+            json={},
+        )
+
+    assert result == payload
+
+
+@pytest.mark.asyncio
+async def test_get_tool_schema_strips_explicit_nulls() -> None:
+    proxy = DaemonProxy(60887)
+    schema_response = {
+        "name": "nullable_schema",
+        "description": None,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "type": ["string", "null"],
+                    "default": None,
+                }
+            },
+        },
+    }
+
+    with patch.object(proxy, "_request", new_callable=AsyncMock) as request:
+        request.return_value = schema_response
+        result = await proxy.get_tool_schema("example", "nullable_schema")
+
+    assert result == {
+        "success": True,
+        "tool": {
+            "name": "nullable_schema",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"value": {"type": ["string", "null"]}},
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_tools_strips_explicit_nulls_from_schemas() -> None:
+    proxy = DaemonProxy(60887)
+    listing = {
+        "success": True,
+        "tools": [
+            {
+                "name": "nullable_schema",
+                "description": None,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"value": {"default": None}},
+                },
+            }
+        ],
+    }
+
+    with patch.object(proxy, "_request", new_callable=AsyncMock) as request:
+        request.return_value = listing
+        result = await proxy.list_tools("example")
+
+    assert result == {
+        "success": True,
+        "tools": [
+            {
+                "name": "nullable_schema",
+                "inputSchema": {"type": "object", "properties": {"value": {}}},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_session_bootstrap_sends_auth_header() -> None:
     response = _response(200, {"session": {"id": "session-123"}})
     client = AsyncMock()

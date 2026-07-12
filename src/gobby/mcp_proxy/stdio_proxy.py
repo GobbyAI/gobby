@@ -178,8 +178,7 @@ class DaemonProxy:
                     )
                 if resp.status_code == 200:
                     data: dict[str, Any] = resp.json()
-                    result: dict[str, Any] = _strip_none(data)
-                    return result
+                    return data
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
         except httpx.ConnectError:
             return _daemon_unavailable_result(self.port, "connection failed")
@@ -200,11 +199,14 @@ class DaemonProxy:
     ) -> dict[str, Any]:
         """List tools from MCP servers."""
         if server_name:
-            return await self._request(
-                "GET",
-                f"/api/mcp/{server_name}/tools",
-                session_id=session_id,
+            listing_response: dict[str, Any] = _strip_none(
+                await self._request(
+                    "GET",
+                    f"/api/mcp/{server_name}/tools",
+                    session_id=session_id,
+                )
             )
+            return listing_response
         status = await self.get_status(session_id=session_id)
         if status.get("success") is False:
             return status
@@ -218,10 +220,13 @@ class DaemonProxy:
             )
             if result.get("success"):
                 all_tools[srv_name] = result.get("tools", [])
-        return {
-            "success": True,
-            "servers": [{"name": n, "tools": t} for n, t in all_tools.items()],
-        }
+        listing_response = _strip_none(
+            {
+                "success": True,
+                "servers": [{"name": n, "tools": t} for n, t in all_tools.items()],
+            }
+        )
+        return listing_response
 
     async def call_tool(
         self,
@@ -308,14 +313,17 @@ class DaemonProxy:
         )
         if "error" in result:
             return {"success": False, "error": result["error"]}
-        return {
-            "success": True,
-            "tool": {
-                "name": result.get("name"),
-                "description": result.get("description"),
-                "inputSchema": result.get("inputSchema"),
-            },
-        }
+        schema_response: dict[str, Any] = _strip_none(
+            {
+                "success": True,
+                "tool": {
+                    "name": result.get("name"),
+                    "description": result.get("description"),
+                    "inputSchema": result.get("inputSchema"),
+                },
+            }
+        )
+        return schema_response
 
     async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
         """List configured MCP servers (includes internal gobby-* servers)."""
