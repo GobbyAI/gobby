@@ -428,6 +428,14 @@ class MemoryManagerFacadeMethods:
     ) -> list[dict[str, str]]:
         return await self._lifecycle_service.sync_memory_scope_indices(memory_id, project_id)
 
+    async def restore_memory_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        await self._lifecycle_service.restore_memory_indices(memory_id, content, project_id)
+
     async def fix_null_project_ids_from_sessions(
         self,
         *,

@@ -523,6 +523,12 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
         "refresh-me": _row("refresh-me", "old"),
         "keep-me": _row("keep-me", "durable"),
     }
+    db.crossrefs[("hide-me", "keep-me")] = {
+        "source_id": "hide-me",
+        "target_id": "keep-me",
+        "similarity": 0.91,
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
     manager = _FakeMemoryManager(db)
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
@@ -561,7 +567,7 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     # keep is stamp-only — no snapshot for it.
     assert {row["action"] for row in db.snapshots} == {"delete", "review", "refresh"}
 
-    result = await revert_dream_run(store=store, run_id=run_id)
+    result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
 
     assert result["success"] is True
     # Revert restores the mutating snapshots (delete/review/refresh) to active.
@@ -569,6 +575,12 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     assert db.memories["hide-me"]["dream_action"] is None
     assert db.memories["review-me"]["deleted_at"] is None
     assert db.memories["refresh-me"]["content"] == "old"
+    assert set(db.crossrefs) == {("hide-me", "keep-me")}
+    restored_ids = {call.args[0] for call in manager.restore_memory_indices.await_args_list}
+    assert {"hide-me", "review-me", "refresh-me"} <= restored_ids
+    assert {"hide-me", "review-me", "refresh-me"} <= manager.vector_ids
+    assert {"hide-me", "review-me", "refresh-me"} <= manager.graph_ids
+    manager.reconcile_stores.assert_awaited_once_with(dry_run=False)
 
 
 @pytest.mark.asyncio
@@ -692,7 +704,29 @@ async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
         "merge-keep": _row("merge-keep", "dup"),
         "merge-drop": _row("merge-drop", "dup"),
         "supersede-me": _row("supersede-me", "old fact"),
+        "related": _row("related", "related fact"),
     }
+    original_crossrefs = {
+        ("merge-drop", "related"): {
+            "source_id": "merge-drop",
+            "target_id": "related",
+            "similarity": 0.92,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+        ("related", "merge-keep"): {
+            "source_id": "related",
+            "target_id": "merge-keep",
+            "similarity": 0.81,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+        ("supersede-me", "related"): {
+            "source_id": "supersede-me",
+            "target_id": "related",
+            "similarity": 0.87,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        },
+    }
+    db.crossrefs = {key: dict(value) for key, value in original_crossrefs.items()}
     manager = _FakeMemoryManager(db)
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
@@ -720,17 +754,68 @@ async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
     assert summary["mutations"] == 4
     assert db.memories["merge-keep"]["content"] == "merged"
     assert "merge-drop" not in db.memories
+    assert ("merge-keep", "related") in db.crossrefs
+    assert all("merge-drop" not in key for key in db.crossrefs)
     created_id = next(mid for mid in db.memories if mid.startswith("created-"))
     assert "supersede-me" not in db.memories
+    assert created_id in manager.vector_ids
+    assert created_id in manager.graph_ids
     assert {row["action"] for row in db.snapshots} >= {"merge", "supersede"}
 
-    result = await revert_dream_run(store=store, run_id=run_id)
+    result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
 
     assert result["success"] is True
     assert db.memories["merge-keep"]["content"] == "dup"
     assert db.memories["merge-drop"]["content"] == "dup"
     assert db.memories["supersede-me"]["content"] == "old fact"
     assert created_id not in db.memories
+    assert db.crossrefs == original_crossrefs
+    assert {"merge-keep", "merge-drop", "supersede-me"} <= manager.vector_ids
+    assert {"merge-keep", "merge-drop", "supersede-me"} <= manager.graph_ids
+    assert created_id not in manager.vector_ids
+    assert created_id not in manager.graph_ids
+    manager.delete_memory.assert_any_await(created_id)
+    restored_ids = {call.args[0] for call in manager.restore_memory_indices.await_args_list}
+    assert {"merge-keep", "merge-drop", "supersede-me"} <= restored_ids
+    manager.reconcile_stores.assert_awaited_once_with(dry_run=False)
+
+
+def test_dream_store_transfers_and_restores_crossrefs_in_postgres(temp_db: Any) -> None:
+    memory_storage = LocalMemoryManager(temp_db)
+    keeper = memory_storage.create_memory(content="keeper")
+    duplicate = memory_storage.create_memory(content="duplicate")
+    related = memory_storage.create_memory(content="related")
+    memory_storage.create_crossref(duplicate.id, related.id, 0.93)
+    memory_storage.create_crossref(related.id, keeper.id, 0.81)
+    store = MemoryDreamStore(temp_db)
+    keeper_before = store.get_memory_row(keeper.id)
+    duplicate_before = store.get_memory_row(duplicate.id)
+    assert keeper_before is not None
+    assert duplicate_before is not None
+    assert duplicate_before["_crossrefs"][0]["source_id"] == duplicate.id
+
+    transferred = store.transfer_crossrefs(duplicate.id, keeper.id)
+    memory_storage.delete_memory(duplicate.id)
+
+    assert transferred == 1
+    assert {
+        (crossref.source_id, crossref.target_id)
+        for crossref in memory_storage.get_crossrefs(keeper.id)
+    } == {
+        (keeper.id, related.id),
+        (related.id, keeper.id),
+    }
+
+    store.restore_memory_row(duplicate_before)
+    store.restore_crossrefs([keeper_before, duplicate_before])
+
+    assert {
+        (crossref.source_id, crossref.target_id)
+        for crossref in memory_storage.get_crossrefs(related.id)
+    } == {
+        (duplicate.id, related.id),
+        (related.id, keeper.id),
+    }
 
 
 @pytest.mark.asyncio
@@ -1127,6 +1212,7 @@ class _FakeDreamDB:
 
     def __init__(self) -> None:
         self.memories: dict[str, dict[str, Any]] = {}
+        self.crossrefs: dict[tuple[str, str], dict[str, Any]] = {}
         self.projects: dict[str, dict[str, Any]] = {}
         self.runs: dict[str, dict[str, Any]] = {}
         self.snapshots: list[dict[str, Any]] = []
@@ -1175,6 +1261,25 @@ class _FakeDreamDB:
                     "applied": True,
                 }
             )
+        elif normalized.startswith("DELETE FROM memory_crossrefs"):
+            memory_id = str(params[0])
+            self.crossrefs = {
+                key: row for key, row in self.crossrefs.items() if memory_id not in key
+            }
+        elif normalized.startswith("INSERT INTO memory_crossrefs"):
+            key = (str(params[0]), str(params[1]))
+            row = {
+                "source_id": key[0],
+                "target_id": key[1],
+                "similarity": float(params[2]),
+                "created_at": params[3],
+            }
+            if "GREATEST" in normalized and key in self.crossrefs:
+                row["similarity"] = max(
+                    float(self.crossrefs[key]["similarity"]),
+                    row["similarity"],
+                )
+            self.crossrefs[key] = row
         elif normalized.startswith("DELETE FROM memories"):
             self.memories.pop(str(params[0]), None)
         elif normalized.startswith("INSERT INTO memories"):
@@ -1231,6 +1336,9 @@ class _FakeDreamDB:
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         normalized = " ".join(sql.split())
+        if "FROM memory_crossrefs" in normalized:
+            memory_id = str(params[0])
+            return [dict(row) for key, row in self.crossrefs.items() if memory_id in key]
         if "FROM memory_dream_runs" in normalized:
             return [
                 {"id": run["id"]}
@@ -1349,14 +1457,25 @@ def test_snapshots_serialize_datetime_rows_to_iso_strings() -> None:
 class _FakeMemoryManager:
     def __init__(self, db: _FakeDreamDB) -> None:
         self.db = db
+        self.vector_ids = set(db.memories)
+        self.graph_ids = set(db.memories)
         self.delete_memory = AsyncMock(side_effect=self._delete)
         self.update_memory = AsyncMock(side_effect=self._update)
         self.create_memory = AsyncMock(side_effect=self._create)
         self.rescope_memory = AsyncMock(side_effect=self._rescope)
         self.sync_memory_scope_indices = AsyncMock(return_value=[])
+        self.restore_memory_indices = AsyncMock(side_effect=self._restore_indices)
+        self.reconcile_stores = AsyncMock(return_value={"success": True})
 
     async def _delete(self, memory_id: str) -> bool:
-        return self.db.memories.pop(memory_id, None) is not None
+        deleted = self.db.memories.pop(memory_id, None) is not None
+        if deleted:
+            self.db.crossrefs = {
+                key: row for key, row in self.db.crossrefs.items() if memory_id not in key
+            }
+            self.vector_ids.discard(memory_id)
+            self.graph_ids.discard(memory_id)
+        return deleted
 
     async def _update(
         self,
@@ -1374,7 +1493,19 @@ class _FakeMemoryManager:
     async def _create(self, **kwargs: Any) -> Any:
         memory_id = f"created-{len(self.db.memories)}"
         self.db.memories[memory_id] = _row(memory_id, kwargs["content"])
+        self.vector_ids.add(memory_id)
+        self.graph_ids.add(memory_id)
         return SimpleNamespace(id=memory_id)
+
+    async def _restore_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        del content, project_id
+        self.vector_ids.add(memory_id)
+        self.graph_ids.add(memory_id)
 
     async def _rescope(self, memory_id: str, new_project_id: str | None) -> Any:
         row = self.db.memories.get(memory_id)

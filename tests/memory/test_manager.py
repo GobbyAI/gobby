@@ -878,6 +878,39 @@ class TestLifecycleService:
     """Service-level tests for memory lifecycle side effects."""
 
     @pytest.mark.asyncio
+    async def test_restore_memory_indices_recreates_vector_and_requeues_graph(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
+        memory = manager.storage.create_memory(
+            content="restored content",
+            project_id=PROJECT_ID,
+        )
+        manager.storage.mark_graph_processed(memory.id)
+
+        await manager.restore_memory_indices(memory.id, memory.content, PROJECT_ID)
+
+        mock_vs.upsert.assert_awaited_once_with(
+            memory.id,
+            [0.1, 0.2],
+            {"project_id": PROJECT_ID},
+        )
+        row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
+        assert row is not None
+        assert row["graph_processed"] in (False, 0)
+
+    @pytest.mark.asyncio
     async def test_create_update_delete_updates_secondary_indices(
         self,
         db,

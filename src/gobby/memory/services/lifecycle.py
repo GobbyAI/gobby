@@ -287,6 +287,23 @@ class MemoryLifecycleService:
                 failures.append({"memory_id": memory_id, "index": "embedding", "error": str(exc)})
         return failures
 
+    async def restore_memory_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        """Recreate vector and graph-index state for a restored memory row."""
+        await self._embed_and_upsert(
+            memory_id,
+            content,
+            payload={"project_id": project_id},
+        )
+        try:
+            self.storage.mark_pending_graph(memory_id)
+        except Exception as exc:
+            logger.warning("Graph restore sync failed for %s: %s", memory_id, exc)
+
     async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
         """Update a memory's scope, then best-effort sync secondary stores."""
         result = self.storage.rescope_memory(memory_id, new_project_id)
