@@ -17,6 +17,7 @@ from gobby.autonomous.stuck_detector import StuckDetector
 from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.health_monitor import HealthMonitor
+from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.skill_manager import HookSkillManager
@@ -387,7 +388,7 @@ class HookManagerFactory:
                     strip_unknown=True,
                     enforce_workflow=False,
                 )
-                success = isinstance(result, dict) and result.get("success", True)
+                success = mcp_call_succeeded(result)
                 return {
                     "success": success,
                     "inject_result": True,

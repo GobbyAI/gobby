@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.memory.context import format_memory_metadata_suffix
@@ -466,7 +467,7 @@ def dispatch_mcp_calls(
             _sid: str = _event_session_id,
             _project_id: str | None = _event_project_id,
             _origin: Literal["explicit", "ambient"] = _session_ref_origin,
-        ) -> dict[str, Any] | None:
+        ) -> Any:
             from gobby.utils.session_context import (
                 reset_seeded_contexts,
                 resolve_and_seed_contexts,
@@ -514,9 +515,10 @@ def dispatch_mcp_calls(
                         enforce_workflow=False,
                     )
 
-                if isinstance(result, dict) and result.get("success") is False:
+                if not mcp_call_succeeded(result):
                     logger.warning(
-                        f"dispatch_mcp_calls: {s}/{t} returned failure: {result.get('error', 'unknown')}",
+                        f"dispatch_mcp_calls: {s}/{t} returned failure: "
+                        f"{result.get('error', 'unknown') if isinstance(result, dict) else 'no result'}",
                     )
                 return result
             except Exception as exc:
@@ -538,7 +540,7 @@ def dispatch_mcp_calls(
                 logger,
                 label=label,
             )
-            success = isinstance(result, dict) and result.get("success", False)
+            success = mcp_call_succeeded(result)
             dispatch_results.append(
                 {
                     "server": server,

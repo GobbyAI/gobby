@@ -18,6 +18,7 @@ from contextvars import Token
 from typing import Any
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.utils.session_context import (
     SessionContext,
     reset_session_context,
@@ -93,9 +94,10 @@ async def _safe_call(
     session_token = _set_session_context_from_arguments(arguments)
     try:
         result = await call_tool_fn(server, tool, arguments)
-        if isinstance(result, dict) and result.get("success") is False:
+        if not mcp_call_succeeded(result):
             logger.warning(
-                f"dispatch_mcp_calls: {server}/{tool} returned failure: {result.get('error', 'unknown')}",
+                f"dispatch_mcp_calls: {server}/{tool} returned failure: "
+                f"{result.get('error', 'unknown') if isinstance(result, dict) else 'no result'}",
             )
     except Exception as exc:
         logger.error(f"dispatch_mcp_calls: {server}/{tool} failed: {exc}", exc_info=True)
