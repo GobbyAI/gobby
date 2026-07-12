@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-import psycopg
-
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
+from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
@@ -32,6 +30,8 @@ from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
+
+_signoff_relay_tasks: dict[str, asyncio.Task[None]] = {}
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import Task
@@ -202,7 +202,7 @@ async def _relay_signoff_to_build_coordinator(
                 signoff_message=signoff_message,
             ),
         )
-    except (sqlite3.DatabaseError, psycopg.Error):
+    except Exception:
         logger.warning(
             "Failed to relay review signoff to build coordinator",
             extra={"task_id": task_id, "stage_name": stage_name, "action": action},
@@ -221,7 +221,22 @@ def _schedule_signoff_relay(
     signoff_message: str,
 ) -> None:
     try:
-        loop = asyncio.get_running_loop()
+        schedule_background_task(
+            _signoff_relay_tasks,
+            f"{task_id}:{stage_name}:{action}",
+            lambda: _relay_signoff_to_build_coordinator(
+                ctx,
+                task=task,
+                task_id=task_id,
+                stage_name=stage_name,
+                action=action,
+                from_session_id=from_session_id,
+                signoff_message=signoff_message,
+            ),
+            name=f"gobby-review-signoff-relay-{action}",
+            logger=logger,
+            description="Review signoff relay task",
+        )
     except RuntimeError as exc:
         logger.warning(
             "Failed to schedule review signoff relay to build coordinator: %s",
@@ -235,18 +250,6 @@ def _schedule_signoff_relay(
             exc_info=True,
         )
         return
-    loop.create_task(
-        _relay_signoff_to_build_coordinator(
-            ctx,
-            task=task,
-            task_id=task_id,
-            stage_name=stage_name,
-            action=action,
-            from_session_id=from_session_id,
-            signoff_message=signoff_message,
-        ),
-        name=f"gobby-review-signoff-relay-{action}",
-    )
 
 
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
