@@ -1,5 +1,6 @@
 """Tests for the SemanticToolSearch module."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -285,15 +286,41 @@ class TestSemanticToolSearch:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_has_embeddings_false(self, temp_db: HubDatabase) -> None:
+    async def test_has_embeddings_false(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test has_embeddings returns False when no points exist."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
         mock_vs.search = AsyncMock(return_value=[])
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
-        result = await search.has_embeddings("proj-1")
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.semantic_search"):
+            result = await search.has_embeddings("proj-1")
+
         assert result is False
+        assert caplog.records == []
+
+    async def test_has_embeddings_logs_backend_failure(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
+        mock_vs.search = AsyncMock(side_effect=RuntimeError("qdrant unavailable"))
+        search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.semantic_search"):
+            result = await search.has_embeddings("proj-1")
+
+        assert result is False
+        assert "Failed to check embeddings for project proj-1" in caplog.text
+        assert search._collection_name in caplog.text
+        assert "RuntimeError: qdrant unavailable" in caplog.text
+        assert "dimension conflict" not in caplog.text.lower()
 
     @pytest.mark.asyncio
     async def test_has_embeddings_no_vectorstore(self, semantic_search: SemanticToolSearch) -> None:
