@@ -10,8 +10,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from gobby.github_triage.service import (
     GitHubIssueTriageService,
-    TriageDisabledError,
     TriageWebhookError,
+    WebhookAuthenticationError,
 )
 from gobby.storage.secrets import SecretStore
 
@@ -40,8 +40,11 @@ def create_github_triage_router(server: HTTPServer) -> APIRouter:
                 dict(request.headers),
                 raw_body,
             )
-        except TriageDisabledError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except WebhookAuthenticationError as exc:
+            raise HTTPException(
+                status_code=401,
+                detail=WebhookAuthenticationError.detail,
+            ) from exc
         except TriageWebhookError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 

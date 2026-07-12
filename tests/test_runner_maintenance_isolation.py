@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -113,3 +114,139 @@ async def test_expired_isolation_loop_uses_bounded_db_runner(
         assert stats.threads <= executor.max_workers
     finally:
         executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_expired_isolation_loop_runs_git_in_parent_repo(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expired cleanup targets the recorded repo when daemon cwd is unrelated."""
+    repo_path = tmp_path / "repo"
+    worktree_path = tmp_path / "expired-worktree"
+    repo_path.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_path, check=True)
+    (repo_path / "tracked.txt").write_text("tracked\n")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_path, check=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "task/expired", str(worktree_path)],
+        cwd=repo_path,
+        check=True,
+    )
+
+    project = LocalProjectManager(temp_db).create(
+        name="proj-1",
+        repo_path=str(repo_path),
+    )
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/expired",
+        worktree_path=str(worktree_path),
+    )
+    worktrees.mark_merged(worktree.id)
+
+    unrelated_path = tmp_path / "unrelated"
+    unrelated_path.mkdir()
+    monkeypatch.chdir(unrelated_path)
+    shutdown_checks = 0
+
+    def is_shutdown_requested() -> bool:
+        nonlocal shutdown_checks
+        shutdown_checks += 1
+        return shutdown_checks > 1
+
+    await cleanup_expired_isolation_loop(
+        temp_db,
+        is_shutdown_requested,
+        interval_hours=0,
+    )
+
+    worktree_list = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    branch_list = subprocess.run(
+        ["git", "branch", "--list", "task/expired"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert str(worktree_path) not in worktree_list.stdout
+    assert branch_list.stdout == ""
+    assert worktrees.get(worktree.id) is None
+
+
+@pytest.mark.asyncio
+async def test_expired_isolation_loop_logs_git_cleanup_failures(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nonzero prune and branch results retain actionable cleanup evidence."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    project = LocalProjectManager(temp_db).create(
+        name="proj-1",
+        repo_path=str(repo_path),
+    )
+    worktrees = LocalWorktreeManager(temp_db)
+    worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/expired",
+        worktree_path=str(tmp_path / "expired-worktree"),
+    )
+    worktrees.mark_merged(worktree.id)
+
+    git_commands: list[list[str]] = []
+
+    def run_git(args: list[str]) -> int:
+        git_commands.append(args)
+        if args[-2:] == ["worktree", "prune"]:
+            return 7
+        if "branch" in args:
+            return 9
+        return 0
+
+    monkeypatch.setattr("gobby.runner_maintenance._run_git_command", run_git)
+    caplog.set_level("WARNING")
+    shutdown_checks = 0
+
+    def is_shutdown_requested() -> bool:
+        nonlocal shutdown_checks
+        shutdown_checks += 1
+        return shutdown_checks > 1
+
+    await cleanup_expired_isolation_loop(
+        temp_db,
+        is_shutdown_requested,
+        interval_hours=0,
+    )
+
+    assert git_commands == [
+        [
+            "git",
+            "-C",
+            str(repo_path),
+            "worktree",
+            "remove",
+            "--force",
+            str(tmp_path / "expired-worktree"),
+        ],
+        ["git", "-C", str(repo_path), "worktree", "prune"],
+        ["git", "-C", str(repo_path), "branch", "-D", "task/expired"],
+    ]
+    assert f"git worktree prune failed in {repo_path} (exit code 7)" in caplog.messages
+    assert (
+        f"git branch deletion failed for task/expired in {repo_path} (exit code 9)"
+        in caplog.messages
+    )

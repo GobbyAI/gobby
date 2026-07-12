@@ -733,17 +733,18 @@ class TestPersistEmbeddingConfig:
         self,
         temp_db: HubDatabase,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
         with (
             patch(
                 "gobby.storage.hub.runtime.runtime_hub_database",
                 return_value=nullcontext(temp_db),
             ),
-            patch("gobby.storage.secrets.SALT_FILE", tmp_path / ".secret_salt"),
             patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
         ):
             _persist_embedding_config(
@@ -771,17 +772,18 @@ class TestPersistEmbeddingConfig:
         self,
         temp_db: HubDatabase,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
         with (
             patch(
                 "gobby.storage.hub.runtime.runtime_hub_database",
                 return_value=nullcontext(temp_db),
             ),
-            patch("gobby.storage.secrets.SALT_FILE", tmp_path / ".secret_salt"),
             patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
         ):
             store = ConfigStore(temp_db)

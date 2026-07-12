@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import sqlite3
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -162,40 +160,6 @@ def _relay_signoff_to_build_coordinator_sync(
     )
 
 
-async def _relay_signoff_to_build_coordinator(
-    ctx: RegistryContext,
-    *,
-    task: Task,
-    task_id: str,
-    stage_name: str,
-    action: str,
-    from_session_id: str,
-    signoff_message: str,
-) -> None:
-    """Persist a direct P2P signoff for the coordinator of the newest build run."""
-    try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            partial(
-                _relay_signoff_to_build_coordinator_sync,
-                ctx,
-                task=task,
-                task_id=task_id,
-                stage_name=stage_name,
-                action=action,
-                from_session_id=from_session_id,
-                signoff_message=signoff_message,
-            ),
-        )
-    except (sqlite3.DatabaseError, psycopg.Error):
-        logger.warning(
-            "Failed to relay review signoff to build coordinator",
-            extra={"task_id": task_id, "stage_name": stage_name, "action": action},
-            exc_info=True,
-        )
-
-
 def _schedule_signoff_relay(
     ctx: RegistryContext,
     *,
@@ -207,11 +171,18 @@ def _schedule_signoff_relay(
     signoff_message: str,
 ) -> None:
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError as exc:
+        _relay_signoff_to_build_coordinator_sync(
+            ctx,
+            task=task,
+            task_id=task_id,
+            stage_name=stage_name,
+            action=action,
+            from_session_id=from_session_id,
+            signoff_message=signoff_message,
+        )
+    except (sqlite3.DatabaseError, psycopg.Error):
         logger.warning(
-            "Failed to schedule review signoff relay to build coordinator: %s",
-            exc,
+            "Failed to relay review signoff to build coordinator",
             extra={
                 "task_id": task_id,
                 "stage_name": stage_name,
@@ -220,19 +191,6 @@ def _schedule_signoff_relay(
             },
             exc_info=True,
         )
-        return
-    loop.create_task(
-        _relay_signoff_to_build_coordinator(
-            ctx,
-            task=task,
-            task_id=task_id,
-            stage_name=stage_name,
-            action=action,
-            from_session_id=from_session_id,
-            signoff_message=signoff_message,
-        ),
-        name=f"gobby-review-signoff-relay-{action}",
-    )
 
 
 def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -252,7 +210,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
@@ -339,7 +298,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
@@ -445,7 +405,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
@@ -559,7 +520,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:

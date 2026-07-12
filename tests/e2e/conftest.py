@@ -1171,10 +1171,12 @@ _ALWAYS_EXEMPT_BASENAMES = {"shutdown_intent_active.json"}
 _ALWAYS_EXEMPT_PREFIXES = ("hooks/inbox/", "session_wiki/")
 
 
-def _is_worktree_bytecode_artifact(rel_path: str) -> bool:
-    """Return true for Python bytecode created by running tests from a task worktree."""
+def _is_worktree_tool_artifact(rel_path: str) -> bool:
+    """Return true for tool caches created inside a concurrent task worktree."""
     return rel_path.startswith("worktrees/") and (
-        "/__pycache__/" in rel_path or rel_path.endswith((".pyc", ".pyo"))
+        "/__pycache__/" in rel_path
+        or "/.ruff_cache/" in rel_path
+        or rel_path.endswith((".pyc", ".pyo"))
     )
 
 
@@ -1215,7 +1217,7 @@ def assert_no_external_writes() -> Generator[None]:
             basename = Path(rel_path).name
             if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
                 continue
-            if _is_worktree_bytecode_artifact(rel_path):
+            if _is_worktree_tool_artifact(rel_path):
                 continue
             if basename in _ALWAYS_EXEMPT_BASENAMES:
                 continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
@@ -1236,7 +1238,7 @@ def assert_no_external_writes() -> Generator[None]:
             # PostgreSQL WAL/SHM files can be touched by any process that opens
             # the database (even read-only), so exempt them as well.
             basename = Path(rel_path).name
-            if _is_worktree_bytecode_artifact(rel_path):
+            if _is_worktree_tool_artifact(rel_path):
                 continue
             if basename.endswith(("-shm", "-wal", "-journal")):
                 continue

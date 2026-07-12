@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import datetime_to_required_iso, require_stored_datetime, utc_now
 from gobby.utils.machine_id import get_machine_id
@@ -30,17 +31,21 @@ from gobby.utils.machine_id import get_machine_id
 logger = logging.getLogger(__name__)
 
 SECRET_REF_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
-SALT_FILE = Path("~/.gobby/.secret_salt").expanduser()
-KEK_FILE = Path("~/.gobby/.secret_kek").expanduser()
+_SALT_FILENAME = ".secret_salt"
+_KEK_FILENAME = ".secret_kek"
 # Every file holding secret key material under ~/.gobby. Anything that
 # provisions an alternate GOBBY_HOME or snapshots ~/.gobby must carry all of
 # these, or envelope decryption breaks (Rust gcore reads GOBBY_HOME/.secret_kek).
-SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (SALT_FILE.name, KEK_FILE.name)
+SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (_SALT_FILENAME, _KEK_FILENAME)
 
-SECRET_KEY_ID = "default"
+# These B105 suppressions are scoped to metadata literals, never secret values.
+# Stable key identifier, not a credential.
+SECRET_KEY_ID = "default"  # nosec B105
 POSTURE_KEY_FILE = "key_file"
-POSTURE_SCRYPT_PASSPHRASE = "scrypt_passphrase"
-SECRET_KEK_PASSPHRASE_ENV = "GOBBY_SECRET_KEK_PASSPHRASE"
+# Secret-posture enum value, not a credential.
+POSTURE_SCRYPT_PASSPHRASE = "scrypt_passphrase"  # nosec B105
+# Environment variable name, not a credential.
+SECRET_KEK_PASSPHRASE_ENV = "GOBBY_SECRET_KEK_PASSPHRASE"  # nosec B105
 
 SCRYPT_N = 2**14
 SCRYPT_R = 8
@@ -156,13 +161,14 @@ class SecretInfo:
 
 def _get_or_create_salt() -> bytes:
     """Get or create the legacy machine_id encryption salt."""
-    SALT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    salt_file = get_gobby_home() / _SALT_FILENAME
+    salt_file.parent.mkdir(parents=True, exist_ok=True)
 
-    if SALT_FILE.exists():
-        return SALT_FILE.read_bytes()
+    if salt_file.exists():
+        return salt_file.read_bytes()
 
     salt = os.urandom(16)
-    fd = os.open(SALT_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(salt_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, salt)
     finally:
@@ -209,21 +215,22 @@ def write_private_file(path: Path, data: bytes) -> None:
 
 def _get_or_create_kek_file_key() -> bytes:
     """Return the default key-file KEK, creating it with 0600 permissions."""
-    KEK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if KEK_FILE.exists():
-        key = KEK_FILE.read_bytes().strip()
+    kek_file = get_gobby_home() / _KEK_FILENAME
+    kek_file.parent.mkdir(parents=True, exist_ok=True)
+    if kek_file.exists():
+        key = kek_file.read_bytes().strip()
         try:
             Fernet(key)
         except (TypeError, ValueError) as exc:
-            raise SecretKeyUnavailable(f"Invalid secret KEK file: {KEK_FILE}") from exc
+            raise SecretKeyUnavailable(f"Invalid secret KEK file: {kek_file}") from exc
         try:
-            KEK_FILE.chmod(0o600)
+            kek_file.chmod(0o600)
         except OSError:
-            logger.warning("Could not enforce 0600 permissions on %s", KEK_FILE)
+            logger.warning("Could not enforce 0600 permissions on %s", kek_file)
         return key
 
     key = Fernet.generate_key()
-    write_private_file(KEK_FILE, key)
+    write_private_file(kek_file, key)
     logger.info("Generated new secret KEK file")
     return key
 

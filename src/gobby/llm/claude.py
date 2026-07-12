@@ -1,5 +1,6 @@
 """Claude LLM provider facade."""
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -32,6 +33,7 @@ class ClaudeLLMProvider:
         self.config = config
         self.logger = logger
         self._claude_cli_path = self._find_cli_path()
+        self._cli_path_lock = asyncio.Lock()
         self._default_model = _DEFAULT_CLAUDE_MODEL
         self._sdk_client = ClaudeSDKClient(
             default_model=self._default_model,
@@ -49,9 +51,10 @@ class ClaudeLLMProvider:
         """Verify CLI path is still valid. Delegates to claude_cli.verify_cli_path()."""
         from gobby.llm.claude_cli import verify_cli_path
 
-        cli_path = await verify_cli_path(self._claude_cli_path)
-        self._claude_cli_path = cli_path
-        return cli_path
+        async with self._cli_path_lock:
+            cli_path = await verify_cli_path(self._claude_cli_path)
+            self._claude_cli_path = cli_path
+            return cli_path
 
     async def generate_text(
         self,

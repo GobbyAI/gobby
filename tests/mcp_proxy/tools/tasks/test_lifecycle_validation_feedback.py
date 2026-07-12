@@ -362,6 +362,12 @@ def test_current_failures_near_tdd_wording_still_admit_failure(feedback: str) ->
         "The handler change coerces degraded gwiki results into failed cron outcomes.",
         "New tests verify the executor records the run as failed when the envelope is degraded.",
         "The history output records status: failed so backoff can engage.",
+        (
+            "The storage test injects a raise between the two state changes and verifies both "
+            "updates roll back, then retries successfully to reach FAILED/CANCELLED — directly "
+            "matching the acceptance criterion. All acceptance criteria are met with concrete "
+            "evidence."
+        ),
     ],
 )
 def test_failure_state_assertion_descriptions_do_not_admit_failure(feedback: str) -> None:

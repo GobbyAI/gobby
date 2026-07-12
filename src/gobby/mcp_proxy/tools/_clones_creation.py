@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.utils.git import run_to_completion
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         description="Clone creation tools",
     )
 
-    async def create_clone(
+    async def _create_clone_impl(
         branch_name: str,
         clone_path: str,
         remote_url: str | None = None,
@@ -27,6 +29,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         base_branch: str = "main",
         depth: int = 1,
         use_local: bool = False,
+        cancellation_requested: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """
         Create a new git clone.
@@ -63,50 +66,62 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 "error": "No project context available for clone creation",
             }
 
+        clone_created = False
+        record_created = False
         try:
+            # Resolve task references before creating anything on disk. A bad task
+            # reference must not leave a clone directory behind.
+            resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
+            if cancellation_requested is not None and cancellation_requested.is_set():
+                raise asyncio.CancelledError
+
             if use_local:
                 # Clone from local repo path - always full clone
                 # Clone base_branch first, then create branch_name as new branch
                 source = str(git_manager.repo_path)
-                result = git_manager.full_clone(
+                result = await asyncio.to_thread(
+                    git_manager.full_clone,
                     remote_url=source,
                     clone_path=clone_path,
                     branch=base_branch,
                 )
+                clone_created = result.success
                 if result.success and branch_name != base_branch:
-                    git_manager.run_git_command(
+                    await asyncio.to_thread(
+                        git_manager.run_git_command,
                         ["checkout", "-b", branch_name],
                         cwd=clone_path,
                         check=True,
                     )
                 if not remote_url:
-                    remote_url = git_manager.get_remote_url() or source
+                    remote_url = await asyncio.to_thread(git_manager.get_remote_url) or source
             else:
                 # Get remote URL if not provided
                 if not remote_url:
-                    remote_url = git_manager.get_remote_url()
+                    remote_url = await asyncio.to_thread(git_manager.get_remote_url)
                     if not remote_url:
                         return {
                             "success": False,
                             "error": "No remote URL provided and could not get from repository",
                         }
+                if cancellation_requested is not None and cancellation_requested.is_set():
+                    raise asyncio.CancelledError
 
                 # Create the clone
-                result = git_manager.shallow_clone(
+                result = await asyncio.to_thread(
+                    git_manager.shallow_clone,
                     remote_url=remote_url,
                     clone_path=clone_path,
                     branch=branch_name,
                     depth=depth,
                 )
+                clone_created = result.success
 
             if not result.success:
                 return {
                     "success": False,
                     "error": f"Clone failed: {result.error or result.message}",
                 }
-
-            # Resolve task_id (#N -> UUID) before DB insert
-            resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
 
             # Store clone record
             clone = ctx.clone_storage.create(
@@ -117,6 +132,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 task_id=resolved_task_id,
                 remote_url=remote_url,
             )
+            record_created = True
 
             return {
                 "success": True,
@@ -125,8 +141,51 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             }
 
         except Exception as e:
-            logger.error(f"Error creating clone: {e}")
+            if clone_created and not record_created:
+                try:
+                    cleanup_result = await asyncio.to_thread(
+                        git_manager.delete_clone,
+                        clone_path,
+                        force=True,
+                    )
+                    if not cleanup_result.success:
+                        logger.warning(
+                            "Failed to clean up clone %s after create failure: %s",
+                            clone_path,
+                            cleanup_result.error or cleanup_result.message,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to clean up clone %s after create failure",
+                        clone_path,
+                        exc_info=True,
+                    )
+            logger.error("Error creating clone: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
+
+    async def create_clone(
+        branch_name: str,
+        clone_path: str,
+        remote_url: str | None = None,
+        task_id: str | None = None,
+        base_branch: str = "main",
+        depth: int = 1,
+        use_local: bool = False,
+    ) -> dict[str, Any]:
+        cancellation_requested = asyncio.Event()
+        return await run_to_completion(
+            _create_clone_impl(
+                branch_name,
+                clone_path,
+                remote_url,
+                task_id,
+                base_branch,
+                depth,
+                use_local,
+                cancellation_requested,
+            ),
+            on_cancel=cancellation_requested.set,
+        )
 
     registry.register(
         name="create_clone",

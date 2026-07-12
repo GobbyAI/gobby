@@ -1,4 +1,4 @@
-gwiki: ask resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01
+gwiki: ask resolved scope project:3bf57fe7-2a0c-4074-8912-a83d9cd4df01 (captured output)
 {
   "ai": {
     "error": null,

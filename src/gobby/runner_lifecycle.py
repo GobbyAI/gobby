@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
@@ -13,11 +14,9 @@ import uvicorn
 from gobby.app_context import clear_app_context
 from gobby.runner_lifecycle_agents import (
     _cancel_active_agent_runs_for_shutdown,
-    _cleanup_persisted_completion_subscribers,
     _reconcile_agent_runs_after_restart,
     _recover_agent_runs_after_restart,
     _register_persisted_completion_subscribers,
-    _replay_daemon_restart_agent_cancellations,
 )
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_lifecycle_shutdown import (
@@ -33,6 +32,7 @@ from gobby.runner_lifecycle_startup import (
     _refresh_provider_model_catalog,
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
+from gobby.runner_pid_file import PidFileClaim, claim_pid_file
 from gobby.telemetry import shutdown_telemetry
 
 if TYPE_CHECKING:
@@ -44,7 +44,6 @@ __all__ = [
     "StartupTracker",
     "_await_critical_stop_hook_grace_window",
     "_cancel_active_agent_runs_for_shutdown",
-    "_cleanup_persisted_completion_subscribers",
     "_init_subsystems",
     "_log_subsystem_init_result",
     "_reap_remaining_child_processes",
@@ -53,7 +52,6 @@ __all__ = [
     "_record_provider_model_refresh_result",
     "_refresh_provider_model_catalog",
     "_register_persisted_completion_subscribers",
-    "_replay_daemon_restart_agent_cancellations",
     "_shutdown_websocket_server",
     "_start_periodic_tasks",
     "get_startup_tracker",
@@ -88,6 +86,15 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
     start_periodic_tasks(runner, tracker=_startup_tracker, **loops)
 
 
+async def _serve_http(server: uvicorn.Server) -> BaseException | None:
+    """Run uvicorn and return failures so its task cannot terminate the event loop."""
+    try:
+        await server.serve()
+    except BaseException as exc:
+        return exc
+    return None
+
+
 async def run_daemon(runner: GobbyRunner) -> None:
     """Main daemon startup, event loop, and shutdown sequence."""
     from gobby.runner_maintenance import (
@@ -110,23 +117,42 @@ async def run_daemon(runner: GobbyRunner) -> None:
         unmodeled_observation_cleanup_loop,
     )
 
+    pid_claim: PidFileClaim | None = None
+
+    def cleanup_owned_pid_file() -> None:
+        try:
+            cleanup_pid_file()
+        finally:
+            if pid_claim is not None:
+                pid_claim.release()
+
     try:
         global _startup_tracker
         _startup_tracker = StartupTracker()
 
         setup_signal_handlers(
-            lambda: setattr(runner, "_shutdown_requested", True),
-            shutdown_intent_callback=lambda intent: setattr(runner, "_shutdown_intent", intent),
+            runner.request_shutdown,
+            shutdown_intent_callback=runner.request_shutdown,
         )
 
         from gobby.cli.utils import get_gobby_home
 
         pid_file = get_gobby_home() / "gobby.pid"
         try:
-            pid_file.write_text(str(os.getpid()))
-            logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
+            pid_claim = claim_pid_file(pid_file)
         except OSError as e:
-            logger.warning(f"Could not write PID file {pid_file}: {e}")
+            logger.warning(f"Could not claim PID file {pid_file}: {e}")
+        if pid_claim is None:
+            from gobby.runner import _healthy_daemon_running
+
+            if _healthy_daemon_running(runner.http_server.port, runner.config.bind_host):
+                logger.info(
+                    "Another healthy Gobby daemon owns %s; exiting cleanly",
+                    pid_file,
+                )
+                return
+            raise RuntimeError(f"PID file is owned by another live process: {pid_file}")
+        logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
 
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
@@ -147,34 +173,56 @@ async def run_daemon(runner: GobbyRunner) -> None:
             lambda: bool(getattr(runner.http_server.services, "shutdown_in_progress", False))
         )
         try:
-            server_task = asyncio.create_task(server.serve())
+            server_task = asyncio.create_task(_serve_http(server))
 
-            runner._subsystem_init_task = asyncio.create_task(
-                _init_subsystems(runner, rebuild_vector_store),
-                name="subsystem-init",
-            )
-            runner._subsystem_init_task.add_done_callback(_log_subsystem_init_result)
+            unexpected_server_exit = asyncio.Event()
 
-            _start_periodic_tasks(
-                runner,
-                metrics_cleanup_loop=metrics_cleanup_loop,
-                metrics_archive_loop=metrics_archive_loop,
-                span_cleanup_loop=span_cleanup_loop,
-                unmodeled_observation_cleanup_loop=unmodeled_observation_cleanup_loop,
-                memory_reconcile_loop=memory_reconcile_loop,
-                cleanup_zombie_messages_loop=cleanup_zombie_messages_loop,
-                cleanup_comms_messages_loop=cleanup_comms_messages_loop,
-                cleanup_chat_attachments_loop=cleanup_chat_attachments_loop,
-                cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
-                metric_snapshot_loop=metric_snapshot_loop,
-                bin_freshness_loop=bin_freshness_loop,
-                drain_hook_inbox_loop=drain_hook_inbox_loop,
-                expire_approval_timeouts_loop=expire_approval_timeouts_loop,
-                tmux_window_name_repair_loop=tmux_window_name_repair_loop,
-            )
+            def observe_server_exit(task: asyncio.Future[BaseException | None]) -> None:
+                if runner._shutdown_requested:
+                    return
+                unexpected_server_exit.set()
+                logger.error(
+                    "HTTP server exited unexpectedly (%r); requesting daemon shutdown",
+                    task.result(),
+                )
+                runner.request_shutdown()
+
+            server_task.add_done_callback(observe_server_exit)
+
+            while not server.started and not server_task.done() and not runner._shutdown_requested:
+                await asyncio.sleep(0.01)
+
+            if server.started and not runner._shutdown_requested:
+                runner._subsystem_init_task = asyncio.create_task(
+                    _init_subsystems(runner, rebuild_vector_store),
+                    name="subsystem-init",
+                )
+                runner._subsystem_init_task.add_done_callback(
+                    partial(_log_subsystem_init_result, tracker=_startup_tracker)
+                )
+
+                _start_periodic_tasks(
+                    runner,
+                    metrics_cleanup_loop=metrics_cleanup_loop,
+                    metrics_archive_loop=metrics_archive_loop,
+                    span_cleanup_loop=span_cleanup_loop,
+                    unmodeled_observation_cleanup_loop=unmodeled_observation_cleanup_loop,
+                    memory_reconcile_loop=memory_reconcile_loop,
+                    cleanup_zombie_messages_loop=cleanup_zombie_messages_loop,
+                    cleanup_comms_messages_loop=cleanup_comms_messages_loop,
+                    cleanup_chat_attachments_loop=cleanup_chat_attachments_loop,
+                    cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
+                    metric_snapshot_loop=metric_snapshot_loop,
+                    bin_freshness_loop=bin_freshness_loop,
+                    drain_hook_inbox_loop=drain_hook_inbox_loop,
+                    expire_approval_timeouts_loop=expire_approval_timeouts_loop,
+                    tmux_window_name_repair_loop=tmux_window_name_repair_loop,
+                )
 
             while not runner._shutdown_requested:
                 await asyncio.sleep(0.5)
+
+            server_failure = server_task.result() if unexpected_server_exit.is_set() else None
 
             await shutdown_daemon_services(
                 runner,
@@ -186,14 +234,24 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 cancel_active_agent_runs_for_shutdown=_cancel_active_agent_runs_for_shutdown,
                 reap_remaining_child_processes=_reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
-                cleanup_pid_file=cleanup_pid_file,
+                cleanup_pid_file=cleanup_owned_pid_file,
             )
+            if unexpected_server_exit.is_set():
+                from gobby.runner import _healthy_daemon_running
+
+                if _healthy_daemon_running(runner.http_server.port, runner.config.bind_host):
+                    logger.info("Lost the HTTP bind race to a healthy daemon; exiting cleanly")
+                    return
+                logger.error("HTTP server exited unexpectedly: %s", server_failure)
+                if server_failure is None:
+                    raise SystemExit(1)
+                raise SystemExit(1) from server_failure
         finally:
             remove_uvicorn_shutdown_filter(shutdown_log_filter)
 
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-        cleanup_pid_file()
+        cleanup_owned_pid_file()
         sys.exit(1)
     finally:
         clear_app_context()

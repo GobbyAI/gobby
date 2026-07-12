@@ -14,7 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
+import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
+import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
+from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.shutdown_intent import ShutdownIntent
@@ -148,8 +151,11 @@ class TestGobbyRunnerRun:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_with_websocket_server(self, mock_config_with_websocket):
-        """Test run with WebSocket server enabled."""
+    async def test_shutdown_during_subsystem_init_does_not_start_websocket(
+        self,
+        mock_config_with_websocket,
+    ):
+        """Test shutdown blocks WebSocket activation while subsystems initialize."""
         mock_mcp_manager = AsyncMock()
         mock_mcp_manager.connect_all = AsyncMock()
         mock_mcp_manager.disconnect_all = AsyncMock()
@@ -186,9 +192,12 @@ class TestGobbyRunnerRun:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run()
 
-            mock_ws_server.start.assert_called()
-            assert mock_ws_server.start.call_count == 1
+            mock_ws_server.start.assert_not_awaited()
             assert runner._shutdown_requested is True
+            assert (
+                spawn_readiness_blocker(runner.http_server.services)
+                == "daemon_shutdown_in_progress"
+            )
 
     @pytest.mark.asyncio
     async def test_run_passes_websocket_to_http(self, mock_config_with_websocket):
@@ -218,6 +227,45 @@ class TestGobbyRunnerRun:
 
             assert runner.http_server.websocket_server == mock_ws_server
             assert mock_http.websocket_server == mock_ws_server
+
+    async def test_websocket_startup_failure_is_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.runner_lifecycle_startup import StartupTracker
+        from gobby.runner_lifecycle_subsystems import _start_websocket_server
+
+        error = OSError("address already in use")
+        websocket_server = SimpleNamespace(start=AsyncMock(side_effect=error))
+        runner = SimpleNamespace(websocket_server=websocket_server)
+        tracker = StartupTracker()
+
+        with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+            _start_websocket_server(runner, tracker)
+            with pytest.raises(OSError, match="address already in use"):
+                await runner._websocket_task
+
+        assert runner._websocket_task.get_name() == "websocket-server"
+        assert tracker.steps_scheduled == ["WebSocket server"]
+        assert tracker.errors == [
+            {"subsystem": "WebSocket server", "error": "address already in use"}
+        ]
+        assert "WebSocket server startup failed" in caplog.text
+
+    async def test_subsystem_init_failure_finishes_startup_tracker(self) -> None:
+        tracker = runner_lifecycle.StartupTracker()
+
+        async def fail_init() -> None:
+            raise RuntimeError("init exploded")
+
+        task = asyncio.create_task(fail_init())
+        await asyncio.wait({task})
+
+        runner_lifecycle._log_subsystem_init_result(task, tracker)
+
+        assert tracker.to_dict()["done"] is True
+        assert tracker.errors == [
+            {"subsystem": "Subsystem initialization", "error": "init exploded"}
+        ]
 
 
 class TestInitSubsystems:
@@ -646,6 +694,143 @@ class TestInitSubsystems:
         assert "Agent stale pending cleanup failed during startup" in caplog.text
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
 
+    async def test_start_failures_do_not_abort_init_and_readiness_is_last(self) -> None:
+        events: list[str] = []
+
+        class RecordingServices:
+            provider_model_catalog = None
+            shutdown_in_progress = False
+
+            def __init__(self) -> None:
+                self._startup_ready = False
+
+            @property
+            def startup_ready(self) -> bool:
+                return self._startup_ready
+
+            @startup_ready.setter
+            def startup_ready(self, value: bool) -> None:
+                events.append(f"ready:{value}")
+                self._startup_ready = value
+
+        class RecordingTracker(runner_lifecycle.StartupTracker):
+            def finish(self) -> None:
+                events.append("tracker-finish")
+                super().finish()
+
+        async def message_start() -> None:
+            events.append("message-start")
+            raise RuntimeError("message failed")
+
+        async def communications_start() -> None:
+            events.append("communications-start")
+
+        async def lifecycle_start() -> None:
+            events.append("lifecycle-start")
+            raise RuntimeError("lifecycle failed")
+
+        async def cron_start() -> None:
+            events.append("cron-start")
+            raise RuntimeError("cron failed")
+
+        async def automation_start() -> None:
+            events.append("automation-start")
+
+        async def recover_pipelines(*_args: object) -> None:
+            events.append("recover-pipelines")
+
+        services = RecordingServices()
+        tracker = RecordingTracker()
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(services=services),
+            message_processor=SimpleNamespace(start=AsyncMock(side_effect=message_start)),
+            communications_manager=SimpleNamespace(
+                start=AsyncMock(side_effect=communications_start)
+            ),
+            lifecycle_manager=SimpleNamespace(start=AsyncMock(side_effect=lifecycle_start)),
+            cron_scheduler=SimpleNamespace(start=AsyncMock(side_effect=cron_start)),
+            cron_storage=None,
+            system_automation_loop=SimpleNamespace(start=AsyncMock(side_effect=automation_start)),
+        )
+        async_noop = AsyncMock()
+
+        with (
+            patch.object(runner_lifecycle_subsystems, "_schedule_provider_model_refresh"),
+            patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_external_services", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
+            patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_agent_lifecycle_monitor",
+                async_noop,
+            ),
+            patch.object(runner_lifecycle_subsystems, "_register_wiki_cron_handlers", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_code_index_tasks",
+                side_effect=lambda *_args: events.append("code-index"),
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_recover_pipelines",
+                side_effect=recover_pipelines,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_websocket_server",
+                side_effect=lambda *_args: events.append("websocket"),
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_maybe_start_ui_dev_server",
+                side_effect=lambda *_args: events.append("ui"),
+            ),
+        ):
+            await runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), tracker)
+
+        assert events == [
+            "message-start",
+            "communications-start",
+            "lifecycle-start",
+            "cron-start",
+            "code-index",
+            "recover-pipelines",
+            "websocket",
+            "ui",
+            "automation-start",
+            "tracker-finish",
+            "ready:True",
+        ]
+        assert tracker.errors == [
+            {"subsystem": "Message processor", "error": "message failed"},
+            {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
+            {"subsystem": "Cron scheduler", "error": "cron failed"},
+        ]
+        assert tracker.steps_completed == [
+            "Communications manager",
+            "System automation loop",
+        ]
+        assert tracker.done is True
+        assert services.startup_ready is True
+
+    async def test_automation_start_failure_is_tracked_without_raising(self) -> None:
+        tracker = runner_lifecycle.StartupTracker()
+        runner = SimpleNamespace(
+            system_automation_loop=SimpleNamespace(
+                start=AsyncMock(side_effect=RuntimeError("automation failed"))
+            )
+        )
+
+        await runner_lifecycle_subsystems._start_system_automation_loop(runner, tracker)
+
+        assert tracker.steps_completed == []
+        assert tracker.errors == [
+            {"subsystem": "System automation loop", "error": "automation failed"}
+        ]
+
 
 class TestShutdownDaemonServices:
     @staticmethod
@@ -667,6 +852,178 @@ class TestShutdownDaemonServices:
             mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
             database=SimpleNamespace(close=MagicMock()),
         )
+
+    @pytest.mark.asyncio
+    async def test_late_subsystem_init_cannot_activate_after_shutdown_starts(self) -> None:
+        services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
+        runner = SimpleNamespace(http_server=SimpleNamespace(services=services))
+
+        async def begin_shutdown_during_pipeline_recovery(
+            _runner: object,
+            _tracker: object,
+        ) -> None:
+            services.shutdown_in_progress = True
+
+        start_websocket = MagicMock()
+        start_ui = MagicMock()
+        start_automation = AsyncMock()
+        async_noop = AsyncMock()
+
+        with (
+            patch.object(runner_lifecycle_subsystems, "_schedule_provider_model_refresh"),
+            patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_external_services", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
+            patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_start_core_services", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_agent_lifecycle_monitor",
+                async_noop,
+            ),
+            patch.object(runner_lifecycle_subsystems, "_start_cron_scheduler", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_start_code_index_tasks"),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_recover_pipelines",
+                side_effect=begin_shutdown_during_pipeline_recovery,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_websocket_server",
+                start_websocket,
+            ),
+            patch.object(runner_lifecycle_subsystems, "_maybe_start_ui_dev_server", start_ui),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_system_automation_loop",
+                start_automation,
+            ),
+        ):
+            await runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), None)
+
+        assert spawn_readiness_blocker(services) == "daemon_shutdown_in_progress"
+        assert services.startup_ready is False
+        assert services.shutdown_in_progress is True
+        start_websocket.assert_not_called()
+        start_ui.assert_not_called()
+        start_automation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_subsystem_init_before_grace_and_keeps_spawn_blocked(
+        self,
+    ) -> None:
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        runner.http_server.services.startup_ready = False
+        init_blocked = asyncio.Event()
+        events: list[str] = []
+
+        async def blocked_connect(_runner: object, _tracker: object) -> None:
+            events.append("init-blocked")
+            init_blocked.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("init-cancelled")
+                raise
+            finally:
+                events.append("init-cleanup")
+
+        async def grace_window() -> None:
+            events.append("grace")
+            assert runner._subsystem_init_task.cancelled()
+            assert (
+                spawn_readiness_blocker(runner.http_server.services)
+                == "daemon_shutdown_in_progress"
+            )
+
+        start_core_services = AsyncMock()
+        start_websocket = MagicMock()
+        start_automation = AsyncMock()
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        with (
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_connect_mcp_servers",
+                side_effect=blocked_connect,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_core_services",
+                start_core_services,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_websocket_server",
+                start_websocket,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_system_automation_loop",
+                start_automation,
+            ),
+        ):
+            runner._subsystem_init_task = asyncio.create_task(
+                runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), None)
+            )
+            await init_blocked.wait()
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=grace_window,
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=AsyncMock(),
+                shutdown_telemetry=MagicMock(),
+                cleanup_pid_file=MagicMock(),
+            )
+
+        assert events == ["init-blocked", "init-cancelled", "init-cleanup", "grace"]
+        assert spawn_readiness_blocker(runner.http_server.services) == (
+            "daemon_shutdown_in_progress"
+        )
+        assert runner.http_server.services.startup_ready is False
+        assert runner.http_server.services.shutdown_in_progress is True
+        start_core_services.assert_not_awaited()
+        start_websocket.assert_not_called()
+        start_automation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_subsystem_task_cancellation_does_not_swallow_shutdown_cancellation(
+        self,
+    ) -> None:
+        init_cancelled = asyncio.Event()
+
+        async def stubborn_init() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                init_cancelled.set()
+                await asyncio.Event().wait()
+
+        subsystem_task = asyncio.create_task(stubborn_init())
+        runner = SimpleNamespace(_subsystem_init_task=subsystem_task)
+        shutdown_task = asyncio.create_task(
+            runner_lifecycle_shutdown._cancel_runner_task(
+                runner,
+                "_subsystem_init_task",
+                timeout=10.0,
+            )
+        )
+        await init_cancelled.wait()
+        shutdown_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown_task
+        assert subsystem_task.cancelled()
 
     @pytest.mark.asyncio
     async def test_shutdown_intent_marker_is_removed_after_cleanup(
@@ -725,6 +1082,355 @@ class TestShutdownDaemonServices:
 
         assert cleanup_saw_marker is True
         assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_periodic_tasks_cancel_concurrently(self) -> None:
+        all_cancelled = asyncio.Event()
+        all_started = asyncio.Event()
+        cancellation_count = 0
+        started_count = 0
+
+        async def wait_for_peer_cancellations() -> None:
+            nonlocal cancellation_count, started_count
+            started_count += 1
+            if started_count == 3:
+                all_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellation_count += 1
+                if cancellation_count == 3:
+                    all_cancelled.set()
+                await all_cancelled.wait()
+                raise
+
+        tasks = [asyncio.create_task(wait_for_peer_cancellations()) for _ in range(3)]
+        runner = SimpleNamespace(
+            _metrics_cleanup_task=tasks[0],
+            _metrics_archive_task=tasks[1],
+            _span_cleanup_task=tasks[2],
+        )
+        await asyncio.wait_for(all_started.wait(), timeout=0.5)
+
+        await asyncio.wait_for(
+            runner_lifecycle_shutdown._cancel_periodic_tasks(runner),
+            timeout=0.5,
+        )
+
+        assert cancellation_count == 3
+        assert all(task.cancelled() for task in tasks)
+
+    @pytest.mark.asyncio
+    async def test_restart_skips_stop_hook_grace(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.RESTART)
+        server = SimpleNamespace(should_exit=False)
+        grace_window = AsyncMock()
+
+        async def completed_server() -> None:
+            return None
+
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=grace_window,
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+        )
+
+        grace_window.assert_not_awaited()
+        assert server.should_exit is True
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_shutdown_marker_is_removed_when_pid_cleanup_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        def fail_pid_cleanup() -> None:
+            raise OSError("pid file is busy")
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=fail_pid_cleanup,
+        )
+
+        assert "PID file cleanup failed: pid file is busy" in caplog.text
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_degraded_shutdown_deadline_preserves_cleanup_tail(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
+            0.05,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
+            0.15,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+
+        async def degraded_stop() -> None:
+            await asyncio.Event().wait()
+
+        runner.lifecycle_manager.stop = degraded_stop
+        runner.agent_lifecycle_monitor = SimpleNamespace(stop=degraded_stop)
+        runner.cron_scheduler = SimpleNamespace(stop=degraded_stop)
+        runner.message_processor = SimpleNamespace(stop=degraded_stop)
+        cleanup_pid_file = MagicMock()
+        shutdown_telemetry = MagicMock()
+        reap_remaining_child_processes = AsyncMock()
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        await asyncio.wait_for(
+            runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(),
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=reap_remaining_child_processes,
+                shutdown_telemetry=shutdown_telemetry,
+                cleanup_pid_file=cleanup_pid_file,
+            ),
+            timeout=0.5,
+        )
+        elapsed = loop.time() - started_at
+
+        assert elapsed < 0.5
+        assert "Graceful shutdown exceeded 0.1s budget" in caplog.text
+        reap_remaining_child_processes.assert_awaited_once_with(
+            preserve_agents=False,
+            preserved_agent_pids=set(),
+        )
+        shutdown_telemetry.assert_called_once_with()
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_mid_sequence_exception_preserves_full_cleanup_tail(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        events: list[str] = []
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+
+        async def fail_cron_stop() -> None:
+            events.append("cron")
+            raise ValueError("injected cron stop failure")
+
+        async def stop_message_processor() -> None:
+            events.append("message-processor")
+
+        async def disconnect_mcp() -> None:
+            events.append("mcp")
+
+        async def reap_children(**_kwargs: object) -> None:
+            events.append("reap")
+
+        def shutdown_executor(*, wait: bool, cancel_futures: bool = False) -> None:
+            assert wait is False
+            assert cancel_futures is True
+            events.append("db-executor")
+
+        runner.cron_scheduler = SimpleNamespace(stop=fail_cron_stop)
+        runner.message_processor = SimpleNamespace(stop=stop_message_processor)
+        runner.mcp_proxy.disconnect_all = disconnect_mcp
+        runner.db_executor = SimpleNamespace(shutdown=shutdown_executor)
+        runner.database.close.side_effect = lambda: events.append("database")
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(completed_server()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+            reap_remaining_child_processes=reap_children,
+            shutdown_telemetry=lambda: events.append("telemetry"),
+            cleanup_pid_file=lambda: events.append("pid"),
+        )
+
+        assert "Cron scheduler shutdown failed: injected cron stop failure" in caplog.text
+        assert events == [
+            "cron",
+            "message-processor",
+            "mcp",
+            "reap",
+            "telemetry",
+            "db-executor",
+            "database",
+            "pid",
+        ]
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancellation_propagates_after_sync_finalizers(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = tmp_path / "shutdown_intent_active.json"
+        marker.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "get_shutdown_marker_path",
+            lambda: marker,
+        )
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        server = SimpleNamespace(should_exit=False)
+        shutdown_telemetry = MagicMock()
+        cleanup_pid_file = MagicMock()
+        reap_remaining_child_processes = AsyncMock()
+
+        async def completed_server() -> None:
+            return None
+
+        with pytest.raises(asyncio.CancelledError):
+            await runner_lifecycle_shutdown.shutdown_daemon_services(
+                runner,
+                server,
+                asyncio.create_task(completed_server()),
+                1,
+                await_critical_stop_hook_grace_window=AsyncMock(
+                    side_effect=asyncio.CancelledError()
+                ),
+                shutdown_websocket_server=AsyncMock(),
+                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
+                reap_remaining_child_processes=reap_remaining_child_processes,
+                shutdown_telemetry=shutdown_telemetry,
+                cleanup_pid_file=cleanup_pid_file,
+            )
+
+        reap_remaining_child_processes.assert_not_awaited()
+        shutdown_telemetry.assert_not_called()
+        runner.database.close.assert_called_once_with()
+        cleanup_pid_file.assert_called_once_with()
+        assert marker.exists() is False
+
+    @pytest.mark.asyncio
+    async def test_db_executor_shutdown_cancels_queued_work_without_default_executor(
+        self,
+    ) -> None:
+        shutdown_calls: list[tuple[bool, bool]] = []
+
+        def shutdown_executor(*, wait: bool, cancel_futures: bool = False) -> None:
+            shutdown_calls.append((wait, cancel_futures))
+
+        await runner_lifecycle_shutdown._shutdown_database_executor(
+            SimpleNamespace(shutdown=shutdown_executor)
+        )
+
+        assert shutdown_calls == [(False, True)]
+
+    def test_db_executor_shutdown_does_not_strand_asyncio_run(self) -> None:
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent(
+            """
+            import asyncio
+            import threading
+
+            from gobby.runner_lifecycle_shutdown import _shutdown_database_executor
+
+            class BlockingExecutor:
+                def shutdown(self, *, wait: bool, cancel_futures: bool = False) -> None:
+                    if wait:
+                        threading.Event().wait()
+                    assert cancel_futures is True
+
+            asyncio.run(_shutdown_database_executor(BlockingExecutor()))
+            """
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=1.0,
+        )
+
+        assert completed.returncode == 0, completed.stderr
 
     @pytest.mark.asyncio
     async def test_pending_interactions_and_http_sessions_stop_before_uvicorn_exit(self) -> None:
@@ -1085,6 +1791,48 @@ class TestShutdownDaemonServices:
         assert pane.terminated is False
         assert unrelated_tmux.terminated is True
         assert worker.terminated is True
+
+    async def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
+        run_count = 1_005
+        runs = [
+            SimpleNamespace(
+                id=f"run-{index}",
+                pid=10_000 + index,
+                tmux_session_name=f"agent-{index}",
+            )
+            for index in range(run_count)
+        ]
+        list_active = MagicMock(
+            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        )
+        db_calls: list[tuple[object, tuple[object, ...]]] = []
+
+        async def run_db(func: object, *args: object) -> object:
+            db_calls.append((func, args))
+            assert callable(func)
+            return func(*args)
+
+        runner = SimpleNamespace(
+            agent_runner=SimpleNamespace(
+                run_storage=SimpleNamespace(list_active=list_active),
+            ),
+            db_executor=SimpleNamespace(run=run_db),
+        )
+
+        preserved_pids = await runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
+
+        assert preserved_pids == {10_000 + index for index in range(run_count)}
+        assert db_calls == [
+            (runner_lifecycle_shutdown._list_active_agent_runs_once, (runner,)),
+        ]
+        assert [invocation.kwargs for invocation in list_active.call_args_list] == [
+            {"limit": runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE, "offset": offset}
+            for offset in range(
+                0,
+                run_count,
+                runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE,
+            )
+        ]
 
 
 class TestRunGobbyFunction:
@@ -1484,6 +2232,7 @@ class TestMetricsCleanupLoop:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_first_cycle,
                 )
             )
@@ -1525,6 +2274,7 @@ class TestMetricsCleanupLoop:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_after_retry,
                 )
             )
@@ -1660,6 +2410,50 @@ class TestSignalHandlerBehavior:
             for record in caplog.records
         )
 
+    def test_signal_handler_recovers_consumed_thirty_second_restart_marker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.runner_maintenance import setup_signal_handlers
+        from gobby.shutdown_intent import write_shutdown_intent
+
+        mock_loop = MagicMock()
+        captured_handler = None
+
+        def capture_handler(sig, handler):
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = handler
+
+        mock_loop.add_signal_handler = capture_handler
+        shutdown_callback = MagicMock()
+        shutdown_intent_callback = MagicMock()
+        marker_written_at = 1_000.0
+
+        with patch("gobby.shutdown_intent.time.time", return_value=marker_written_at):
+            write_shutdown_intent(
+                "cli_restart",
+                ShutdownIntent.RESTART,
+                sender_pid=123,
+                home=tmp_path,
+            )
+
+        with (
+            patch("asyncio.get_running_loop", return_value=mock_loop),
+            patch("gobby.runner_maintenance.get_gobby_home", return_value=tmp_path),
+            patch("gobby.shutdown_intent.time.time", return_value=marker_written_at + 30.0),
+        ):
+            setup_signal_handlers(
+                shutdown_callback,
+                shutdown_intent_callback=shutdown_intent_callback,
+            )
+            assert captured_handler is not None
+            captured_handler()
+
+        shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
+        shutdown_callback.assert_called_once_with()
+        assert not (tmp_path / "shutdown_intent_active.json").exists()
+
     def test_signal_handler_still_shuts_down_when_intent_callback_fails(
         self,
         tmp_path: Path,
@@ -1700,6 +2494,72 @@ class TestSignalHandlerBehavior:
 
 class TestAgentEventBroadcastingCallback:
     """Tests for the broadcast_agent_event callback via fire_agent_event."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("event_type", "expected_task_count"),
+        [("agent_started", 3), ("agent_completed", 4)],
+    )
+    async def test_broadcast_tasks_retained_until_completion(
+        self,
+        event_type: str,
+        expected_task_count: int,
+    ) -> None:
+        """Every agent lifecycle broadcast stays anchored until its coroutine completes."""
+        import gobby.runner_broadcasting as rb
+        from gobby.runner_broadcasting import fire_agent_event, setup_agent_event_broadcasting
+
+        release = asyncio.Event()
+
+        async def wait_for_release(*_args: object, **_kwargs: object) -> None:
+            await release.wait()
+
+        mock_ws_server = MagicMock()
+        mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=wait_for_release)
+        mock_ws_server.broadcast_tmux_session_event = AsyncMock(side_effect=wait_for_release)
+
+        mock_pty_manager = MagicMock()
+        mock_pty_manager.stop_reader = AsyncMock(side_effect=wait_for_release)
+        mock_tmux_reader = MagicMock()
+        mock_tmux_reader.start_reader = AsyncMock(side_effect=wait_for_release)
+        mock_tmux_reader.stop_reader = AsyncMock(side_effect=wait_for_release)
+
+        old_callback = rb._agent_event_callback
+        tasks_before = set(rb._agent_broadcast_tasks)
+        scheduled_tasks: set[asyncio.Task[None]] = set()
+        try:
+            with (
+                patch(
+                    "gobby.agents.pty_reader.get_pty_reader_manager",
+                    return_value=mock_pty_manager,
+                ),
+                patch(
+                    "gobby.agents.tmux.get_tmux_output_reader",
+                    return_value=mock_tmux_reader,
+                ),
+            ):
+                setup_agent_event_broadcasting(mock_ws_server)
+
+            fire_agent_event(
+                event_type,
+                "run-123",
+                {"tmux_session_name": "agent-run-123"},
+            )
+
+            scheduled_tasks = rb._agent_broadcast_tasks - tasks_before
+            assert len(scheduled_tasks) == expected_task_count
+            assert all(not task.done() for task in scheduled_tasks)
+
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*scheduled_tasks), timeout=1.0)
+
+            assert scheduled_tasks.isdisjoint(rb._agent_broadcast_tasks)
+        finally:
+            release.set()
+            unfinished_tasks = [task for task in scheduled_tasks if not task.done()]
+            if unfinished_tasks:
+                await asyncio.gather(*unfinished_tasks, return_exceptions=True)
+            rb._agent_event_callback = old_callback
 
     @pytest.mark.asyncio
     async def test_broadcast_callback_invoked(self):
@@ -1942,6 +2802,124 @@ class TestShutdownLoop:
                     assert main_loop_slept is True
                     assert runner._shutdown_requested is True
 
+    @pytest.mark.asyncio
+    async def test_server_crash_before_bind_skips_side_effects_and_shuts_down(
+        self,
+        mock_config,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A server that never binds cannot start shared-state background work."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = GobbyRunner()
+
+            server = MagicMock()
+            server.started = False
+            failure = RuntimeError("serve loop crashed before bind")
+
+            async def serve() -> None:
+                raise failure
+
+            server.serve = AsyncMock(side_effect=serve)
+            pid_claim = MagicMock()
+
+            stack.enter_context(patch("uvicorn.Config"))
+            stack.enter_context(patch("uvicorn.Server", return_value=server))
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
+            stack.enter_context(
+                patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
+            )
+            init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
+            start_periodic_tasks = stack.enter_context(
+                patch("gobby.runner_lifecycle._start_periodic_tasks")
+            )
+            shutdown_services = stack.enter_context(
+                patch("gobby.runner_lifecycle.shutdown_daemon_services")
+            )
+            stack.enter_context(patch("gobby.runner._healthy_daemon_running", return_value=False))
+
+            with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+                with pytest.raises(SystemExit) as exc_info:
+                    await asyncio.wait_for(
+                        runner_lifecycle.run_daemon(runner),
+                        timeout=1.0,
+                    )
+
+            assert exc_info.value.code == 1
+            assert runner._shutdown_requested is True
+            init_subsystems.assert_not_awaited()
+            start_periodic_tasks.assert_not_called()
+            shutdown_services.assert_awaited_once()
+            assert "serve loop crashed before bind" in caplog.text
+            assert "requesting daemon shutdown" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_server_crash_after_bind_requests_shutdown(
+        self,
+        mock_config,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The server done-callback stops a daemon whose bound serve loop dies."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = GobbyRunner()
+
+            server = MagicMock()
+            server.started = False
+            side_effects_started = asyncio.Event()
+            failure = RuntimeError("serve loop crashed after bind")
+
+            async def serve() -> None:
+                server.started = True
+                await side_effects_started.wait()
+                raise failure
+
+            server.serve = AsyncMock(side_effect=serve)
+            pid_claim = MagicMock()
+
+            stack.enter_context(patch("uvicorn.Config"))
+            stack.enter_context(patch("uvicorn.Server", return_value=server))
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
+            stack.enter_context(
+                patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
+            )
+            init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
+
+            def start_periodic_tasks(*_args: object, **_kwargs: object) -> None:
+                side_effects_started.set()
+
+            periodic_tasks = stack.enter_context(
+                patch(
+                    "gobby.runner_lifecycle._start_periodic_tasks",
+                    side_effect=start_periodic_tasks,
+                )
+            )
+            shutdown_services = stack.enter_context(
+                patch("gobby.runner_lifecycle.shutdown_daemon_services")
+            )
+            stack.enter_context(patch("gobby.runner._healthy_daemon_running", return_value=False))
+
+            with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
+                with pytest.raises(SystemExit) as exc_info:
+                    await asyncio.wait_for(
+                        runner_lifecycle.run_daemon(runner),
+                        timeout=1.0,
+                    )
+
+            assert exc_info.value.code == 1
+            assert runner._shutdown_requested is True
+            init_subsystems.assert_awaited_once()
+            periodic_tasks.assert_called_once()
+            shutdown_services.assert_awaited_once()
+            assert "serve loop crashed after bind" in caplog.text
+            assert "requesting daemon shutdown" in caplog.text
+
 
 class TestMetricsCleanupLoopDetailed:
     """Detailed tests for the metrics cleanup loop."""
@@ -1983,6 +2961,7 @@ class TestMetricsCleanupLoopDetailed:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_first_cycle,
                 )
             )
@@ -2024,6 +3003,7 @@ class TestMetricsCleanupLoopDetailed:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_first_cycle,
                 )
             )
@@ -2074,6 +3054,7 @@ class TestMetricsCleanupLoopDetailed:
                     runner.metrics_manager,
                     is_shutdown,
                     interval_seconds=1,
+                    startup_delay_seconds=0,
                     sleep=complete_after_retry,
                 )
             )

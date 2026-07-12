@@ -258,17 +258,9 @@ class ToolProxyService:
         self,
         server_name: str,
         tool_name: str,
-        session_id: str | None = None,
-        record_discovery: bool = True,
     ) -> dict[str, Any]:
         """Get full schema for a specific tool."""
-        return await get_tool_schema_impl(
-            self,
-            server_name,
-            tool_name,
-            session_id=session_id,
-            record_discovery=record_discovery,
-        )
+        return await get_tool_schema_impl(self, server_name, tool_name)
 
     def find_tool_server(self, tool_name: str) -> str | None:
         """Find which server owns a tool by searching all available servers."""

@@ -10,6 +10,8 @@ from typing import Any, Literal
 import httpx
 import psutil
 
+from gobby.paths import get_gobby_home
+
 logger = logging.getLogger("gobby.daemon.control")
 
 DaemonShutdownIntent = Literal["stop", "restart"]
@@ -43,7 +45,7 @@ def get_daemon_pid() -> int | None:
     """
     current_pid = os.getpid()
     test_protect = os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes")
-    home_marker = os.environ.get("GOBBY_HOME") if test_protect else None
+    home_marker = str(get_gobby_home()) if test_protect else None
     config_marker = os.environ.get("GOBBY_CONFIG_FILE") if test_protect else None
 
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
@@ -79,6 +81,24 @@ def is_daemon_running() -> bool:
     return get_daemon_pid() is not None
 
 
+async def _terminate_start_process(proc: asyncio.subprocess.Process) -> None:
+    """Terminate and reap a failed daemon-start child."""
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+
+
 async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]:
     """Start daemon in a new process."""
     if is_daemon_running():
@@ -106,8 +126,8 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
         # Use asyncio.create_subprocess_exec to avoid blocking the event loop
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
         # Do NOT await communicate() - this blocks until exit.
@@ -115,12 +135,10 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
         await asyncio.sleep(0.5)
 
         if proc.returncode is not None:
-            # Process exited immediately - capture output
-            stdout, stderr = await proc.communicate()
             return {
                 "success": False,
                 "message": "Start failed - process exited immediately",
-                "error": stderr.decode().strip() if stderr else "Unknown error",
+                "error": f"Process exited with code {proc.returncode}",
             }
 
         # Process is running - check health
@@ -141,6 +159,7 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
                 "output": "Daemon started (health check pending)",
             }
 
+        await _terminate_start_process(proc)
         return {
             "success": False,
             "message": "Start failed - process running but unhealthy",

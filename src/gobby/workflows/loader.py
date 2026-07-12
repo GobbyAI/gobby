@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.paths import get_global_workflows_dir
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 from .definitions import PipelineDefinition, WorkflowDefinition
@@ -74,7 +75,7 @@ class WorkflowLoader(WorkflowLoaderSyncMixin):
         self,
         db: "HubDatabase | None" = None,
     ):
-        self.global_dirs = [Path.home() / ".gobby" / "workflows"]
+        self.global_dirs = [get_global_workflows_dir()]
         self._cache: dict[str, _CachedEntry] = {}
         # Cache for discovered workflows per project path
         self._discovery_cache: dict[str, _CachedDiscovery] = {}

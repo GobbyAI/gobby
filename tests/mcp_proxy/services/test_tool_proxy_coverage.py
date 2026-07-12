@@ -3,14 +3,88 @@
 Targets uncovered lines: 97-104, 125, 133, 183, 188-220, 250-278, 280-309
 """
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.models import MCPError
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPError, MCPServerConfig
+from gobby.mcp_proxy.services.tool_execution import get_tool_schema as get_tool_schema_impl
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService, safe_truncate
 
 pytestmark = pytest.mark.unit
+
+
+class TestListServers:
+    @pytest.mark.asyncio
+    async def test_failed_transport_is_not_reported_connected(self) -> None:
+        config = MCPServerConfig(
+            name="failed-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        failed_connection = MagicMock()
+        failed_connection.is_connected = False
+        manager._connections[config.name] = failed_connection
+
+        result = await ToolProxyService(mcp_manager=manager).list_servers()
+
+        assert result["connected"] == 0
+        assert result["servers"] == [
+            {
+                "name": "failed-server",
+                "state": "unknown",
+                "transport": "http",
+            }
+        ]
+
+
+class TestExternalSchemaCache:
+    @pytest.mark.asyncio
+    async def test_repeated_call_tool_lists_downstream_tools_once(self) -> None:
+        config = MCPServerConfig(
+            name="external-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+        )
+        manager = MCPClientManager(server_configs=[config])
+        manager._list_tools_for_server = AsyncMock(
+            return_value=[
+                {
+                    "name": "echo",
+                    "description": "Echo a string",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                }
+            ]
+        )
+        manager.call_tool = AsyncMock(return_value={"success": True})
+        proxy = ToolProxyService(mcp_manager=manager, validate_arguments=True)
+
+        first = await proxy.call_tool(
+            "external-server",
+            "echo",
+            {"value": "one"},
+            enforce_workflow=False,
+        )
+        second = await proxy.call_tool(
+            "external-server",
+            "echo",
+            {"value": "two"},
+            enforce_workflow=False,
+        )
+
+        assert first["success"] is True
+        assert second["success"] is True
+        assert manager._list_tools_for_server.await_count == 1
+        assert manager.call_tool.await_count == 2
 
 
 class TestSafeTruncate:
@@ -634,6 +708,16 @@ class TestReadResource:
 class TestGetToolSchema:
     """Tests for get_tool_schema method (lines 229-248)."""
 
+    def test_schema_service_has_no_obsolete_discovery_parameters(self) -> None:
+        """Discovery state is owned by the public AFTER_TOOL rule path."""
+        service_parameters = inspect.signature(ToolProxyService.get_tool_schema).parameters
+        implementation_parameters = inspect.signature(get_tool_schema_impl).parameters
+
+        assert "session_id" not in service_parameters
+        assert "record_discovery" not in service_parameters
+        assert "session_id" not in implementation_parameters
+        assert "record_discovery" not in implementation_parameters
+
     @pytest.fixture
     def mock_mcp_manager(self):
         """Create a mock MCP manager."""
@@ -1135,8 +1219,8 @@ class TestResolvePlatformSessionId:
             hook_manager_resolver=lambda: hook_manager,
         )
 
-    def test_resolve_platform_session_id_returns_none_on_valueerror(self, caplog) -> None:
-        """ValueError from resolver → warning logged and unresolved ref is rejected."""
+    def test_resolve_platform_session_id_raises_on_explicit_unresolvable_ref(self, caplog) -> None:
+        """An explicit unresolved ref is logged and rejected for the caller to handle."""
         import logging as _logging
 
         session_manager = MagicMock()
@@ -1144,9 +1228,9 @@ class TestResolvePlatformSessionId:
         proxy = self._make_proxy(session_manager)
 
         caplog.set_level(_logging.WARNING, logger="gobby.mcp.server")
-        result = proxy._resolve_platform_session_id("bogus-session-ref")
+        with pytest.raises(ValueError, match="Session not found"):
+            proxy._resolve_platform_session_id("bogus-session-ref")
 
-        assert result is None
         assert any("Could not resolve session reference" in rec.message for rec in caplog.records)
 
     def test_resolve_platform_session_id_propagates_non_valueerror(self) -> None:

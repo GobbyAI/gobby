@@ -15,6 +15,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.llm.base import (
+    LLMProviderError,
+    VisionInputError,
+    VisionProviderError,
+    VisionProviderUnavailableError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -157,6 +163,27 @@ class TestIsTransientError:
         assert is_transient_error(Exception("500 Internal Server Error")) is True
         assert is_transient_error(Exception("connection reset")) is True
 
+    def test_sdk_not_found_is_permanent_but_connection_failure_is_transient(self) -> None:
+        from claude_agent_sdk import CLIConnectionError, CLINotFoundError
+
+        from gobby.llm.claude_runtime import is_transient_error
+
+        assert is_transient_error(CLINotFoundError()) is False
+        assert is_transient_error(CLIConnectionError("socket unavailable")) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "connection to localhost:4010 timed out",
+            "connection reset after receiving 1404 bytes",
+            "worker 4032 disconnected",
+        ],
+    )
+    def test_status_code_substrings_do_not_suppress_retry(self, message: str) -> None:
+        from gobby.llm.claude_runtime import is_transient_error
+
+        assert is_transient_error(Exception(message)) is True
+
     def test_error_result_success_is_not_retried(self) -> None:
         """Known Claude SDK error-result-success failures are not retried noisily."""
         from gobby.llm.claude_runtime import is_transient_error
@@ -190,6 +217,17 @@ class TestIsTransientError:
 
 class TestRetryAsync:
     """Tests for _retry_async method."""
+
+    @pytest.mark.asyncio
+    async def test_retry_rejects_zero_attempts_without_calling_operation(self) -> None:
+        from gobby.llm.claude_runtime import retry_async
+
+        operation = AsyncMock(return_value="unused")
+
+        with pytest.raises(ValueError, match="max_retries must be at least 1"):
+            await retry_async(operation, max_retries=0)
+
+        operation.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_retry_succeeds_first_attempt(self, claude_config: DaemonConfig) -> None:
@@ -278,6 +316,37 @@ class TestExecuteSdkQuery:
     """Tests for SDK query execution failure classification."""
 
     @pytest.mark.asyncio
+    async def test_failure_diagnostics_keep_only_bounded_stderr_tail(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.llm.claude_runtime import execute_sdk_query
+
+        options = MockClaudeAgentOptions()
+
+        async def failure_with_stderr() -> str:
+            assert callable(options.stderr)
+            for index in range(205):
+                options.stderr(f"stderr-{index}")
+            raise RuntimeError("401 Unauthorized")
+
+        with (
+            caplog.at_level(logging.ERROR, logger="gobby.llm.claude"),
+            pytest.raises(RuntimeError, match="stderr-204") as exc_info,
+        ):
+            await execute_sdk_query(
+                "generate_json",
+                failure_with_stderr,
+                options,
+                logging.getLogger("gobby.llm.claude"),
+                max_retries=1,
+            )
+
+        assert "stderr-0\n" not in str(exc_info.value)
+        assert "stderr-4\n" not in str(exc_info.value)
+        assert "stderr-5\n" in str(exc_info.value)
+        assert "stderr-204" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_sigterm_exit_does_not_retry_or_warn(
         self, claude_config: DaemonConfig, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -341,7 +410,7 @@ class TestExecuteSdkQuery:
                 grouped_failure,
                 options,
                 logging.getLogger("gobby.llm.claude"),
-                max_retries=0,
+                max_retries=1,
                 retry_delay=0.01,
             )
 
@@ -354,50 +423,50 @@ class TestExecuteSdkQuery:
 class TestPrepareImageData:
     """Tests for _prepare_image_data."""
 
-    def test_image_not_found(self, claude_config: DaemonConfig) -> None:
-        """Returns error string when image doesn't exist."""
-        from gobby.llm.claude_payloads import prepare_image_data
+    async def test_image_not_found(self, claude_config: DaemonConfig) -> None:
+        """Raises a structured input error when the image doesn't exist."""
+        from gobby.llm.image_payloads import prepare_image_data
 
-        result = prepare_image_data("/nonexistent/image.png")
-        assert isinstance(result, str)
-        assert "not found" in result.lower()
+        with pytest.raises(VisionInputError, match="not found"):
+            await prepare_image_data("/nonexistent/image.png")
 
-    def test_valid_image(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
+    async def test_valid_image(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Returns (base64, mime_type) for valid image."""
-        from gobby.llm.claude_payloads import prepare_image_data
+        from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.png"
         img_path.write_bytes(b"\x89PNG\r\n")
 
-        result = prepare_image_data(str(img_path))
+        result = await prepare_image_data(str(img_path))
         assert isinstance(result, tuple)
-        assert len(result) == 2
+        assert len(result) == 4
         assert result[1] == "image/png"
 
-    def test_unknown_mime_defaults_to_png(
+    async def test_unknown_mime_defaults_to_png(
         self, claude_config: DaemonConfig, tmp_path: Path
     ) -> None:
         """Unknown extensions default to image/png."""
-        from gobby.llm.claude_payloads import prepare_image_data
+        from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.xyz"
         img_path.write_bytes(b"data")
 
-        result = prepare_image_data(str(img_path))
+        result = await prepare_image_data(str(img_path))
         assert isinstance(result, tuple)
         assert result[1] == "image/png"
 
-    def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
-        """Returns error string when file can't be read."""
-        from gobby.llm.claude_payloads import prepare_image_data
+    async def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
+        """Raises a structured input error when the file can't be read."""
+        from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.png"
         img_path.write_bytes(b"data")
 
-        with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
-            result = prepare_image_data(str(img_path))
-            assert isinstance(result, str)
-            assert "Failed to read" in result
+        with patch.object(Path, "open", side_effect=PermissionError("denied")):
+            with pytest.raises(VisionInputError, match="Failed to read") as exc_info:
+                await prepare_image_data(str(img_path))
+
+        assert isinstance(exc_info.value.__cause__, PermissionError)
 
 
 # ─── generate_json tests ────────────────────────────────────────────────
@@ -405,6 +474,24 @@ class TestPrepareImageData:
 
 class TestGenerateText:
     """Tests for text-generation SDK option plumbing."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content", [None, "", " \t\n"])
+    async def test_generate_text_sdk_rejects_blank_content(
+        self, claude_config: DaemonConfig, content: str | None
+    ) -> None:
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage(content)
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            with pytest.raises(
+                LLMProviderError,
+                match=r"Claude generate_text\[unit-test\] returned blank content",
+            ):
+                await provider.generate_text_result("Generate text", caller="unit-test")
 
     @pytest.mark.asyncio
     async def test_generate_text_sdk_passes_reasoning_effort(
@@ -451,6 +538,21 @@ class TestGenerateText:
         assert captured_kwargs[0]["max_turns"] > 1
         assert captured_kwargs[0]["tools"] == []
         assert captured_kwargs[0]["allowed_tools"] == []
+
+    @pytest.mark.asyncio
+    async def test_generate_text_sdk_does_not_slice_complete_result_by_character_estimate(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage("complete reply")
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider.generate_text_result("Generate text", max_tokens=1)
+
+        assert result.text == "complete reply"
 
     @pytest.mark.asyncio
     async def test_generate_text_retry_discards_failed_attempt_usage(
@@ -914,13 +1016,79 @@ class TestDescribeImage:
 
     @pytest.mark.asyncio
     async def test_describe_image_sdk_no_cli(self, claude_config: DaemonConfig) -> None:
-        """Returns unavailable message when CLI not found."""
+        """Raises a structured provider error when CLI is not found."""
         with patch("gobby.llm.claude_cli.shutil.which", return_value=None):
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider.describe_image("/path/to/image.png")
-            assert "unavailable" in result.lower()
+            with pytest.raises(VisionProviderUnavailableError, match="Claude CLI not found"):
+                await provider.describe_image("/path/to/image.png")
+
+    @pytest.mark.asyncio
+    async def test_describe_image_sdk_missing_file_raises_input_error(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        provider = ClaudeLLMProvider(claude_config)
+        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
+
+        with pytest.raises(VisionInputError, match="not found"):
+            await provider.describe_image("/missing/image.png")
+
+    @pytest.mark.asyncio
+    async def test_describe_image_sdk_unreadable_file_raises_input_error(
+        self, claude_config: DaemonConfig, tmp_path: Path
+    ) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        image_path = tmp_path / "image.png"
+        image_path.write_bytes(b"image")
+        provider = ClaudeLLMProvider(claude_config)
+        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
+
+        with patch.object(Path, "open", side_effect=PermissionError("denied")):
+            with pytest.raises(VisionInputError, match="Failed to read"):
+                await provider.describe_image(str(image_path))
+
+    @pytest.mark.asyncio
+    async def test_describe_image_sdk_failure_raises_provider_error(
+        self, claude_config: DaemonConfig, tmp_path: Path
+    ) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        image_path = tmp_path / "image.png"
+        image_path.write_bytes(b"image")
+        provider = ClaudeLLMProvider(claude_config)
+        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
+
+        with patch(
+            "gobby.llm.claude_sdk.execute_sdk_query",
+            new=AsyncMock(side_effect=RuntimeError("SDK failed")),
+        ):
+            with pytest.raises(VisionProviderError, match="SDK failed") as exc_info:
+                await provider.describe_image(str(image_path))
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+    @pytest.mark.asyncio
+    async def test_describe_image_sdk_preserves_successful_output(
+        self, claude_config: DaemonConfig, tmp_path: Path
+    ) -> None:
+        from gobby.llm.claude import ClaudeLLMProvider
+
+        image_path = tmp_path / "image.png"
+        image_path.write_bytes(b"image")
+        provider = ClaudeLLMProvider(claude_config)
+        provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
+
+        with patch(
+            "gobby.llm.claude_sdk.execute_sdk_query",
+            new=AsyncMock(return_value="A blue diagram"),
+        ):
+            result = await provider.describe_image(str(image_path))
+
+        assert result == "A blue diagram"
 
 
 # ─── generate_text no backend ────────────────────────────────────────────

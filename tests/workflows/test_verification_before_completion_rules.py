@@ -41,9 +41,13 @@ def _sync_bundled(db: HubDatabase) -> None:
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
 
-def _lifecycle_event(server: str = "gobby-tasks", tool: str = "close_task") -> HookEvent:
+def _lifecycle_event(
+    server: str = "gobby-tasks",
+    tool: str = "close_task",
+    task_id: str = "#42",
+) -> HookEvent:
     arguments = {
-        "task_id": "#42",
+        "task_id": task_id,
         "commit_sha": "abc1234",
         "changes_summary": "done",
     }
@@ -156,6 +160,44 @@ async def test_completion_readiness_allows_successful_validation_evidence(
     )
 
     assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_completion_readiness_isolates_concurrent_task_evidence(
+    db: HubDatabase,
+) -> None:
+    """A later failure for task B cannot invalidate task A's scoped success."""
+    _sync_bundled(db)
+    variables = _ready_variables(
+        verification_evidence=[
+            {
+                "evidence_type": "test",
+                "task_id": "#42",
+                "supports": "task_id:#42",
+                "success": True,
+            },
+            {
+                "evidence_type": "validation_command",
+                "task_id": "#99",
+                "success": False,
+            },
+        ]
+    )
+
+    task_a_response = await RuleEngine(db).evaluate(
+        _lifecycle_event(task_id="#42"),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    task_b_response = await RuleEngine(db).evaluate(
+        _lifecycle_event(task_id="#99"),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+
+    assert task_a_response.decision == "allow"
+    assert task_b_response.decision == "block"
+    assert "require-completion-readiness-evidence" in (task_b_response.reason or "")
 
 
 @pytest.mark.asyncio

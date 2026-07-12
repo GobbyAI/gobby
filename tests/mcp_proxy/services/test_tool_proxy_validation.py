@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
+from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.utils.session_context import session_context_for_test
 
@@ -82,7 +83,7 @@ async def test_bool_for_string_returns_invalid_arguments_with_schema_before_exte
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
+    assert result["error_code"] == "INVALID_ARGUMENTS"
     assert result["validation_errors"] == [
         "Invalid type for parameter 'supports': expected string, got boolean"
     ]
@@ -491,41 +492,87 @@ class TestCallToolPreValidation:
         assert mock_mcp_manager.call_tool.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_no_validation_for_empty_arguments(self, tool_proxy, mock_mcp_manager):
-        """Verify no validation is performed when arguments are empty."""
+    async def test_empty_arguments_dispatch_when_schema_has_no_required_params(
+        self, tool_proxy, mock_mcp_manager
+    ):
+        """Empty arguments remain valid when the schema requires nothing."""
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {
+                    "name": "test_tool",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"optional": {"type": "string"}},
+                    },
+                },
+            }
+        )
         mock_mcp_manager.call_tool.return_value = {"success": True}
 
-        await tool_proxy.call_tool(
+        result = await tool_proxy.call_tool(
             server_name="test-server",
             tool_name="test_tool",
-            arguments={},  # Empty args
+            arguments={},
         )
 
-        # Should pass through - empty args don't trigger validation
-        mock_mcp_manager.call_tool.assert_called_once()
-        assert mock_mcp_manager.call_tool.call_count == 1
-        assert mock_mcp_manager.call_tool.call_args is not None
+        assert result == {"success": True}
+        mock_mcp_manager.call_tool.assert_awaited_once_with(
+            "test-server", "test_tool", {}, session_id=None
+        )
+
+    async def test_empty_arguments_reject_missing_required_params(
+        self, tool_proxy, mock_mcp_manager
+    ):
+        """Empty arguments must not bypass required-parameter validation."""
+        input_schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+        tool_proxy.get_tool_schema = AsyncMock(
+            return_value={
+                "success": True,
+                "tool": {"name": "test_tool", "inputSchema": input_schema},
+            }
+        )
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="test_tool",
+            arguments={},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "INVALID_ARGUMENTS"
+        assert result["validation_errors"] == ["Missing required parameter 'name'"]
+        assert result["schema"] == input_schema
+        mock_mcp_manager.call_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_schema_fetch_failure_allows_execution(self, tool_proxy, mock_mcp_manager):
         """Verify tool execution proceeds when schema fetch fails."""
 
         async def mock_get_schema(server, tool):
-            return {"success": False, "error": "Schema not found"}
+            raise MCPError("Schema temporarily unavailable")
 
         tool_proxy.get_tool_schema = mock_get_schema
         mock_mcp_manager.call_tool.return_value = {"success": True}
 
-        await tool_proxy.call_tool(
+        result = await tool_proxy.call_tool(
             server_name="test-server",
             tool_name="test_tool",
             arguments={"some_param": "test"},
         )
 
         # Should still attempt execution when schema is unavailable
-        mock_mcp_manager.call_tool.assert_called_once()
-        assert mock_mcp_manager.call_tool.call_count == 1
-        assert mock_mcp_manager.call_tool.call_args is not None
+        assert result == {"success": True}
+        mock_mcp_manager.call_tool.assert_awaited_once_with(
+            "test-server",
+            "test_tool",
+            {"some_param": "test"},
+            session_id=None,
+        )
 
 
 class TestCallToolInternalServer:
@@ -599,7 +646,7 @@ class TestCallToolInternalServer:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "invalid_arguments"
+        assert result["error_code"] == "INVALID_ARGUMENTS"
         assert result["validation_errors"] == [
             "Invalid type for parameter 'payload': expected object, got string"
         ]
@@ -1363,6 +1410,34 @@ class TestDirectMcpAfterToolWorkflow:
         mock_hook_manager.handle.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_after_tool_workflow_exception_preserves_successful_result(
+        self, tool_proxy_with_hooks, mock_internal_manager, caplog
+    ) -> None:
+        """After-tool workflow failures must not replace successful tool output."""
+        successful_result = {"id": "task-123", "ref": "#123"}
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value=successful_result)
+        mock_internal_manager.get_registry.return_value = mock_registry
+        tool_proxy_with_hooks._apply_after_tool_workflow = AsyncMock(
+            side_effect=RuntimeError("session lookup failed")
+        )
+
+        result = await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="create_task",
+            arguments={"title": "Test task"},
+            session_id="session-123",
+        )
+
+        assert result == successful_result
+        assert (
+            "After-tool workflow failed for gobby-tasks/create_task; preserving tool result"
+            in caplog.text
+        )
+        assert "session lookup failed" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_internal_tool_exception_emits_failed_after_tool_workflow(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
@@ -1514,7 +1589,7 @@ class TestStripUnknownParameters:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "invalid_arguments"
+        assert result["error_code"] == "INVALID_ARGUMENTS"
         assert result["validation_errors"] == [
             "Invalid type for parameter 'limit': expected integer, got boolean"
         ]

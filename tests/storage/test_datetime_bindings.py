@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -13,6 +13,7 @@ from gobby.mcp_proxy.schema_hash import SchemaHashManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.cron_runs import CronRunStorageMixin
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories_crossrefs import MemoryCrossRefMixin
 from gobby.storage.memories_dreams import MemoryDreamMixin
 from gobby.storage.memories_query import MemoryQueryMixin
@@ -99,12 +100,12 @@ class _RecordingDB:
 
 class _UsageRecorder(_UsageMixin):
     def __init__(self, db: _RecordingDB) -> None:
-        self.db = db
+        self.db: HubDatabase = cast(HubDatabase, db)
 
 
 class _CronRecorder(CronRunStorageMixin):
     def __init__(self, db: _RecordingDB) -> None:
-        self.db = db
+        self.db: HubDatabase = cast(HubDatabase, db)
 
 
 def _params(call: _RecordedCall) -> Sequence[Any]:
@@ -150,7 +151,7 @@ def test_session_context_usage_binds_snapshot_timestamp_as_datetime() -> None:
         context_used_tokens=25_000,
         context_usage_ratio=0.25,
         confidence="reported",
-        timestamp="2026-07-03T01:02:03+00:00",
+        timestamp=datetime(2026, 7, 3, 1, 2, 3, tzinfo=UTC),
     )
 
     updated = manager.update_context_usage("session-1", snapshot)
@@ -208,7 +209,7 @@ def test_cron_run_create_binds_triggered_and_created_at_as_datetimes() -> None:
     assert run is None
     params = _params(db.calls[-1])
     _assert_aware_utc(params[2])
-    _assert_aware_utc(params[10])
+    _assert_aware_utc(params[11])
 
 
 def test_schema_hash_manager_binds_verification_timestamps_as_datetimes() -> None:
@@ -251,8 +252,11 @@ def test_tool_metrics_store_binds_datetimes_for_writes_and_cutoffs() -> None:
     store.aggregate_to_daily(retention_days=7)
     _assert_aware_utc(_params(db.calls[-1])[0])
 
-    store.cleanup_old_metrics(retention_days=7)
-    _assert_aware_utc(_params(db.calls[-1])[0])
+    cutoff = datetime(2026, 7, 5, 1, 2, 3, tzinfo=UTC)
+    store.cleanup_old_metrics(cutoff)
+    cleanup_params = _params(db.calls[-1])
+    assert _assert_aware_utc(cleanup_params[0]) == cutoff
+    _assert_aware_utc(cleanup_params[1])
 
 
 def test_metrics_event_store_binds_datetimes_for_filters_and_archive() -> None:
@@ -276,10 +280,8 @@ def test_metrics_event_store_binds_datetimes_for_filters_and_archive() -> None:
     _assert_aware_utc(_params(db.calls[-1])[1])
 
     store.archive_old_events(retention_days=30)
-    archive_params = _params(db.calls[-2])
-    delete_params = _params(db.calls[-1])
+    archive_params = _params(db.calls[-1])
     _assert_aware_utc(archive_params[0])
-    _assert_aware_utc(delete_params[0])
 
 
 def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:

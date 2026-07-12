@@ -64,32 +64,6 @@ class TestAgentRestartReconciliation:
         ]
 
     @pytest.mark.asyncio
-    async def test_replay_daemon_restart_agent_cancellations_paginates_offsets(self) -> None:
-        page_size = _RUN_REPLAY_PAGE_SIZE
-        runs = [
-            SimpleNamespace(
-                id=f"run-{index}",
-                terminal_reason="daemon_restart",
-                continuation_prompt=None,
-                tmux_session_name=None,
-            )
-            for index in range(page_size + 1)
-        ]
-        list_by_status = MagicMock(
-            side_effect=lambda _status, *, limit, offset=0: runs[offset : offset + limit]
-        )
-        runner = self._runner(SimpleNamespace(list_by_status=list_by_status))
-
-        replayed = await runner_lifecycle._replay_daemon_restart_agent_cancellations(runner)
-
-        assert replayed == page_size + 1
-        assert list_by_status.call_args_list == [
-            call("cancelled", limit=page_size, offset=0),
-            call("cancelled", limit=page_size, offset=page_size),
-        ]
-        assert runner.completion_registry.notify.await_count == page_size + 1
-
-    @pytest.mark.asyncio
     async def test_reconcile_live_tmux_run_refreshes_pid_and_reader(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
@@ -297,7 +271,8 @@ class TestAgentRestartReconciliation:
         assert mutex is not None
         assert mutex.run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
         assert mutex.lease_holder == "dispatcher"
-        assert datetime.fromisoformat(mutex.lease_until) > datetime.now(UTC)
+        assert mutex.lease_until is not None
+        assert mutex.lease_until > datetime.now(UTC)
 
     @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_run_does_not_refresh_expired_mutex(
@@ -349,7 +324,8 @@ class TestAgentRestartReconciliation:
         mutex = mutexes.get_mutex(task.id)
         assert reconciled == 2
         assert mutex is not None
-        assert datetime.fromisoformat(mutex.lease_until) < datetime.now(UTC)
+        assert mutex.lease_until is not None
+        assert mutex.lease_until < datetime.now(UTC)
         assert run_storage.get(run.id).tmux_session_name == "gobby-run-1"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:

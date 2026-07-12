@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -47,6 +47,19 @@ WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS = 600.0
 WIKI_LIBRARIAN_TASK_LABEL_PREFIX = "wiki-librarian"
 _LIBRARIAN_DEDUP_LOOKUP_LIMIT = 20
 _LIBRARIAN_FILED_TITLE_SAMPLE_SIZE = 10
+
+RunSync = Callable[..., Awaitable[Any]]
+
+
+async def _run_sync(
+    run_sync: RunSync | None,
+    operation: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if run_sync is not None:
+        return await run_sync(operation, *args, **kwargs)
+    return await asyncio.to_thread(operation, *args, **kwargs)
 
 
 class WikiGatewayProtocol(Protocol):
@@ -300,17 +313,53 @@ async def register_wiki_cron_jobs(
     task_manager: LibrarianTaskManagerProtocol | None = None,
 ) -> int:
     """Register wiki cron handlers and reconcile one cron row per scope and command."""
+    return await register_wiki_cron_jobs_for_projects(
+        cron_storage=cron_storage,
+        cron_executor=cron_executor,
+        project_scopes=((project_id, scopes),),
+        db=db,
+        gateway_factory=gateway_factory,
+        task_manager=task_manager,
+    )
+
+
+async def register_wiki_cron_jobs_for_projects(
+    *,
+    cron_storage: CronJobStorage,
+    cron_executor: CronRegistrationProtocol,
+    project_scopes: Iterable[tuple[str, Iterable[str] | None]],
+    db: HubDatabase | None = None,
+    gateway_factory: GatewayFactory | None = None,
+    task_manager: LibrarianTaskManagerProtocol | None = None,
+    run_sync: RunSync | None = None,
+) -> int:
+    """Register deduplicated wiki cron handlers for a paginated project stream."""
     if gateway_factory is None and db is None:
-        raise ValueError("register_wiki_cron_jobs requires db when gateway_factory is not provided")
-    reconcile_stale_wiki_cron_scopes(cron_storage=cron_storage, project_id=project_id)
-    purge_legacy_wiki_research_jobs(cron_storage)
+        raise ValueError(
+            "register_wiki_cron_jobs_for_projects requires db when gateway_factory is not provided"
+        )
+
+    scope_projects: dict[str, str] = {}
+    fallback_project_id = ""
+    for project_id, scopes in project_scopes:
+        if not fallback_project_id:
+            fallback_project_id = project_id
+        await _run_sync(
+            run_sync,
+            reconcile_stale_wiki_cron_scopes,
+            cron_storage=cron_storage,
+            project_id=project_id,
+        )
+        for scope in _configured_scopes(scopes, project_id):
+            scope_projects.setdefault(scope, project_id)
+
+    await _run_sync(run_sync, purge_legacy_wiki_research_jobs, cron_storage)
     if task_manager is None and db is not None:
         from gobby.storage.tasks import LocalTaskManager
 
         task_manager = LocalTaskManager(db)
     registered = 0
-    configured = _configured_scopes(scopes, project_id)
-    for scope in configured:
+    for scope, project_id in sorted(scope_projects.items()):
         gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
@@ -323,7 +372,9 @@ async def register_wiki_cron_jobs(
         ):
             handler_name = wiki_handler_name(command, scope)
             cron_executor.register_handler(handler_name, handler)
-            _ensure_wiki_cron_job(
+            await _run_sync(
+                run_sync,
+                _ensure_wiki_cron_job,
                 cron_storage=cron_storage,
                 project_id=project_id,
                 command=command,
@@ -338,11 +389,12 @@ async def register_wiki_cron_jobs(
     registered += await _register_enabled_wiki_row_handlers(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
-        fallback_project_id=project_id,
+        fallback_project_id=fallback_project_id,
         db=db,
         gateway_factory=gateway_factory,
         task_manager=task_manager,
-        covered_scopes=set(configured),
+        covered_scopes=set(scope_projects),
+        run_sync=run_sync,
     )
     return registered
 
@@ -456,11 +508,17 @@ async def _register_enabled_wiki_row_handlers(
     gateway_factory: GatewayFactory | None,
     task_manager: LibrarianTaskManagerProtocol | None,
     covered_scopes: set[str],
+    run_sync: RunSync | None,
 ) -> int:
     """Register handlers for every enabled wiki system cron row, regardless of
     which project the daemon started in; park rows whose scope identity no
     longer resolves so they stop failing with "No handler registered"."""
-    rows = cron_storage.list_system_jobs_by_name_prefix(WIKI_JOB_NAME_PREFIX, enabled=True)
+    rows = await _run_sync(
+        run_sync,
+        cron_storage.list_system_jobs_by_name_prefix,
+        WIKI_JOB_NAME_PREFIX,
+        enabled=True,
+    )
     rows_by_scope: dict[str, list[CronJob]] = {}
     for job in rows:
         scope = _wiki_job_scope(job)
@@ -487,7 +545,7 @@ async def _register_enabled_wiki_row_handlers(
                 )
         except WikiScopeResolutionError as exc:
             for job in scope_rows:
-                cron_storage.park_system_job(job.id)
+                await _run_sync(run_sync, cron_storage.park_system_job, job.id)
             logger.warning(
                 "Parked %d enabled wiki cron row(s) for unresolvable scope %s: %s",
                 len(scope_rows),
@@ -513,21 +571,8 @@ async def _register_enabled_wiki_row_handlers(
             registered += 1
         for job in scope_rows:
             if job.next_run_at is None:
-                cron_storage.wake_system_job(job.id)
+                await _run_sync(run_sync, cron_storage.wake_system_job, job.id)
     return registered
-
-
-def configured_wiki_cron_scopes(config: object | None, project_id: str) -> list[str]:
-    if config is None:
-        return [project_scope(project_id)]
-
-    wiki_config = getattr(config, "wiki", None)
-    scopes = _scopes_from_config_value(getattr(wiki_config, "scheduled_scopes", None))
-    if scopes:
-        return scopes
-
-    scopes = _scopes_from_config_value(getattr(config, "wiki_scheduled_scopes", None))
-    return scopes or [project_scope(project_id)]
 
 
 def wiki_handler_name(command: str, scope: str) -> str:
@@ -631,20 +676,19 @@ def _ensure_wiki_cron_job(
         cron_storage.mark_as_system_job(existing.id)
         return
 
-    if existing.is_system:
-        reconciled = cron_storage.reconcile_system_job_definition(
-            existing.id,
-            action_type="handler",
-            action_config=action_config,
-            description=description,
-            schedule_type=schedule_type,
-            cron_expr=cron_expr,
-            interval_seconds=interval_seconds,
-        )
-        if reconciled is not None and reconciled.enabled and reconciled.next_run_at is None:
-            # A previous startup parked this row while its scope was
-            # unresolvable; the scope is registering again, so wake it.
-            cron_storage.wake_system_job(existing.id)
+    reconciled = cron_storage.reconcile_system_job_definition(
+        existing.id,
+        action_type="handler",
+        action_config=action_config,
+        description=description,
+        schedule_type=schedule_type,
+        cron_expr=cron_expr,
+        interval_seconds=interval_seconds,
+    )
+    if reconciled is not None and reconciled.enabled and reconciled.next_run_at is None:
+        # A previous startup parked this row while its scope was
+        # unresolvable; the scope is registering again, so wake it.
+        cron_storage.wake_system_job(existing.id)
 
 
 def purge_legacy_wiki_research_jobs(cron_storage: CronJobStorage) -> int:
@@ -824,13 +868,3 @@ def _scope_project_id(scope: str, fallback_project_id: str) -> str:
         if candidate:
             return candidate
     return fallback_project_id
-
-
-def _scopes_from_config_value(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return _configured_scopes([value], "")
-    if isinstance(value, Iterable):
-        return _configured_scopes([str(item) for item in value], "")
-    return []

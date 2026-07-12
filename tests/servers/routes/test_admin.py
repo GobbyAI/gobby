@@ -423,7 +423,7 @@ class TestAdminRoutes:
         mock_write_shutdown.assert_called_once_with("http_shutdown", intent="stop")
         mock_server._process_shutdown.assert_called_once()
 
-    def test_request_runner_shutdown_falls_back_to_runner_attrs(self) -> None:
+    def test_request_runner_shutdown_rejects_runner_without_shutdown_api(self) -> None:
         from gobby.servers.routes.admin._lifecycle import _request_runner_shutdown
 
         runner = MinimalRunnerFallbackStub()
@@ -432,9 +432,9 @@ class TestAdminRoutes:
             ShutdownIntent.RESTART,
         )
 
-        assert requested is True
-        assert runner._shutdown_requested is True
-        assert runner._shutdown_intent is ShutdownIntent.RESTART
+        assert requested is False
+        assert runner._shutdown_requested is False
+        assert runner._shutdown_intent is None
 
     @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
     @patch(

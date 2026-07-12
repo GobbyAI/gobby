@@ -311,7 +311,10 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db: HubDatabase
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_detects_embedding_api_key(
-    temp_db: HubDatabase, mock_machine_id: str, tmp_path: Path
+    temp_db: HubDatabase,
+    mock_machine_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.secrets import SecretStore
@@ -325,11 +328,8 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
         }
     )
 
-    salt_file = tmp_path / ".secret_salt"
-    with (
-        patch("gobby.storage.secrets.SALT_FILE", salt_file),
-        _patch_runtime_hub_database(temp_db),
-    ):
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    with _patch_runtime_hub_database(temp_db):
         store.set_secret(
             AI_EMBEDDING_API_KEY_KEY,
             "sk-test",

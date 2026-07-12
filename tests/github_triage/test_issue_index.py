@@ -50,6 +50,19 @@ def test_content_hash_changes_when_triage_relevant_content_changes() -> None:
 
     assert content_hash(issue) == content_hash(_issue(labels=("bug", "p1")))
     assert content_hash(issue) != content_hash(_issue(title="Crash after login"))
+    assert content_hash(issue) != content_hash(_issue(body="Different reproduction"))
+    assert content_hash(issue) != content_hash(_issue(labels=("bug", "p1", "customer")))
+
+
+def test_content_hash_ignores_gobby_managed_labels_and_update_timestamp() -> None:
+    issue = _issue()
+
+    assert content_hash(issue) == content_hash(
+        _issue(
+            labels=("p1", "gobby:accepted", "bug", "gobby:needs-triage"),
+            updated_at="2026-05-04T00:00:00Z",
+        )
+    )
 
 
 def test_build_issue_content_omits_labels() -> None:

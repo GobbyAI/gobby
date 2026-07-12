@@ -143,6 +143,37 @@ class TestValidationPromptBudget:
         assert "### tests/test_big.py" in evidence.text
         assert "+test_line_99_" in evidence.text
 
+    def test_supplemental_summary_does_not_force_head_only_raw_diff_truncation(self) -> None:
+        """Oversized raw evidence must use per-file excerpts before adding agent prose."""
+        source_lines = "".join(f"+source_line_{line}_{'s' * 50}\n" for line in range(100))
+        test_lines = "".join(f"+def test_acceptance_{line}(): pass\n" for line in range(40))
+        diff = (
+            "diff --git a/src/big.py b/src/big.py\n"
+            "index abc..def 100644\n"
+            "--- a/src/big.py\n"
+            "+++ b/src/big.py\n"
+            "@@ -1 +1,100 @@\n"
+            + source_lines
+            + "diff --git a/tests/test_acceptance.py b/tests/test_acceptance.py\n"
+            "index abc..def 100644\n"
+            "--- a/tests/test_acceptance.py\n"
+            "+++ b/tests/test_acceptance.py\n"
+            "@@ -1 +1,40 @@\n" + test_lines
+        )
+
+        evidence = build_diff_validation_evidence(
+            diff,
+            max_chars=4000,
+            max_hunk_lines=60,
+            agent_summary="Implemented the requested production behavior and regression coverage.",
+        )
+
+        assert "Diff Excerpts:" in evidence.text
+        assert "### tests/test_acceptance.py" in evidence.text
+        assert "+def test_acceptance_0(): pass" in evidence.text
+        assert "+def test_acceptance_39(): pass" in evidence.text
+        assert "validation evidence shortened due to length" not in evidence.text
+
     def test_diff_evidence_keeps_hunk_tail_lines(self) -> None:
         """Oversized hunks keep tail lines, where appended tests live."""
         body = "".join(

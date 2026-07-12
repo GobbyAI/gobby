@@ -40,6 +40,7 @@ from gobby.config.app import DaemonConfig
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
+from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_FINGERPRINT_HEADER,
     MCP_WRAPPER_STALE_ERROR_CODE,
@@ -2738,6 +2739,67 @@ class TestRefreshMCPTools:
         assert data["force"] is True
         # In force mode, all tools are treated as new
         assert data["stats"]["tools_new"] == 2
+
+    def test_refresh_tools_description_change_reembeds(
+        self, session_storage: SessionManager
+    ) -> None:
+        """A description-only change refreshes its hash and embedding."""
+        registry = FakeInternalRegistry(
+            name="gobby-tasks",
+            tools=[{"name": "list_tasks", "description": "New description"}],
+        )
+        schema = registry.get_schema("list_tasks")
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager([registry])
+
+        mock_mcp_db_manager = MagicMock()
+        mock_mcp_db_manager.db = MagicMock()
+        mock_mcp_db_manager.get_cached_tools.return_value = []
+        server._mcp_db_manager = mock_mcp_db_manager
+
+        semantic_search = MagicMock()
+        semantic_search.embed_tool = AsyncMock()
+        mock_handler = MagicMock()
+        mock_handler._semantic_search = semantic_search
+        server._tools_handler = mock_handler
+
+        hash_manager = SchemaHashManager(db=MagicMock())
+        hash_manager.get_hashes_for_server = MagicMock(
+            return_value=[
+                MagicMock(
+                    tool_name="list_tasks",
+                    schema_hash=compute_schema_hash(schema, description="Old description"),
+                )
+            ]
+        )
+        hash_manager.store_hash = MagicMock()
+        hash_manager.cleanup_stale_hashes = MagicMock(return_value=0)
+
+        with (
+            TestClient(server.app) as client,
+            patch.object(server, "resolve_project_id", return_value="test-project"),
+            patch(
+                "gobby.mcp_proxy.schema_hash.SchemaHashManager",
+                return_value=hash_manager,
+            ),
+        ):
+            response = client.post("/api/mcp/refresh", json={"force": False})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["stats"]["tools_changed"] == 1
+        assert data["stats"]["embeddings_generated"] == 1
+        semantic_search.embed_tool.assert_awaited_once()
+        hash_manager.store_hash.assert_called_once_with(
+            server_name="gobby-tasks",
+            tool_name="list_tasks",
+            project_id="test-project",
+            schema_hash=compute_schema_hash(schema, description="New description"),
+        )
 
 
 # ============================================================================

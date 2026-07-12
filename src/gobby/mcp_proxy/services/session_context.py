@@ -64,6 +64,8 @@ def resolve_platform_session_id(service: Any, session_id: str | None) -> str | N
             project_id,
             exc,
         )
+        if session_id:
+            raise
         return None
     return resolved_session_id or requested_session_id
 

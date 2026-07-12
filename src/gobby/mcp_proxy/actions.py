@@ -75,12 +75,16 @@ async def add_mcp_server(
         # Generate server description using AI if not provided
         if not description and full_tool_schemas:
             try:
-                server_description = await generate_server_description(
+                description = await generate_server_description(
                     server_name=name, tool_summaries=full_tool_schemas
                 )
-                config.description = server_description
+                await mcp_manager.set_server_description(name, description)
             except Exception as e:
                 logger.warning(f"Failed to generate server description: {e}")
+                description = None
+
+        if description is not None:
+            result["description"] = description
 
         logger.debug(f"Added MCP server: {name} ({transport})")
         return result

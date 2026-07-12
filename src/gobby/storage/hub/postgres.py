@@ -58,6 +58,7 @@ from gobby.utils.datetime import to_aware_utc, to_json_safe
 logger = logging.getLogger(__name__)
 
 _OPEN_DATABASES: weakref.WeakSet[PostgresHubDatabase] = weakref.WeakSet()
+_POOL_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 def _close_open_databases_at_exit() -> None:
@@ -393,7 +394,10 @@ class PostgresHubDatabase:
         if getattr(self, "_pool_closed", False):
             return
         self._pool_closed = True
-        self._pool.close()
+        # Daemon shutdown reserves three seconds after its 17-second async
+        # cleanup deadline before the CLI force-kills the process at 20
+        # seconds. Leave a one-second scheduling margin inside that tail.
+        self._pool.close(timeout=_POOL_CLOSE_TIMEOUT_SECONDS)
         self._pool_opened = False
 
 
@@ -678,7 +682,8 @@ def _build_safe_update(
         set_clauses.append(f"{column} = %s")
         update_params.append(value)
 
-    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
+    # Table/column identifiers are allowlisted above; values remain parameterized.
+    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec
     return sql, (*update_params, *where_params)
 
 

@@ -6,7 +6,6 @@ import asyncio
 import copy
 import json
 import logging
-import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +24,7 @@ from gobby.llm.context_windows import (
     provider_catalog_context_length_for_model,
     static_context_length_for_model,
 )
+from gobby.paths import get_gobby_home
 from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import AGY_MODELS as _AGY_MODELS
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
@@ -166,11 +166,6 @@ def _static_provider_models(provider: str) -> list[dict[str, Any]]:
     return []
 
 
-def _gobby_home() -> Path:
-    raw = os.environ.get("GOBBY_HOME")
-    return Path(raw).expanduser() if raw else Path.home() / ".gobby"
-
-
 def _model_discovery_cwd_path(provider: str) -> Path:
     provider_dir = provider.strip().lower()
     if (
@@ -180,7 +175,7 @@ def _model_discovery_cwd_path(provider: str) -> Path:
         or "\\" in provider_dir
     ):
         raise ValueError(f"Invalid provider model-discovery directory: {provider!r}")
-    return _gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider_dir
+    return get_gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider_dir
 
 
 async def _model_discovery_cwd(provider: str) -> tuple[Path, bool]:
@@ -219,7 +214,7 @@ class ProviderModelCatalog:
         *,
         cache_path: Path | None = None,
     ) -> None:
-        self._cache_path = cache_path or (_gobby_home() / _DEFAULT_CACHE_FILE)
+        self._cache_path = cache_path or (get_gobby_home() / _DEFAULT_CACHE_FILE)
         self._providers: dict[str, dict[str, Any]] = {}
         self._generated_at: str | None = None
         self.load_cache()
