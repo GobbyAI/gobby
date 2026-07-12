@@ -118,12 +118,13 @@ class TestStageResult:
             VerificationResult("p2", "c2", success=True),
             VerificationResult("f1", "c3", success=False),
             VerificationResult("s1", "c4", success=False, skipped=True),
+            VerificationResult("s2", "c5", success=True, skipped=True),
         ]
         stage_result = StageResult("test", success=False, results=results)
 
         assert stage_result.passed_count == 2
         assert stage_result.failed_count == 1  # Skipped doesn't count as failed
-        assert stage_result.skipped_count == 1
+        assert stage_result.skipped_count == 2
 
 
 class TestVerificationRunner:

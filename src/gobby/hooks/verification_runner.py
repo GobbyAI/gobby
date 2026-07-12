@@ -53,7 +53,7 @@ class StageResult:
     @property
     def passed_count(self) -> int:
         """Number of passed verifications."""
-        return sum(1 for r in self.results if r.success)
+        return sum(1 for r in self.results if r.success and not r.skipped)
 
     @property
     def skipped_count(self) -> int:
