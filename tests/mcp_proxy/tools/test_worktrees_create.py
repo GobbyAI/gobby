@@ -231,6 +231,62 @@ async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git
 
 
 @pytest.mark.asyncio
+async def test_invalid_task_cleanup_preserves_preexisting_branch(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._context.RegistryContext.resolve_task_id",
+        side_effect=ValueError("bad task ref"),
+    ):
+        result = await registry.call(
+            "create_worktree",
+            {
+                "branch_name": "feature/existing",
+                "task_id": "typo",
+                "create_branch": False,
+                "worktree_path": "/tmp/wt/existing",
+            },
+        )
+
+    assert result["success"] is False
+    mock_git_manager.delete_worktree.assert_called_once_with(
+        "/tmp/wt/existing",
+        force=True,
+        delete_branch=False,
+        branch_name="feature/existing",
+    )
+
+
+@pytest.mark.asyncio
+async def test_database_failure_cleanup_preserves_preexisting_branch(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.side_effect = RuntimeError("database unavailable")
+
+    result = await registry.call(
+        "create_worktree",
+        {
+            "branch_name": "feature/existing",
+            "create_branch": False,
+            "worktree_path": "/tmp/wt/existing",
+        },
+    )
+
+    assert result["success"] is False
+    mock_git_manager.delete_worktree.assert_called_once_with(
+        "/tmp/wt/existing",
+        force=True,
+        delete_branch=False,
+        branch_name="feature/existing",
+    )
+
+
+@pytest.mark.asyncio
 async def test_create_worktree_existing(registry, mock_worktree_storage) -> None:
     existing = Worktree(
         id="wt-123",

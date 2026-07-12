@@ -112,6 +112,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     async def delete_worktree(
         worktree_id: str,
         force: bool | str = False,
+        force_delete_branch: bool | str = False,
         project_path: str | None = None,
     ) -> dict[str, Any]:
         """Delete a worktree completely (handles all cleanup).
@@ -127,12 +128,18 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Args:
             worktree_id: The worktree ID (uuid) to delete.
             force: Force deletion even if there are uncommitted changes.
+            force_delete_branch: Force-delete the branch even if it is unmerged.
             project_path: Optional path to project root to resolve git context.
 
         Returns:
             Dict with success status.
         """
         force = force in (True, "true", "True", "1") if isinstance(force, str) else force
+        force_delete_branch = (
+            force_delete_branch in (True, "true", "True", "1")
+            if isinstance(force_delete_branch, str)
+            else force_delete_branch
+        )
 
         worktree = ctx.worktree_storage.get(worktree_id)
 
@@ -169,6 +176,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 worktree.worktree_path,
                 force=force,
                 delete_branch=True,
+                force_delete_branch=force_delete_branch,
                 branch_name=worktree.branch_name,
             )
             if not result.success:

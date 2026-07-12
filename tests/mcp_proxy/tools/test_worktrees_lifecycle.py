@@ -584,7 +584,11 @@ async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git
         assert result["success"] is True
         assert result["event"]["event_type"] == "worktree_deleted"
         mock_git_manager.delete_worktree.assert_called_with(
-            "/tmp/p1", force=False, delete_branch=True, branch_name="b1"
+            "/tmp/p1",
+            force=False,
+            delete_branch=True,
+            force_delete_branch=False,
+            branch_name="b1",
         )
         mock_worktree_storage.delete.assert_called_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
         emit_event.assert_called_once_with(
@@ -631,7 +635,11 @@ async def test_delete_worktree_uncommitted_changes(
         )
         assert result_force["success"] is True
         mock_git_manager.delete_worktree.assert_called_with(
-            "/tmp/p1", force=True, delete_branch=True, branch_name="b1"
+            "/tmp/p1",
+            force=True,
+            delete_branch=True,
+            force_delete_branch=False,
+            branch_name="b1",
         )
 
 
@@ -987,6 +995,7 @@ async def test_cleanup_stale_worktrees(registry, mock_worktree_storage, mock_git
         merged_at=None,
     )
     mock_worktree_storage.cleanup_stale.return_value = [wt]
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
     mock_git_manager.delete_worktree.return_value.success = True
 
     result = await registry.call("cleanup_stale_worktrees", {"hours": 24, "dry_run": True})
@@ -1004,8 +1013,82 @@ async def test_cleanup_stale_worktrees(registry, mock_worktree_storage, mock_git
     assert result["cleaned"][0]["marked_abandoned"] is True
     assert result["cleaned"][0]["git_deleted"] is True
     mock_git_manager.delete_worktree.assert_called_with(
-        "/tmp/p1", force=True, delete_branch=True, branch_name="b1"
+        "/tmp/p1",
+        force=False,
+        delete_branch=True,
+        force_delete_branch=False,
+        branch_name="b1",
     )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_worktrees_skips_dirty_git_worktree(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/tmp/p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.cleanup_stale.return_value = [wt]
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = True
+
+    result = await registry.call(
+        "cleanup_stale_worktrees",
+        {"hours": 24, "dry_run": False, "delete_git": True},
+    )
+
+    assert result["success"] is True
+    assert result["cleaned"][0]["git_deleted"] is False
+    assert result["cleaned"][0]["git_skipped"] is True
+    assert result["cleaned"][0]["git_skip_reason"] == "Worktree has uncommitted changes"
+    mock_git_manager.delete_worktree.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_worktree_rechecks_git_merge_state(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+        project_id="p1",
+        branch_name="b2",
+        worktree_path="/tmp/p2",
+        base_branch="main",
+        status="merged",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=_VALID_TIMESTAMP,
+        cleanup_after=_VALID_TIMESTAMP,
+    )
+    mock_worktree_storage.cleanup_stale.return_value = []
+    mock_worktree_storage.find_expired.return_value = [wt]
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._cleanup.is_worktree_git_merged",
+        return_value=False,
+    ):
+        result = await registry.call(
+            "cleanup_stale_worktrees",
+            {"hours": 24, "dry_run": False, "delete_git": True},
+        )
+
+    assert result["success"] is True
+    assert result["cleaned"][0]["git_deleted"] is False
+    assert result["cleaned"][0]["git_skipped"] is True
+    assert "no longer reports" in result["cleaned"][0]["git_skip_reason"]
+    mock_git_manager.delete_worktree.assert_not_called()
+    mock_worktree_storage.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
