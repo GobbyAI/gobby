@@ -139,6 +139,7 @@ def init_servers(runner: GobbyRunner) -> None:
             daemon_config=runner.config,
             internal_manager=runner.http_server._internal_manager,
             web_chat_session_registry=web_chat_session_registry,
+            tool_proxy_getter=tool_proxy_getter,
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         runner.http_server.websocket_server = runner.websocket_server

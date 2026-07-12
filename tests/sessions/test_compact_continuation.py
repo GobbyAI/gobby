@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,6 +13,7 @@ from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_VARIABLE,
     build_compact_self_continue_prompt,
+    consume_and_schedule_compact_self_continuation,
     mark_compact_self_continuation_pending,
     persist_compact_resume_required_skills,
     schedule_compact_self_continuation_fallback,
@@ -76,6 +78,60 @@ def test_pending_marker_stores_summary_session_id(hub_db: HubDatabase) -> None:
 
     variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
     assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["summary_session_id"] == SOURCE_SESSION_ID
+
+
+def test_failed_schedule_restores_exact_pending_marker(hub_db: HubDatabase) -> None:
+    created_at = datetime.now(UTC).isoformat()
+    sv_mgr = SessionVariableManager(hub_db)
+    payload = {
+        "prompt": "continue exactly",
+        "created_at": created_at,
+        "summary_session_id": SOURCE_SESSION_ID,
+    }
+    sv_mgr.merge_variables(SESSION_ID, {COMPACT_SELF_CONTINUE_VARIABLE: payload})
+
+    with patch(
+        "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+        return_value=False,
+    ):
+        scheduled = consume_and_schedule_compact_self_continuation(
+            hub_db,
+            pending_session_id=SESSION_ID,
+            target_session=SimpleNamespace(id=SESSION_ID),
+        )
+
+    assert scheduled is False
+    assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == payload
+
+
+def test_failed_schedule_does_not_replace_newer_pending_marker(hub_db: HubDatabase) -> None:
+    sv_mgr = SessionVariableManager(hub_db)
+    old_payload = {
+        "prompt": "old prompt",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    new_payload = {
+        "prompt": "new prompt",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    sv_mgr.merge_variables(SESSION_ID, {COMPACT_SELF_CONTINUE_VARIABLE: old_payload})
+
+    def fail_after_new_marker(*_args: object, **_kwargs: object) -> bool:
+        sv_mgr.merge_variables(SESSION_ID, {COMPACT_SELF_CONTINUE_VARIABLE: new_payload})
+        return False
+
+    with patch(
+        "gobby.sessions.compact_continuation.schedule_compact_self_continuation",
+        side_effect=fail_after_new_marker,
+    ):
+        scheduled = consume_and_schedule_compact_self_continuation(
+            hub_db,
+            pending_session_id=SESSION_ID,
+            target_session=SimpleNamespace(id=SESSION_ID),
+        )
+
+    assert scheduled is False
+    assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == new_payload
 
 
 def test_persist_compact_resume_required_skills_excludes_loaded_skills(

@@ -24,7 +24,7 @@ from gobby.hooks.envelope_dedupe import (
     is_inbox_envelope_fresh,
     mark_envelope_processed,
 )
-from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.utils.local_token import read_local_api_token
 
 logger = logging.getLogger(__name__)

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.cli.installers.qwen import install_qwen, uninstall_qwen
+from gobby.cli.utils import get_install_dir as get_real_install_dir
 
 pytestmark = pytest.mark.unit
 
@@ -27,17 +28,8 @@ class TestInstallQwen:
         qwen_dir = install_dir / "qwen"
         qwen_dir.mkdir(parents=True)
 
-        template = qwen_dir / "hooks-template.json"
-        template.write_text(
-            json.dumps(
-                {
-                    "hooks": {
-                        "SessionStart": {"command": "uv run $HOOKS_DIR/hook_dispatcher.py"},
-                        "SessionEnd": {"command": "uv run $HOOKS_DIR/hook_dispatcher.py"},
-                    }
-                }
-            )
-        )
+        source_template = get_real_install_dir() / "qwen" / "hooks-template.json"
+        (qwen_dir / "hooks-template.json").write_text(source_template.read_text())
 
         shared_scripts = install_dir / "shared" / "scripts"
         shared_scripts.mkdir(parents=True)
@@ -52,6 +44,33 @@ class TestInstallQwen:
     def test_install_qwen_success(
         self, project_path: Path, mock_install_dir: Path, temp_dir: Path
     ) -> None:
+        template_hooks = json.loads(
+            (mock_install_dir / "qwen" / "hooks-template.json").read_text()
+        )["hooks"]
+        user_hooks = {hook_type: f"user-{hook_type}" for hook_type in template_hooks}
+        settings_file = project_path / ".qwen" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        hook_type: [
+                            {
+                                "custom": "preserve-group-metadata",
+                                "hooks": [
+                                    {"type": "command", "command": user_command},
+                                    {
+                                        "type": "command",
+                                        "command": "/old/ghook --gobby-owned --cli=qwen --type=stale",
+                                    },
+                                ],
+                            }
+                        ]
+                        for hook_type, user_command in user_hooks.items()
+                    }
+                }
+            )
+        )
         with (
             patch("gobby.cli.installers.qwen.get_install_dir", return_value=mock_install_dir),
             patch(
@@ -76,7 +95,7 @@ class TestInstallQwen:
 
         assert result["success"] is True
         assert result["error"] is None
-        assert result["hooks_installed"] == ["SessionStart", "SessionEnd"]
+        assert result["hooks_installed"] == list(template_hooks)
         assert result["commands_installed"] == ["command1.md", "gobby/", "g/"]
         assert result["plugins_installed"] == ["plugin1.py"]
         assert result["mcp_configured"] is True
@@ -84,13 +103,19 @@ class TestInstallQwen:
         assert result["trust"]["success"] is True
         assert os.environ["GOBBY_HOME"] in result["trust"]["paths"]
 
-        settings_file = project_path / ".qwen" / "settings.json"
         with open(settings_file) as f:
             settings = json.load(f)
 
         assert settings["general"]["enableHooks"] is True
         assert settings["ui"]["hideTips"] is True
         assert "hooks" in settings
+        for hook_type, user_command in user_hooks.items():
+            groups = settings["hooks"][hook_type]
+            assert groups[0]["custom"] == "preserve-group-metadata"
+            commands = [handler["command"] for group in groups for handler in group["hooks"]]
+            assert user_command in commands
+            assert not any("--type=stale" in command for command in commands)
+            assert sum("--gobby-owned" in command for command in commands) == 1
         assert (temp_dir / ".qwen" / "projects.json").exists()
         assert (temp_dir / ".qwen" / "trustedFolders.json").exists()
 

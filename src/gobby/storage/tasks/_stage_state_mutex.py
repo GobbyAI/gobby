@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from typing import cast
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex, RuntimeStageSnapshotState
+from gobby.storage.tasks._runtime_mutex import (
+    DispatchMutexUnavailableError,
+    RuntimeDispatchMutex,
+    RuntimeStageSnapshotState,
+)
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_types import StageState, StageState5
 
@@ -24,7 +29,14 @@ class StageStateMutexFactory:
         action: str,
         *,
         expected_stage: StageState | None = None,
-    ) -> RuntimeDispatchMutex:
+        preheld_run_id: str | None = None,
+    ) -> AbstractContextManager[object | None]:
+        if preheld_run_id is not None:
+            mutex = self.storage.get_mutex_by_run_id(preheld_run_id)
+            if mutex is None or mutex.task_id != task_id:
+                msg = f"dispatch mutex for task {task_id!r} is not held by run {preheld_run_id!r}"
+                raise DispatchMutexUnavailableError(msg)
+            return nullcontext()
         if expected_stage is None:
             return RuntimeDispatchMutex(
                 storage=self.storage,

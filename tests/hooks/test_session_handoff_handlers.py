@@ -793,6 +793,129 @@ class TestSessionStartHandoff:
         assert mock_dependencies["session_task_manager"].link_task.call_args is not None
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_concurrent_clear_handoffs_bind_matching_parent_once(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        from gobby.sessions.handoff_identity import terminal_context_matches_session
+
+        parent_a = MagicMock(
+            id="parent-a",
+            seq_num=101,
+            project_id="proj-1",
+            summary_markdown="# Parent A\nSummary A",
+            terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+        )
+        parent_b = MagicMock(
+            id="parent-b",
+            seq_num=102,
+            project_id="proj-1",
+            summary_markdown="# Parent B\nSummary B",
+            terminal_context={"tmux_pane": "%2", "tmux_socket_path": "/tmp/tmux"},
+        )
+        child_a = MagicMock(id="child-a", seq_num=103, project_id="proj-1")
+        child_b = MagicMock(id="child-b", seq_num=104, project_id="proj-1")
+        sessions = {
+            parent_a.id: parent_a,
+            parent_b.id: parent_b,
+            child_a.id: child_a,
+            child_b.id: child_b,
+        }
+        parent_vars = {
+            parent_a.id: {"task_claimed": True, "claimed_tasks": {"task-a": "#201"}},
+            parent_b.id: {"task_claimed": True, "claimed_tasks": {"task-b": "#202"}},
+        }
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.side_effect = lambda session_id: parent_vars.get(
+            session_id, {"auto_inject_handoff": True}
+        )
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+        mock_dependencies["session_storage"].get.side_effect = sessions.get
+
+        candidates = [parent_b, parent_a]
+
+        def find_parent(**kwargs: Any) -> MagicMock | None:
+            assert kwargs["candidate_limit"] == 8
+            child_context = kwargs["terminal_context"]
+            return next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if terminal_context_matches_session(candidate, child_context)
+                ),
+                None,
+            )
+
+        mock_dependencies["session_storage"].find_parent.side_effect = find_parent
+        mock_dependencies["session_manager"].register_session.side_effect = [
+            child_a.id,
+            child_b.id,
+        ]
+        mock_dependencies["session_task_manager"] = MagicMock()
+        claimed_tasks = {
+            "task-a": MagicMock(
+                status="needs_review",
+                claimed_by_session_id=parent_a.id,
+                current_stage={"state": "needs_review"},
+            ),
+            "task-b": MagicMock(
+                status="needs_review",
+                claimed_by_session_id=parent_b.id,
+                current_stage={"state": "needs_review"},
+            ),
+        }
+        mock_dependencies["task_manager"].get_task.side_effect = claimed_tasks.get
+        handlers = EventHandlers(**mock_dependencies)
+        handlers._activate_default_agent = MagicMock(return_value=None)
+
+        for external_id, terminal_context in (
+            ("external-a", parent_a.terminal_context),
+            ("external-b", parent_b.terminal_context),
+        ):
+            response = handlers.handle_session_start(
+                make_event(
+                    HookEventType.SESSION_START,
+                    session_id=external_id,
+                    data={
+                        "source": "clear",
+                        "cwd": "/some/dir",
+                        "terminal_context": terminal_context,
+                    },
+                    metadata={},
+                )
+            )
+            assert response.decision == "allow"
+
+        merged_by_child: dict[str, list[dict[str, Any]]] = {
+            child_a.id: [],
+            child_b.id: [],
+        }
+        for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list:
+            if args[0] in merged_by_child:
+                merged_by_child[args[0]].append(args[1])
+        assert any(
+            payload.get("session_summary") == parent_a.summary_markdown
+            for payload in merged_by_child[child_a.id]
+        )
+        assert any(
+            payload.get("claimed_tasks") == {"task-a": "#201"}
+            for payload in merged_by_child[child_a.id]
+        )
+        assert any(
+            payload.get("session_summary") == parent_b.summary_markdown
+            for payload in merged_by_child[child_b.id]
+        )
+        assert any(
+            payload.get("claimed_tasks") == {"task-b": "#202"}
+            for payload in merged_by_child[child_b.id]
+        )
+        claim_calls = mock_dependencies["task_manager"].claim_task.call_args_list
+        assert [(call.args[0], call.kwargs["session_id"]) for call in claim_calls] == [
+            ("task-a", child_a.id),
+            ("task-b", child_b.id),
+        ]
+        assert len({call.args[0] for call in claim_calls}) == 2
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_task_claim_handoff_skips_reassignment_when_owned_elsewhere(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
     ) -> None:

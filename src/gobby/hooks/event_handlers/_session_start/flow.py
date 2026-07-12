@@ -12,14 +12,17 @@ import psycopg
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
-from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd, hook_cwd
+from gobby.hooks.terminal_context import (
+    enrich_terminal_context_with_cwd,
+    hook_cwd,
+    is_gobby_acp_child,
+)
 from gobby.sessions.handoff_identity import terminal_contexts_match
 
 from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
 from .context import classify_session_start_context, mark_startup_context_injected
 from .handoff import find_parent_session, populate_handoff_session_variables
 from .profile import seed_user_profile_content
-from .types import AgentActivationResult
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
@@ -340,13 +343,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
     terminal_context = enrich_terminal_context_with_cwd(terminal_context, cwd)
 
-    if terminal_context and terminal_context.get("gobby_acp_child") == "1":
+    if is_gobby_acp_child(terminal_context):
         handler.logger.info(
             "Skipping session registration for ACP child process",
             extra={
                 "cli": cli_source,
                 "external_id": external_id,
-                "gobby_acp_child": terminal_context.get("gobby_acp_child"),
+                "gobby_acp_child": "1",
             },
         )
         return HookResponse()
@@ -401,6 +404,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                             external_id=external_id,
                             source=cli_source,
                             session_id=gobby_session_id_from_env,
+                            machine_id=existing_session.machine_id,
+                            project_id=existing_session.project_id,
                         )
                     return cast(
                         HookResponse,
@@ -434,7 +439,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if project_id is None:
         return HookResponse(decision="allow")
 
-    machine_id = handler._get_machine_id()
+    machine_id = event.machine_id or handler._get_machine_id()
 
     handler.logger.debug(
         f"SESSION_START: cli={cli_source}, project={project_id}, source={session_source}"
@@ -556,11 +561,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     )
 
     _t_activate = time.monotonic()
-    agent_result: AgentActivationResult | None = None
     if session_id and not input_data.get("skip_default_agent_activation"):
         try:
             agent_override = input_data.get("agent_name_override")
-            agent_result = handler._activate_default_agent(
+            handler._activate_default_agent(
                 session_id,
                 cli_source,
                 project_id,
@@ -643,8 +647,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             target_session=session_obj,
         )
 
-    claimed_tasks_info = handler._get_claimed_task_info(session_id, project_id)
-
     def _ms(a: float, b: float) -> int:
         return int((b - a) * 1000)
 
@@ -686,9 +688,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             task_id=event.task_id,
             additional_context=additional_context,
             terminal_context=terminal_context,
-            agent_info=agent_result,
-            session_source=session_source,
-            claimed_tasks_info=claimed_tasks_info,
         ),
     )
     if context_decision.mode == "full":
@@ -743,11 +742,13 @@ def handle_pre_created_session(
             external_id=external_id,
             source=cli_source,
             session_id=existing_session.id,
+            machine_id=session_obj.machine_id,
+            project_id=session_obj.project_id,
         )
 
     session_id = session_obj.id
     parent_session_id = session_obj.parent_session_id
-    machine_id = handler._get_machine_id()
+    machine_id = event.machine_id or session_obj.machine_id or handler._get_machine_id()
 
     if transcript_path and handler._session_coordinator:
         try:
@@ -778,7 +779,6 @@ def handle_pre_created_session(
             handler.logger.warning(f"Failed to seed memory recall vars: {e}")
         _seed_wiki_overview_var(handler, session_id, session_obj.project_id)
 
-    agent_result: AgentActivationResult | None = None
     input_data = event.data if event else {}
     session_source = input_data.get("source", "startup")
     context_decision = classify_session_start_context(
@@ -789,19 +789,26 @@ def handle_pre_created_session(
         is_existing_session=True,
     )
 
-    try:
-        agent_override = input_data.get("agent_name_override")
-        agent_result = handler._activate_default_agent(
-            session_id,
-            cli_source,
-            session_obj.project_id,
-            agent_name_override=agent_override,
-        )
-    except Exception as e:
-        handler.logger.error(
-            f"Failed to activate default agent for pre-created session: {e}",
-            exc_info=True,
-        )
+    if not input_data.get("skip_default_agent_activation"):
+        try:
+            agent_override = input_data.get("agent_name_override")
+            handler._activate_default_agent(
+                session_id,
+                cli_source,
+                session_obj.project_id,
+                agent_name_override=agent_override,
+            )
+        except Exception as e:
+            handler.logger.error(
+                f"Failed to activate default agent for pre-created session: {e}",
+                exc_info=True,
+            )
+
+    if handler._session_manager is not None:
+        try:
+            seed_user_profile_content(handler, session_id)
+        except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
+            handler.logger.warning(f"Failed to seed user profile vars: {e}")
 
     event.metadata["_platform_session_id"] = session_id
 
@@ -827,8 +834,6 @@ def handle_pre_created_session(
         )
         if claimed_ctx:
             additional_context.append(claimed_ctx)
-
-    claimed_tasks_info = handler._get_claimed_task_info(session_id, session_obj.project_id)
 
     _consume_pending_compact_self_continuation(
         handler,
@@ -859,9 +864,6 @@ def handle_pre_created_session(
             additional_context=additional_context,
             is_pre_created=True,
             terminal_context=session_obj.terminal_context,
-            agent_info=agent_result,
-            session_source=session_source,
-            claimed_tasks_info=claimed_tasks_info,
         ),
     )
     if context_decision.mode == "full":

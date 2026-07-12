@@ -1,7 +1,7 @@
 """Tests for the SessionManager service layer."""
 
 from importlib import import_module
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -459,6 +459,87 @@ class TestSessionManagerCaching:
 
         result = session_mgr.get_session_id("manual-cli", "claude")
         assert result == "manual-session-id"
+
+    def test_cache_session_mapping_is_scoped_by_machine_and_project(
+        self, session_mgr: SessionManager
+    ) -> None:
+        session_mgr.cache_session_mapping(
+            "shared-cli",
+            "claude",
+            "session-a",
+            machine_id="machine-a",
+            project_id="project-a",
+        )
+        session_mgr.cache_session_mapping(
+            "shared-cli",
+            "claude",
+            "session-b",
+            machine_id="machine-b",
+            project_id="project-b",
+        )
+
+        assert (
+            session_mgr.get_session_id(
+                "shared-cli", "claude", machine_id="machine-a", project_id="project-a"
+            )
+            == "session-a"
+        )
+        assert (
+            session_mgr.get_session_id(
+                "shared-cli", "claude", machine_id="machine-b", project_id="project-b"
+            )
+            == "session-b"
+        )
+        assert session_mgr.get_session_id("shared-cli", "claude") is None
+
+    def test_cache_session_mapping_expires_entries(self, session_mgr: SessionManager) -> None:
+        with patch(
+            "gobby.storage.sessions._registration_cache.time.monotonic",
+            side_effect=[0.0, 3600.0],
+        ):
+            session_mgr.cache_session_mapping(
+                "expiring-cli",
+                "claude",
+                "session-id",
+                machine_id="machine",
+                project_id="project",
+            )
+            assert (
+                session_mgr.get_session_id(
+                    "expiring-cli", "claude", machine_id="machine", project_id="project"
+                )
+                is None
+            )
+
+    def test_cache_session_mapping_evicts_oldest_entry(self, session_mgr: SessionManager) -> None:
+        with (
+            patch("gobby.storage.sessions._registration_cache._SESSION_MAPPING_MAX_ENTRIES", 2),
+            patch(
+                "gobby.storage.sessions._registration_cache.time.monotonic",
+                side_effect=[0.0, 1.0, 2.0, 3.0, 4.0],
+            ),
+        ):
+            for suffix in ("a", "b", "c"):
+                session_mgr.cache_session_mapping(
+                    f"cli-{suffix}",
+                    "claude",
+                    f"session-{suffix}",
+                    machine_id="machine",
+                    project_id="project",
+                )
+
+            assert (
+                session_mgr.get_session_id(
+                    "cli-a", "claude", machine_id="machine", project_id="project"
+                )
+                is None
+            )
+            assert (
+                session_mgr.get_session_id(
+                    "cli-c", "claude", machine_id="machine", project_id="project"
+                )
+                == "session-c"
+            )
 
     def test_thread_safety(
         self,

@@ -13,19 +13,50 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.config.url_validation import validate_endpoint_url
+from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
+    new_blocking_effect_deadline,
+    remaining_blocking_effect_seconds,
+)
+from gobby.hooks.events import HookEvent, HookResponse
 from gobby.utils.env import expand_env_mapping, expand_env_variables
 
 if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
-    from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger(__name__)
+_MAX_WEBHOOK_RESPONSE_BYTES = 64 * 1024
+
+
+class _WebhookResponseTooLarge(ValueError):
+    """Raised when a webhook response exceeds the configured body ceiling."""
+
+
+async def _read_bounded_response(response: httpx.Response) -> bytes:
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > _MAX_WEBHOOK_RESPONSE_BYTES:
+            raise _WebhookResponseTooLarge
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > _MAX_WEBHOOK_RESPONSE_BYTES:
+            raise _WebhookResponseTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @dataclass
@@ -71,6 +102,13 @@ class WebhookDispatcher:
         self._client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
 
+    def _new_client(self) -> httpx.AsyncClient:
+        """Create an HTTP client owned by the caller's event loop."""
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(self.config.default_timeout),
+            follow_redirects=False,
+        )
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client.
 
@@ -81,10 +119,7 @@ class WebhookDispatcher:
             async with self._client_lock:
                 # Double-check after acquiring lock
                 if self._client is None:
-                    self._client = httpx.AsyncClient(
-                        timeout=httpx.Timeout(self.config.default_timeout),
-                        follow_redirects=True,
-                    )
+                    self._client = self._new_client()
         return self._client
 
     async def close(self) -> None:
@@ -116,7 +151,9 @@ class WebhookDispatcher:
 
         return False
 
-    def _build_payload(self, event: HookEvent) -> dict[str, Any]:
+    def _build_payload(
+        self, event: HookEvent, response: HookResponse | None = None
+    ) -> dict[str, Any]:
         """Build the webhook payload from a hook event.
 
         Args:
@@ -125,7 +162,7 @@ class WebhookDispatcher:
         Returns:
             Dictionary payload for the webhook POST body.
         """
-        return {
+        payload = {
             "event_type": event.event_type.value,
             "session_id": event.session_id,
             "source": event.source.value,
@@ -137,11 +174,16 @@ class WebhookDispatcher:
             "task_id": event.task_id,
             "metadata": event.metadata,
         }
+        if response is not None:
+            payload["response"] = asdict(response)
+        return payload
 
     async def _dispatch_single(
         self,
         endpoint: WebhookEndpointConfig,
         payload: dict[str, Any],
+        *,
+        client: httpx.AsyncClient | None = None,
     ) -> WebhookResult:
         """Dispatch a webhook to a single endpoint with retry logic.
 
@@ -152,7 +194,8 @@ class WebhookDispatcher:
         Returns:
             WebhookResult with success/failure info.
         """
-        client = await self._get_client()
+        if client is None:
+            client = await self._get_client()
         start_time = datetime.now()
         attempts = 0
         last_error: str | None = None
@@ -165,25 +208,60 @@ class WebhookDispatcher:
             "X-Gobby-Event": payload.get("event_type", "unknown"),
         }
         headers.update(expand_env_mapping(endpoint.headers) or {})
-        url = expand_env_variables(endpoint.url)
+        try:
+            url = validate_endpoint_url(
+                expand_env_variables(endpoint.url),
+                field_name="webhook URL",
+            )
+        except ValueError as exc:
+            return WebhookResult(
+                endpoint_name=endpoint.name,
+                success=False,
+                error=f"Invalid webhook URL: {exc}",
+                decision="block" if endpoint.can_block and endpoint.fail_closed else None,
+            )
 
         while attempts <= endpoint.retry_count:
             attempts += 1
 
             try:
-                response = await client.post(
+                request = client.build_request(
+                    "POST",
                     url,
                     json=payload,
                     headers=headers,
                     timeout=endpoint.timeout,
                 )
+                response = await client.send(request, stream=True, follow_redirects=False)
+                try:
+                    response_content = await _read_bounded_response(response)
+                except _WebhookResponseTooLarge:
+                    duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+                    logger.warning(
+                        "Webhook %s response exceeded %d bytes",
+                        endpoint.name,
+                        _MAX_WEBHOOK_RESPONSE_BYTES,
+                    )
+                    return WebhookResult(
+                        endpoint_name=endpoint.name,
+                        success=False,
+                        status_code=response.status_code,
+                        error=f"Response body exceeds {_MAX_WEBHOOK_RESPONSE_BYTES} bytes",
+                        attempts=attempts,
+                        duration_ms=duration_ms,
+                        decision="block" if endpoint.can_block and endpoint.fail_closed else None,
+                    )
+                finally:
+                    await response.aclose()
 
                 duration_ms = (datetime.now() - start_time).total_seconds() * 1000
 
                 # Parse response body if JSON
                 response_body: dict[str, Any] | None = None
                 try:
-                    response_body = response.json()
+                    parsed_body = json.loads(response_content)
+                    if isinstance(parsed_body, dict):
+                        response_body = parsed_body
                 except (json.JSONDecodeError, ValueError):
                     pass
 
@@ -205,9 +283,12 @@ class WebhookDispatcher:
                         decision=decision,
                     )
 
-                # 4xx errors are not retryable (client error)
-                if 400 <= response.status_code < 500:
-                    logger.warning(f"Webhook {endpoint.name} client error: {response.status_code}")
+                # Redirects and client errors are not retryable. Redirect following is disabled,
+                # so returning immediately also prevents repeated requests to the origin.
+                if 300 <= response.status_code < 500:
+                    logger.warning(
+                        f"Webhook {endpoint.name} non-success response: {response.status_code}"
+                    )
                     return WebhookResult(
                         endpoint_name=endpoint.name,
                         success=False,
@@ -262,7 +343,43 @@ class WebhookDispatcher:
             decision="block" if endpoint.can_block and endpoint.fail_closed else None,
         )
 
-    async def trigger(self, event: HookEvent) -> list[WebhookResult]:
+    async def _dispatch_blocking(
+        self,
+        endpoint: WebhookEndpointConfig,
+        payload: dict[str, Any],
+        deadline: float,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> WebhookResult:
+        """Dispatch one blocking endpoint within the shared hook deadline."""
+        remaining = remaining_blocking_effect_seconds(
+            deadline,
+            maximum=BLOCKING_EFFECT_BUDGET_SECONDS,
+        )
+        if remaining <= 0:
+            return self._blocking_deadline_result(endpoint)
+        try:
+            async with asyncio.timeout(remaining):
+                return await self._dispatch_single(endpoint, payload, client=client)
+        except TimeoutError:
+            logger.error("Blocking webhook %s exceeded aggregate deadline", endpoint.name)
+            return self._blocking_deadline_result(endpoint)
+
+    @staticmethod
+    def _blocking_deadline_result(endpoint: WebhookEndpointConfig) -> WebhookResult:
+        return WebhookResult(
+            endpoint_name=endpoint.name,
+            success=False,
+            error="Aggregate blocking deadline exceeded",
+            decision="block" if endpoint.fail_closed else None,
+        )
+
+    async def trigger(
+        self,
+        event: HookEvent,
+        *,
+        deadline: float | None = None,
+    ) -> list[WebhookResult]:
         """Trigger webhooks for a hook event.
 
         Dispatches HTTP POST requests to all matching webhook endpoints.
@@ -295,10 +412,11 @@ class WebhookDispatcher:
         non_blocking = [ep for ep in matching_endpoints if not ep.can_block]
 
         results: list[WebhookResult] = []
+        blocking_deadline = deadline if deadline is not None else new_blocking_effect_deadline()
 
         # Dispatch blocking webhooks first (sequentially, need their decisions)
         for endpoint in blocking:
-            result = await self._dispatch_single(endpoint, payload)
+            result = await self._dispatch_blocking(endpoint, payload, blocking_deadline)
             results.append(result)
 
             # If a blocking webhook says "block", we might stop processing

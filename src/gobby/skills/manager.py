@@ -17,8 +17,8 @@ from gobby.storage.skills import (
     ChangeEvent,
     LocalSkillManager,
     Skill,
-    SkillChangeNotifier,
     SkillSourceType,
+    get_skill_change_notifier,
 )
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ class SkillManager:
         self._project_id = project_id
 
         # Set up change notifier
-        self._notifier = SkillChangeNotifier()
+        self._notifier = get_skill_change_notifier(db)
         self._notifier.add_listener(self._on_skill_change)
 
         # Initialize storage with notifier

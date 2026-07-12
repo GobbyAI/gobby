@@ -18,7 +18,6 @@ from gobby.tasks.state_semantics import (
 
 if TYPE_CHECKING:
     from gobby.hooks.event_handlers._base import EventHandlersBase
-    from gobby.hooks.event_handlers._session_start import AgentActivationResult
     from gobby.storage.session_models import Session
 
 _logger = logging.getLogger(__name__)
@@ -186,9 +185,6 @@ def compose_session_response(
     additional_context: list[str] | None = None,
     is_pre_created: bool = False,
     terminal_context: dict[str, Any] | None = None,
-    agent_info: AgentActivationResult | None = None,
-    session_source: str | None = None,
-    claimed_tasks_info: list[tuple[str, str, str]] | None = None,
 ) -> HookResponse:
     """Build HookResponse for session start.
 
@@ -207,8 +203,6 @@ def compose_session_response(
         additional_context: Additional context strings to append (e.g., task/skill context)
         is_pre_created: Whether this is a pre-created session
         terminal_context: Terminal context dict to add to metadata
-        session_source: Session source (e.g., "clear", "compact", "startup") for handoff indicator
-        claimed_tasks_info: Pre-fetched claimed task info from get_claimed_task_info()
 
     Returns:
         HookResponse with system_message, context, and metadata

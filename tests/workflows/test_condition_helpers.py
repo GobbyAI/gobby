@@ -156,6 +156,29 @@ class TestCompletionEvidenceReady:
             is False
         )
 
+    def test_unknown_validation_neither_satisfies_nor_clears_failure(self) -> None:
+        unknown = {
+            "evidence_type": "validation_command",
+            "command": "uv run pytest unknown.py",
+            "success": None,
+        }
+        assert completion_evidence_ready({"verification_evidence": [unknown]}) is False
+        assert (
+            completion_evidence_ready(
+                {
+                    "verification_evidence": [
+                        {
+                            "evidence_type": "validation_command",
+                            "command": "uv run pytest failing.py",
+                            "success": False,
+                        },
+                        unknown,
+                    ]
+                }
+            )
+            is False
+        )
+
     def test_manual_evidence_satisfies_without_failed_validation(self) -> None:
         assert (
             completion_evidence_ready(

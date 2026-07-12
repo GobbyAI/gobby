@@ -32,6 +32,18 @@ _AUTH_PROMPT_RE = re.compile(
 )
 _NO_ACTIVITY_ERROR = "Agent completed with no activity (0 tool calls, 0 turns)"
 _INCOMPLETE_STEP_WORKFLOW_ERROR = "Agent session ended before step workflow completed"
+_TMUX_CAPTURE_HISTORY_LINES = 2000
+_MAX_TMUX_RESULT_CHARS = 64_000
+_TMUX_TRUNCATION_MARKER = "[... tmux output truncated; showing recent output ...]\n"
+
+
+def _bound_tmux_result(output: str) -> str:
+    """Return stripped tmux output capped to the newest diagnostic context."""
+    stripped = output.strip()
+    if len(stripped) <= _MAX_TMUX_RESULT_CHARS:
+        return stripped
+    retained_chars = _MAX_TMUX_RESULT_CHARS - len(_TMUX_TRUNCATION_MARKER)
+    return f"{_TMUX_TRUNCATION_MARKER}{stripped[-retained_chars:]}"
 
 
 def _format_no_activity_error(result: Any) -> str:
@@ -403,16 +415,29 @@ class SessionCoordinator:
             tmux_session_name = agent_run.tmux_session_name
             if not result and tmux_session_name:
                 try:
-                    import subprocess
+                    # Invoked only with fixed tmux argv and shell execution disabled.
+                    import subprocess  # nosec B404
 
                     from gobby.agents.tmux import get_configured_tmux_command_prefix
 
                     cmd = get_configured_tmux_command_prefix()
-                    cmd.extend(["capture-pane", "-t", tmux_session_name, "-p", "-S", "-"])
+                    cmd.extend(
+                        [
+                            "capture-pane",
+                            "-t",
+                            tmux_session_name,
+                            "-p",
+                            "-S",
+                            f"-{_TMUX_CAPTURE_HISTORY_LINES}",
+                        ]
+                    )
 
-                    proc = subprocess.run(cmd, capture_output=True, timeout=5, text=True)
+                    # The configured tmux binary receives a fixed argument list.
+                    proc = subprocess.run(  # nosec B603
+                        cmd, capture_output=True, timeout=5, text=True
+                    )
                     if proc.returncode == 0 and proc.stdout.strip():
-                        result = proc.stdout.strip()
+                        result = _bound_tmux_result(proc.stdout)
                         self.logger.info(
                             f"Captured result from tmux session '{tmux_session_name}' "
                             f"for agent {agent_run_id} ({len(result)} chars)"
@@ -425,13 +450,17 @@ class SessionCoordinator:
             # Clean up the tmux session (remain-on-exit keeps it alive for capture)
             if tmux_session_name:
                 try:
-                    import subprocess
+                    # Invoked only with fixed tmux argv and shell execution disabled.
+                    import subprocess  # nosec B404
 
                     from gobby.agents.tmux import get_configured_tmux_command_prefix
 
                     kill_cmd = get_configured_tmux_command_prefix()
                     kill_cmd.extend(["kill-session", "-t", tmux_session_name])
-                    subprocess.run(kill_cmd, capture_output=True, timeout=5)
+                    # The configured tmux binary receives a fixed argument list.
+                    subprocess.run(  # nosec B603
+                        kill_cmd, capture_output=True, timeout=5
+                    )
                 except Exception as e:
                     self.logger.debug(f"tmux kill-session failed for {tmux_session_name}: {e}")
 
@@ -441,16 +470,13 @@ class SessionCoordinator:
             session_id = session.id
             if self._message_processor:
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        flush_task = asyncio.ensure_future(
-                            self._message_processor.flush_session(session_id)
-                        )
-                        loop.call_later(
-                            5.0, lambda: flush_task.cancel() if not flush_task.done() else None
-                        )
-                    else:
-                        loop.run_until_complete(self._message_processor.flush_session(session_id))
+                    if not self._event_loop or not self._event_loop.is_running():
+                        raise RuntimeError("daemon event loop is not available")
+                    flush_future = asyncio.run_coroutine_threadsafe(
+                        self._message_processor.flush_session(session_id),
+                        self._event_loop,
+                    )
+                    flush_future.result(timeout=5)
                 except Exception as e:
                     self.logger.debug(f"Failed to flush session stats for {session_id}: {e}")
 
@@ -458,6 +484,11 @@ class SessionCoordinator:
                 refreshed = self._session_manager.get(session_id) if self._session_manager else None
                 if refreshed:
                     session = refreshed
+                    result = (
+                        getattr(session, "summary_markdown", None)
+                        or getattr(session, "last_assistant_content", None)
+                        or result
+                    )
 
             # Count tool calls and turns from session stats
             tool_calls_count = getattr(session, "tool_call_count", 0)
@@ -469,7 +500,7 @@ class SessionCoordinator:
                     incomplete_workflow_error = (
                         f"{incomplete_workflow_error}\n\n{_format_no_activity_error(result)}"
                     )
-                self._agent_run_manager.fail(
+                updated_run = self._agent_run_manager.fail(
                     run_id=agent_run_id,
                     error=incomplete_workflow_error,
                     tool_calls_count=tool_calls_count,
@@ -479,12 +510,17 @@ class SessionCoordinator:
                     f"Agent run {agent_run_id} marked as failed: "
                     f"incomplete step workflow on session end"
                 )
-                self._notify_agent_completion(agent_run_id, "error")
+                notification_status = self._agent_run_notification_status(
+                    agent_run_id,
+                    updated_run,
+                    default="error",
+                )
+                self._notify_agent_completion(agent_run_id, notification_status)
                 return
 
             # Guard: agent exited cleanly but did nothing — treat as error
             if tool_calls_count == 0 and turns_used == 0:
-                self._agent_run_manager.fail(
+                updated_run = self._agent_run_manager.fail(
                     run_id=agent_run_id,
                     error=_format_no_activity_error(result),
                 )
@@ -492,11 +528,16 @@ class SessionCoordinator:
                     f"Agent run {agent_run_id} marked as failed: "
                     f"no activity detected (0 tool calls, 0 turns)"
                 )
-                self._notify_agent_completion(agent_run_id, "error")
+                notification_status = self._agent_run_notification_status(
+                    agent_run_id,
+                    updated_run,
+                    default="error",
+                )
+                self._notify_agent_completion(agent_run_id, notification_status)
                 return
 
             # Mark as success
-            self._agent_run_manager.complete(
+            updated_run = self._agent_run_manager.complete(
                 run_id=agent_run_id,
                 result=result,
                 tool_calls_count=tool_calls_count,
@@ -508,7 +549,12 @@ class SessionCoordinator:
             )
 
             # Notify completion registry (fallback if kill_agent didn't fire it)
-            self._notify_agent_completion(agent_run_id, "success")
+            notification_status = self._agent_run_notification_status(
+                agent_run_id,
+                updated_run,
+                default="success",
+            )
+            self._notify_agent_completion(agent_run_id, notification_status)
 
         except Exception as e:
             self.logger.error(f"Failed to complete agent run {agent_run_id}: {e}")
@@ -520,6 +566,27 @@ class SessionCoordinator:
                 self.release_session_worktrees(session.id)
             except Exception as e:
                 self.logger.warning(f"Failed to release worktrees for session {session.id}: {e}")
+
+    def _agent_run_notification_status(
+        self,
+        run_id: str,
+        updated_run: Any | None,
+        *,
+        default: str,
+    ) -> str:
+        """Return the persisted status when another terminalizer won the race."""
+        if updated_run is not None:
+            return default
+        stored_run = self._agent_run_manager.get(run_id) if self._agent_run_manager else None
+        if stored_run is None:
+            self.logger.warning("Agent run %s disappeared after terminalization race", run_id)
+            return default
+        self.logger.debug(
+            "Agent run %s terminalized concurrently with status %s",
+            run_id,
+            stored_run.status,
+        )
+        return stored_run.status
 
     def _incomplete_step_workflow_error(self, session_id: str) -> str | None:
         """Return a failure reason if an active step workflow is still incomplete."""

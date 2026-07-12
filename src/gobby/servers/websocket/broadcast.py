@@ -16,8 +16,7 @@ from websockets.exceptions import ConnectionClosed
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
-
-BROADCAST_SEND_TIMEOUT_SECONDS = 5.0
+BROADCAST_SEND_TIMEOUT_SECONDS = 2.0
 BROADCAST_CLOSE_TIMEOUT_SECONDS = 1.0
 
 
@@ -119,7 +118,6 @@ class BroadcastMixin:
                 logger.warning("Failed to close timed-out broadcast client: %s", exc)
             return False
         except ConnectionClosed:
-            # Client disconnecting, will be cleaned up in handler.
             return False
         except Exception as exc:
             logger.warning("Broadcast failed for client: %s", exc)
@@ -147,6 +145,7 @@ class BroadcastMixin:
                     recipients.append(websocket)
             except Exception as exc:
                 logger.warning("Broadcast subscription check failed for client: %s", exc)
+                self.clients.pop(websocket, None)
                 failed_count += 1
 
         results = await asyncio.gather(
@@ -154,6 +153,9 @@ class BroadcastMixin:
         )
         sent_count = sum(results)
         failed_count += len(results) - sent_count
+        for websocket, sent in zip(recipients, results, strict=True):
+            if not sent:
+                self.clients.pop(websocket, None)
 
         if sent_count > 0 or failed_count > 0:
             logger.debug(

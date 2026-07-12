@@ -256,6 +256,69 @@ async def test_later_successful_validation_clears_failed_validation_block(
 
 
 @pytest.mark.asyncio
+async def test_different_validation_category_does_not_clear_failure(
+    db: HubDatabase,
+) -> None:
+    """A lint success cannot resolve an earlier test failure."""
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id=SESSION_ID,
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest tests/workflows/test_hooks.py",
+                    "categories": ["test"],
+                    "success": False,
+                },
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run ruff check src/gobby",
+                    "categories": ["lint"],
+                    "success": True,
+                },
+            ],
+        ),
+    )
+
+    assert response.decision == "block"
+    assert "require-completion-readiness-evidence" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_same_validation_category_clears_failure(
+    db: HubDatabase,
+) -> None:
+    """A later test success resolves an earlier test failure."""
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(),
+        session_id=SESSION_ID,
+        variables=_ready_variables(
+            verification_evidence=[
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest tests/workflows/test_hooks.py",
+                    "categories": ["test"],
+                    "success": False,
+                },
+                {
+                    "evidence_type": "validation_command",
+                    "command": "uv run pytest tests/workflows/test_rules.py",
+                    "categories": ["test"],
+                    "success": True,
+                },
+            ],
+        ),
+    )
+
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
 async def test_manual_evidence_satisfies_readiness_without_failed_validation(
     db: HubDatabase,
 ) -> None:

@@ -28,7 +28,7 @@ class VerificationEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_type: str = Field(strict=True)
-    success: bool = Field(strict=True)
+    success: bool | None = Field(strict=True)
     timestamp: str | None = Field(default=None, strict=True)
     command: str | None = Field(default=None, strict=True)
     summary: str | None = Field(default=None, strict=True)
@@ -87,9 +87,10 @@ def append_verification_evidence(
             extra={"stored_type": type(existing).__name__, "session_id": session_id},
         )
         items = []
-    return [*items, validated.model_dump(mode="json", exclude_none=True)][
-        -MAX_VERIFICATION_EVIDENCE_ITEMS:
-    ]
+    serialized = validated.model_dump(mode="json", exclude_none=True)
+    if validated.success is None:
+        serialized["success"] = None
+    return [*items, serialized][-MAX_VERIFICATION_EVIDENCE_ITEMS:]
 
 
 def validate_verification_evidence(evidence: Mapping[str, Any]) -> str | None:

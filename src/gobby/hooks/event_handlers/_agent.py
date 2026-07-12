@@ -86,11 +86,35 @@ class AgentEventHandlerMixin(EventHandlersBase):
         prompt = input_data.get("prompt", "")
         stripped_prompt = prompt.strip()
         session_id = event.metadata.get("_platform_session_id")
+        project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
         context_parts = []
 
         if session_id:
             self.logger.debug(f"BEFORE_AGENT: session {session_id}, prompt_len={len(prompt)}")
+
+            # A new parent turn cannot inherit live subagents from the previous
+            # turn. Reset both values together to recover from missed stop hooks.
+            if self._session_manager:
+                try:
+                    from gobby.workflows.state_manager import SessionVariableManager
+
+                    sv_mgr = SessionVariableManager(self._session_manager.db)
+                    sv_mgr.merge_variables(
+                        session_id,
+                        {"subagent_count": 0, "is_subagent": False},
+                    )
+                except (psycopg.Error, KeyError, TypeError, ValueError) as e:
+                    self.logger.warning(f"Failed to reset subagent count on BEFORE_AGENT: {e}")
+
+            try:
+                from gobby.hooks.event_handlers._session_start.transcripts import (
+                    ensure_qwen_transcript_tracking,
+                )
+
+                ensure_qwen_transcript_tracking(self, event, session_id)
+            except Exception as e:
+                self.logger.warning("Failed to register deferred Qwen transcript: %s", e)
 
             # Update status to active (unless /clear or /exit)
             prompt_lower = stripped_prompt.lower()
@@ -132,12 +156,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
             # ``stripped_prompt`` is truthy here, so split() always has a first token.
             skill_identifier = stripped_prompt.split(None, 1)[0]
             try:
-                skill_context = self._intercept_skill_command(stripped_prompt, session_id)
+                skill_context = self._intercept_skill_command(
+                    stripped_prompt,
+                    session_id,
+                    project_id,
+                )
                 if skill_context:
                     context_parts.append(skill_context)
                 else:
                     # Try trigger-based suggestion for non-command prompts
-                    suggestion = self._suggest_skills(stripped_prompt)
+                    suggestion = self._suggest_skills(stripped_prompt, project_id)
                     if suggestion:
                         context_parts.append(suggestion)
             except Exception as e:
@@ -238,7 +266,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
             },
         )
 
-    def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
+    def _intercept_skill_command(
+        self,
+        prompt: str,
+        session_id: str | None = None,
+        project_id: str | None = None,
+    ) -> str | None:
         """Intercept /gobby or $gobby skill commands.
 
         Returns context string to add, or None if not a Gobby router command.
@@ -250,6 +283,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return None
 
         command_prefix = "$gobby" if prompt.startswith("$") else "/gobby"
+        project_kwargs = {"project_id": project_id} if project_id is not None else {}
         skill_name = match.group(1)  # None for bare /gobby or space syntax
         args = (match.group(2) or "").strip()
 
@@ -265,29 +299,41 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     sub_parts = parts[1].split(None, 1)
                     skill_name = sub_parts[0]
                     args = sub_parts[1] if len(sub_parts) > 1 else ""
-                    resolved = self._skill_manager.resolve_skill_name(skill_name)
+                    resolved = self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
                 # Bare Gobby skills → fall through to help.
             elif first_word.lower() != "help":
                 skill_name = first_word
-                resolved = self._skill_manager.resolve_skill_name(first_word)
+                resolved = self._skill_manager.resolve_skill_name(first_word, **project_kwargs)
                 if resolved:
                     args = parts[1] if len(parts) > 1 else ""
 
         # Bare Gobby or Gobby help → generate help.
         if not skill_name or skill_name.lower() == "help":
-            return self._generate_help_content(session_id, command_prefix=command_prefix)
+            return self._generate_help_content(
+                session_id,
+                command_prefix=command_prefix,
+                **project_kwargs,
+            )
 
         # Gobby skillname → resolve and direct the agent to fetch it on demand.
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skill = resolved if resolved else self._skill_manager.resolve_skill_name(skill_name)
+        skill = (
+            resolved
+            if resolved
+            else self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
+        )
 
         if not skill:
-            return self._skill_not_found_context(skill_name, command_prefix=command_prefix)
+            return self._skill_not_found_context(
+                skill_name,
+                command_prefix=command_prefix,
+                **project_kwargs,
+            )
 
         return skill_fetch_directive(skill.name)
 
-    def _suggest_skills(self, prompt: str) -> str | None:
+    def _suggest_skills(self, prompt: str, project_id: str | None = None) -> str | None:
         """Suggest skills based on trigger keyword matching.
 
         Only runs for non-command prompts. Returns a lightweight hint
@@ -299,7 +345,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        matches = self._skill_manager.match_triggers(prompt, threshold=0.7)
+        matches = self._skill_manager.match_triggers(
+            prompt,
+            threshold=0.7,
+            project_id=project_id,
+        )
 
         if not matches:
             return None
@@ -312,11 +362,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         self,
         session_id: str | None = None,
         command_prefix: str = "/gobby",
+        project_id: str | None = None,
     ) -> str:
         """Generate help content listing all available skills."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skills = self._skill_manager.discover_core_skills()
+        skills = self._skill_manager.discover_core_skills(project_id)
 
         if session_id and self._session_manager:
             try:
@@ -329,8 +380,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     if active_names is not None:
                         active_set = set(active_names)
                         skills = [s for s in skills if s.name in active_set]
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to filter help content by active skills for session %s: %s",
+                    session_id,
+                    e,
+                )
 
         # Sort alphabetically, skip always-apply skills and the router entrypoint.
         user_skills = sorted(
@@ -369,11 +424,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
             fallback,
         )
 
-    def _skill_not_found_context(self, name: str, command_prefix: str = "/gobby") -> str:
+    def _skill_not_found_context(
+        self,
+        name: str,
+        command_prefix: str = "/gobby",
+        project_id: str | None = None,
+    ) -> str:
         """Generate context for an unrecognized skill name."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skills = self._skill_manager.discover_core_skills()
+        skills = self._skill_manager.discover_core_skills(project_id)
 
         # Find close matches (name contains or starts with input)
         name_lower = name.lower()
@@ -429,10 +489,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug(f"AFTER_AGENT: cli={cli_source}")
 
-        return HookResponse(
+        response = HookResponse(
             decision="allow",
             context="\n\n".join(context_parts) if context_parts else None,
         )
+        self._apply_debug_echo(response)
+        return response
 
     def handle_stop(self, event: HookEvent) -> HookResponse:
         """Handle STOP event (Claude Code only)."""
@@ -509,10 +571,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def handle_subagent_start(self, event: HookEvent) -> HookResponse:
         """Handle SUBAGENT_START event.
 
-        Marks the subagent's session with correct agent_depth so that
-        lifecycle processing can skip LLM-heavy steps for subagents.
-        Also sets is_subagent=True so rule engine unblocks native task
-        tools and blocks gobby-tasks for the duration of the subagent.
+        Increments subagent_count and derives is_subagent so the rule engine
+        unblocks native task tools while any subagent remains active.
         """
         input_data = event.data
         session_id = event.metadata.get("_platform_session_id")
@@ -526,32 +586,21 @@ class AgentEventHandlerMixin(EventHandlersBase):
             log_msg += f", subagent_id={subagent_id}"
         self.logger.debug(log_msg)
 
-        # Track pending subagent depth for auto-registration
-        if session_id and subagent_id and self._session_manager:
-            try:
-                row = self._session_manager.db.fetchone(
-                    "SELECT agent_depth FROM sessions WHERE external_id = %s AND status = 'active'"
-                    " ORDER BY updated_at DESC LIMIT 1",
-                    (session_id,),
-                )
-                parent_depth = (row["agent_depth"] or 0) if row else 0
-                self._pending_subagent_depths[subagent_id] = parent_depth + 1
-                self.logger.debug(
-                    f"Pending subagent depth for {subagent_id}: {parent_depth + 1}",
-                )
-            except Exception as e:
-                self.logger.debug(f"Failed to track subagent depth: {e}")
-
-        # Toggle is_subagent so rule engine unblocks native task tools
+        # Count active subagents so one stop cannot hide another live subagent.
         if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
                 sv_mgr = SessionVariableManager(self._session_manager.db)
-                sv_mgr.set_variable(session_id, "is_subagent", True)
-                self.logger.debug(f"Set is_subagent=True for session {session_id}")
+                count = sv_mgr.adjust_counter_and_derive_boolean(
+                    session_id,
+                    "subagent_count",
+                    1,
+                    boolean_name="is_subagent",
+                )
+                self.logger.debug(f"Set subagent_count={count} for session {session_id}")
             except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                self.logger.warning(f"Failed to set is_subagent on SUBAGENT_START: {e}")
+                self.logger.warning(f"Failed to increment subagent_count on SUBAGENT_START: {e}")
 
         return HookResponse(decision="allow")
 
@@ -564,15 +613,20 @@ class AgentEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("SUBAGENT_STOP")
 
-        # Clear is_subagent so rule engine re-blocks native task tools
+        # Clamp at zero and derive is_subagent from the remaining count.
         if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
                 sv_mgr = SessionVariableManager(self._session_manager.db)
-                sv_mgr.set_variable(session_id, "is_subagent", False)
-                self.logger.debug(f"Set is_subagent=False for session {session_id}")
+                count = sv_mgr.adjust_counter_and_derive_boolean(
+                    session_id,
+                    "subagent_count",
+                    -1,
+                    boolean_name="is_subagent",
+                )
+                self.logger.debug(f"Set subagent_count={count} for session {session_id}")
             except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                self.logger.warning(f"Failed to clear is_subagent on SUBAGENT_STOP: {e}")
+                self.logger.warning(f"Failed to decrement subagent_count on SUBAGENT_STOP: {e}")
 
         return HookResponse(decision="allow")

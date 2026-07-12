@@ -22,6 +22,9 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 - Webhooks endpoints
 """
 
+import asyncio
+import concurrent.futures
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +37,7 @@ from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
@@ -71,7 +75,7 @@ def _mock_hook_manager() -> MagicMock:
 
 def _hook_envelope(**payload: Any) -> dict[str, Any]:
     envelope = {
-        "schema_version": 1,
+        "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
         "enqueued_at": "2026-04-16T12:00:00Z",
         "critical": False,
         "input_data": {},
@@ -3106,18 +3110,30 @@ class TestHooksEndpoints:
         self,
         session_storage: SessionManager,
     ) -> None:
-        """Non-critical hook timeouts degrade before the CLI transport timeout."""
+        """A stalled non-critical hook degrades before its adapter finishes."""
         server = create_http_server(
             port=60887,
             test_mode=True,
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
+        assert NON_CRITICAL_HOOK_TIMEOUT_SECONDS < 30
+        release_adapter = threading.Event()
+        adapter_finished = threading.Event()
 
-        timeout_mock = AsyncMock(side_effect=TimeoutError())
+        def stalled_evaluation(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+            if not release_adapter.wait(timeout=1):
+                raise AssertionError("test did not release stalled adapter")
+            adapter_finished.set()
+            return {"continue": True}
+
         with (
             TestClient(server.app) as client,
-            patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
+            patch(
+                "gobby.adapters.droid.DroidAdapter.handle_native",
+                side_effect=stalled_evaluation,
+            ),
+            patch("gobby.servers.routes.mcp.hooks.NON_CRITICAL_HOOK_TIMEOUT_SECONDS", 0.01),
         ):
             response = client.post(
                 "/api/hooks/execute",
@@ -3127,20 +3143,78 @@ class TestHooksEndpoints:
                     input_data={"session_id": "droid-123", "tool_name": "Read"},
                 ),
             )
+            assert adapter_finished.is_set() is False
+            release_adapter.set()
+            assert adapter_finished.wait(timeout=1)
 
         assert response.status_code == 200
         data = response.json()
         assert data["continue"] is True
-        assert "timed out after 25s" in data["systemMessage"]
-        assert (
-            timeout_mock.await_args.kwargs["timeout_seconds"] == NON_CRITICAL_HOOK_TIMEOUT_SECONDS
+        assert "timed out after 0.01s" in data["systemMessage"]
+
+    @pytest.mark.asyncio
+    async def test_adapter_executor_bounds_and_releases_hung_evaluation_workers(self) -> None:
+        from gobby.servers.routes.mcp import hooks as hook_routes
+
+        worker_limit = hook_routes.HOOK_ADAPTER_MAX_WORKERS
+        active_workers = 0
+        peak_workers = 0
+        worker_lock = threading.Lock()
+        never_completed: concurrent.futures.Future[None] = concurrent.futures.Future()
+
+        def bounded_evaluation_wait(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+            nonlocal active_workers, peak_workers
+            with worker_lock:
+                active_workers += 1
+                peak_workers = max(peak_workers, active_workers)
+            try:
+                never_completed.result(timeout=0.03)
+            finally:
+                with worker_lock:
+                    active_workers -= 1
+            return {"continue": True}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = bounded_evaluation_wait
+        results = await asyncio.gather(
+            *(
+                hook_routes._run_adapter_hook(
+                    adapter,
+                    {},
+                    MagicMock(),
+                    timeout_seconds=0.5,
+                )
+                for _ in range(worker_limit + 3)
+            ),
+            return_exceptions=True,
         )
 
-    def test_execute_hook_stop_timeout_blocks_fail_safe(
+        assert all(isinstance(result, TimeoutError) for result in results)
+        assert peak_workers <= worker_limit
+        assert active_workers == 0
+        assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
+
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "critical", "adapter_patch"),
+        [
+            (
+                "codex",
+                "Stop",
+                False,
+                "gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter",
+            ),
+            ("claude", "session-start", True, "gobby.adapters.claude_code.ClaudeCodeAdapter"),
+        ],
+    )
+    def test_execute_hook_fail_safe_timeout_blocks(
         self,
         session_storage: SessionManager,
+        source: str,
+        hook_type: str,
+        critical: bool,
+        adapter_patch: str,
     ) -> None:
-        """Critical/fail-safe hook timeouts still return provider-native blocks."""
+        """Stop and CLI-critical hook timeouts return provider-native blocks."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -3151,7 +3225,7 @@ class TestHooksEndpoints:
         timeout_mock = AsyncMock(side_effect=TimeoutError())
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
+            patch(adapter_patch) as MockAdapter,
             patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
         ):
             mock_adapter = MagicMock()
@@ -3165,8 +3239,9 @@ class TestHooksEndpoints:
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(
-                    hook_type="Stop",
-                    source="codex",
+                    hook_type=hook_type,
+                    source=source,
+                    critical=critical,
                     input_data={"session_id": "test-stop"},
                 ),
             )
@@ -3186,6 +3261,73 @@ class TestHooksEndpoints:
             "Try again after the daemon recovers."
         )
         assert hook_response.system_message is None
+
+    @pytest.mark.parametrize("handler_layer", ["value_error", "exception", "outer"])
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "critical", "should_block"),
+        [
+            ("codex", "Stop", False, True),
+            ("claude", "session-start", True, True),
+            ("droid", "PreToolUse", False, False),
+        ],
+    )
+    def test_execute_hook_exception_posture_matches_fail_safe_contract(
+        self,
+        session_storage: SessionManager,
+        handler_layer: str,
+        source: str,
+        hook_type: str,
+        critical: bool,
+        should_block: bool,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+        error: Exception = (
+            ValueError("invalid hook state")
+            if handler_layer == "value_error"
+            else RuntimeError("hook pipeline unavailable")
+        )
+        if handler_layer == "outer":
+            failure_patch = patch(
+                "gobby.servers.routes.mcp.hooks.claim_envelope_processing",
+                side_effect=error,
+            )
+            headers = {"X-Gobby-Envelope-Id": "outer-handler-error"}
+        else:
+            failure_patch = patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new=AsyncMock(side_effect=error),
+            )
+            headers = {}
+
+        with (
+            TestClient(server.app) as client,
+            failure_patch,
+            patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed"),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers=headers,
+                json=_hook_envelope(
+                    hook_type=hook_type,
+                    source=source,
+                    critical=critical,
+                    input_data={"session_id": "error-posture"},
+                ),
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is not should_block
+        if should_block:
+            reason = data.get("reason") or data.get("stopReason")
+            assert "blocking this critical hook for safety" in reason
+        else:
+            assert "non-fatal" in data["systemMessage"]
 
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),
@@ -3452,7 +3594,9 @@ class TestHooksEndpoints:
             )
 
         assert response.status_code == 400
-        assert "Unsupported schema_version" in response.json()["detail"]
+        assert response.json()["detail"] == (
+            f"Unsupported schema_version: 99. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
+        )
 
     def test_execute_hook_envelope_requires_source(self, session_storage: SessionManager) -> None:
         """Envelope requests still require source after normalization."""

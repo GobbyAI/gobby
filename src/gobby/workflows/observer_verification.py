@@ -52,11 +52,9 @@ def detect_verification_evidence(
     if match is None:
         return
 
-    success = (
-        _shell_tool_succeeded(event)
-        and not match.is_compound
-        and not match.evidence_requires_confirmation
-    )
+    success = _shell_tool_succeeded(event)
+    if success is True and (match.is_compound or match.evidence_requires_confirmation):
+        success = False
     evidence = {
         "evidence_type": VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
         "command": command,
@@ -85,7 +83,7 @@ def detect_verification_evidence(
         existing, _json_safe(evidence), session_id=session_id
     )
 
-    if success:
+    if success is True:
         variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = True
         logger.debug(
             "Session %s: verification_evidence_recorded=true via validation command",
@@ -93,9 +91,16 @@ def detect_verification_evidence(
         )
         return
 
-    variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = False
+    if success is False:
+        variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = False
+        logger.info(
+            "Session %s: verification readiness cleared after failed validation command",
+            session_id,
+        )
+        return
+
     logger.info(
-        "Session %s: verification readiness cleared after failed validation command",
+        "Session %s: verification readiness unchanged after validation command with unknown outcome",
         session_id,
     )
 
@@ -108,6 +113,6 @@ def _extract_exit_code(event: HookEvent) -> int | None:
         return None
     for key in ("exitCode", "exit_code", "returncode"):
         value = output.get(key)
-        if isinstance(value, int):
+        if isinstance(value, int) and not isinstance(value, bool):
             return value
     return None

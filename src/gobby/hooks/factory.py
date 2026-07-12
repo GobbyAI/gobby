@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stop_registry import StopRegistry
 from gobby.autonomous.stuck_detector import StuckDetector
+from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.health_monitor import HealthMonitor
+from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.skill_manager import HookSkillManager
@@ -218,7 +220,6 @@ class HookManagerFactory:
             agent_runner,
             completion_registry,
             tool_proxy_getter,
-            resolve_project_id,
             broadcaster,
         )
 
@@ -265,6 +266,7 @@ class HookManagerFactory:
             get_machine_id=get_machine_id,
             resolve_project_id=resolve_project_id,
             code_index_trigger=code_index_trigger,
+            event_loop=loop,
             logger=hook_logger,
         )
 
@@ -386,7 +388,7 @@ class HookManagerFactory:
                     strip_unknown=True,
                     enforce_workflow=False,
                 )
-                success = isinstance(result, dict) and result.get("success", True)
+                success = mcp_call_succeeded(result)
                 return {
                     "success": success,
                     "inject_result": True,
@@ -479,7 +481,6 @@ class HookManagerFactory:
         agent_runner: Any | None,
         completion_registry: Any | None,
         tool_proxy_getter: Any | None,
-        resolve_project_id: Callable[[str | None, str | None], str],
         broadcaster: Any | None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
@@ -489,11 +490,9 @@ class HookManagerFactory:
         loader = WorkflowLoader(db=database)
         template_engine = TemplateEngine()
         metrics_event_store = MetricsEventStore(database)
-        project_id = resolve_project_id(None, None)
         skill_manager = HookSkillManager(
             db=database,
             metrics_event_store=metrics_event_store,
-            project_id=project_id,
         )
         # Build inline mcp_call dispatcher for inject_result atomicity.
         # Dispatches mcp_calls within the rule engine's effect loop so
@@ -524,7 +523,7 @@ class HookManagerFactory:
             from gobby.storage.pipelines import LocalPipelineExecutionManager
             from gobby.workflows.pipeline_executor import PipelineExecutor
 
-            pipeline_mgr = LocalPipelineExecutionManager(database, project_id)
+            pipeline_mgr = LocalPipelineExecutionManager(database, None)
             pipeline_executor = PipelineExecutor(
                 db=database,
                 execution_manager=pipeline_mgr,
@@ -538,7 +537,7 @@ class HookManagerFactory:
         except Exception as e:
             logger.debug(f"Pipeline executor not available: {e}")
 
-        workflow_timeout = 0.0
+        workflow_timeout = DEFAULT_WORKFLOW_TIMEOUT_SECONDS
         workflow_enabled = True
         if config:
             workflow_timeout = config.workflow.timeout

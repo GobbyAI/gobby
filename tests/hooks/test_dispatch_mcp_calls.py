@@ -1,6 +1,7 @@
 """Tests for HookManager._dispatch_mcp_calls method."""
 
 import asyncio
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -226,6 +227,33 @@ class TestDispatchMcpCallsBackgroundMode:
 
 class TestDispatchMcpCallsNoEventLoop:
     """Tests for the asyncio.run() fallback when no event loop is available."""
+
+    def test_blocking_call_respects_aggregate_deadline(self) -> None:
+        proxy = AsyncMock()
+
+        async def slow_call(*_args: object, **_kwargs: object) -> dict[str, bool]:
+            await asyncio.Event().wait()
+            return {"success": True}
+
+        proxy.call_tool = AsyncMock(side_effect=slow_call)
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
+        started = time.monotonic()
+
+        results = stub._dispatch_mcp_calls(
+            [
+                {
+                    "server": "gobby-sessions",
+                    "tool": "set_handoff_context",
+                    "arguments": {"full": True},
+                    "inject_result": True,
+                }
+            ],
+            _make_event(platform_session_id="plat-456"),
+            deadline=started + 0.02,
+        )
+
+        assert time.monotonic() - started < 0.5
+        assert results[0]["success"] is False
 
     def test_blocking_call_falls_back_to_asyncio_run(self) -> None:
         """When no event loop exists, blocking calls use asyncio.run()."""

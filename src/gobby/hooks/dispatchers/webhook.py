@@ -10,6 +10,8 @@ import asyncio
 import concurrent.futures
 import logging
 
+from gobby.hooks.background_tasks import create_background_task
+from gobby.hooks.effect_deadline import new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
@@ -42,6 +44,8 @@ def evaluate_blocking_webhooks(
     webhook_dispatcher: WebhookDispatcher,
     logger: logging.Logger,
     loop: asyncio.AbstractEventLoop | None,
+    *,
+    deadline: float | None = None,
 ) -> HookResponse | None:
     """Evaluate blocking webhooks before handler execution.
 
@@ -60,6 +64,7 @@ def evaluate_blocking_webhooks(
             webhook_dispatcher,
             logger,
             blocking_only=True,
+            deadline=deadline,
         )
         decision, reason = webhook_dispatcher.get_blocking_decision(webhook_results)
         if decision == "block":
@@ -85,6 +90,8 @@ def dispatch_webhooks_sync(
     webhook_dispatcher: WebhookDispatcher,
     logger: logging.Logger,
     blocking_only: bool = False,
+    *,
+    deadline: float | None = None,
 ) -> list[WebhookResult]:
     """Dispatch webhooks synchronously (for blocking webhooks).
 
@@ -114,13 +121,27 @@ def dispatch_webhooks_sync(
 
     # Build payload once
     payload = webhook_dispatcher._build_payload(event)
+    blocking_deadline = deadline if deadline is not None else new_blocking_effect_deadline()
 
     # Run async dispatch in sync context
     async def dispatch_all() -> list[WebhookResult]:
         results: list[WebhookResult] = []
-        for endpoint in matching_endpoints:
-            result = await webhook_dispatcher._dispatch_single(endpoint, payload)
-            results.append(result)
+        async with webhook_dispatcher._new_client() as client:
+            for endpoint in matching_endpoints:
+                if endpoint.can_block:
+                    result = await webhook_dispatcher._dispatch_blocking(
+                        endpoint,
+                        payload,
+                        blocking_deadline,
+                        client=client,
+                    )
+                else:
+                    result = await webhook_dispatcher._dispatch_single(
+                        endpoint,
+                        payload,
+                        client=client,
+                    )
+                results.append(result)
         return results
 
     # Execute in event loop
@@ -141,6 +162,7 @@ def dispatch_webhooks_async(
     webhook_dispatcher: WebhookDispatcher,
     logger: logging.Logger,
     loop: asyncio.AbstractEventLoop | None,
+    response: HookResponse | None = None,
 ) -> None:
     """Dispatch non-blocking webhooks asynchronously (fire-and-forget).
 
@@ -149,6 +171,7 @@ def dispatch_webhooks_async(
         webhook_dispatcher: The WebhookDispatcher instance.
         logger: Logger for diagnostics.
         loop: Captured event loop for thread-safe scheduling.
+        response: Enriched hook response to include in the observer payload.
     """
     if not webhook_dispatcher.config.enabled:
         return
@@ -166,7 +189,7 @@ def dispatch_webhooks_async(
         return
 
     # Build payload
-    payload = webhook_dispatcher._build_payload(event)
+    payload = webhook_dispatcher._build_payload(event, response)
 
     async def dispatch_all() -> None:
         tasks = [webhook_dispatcher._dispatch_single(ep, payload) for ep in matching_endpoints]
@@ -178,7 +201,7 @@ def dispatch_webhooks_async(
     # Fire and forget
     try:
         running_loop = asyncio.get_running_loop()
-        running_loop.create_task(dispatch_all())
+        create_background_task(dispatch_all(), loop=running_loop)
     except RuntimeError:
         # No event loop, try using captured loop
         if loop:

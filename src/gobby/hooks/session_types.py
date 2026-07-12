@@ -64,7 +64,13 @@ class HookSessionManager(Protocol):
         sandbox_enabled: bool | None = None,
     ) -> str: ...
 
-    def get_session_id(self, external_id: str, source: str) -> str | None: ...
+    def get_session_id(
+        self,
+        external_id: str,
+        source: str,
+        machine_id: str | None = None,
+        project_id: str | None = None,
+    ) -> str | None: ...
 
     def lookup_session_id(
         self,
@@ -83,7 +89,14 @@ class HookSessionManager(Protocol):
         session_type: str | None = None,
     ) -> Session | None: ...
 
-    def cache_session_mapping(self, external_id: str, source: str, session_id: str) -> None: ...
+    def cache_session_mapping(
+        self,
+        external_id: str,
+        source: str,
+        session_id: str,
+        machine_id: str | None = None,
+        project_id: str | None = None,
+    ) -> None: ...
 
     def mark_session_expired(self, session_id: str) -> bool: ...
 

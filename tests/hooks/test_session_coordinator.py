@@ -16,18 +16,24 @@ Test categories:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
 import uuid
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 # This import should fail initially (red phase) - module doesn't exist yet
-from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.hooks.session_coordinator import (
+    _MAX_TMUX_RESULT_CHARS,
+    _TMUX_TRUNCATION_MARKER,
+    SessionCoordinator,
+    _bound_tmux_result,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -362,6 +368,111 @@ class TestSessionLifecycleTransitions:
 class TestAgentRunCompletion:
     """Test agent run completion logic."""
 
+    def test_bound_tmux_result_preserves_short_output(self) -> None:
+        assert _bound_tmux_result("  short output\n") == "short output"
+
+    def test_bound_tmux_result_retains_newest_output(self) -> None:
+        output = "a" * _MAX_TMUX_RESULT_CHARS + "newest"
+
+        result = _bound_tmux_result(output)
+
+        assert len(result) == _MAX_TMUX_RESULT_CHARS
+        assert result.startswith(_TMUX_TRUNCATION_MARKER)
+        assert result.endswith("newest")
+
+    @patch("gobby.agents.tmux.get_configured_tmux_command_prefix", side_effect=lambda: ["tmux"])
+    @patch("subprocess.run")
+    def test_complete_agent_run_bounds_tmux_capture(
+        self,
+        mock_run: MagicMock,
+        _mock_tmux_prefix: MagicMock,
+    ) -> None:
+        large_output = "old" * _MAX_TMUX_RESULT_CHARS + "newest"
+        mock_run.side_effect = [
+            SimpleNamespace(returncode=0, stdout=large_output),
+            SimpleNamespace(returncode=0, stdout=""),
+        ]
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run_manager.db.fetchone.return_value = None
+        mock_agent_run_manager.get.return_value = MagicMock(
+            status="running",
+            tmux_session_name="agent-run",
+        )
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        session = SimpleNamespace(
+            id="session-id",
+            agent_run_id="run-id",
+            summary_markdown=None,
+            last_assistant_content=None,
+            tool_call_count=1,
+            turn_count=1,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        result = mock_agent_run_manager.complete.call_args.kwargs["result"]
+        assert len(result) == _MAX_TMUX_RESULT_CHARS
+        assert result.endswith("newest")
+        capture_command = mock_run.call_args_list[0].args[0]
+        assert capture_command[-2:] == ["-S", "-2000"]
+
+    @pytest.mark.asyncio
+    async def test_complete_agent_run_flushes_stats_before_refresh(self) -> None:
+        """A short run uses stats and result persisted by the awaited flush."""
+        agent_run_manager = MagicMock()
+        agent_run_manager.get.return_value = MagicMock(status="running", tmux_session_name=None)
+        agent_run_manager.db.fetchone.return_value = None
+        message_processor = MagicMock()
+        flush_completed = False
+
+        async def flush_session(session_id: str) -> None:
+            nonlocal flush_completed
+            assert session_id == "sess-short"
+            flush_completed = True
+
+        message_processor.flush_session = AsyncMock(side_effect=flush_session)
+        refreshed_session = SimpleNamespace(
+            id="sess-short",
+            agent_run_id="run-short",
+            summary_markdown="Fresh summary",
+            last_assistant_content="",
+            tool_call_count=2,
+            turn_count=1,
+        )
+        session_manager = MagicMock()
+
+        def get_refreshed_session(session_id: str) -> SimpleNamespace:
+            assert session_id == "sess-short"
+            assert flush_completed is True
+            return refreshed_session
+
+        session_manager.get.side_effect = get_refreshed_session
+        coordinator = SessionCoordinator(
+            session_storage=session_manager,
+            message_processor=message_processor,
+            agent_run_manager=agent_run_manager,
+        )
+        coordinator.set_completion_registry(MagicMock())
+        original_session = SimpleNamespace(
+            id="sess-short",
+            agent_run_id="run-short",
+            summary_markdown="Stale summary",
+            last_assistant_content="",
+            tool_call_count=0,
+            turn_count=0,
+        )
+
+        await asyncio.to_thread(coordinator.complete_agent_run, original_session)
+
+        message_processor.flush_session.assert_awaited_once_with("sess-short")
+        agent_run_manager.fail.assert_not_called()
+        agent_run_manager.complete.assert_called_once_with(
+            run_id="run-short",
+            result="Fresh summary",
+            tool_calls_count=2,
+            turns_used=1,
+        )
+
     def test_complete_agent_run_updates_status(self) -> None:
         """Test completing an agent run updates its status."""
         mock_agent_run_manager = MagicMock()
@@ -380,6 +491,54 @@ class TestAgentRunCompletion:
         call_kwargs = mock_agent_run_manager.complete.call_args[1]
         assert call_kwargs["run_id"] == "run-123"
         assert call_kwargs["result"] == "Summary"
+
+    def test_complete_agent_run_notifies_stored_status_when_complete_loses_race(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        running_run = MagicMock(status="running", tmux_session_name=None)
+        terminal_run = MagicMock(status="cancelled")
+        mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
+        mock_agent_run_manager.complete.return_value = None
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        coordinator._notify_agent_completion = MagicMock()
+        session = MagicMock(
+            id="session-123",
+            agent_run_id="run-123",
+            summary_markdown="Summary",
+            tool_call_count=1,
+            turn_count=1,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        coordinator._notify_agent_completion.assert_called_once_with("run-123", "cancelled")
+        assert mock_agent_run_manager.get.call_count == 2
+        assert mock_agent_run_manager.complete.call_count == 1
+        assert mock_agent_run_manager.fail.call_count == 0
+        assert coordinator._notify_agent_completion.call_count == 1
+
+    def test_complete_agent_run_notifies_stored_status_when_fail_loses_race(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        running_run = MagicMock(status="running", tmux_session_name=None)
+        terminal_run = MagicMock(status="success")
+        mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
+        mock_agent_run_manager.fail.return_value = None
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        coordinator._notify_agent_completion = MagicMock()
+        session = MagicMock(
+            id="session-123",
+            agent_run_id="run-123",
+            summary_markdown="Summary",
+            tool_call_count=0,
+            turn_count=0,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        coordinator._notify_agent_completion.assert_called_once_with("run-123", "success")
+        assert mock_agent_run_manager.get.call_count == 2
+        assert mock_agent_run_manager.fail.call_count == 1
+        assert mock_agent_run_manager.complete.call_count == 0
+        assert coordinator._notify_agent_completion.call_count == 1
 
     def test_complete_agent_run_skips_without_run_id(self) -> None:
         """Test complete_agent_run skips sessions without agent_run_id."""

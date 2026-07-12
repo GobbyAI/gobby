@@ -17,13 +17,28 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from starlette.datastructures import State
 
+from gobby.app_context import ServiceContainer
+from gobby.servers.http import HTTPServer
 from gobby.servers.routes.mcp.hooks import MAX_PENDING_PER_SESSION, _maybe_hold_open
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 _SESSION_MANAGER_PATCH = "gobby.storage.sessions.SessionManager"
+
+
+def _hook_envelope(**payload: Any) -> dict[str, Any]:
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "input_data": {},
+    }
+    envelope.update(payload)
+    return envelope
 
 
 def _make_request(
@@ -48,6 +63,112 @@ def _make_request(
 
 def _make_session(session_id: str = "sess-1", session_type: str = "terminal") -> SimpleNamespace:
     return SimpleNamespace(id=session_id, session_type=session_type)
+
+
+@pytest.mark.parametrize(
+    "denial",
+    [
+        {
+            "hookSpecificOutput": {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "blocked by rule",
+            }
+        },
+        {"permissionDecision": "deny", "reason": "blocked by rule"},
+        {"continue": True, "decision": "block", "reason": "blocked by rule"},
+        {"continue": False, "decision": "approve", "reason": "blocked by rule"},
+    ],
+    ids=["nested-permission-deny", "permission-deny", "decision-block", "continue-false"],
+)
+def test_rule_denial_short_circuits_before_web_chat_auto_approval(
+    session_storage: SessionManager,
+    denial: dict[str, Any],
+) -> None:
+    """A rule deny wins even when hold-open would auto-approve the tool."""
+    services = ServiceContainer(
+        config=None,
+        database=session_storage.db,
+        session_manager=session_storage,
+        task_manager=MagicMock(),
+    )
+    server = HTTPServer(
+        services=services,
+        port=60887,
+        test_mode=True,
+        auth_mode="disabled",
+    )
+    mock_hook_manager = MagicMock()
+    server.app.state.hook_manager = mock_hook_manager
+
+    with (
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+        patch(
+            "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+            new_callable=AsyncMock,
+            return_value={"decision": "approve"},
+        ) as hold_open,
+    ):
+        mock_adapter_instance = MagicMock()
+        mock_adapter_instance.handle_native.return_value = denial
+        MockAdapter.return_value = mock_adapter_instance
+        response = TestClient(server.app).post(
+            "/api/hooks/execute",
+            headers={"X-Gobby-Session-Id": "web-chat-session"},
+            json=_hook_envelope(
+                hook_type="PreToolUse",
+                source="claude",
+                input_data={"tool_name": "Read", "arguments": {"path": "/tmp/file"}},
+            ),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == denial
+    hold_open.assert_not_awaited()
+
+
+def test_allowed_result_still_uses_web_chat_hold_open(
+    session_storage: SessionManager,
+) -> None:
+    services = ServiceContainer(
+        config=None,
+        database=session_storage.db,
+        session_manager=session_storage,
+        task_manager=MagicMock(),
+    )
+    server = HTTPServer(
+        services=services,
+        port=60887,
+        test_mode=True,
+        auth_mode="disabled",
+    )
+    mock_hook_manager = MagicMock()
+    server.app.state.hook_manager = mock_hook_manager
+    hold_open_result = {"decision": "approve", "reason": "web-chat approval"}
+
+    with (
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+        patch(
+            "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+            new_callable=AsyncMock,
+            return_value=hold_open_result,
+        ) as hold_open,
+    ):
+        mock_adapter_instance = MagicMock()
+        mock_adapter_instance.handle_native.return_value = {"continue": True}
+        MockAdapter.return_value = mock_adapter_instance
+        response = TestClient(server.app).post(
+            "/api/hooks/execute",
+            headers={"X-Gobby-Session-Id": "web-chat-session"},
+            json=_hook_envelope(
+                hook_type="PreToolUse",
+                source="claude",
+                input_data={"tool_name": "Write", "arguments": {"path": "/tmp/file"}},
+            ),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == hold_open_result
+    hold_open.assert_awaited_once()
 
 
 # --- Early exits ---
