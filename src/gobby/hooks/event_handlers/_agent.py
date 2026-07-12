@@ -93,6 +93,20 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if session_id:
             self.logger.debug(f"BEFORE_AGENT: session {session_id}, prompt_len={len(prompt)}")
 
+            # A new parent turn cannot inherit live subagents from the previous
+            # turn. Reset both values together to recover from missed stop hooks.
+            if self._session_manager:
+                try:
+                    from gobby.workflows.state_manager import SessionVariableManager
+
+                    sv_mgr = SessionVariableManager(self._session_manager.db)
+                    sv_mgr.merge_variables(
+                        session_id,
+                        {"subagent_count": 0, "is_subagent": False},
+                    )
+                except (psycopg.Error, KeyError, TypeError, ValueError) as e:
+                    self.logger.warning(f"Failed to reset subagent count on BEFORE_AGENT: {e}")
+
             try:
                 from gobby.hooks.event_handlers._session_start.transcripts import (
                     ensure_qwen_transcript_tracking,
@@ -555,8 +569,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def handle_subagent_start(self, event: HookEvent) -> HookResponse:
         """Handle SUBAGENT_START event.
 
-        Sets is_subagent=True so the rule engine unblocks native task tools
-        and blocks gobby-tasks for the duration of the subagent.
+        Increments subagent_count and derives is_subagent so the rule engine
+        unblocks native task tools while any subagent remains active.
         """
         input_data = event.data
         session_id = event.metadata.get("_platform_session_id")
@@ -570,16 +584,21 @@ class AgentEventHandlerMixin(EventHandlersBase):
             log_msg += f", subagent_id={subagent_id}"
         self.logger.debug(log_msg)
 
-        # Toggle is_subagent so rule engine unblocks native task tools
+        # Count active subagents so one stop cannot hide another live subagent.
         if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
                 sv_mgr = SessionVariableManager(self._session_manager.db)
-                sv_mgr.set_variable(session_id, "is_subagent", True)
-                self.logger.debug(f"Set is_subagent=True for session {session_id}")
+                count = sv_mgr.adjust_counter_and_derive_boolean(
+                    session_id,
+                    "subagent_count",
+                    1,
+                    boolean_name="is_subagent",
+                )
+                self.logger.debug(f"Set subagent_count={count} for session {session_id}")
             except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                self.logger.warning(f"Failed to set is_subagent on SUBAGENT_START: {e}")
+                self.logger.warning(f"Failed to increment subagent_count on SUBAGENT_START: {e}")
 
         return HookResponse(decision="allow")
 
@@ -592,15 +611,20 @@ class AgentEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug("SUBAGENT_STOP")
 
-        # Clear is_subagent so rule engine re-blocks native task tools
+        # Clamp at zero and derive is_subagent from the remaining count.
         if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
                 sv_mgr = SessionVariableManager(self._session_manager.db)
-                sv_mgr.set_variable(session_id, "is_subagent", False)
-                self.logger.debug(f"Set is_subagent=False for session {session_id}")
+                count = sv_mgr.adjust_counter_and_derive_boolean(
+                    session_id,
+                    "subagent_count",
+                    -1,
+                    boolean_name="is_subagent",
+                )
+                self.logger.debug(f"Set subagent_count={count} for session {session_id}")
             except (psycopg.Error, KeyError, TypeError, ValueError) as e:
-                self.logger.warning(f"Failed to clear is_subagent on SUBAGENT_STOP: {e}")
+                self.logger.warning(f"Failed to decrement subagent_count on SUBAGENT_STOP: {e}")
 
         return HookResponse(decision="allow")

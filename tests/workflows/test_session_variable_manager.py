@@ -188,6 +188,42 @@ def test_merge_variables_empty_updates(db: Any) -> None:
     assert result is True
 
 
+def test_adjust_counter_and_derive_boolean_tracks_overlapping_subagents(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", 1, boolean_name="is_subagent")
+        == 1
+    )
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", 1, boolean_name="is_subagent")
+        == 2
+    )
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", -1, boolean_name="is_subagent")
+        == 1
+    )
+    variables = mgr.get_variables(S1)
+    assert variables["subagent_count"] == 1
+    assert variables["is_subagent"] is True
+
+
+def test_adjust_counter_and_derive_boolean_clamps_at_zero(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", -1, boolean_name="is_subagent")
+        == 0
+    )
+    variables = mgr.get_variables(S1)
+    assert variables["subagent_count"] == 0
+    assert variables["is_subagent"] is False
+
+
 def test_delete_variables(db: Any) -> None:
     """Test delete_variables removes all variables for a session."""
     from gobby.workflows.state_manager import SessionVariableManager
