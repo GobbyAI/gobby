@@ -25,7 +25,6 @@ from gobby.llm.claude_models import AgenticGenerationResult
 from gobby.llm.claude_payloads import (
     claude_reasoning_options,
     normalize_claude_usage,
-    prepare_image_data,
     strip_leading_preamble,
 )
 from gobby.llm.claude_runtime import (
@@ -33,6 +32,7 @@ from gobby.llm.claude_runtime import (
     is_max_turns_error,
     raise_for_error_result,
 )
+from gobby.llm.image_payloads import prepare_image_data
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
 from gobby.utils.json_helpers import extract_json_from_text
 
@@ -368,7 +368,7 @@ class ClaudeSDKClient:
         if not cli_path:
             raise VisionProviderUnavailableError("Claude CLI not found")
 
-        image_base64, mime_type = prepare_image_data(image_path, self.logger)
+        _, mime_type, image_base64, _ = await prepare_image_data(image_path, self.logger)
 
         text_prompt = (
             "Please describe this image in detail, focusing on the key visual "

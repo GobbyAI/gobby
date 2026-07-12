@@ -360,48 +360,48 @@ class TestExecuteSdkQuery:
 class TestPrepareImageData:
     """Tests for _prepare_image_data."""
 
-    def test_image_not_found(self, claude_config: DaemonConfig) -> None:
+    async def test_image_not_found(self, claude_config: DaemonConfig) -> None:
         """Raises a structured input error when the image doesn't exist."""
-        from gobby.llm.claude_payloads import prepare_image_data
+        from gobby.llm.image_payloads import prepare_image_data
 
         with pytest.raises(VisionInputError, match="not found"):
-            prepare_image_data("/nonexistent/image.png")
+            await prepare_image_data("/nonexistent/image.png")
 
-    def test_valid_image(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
+    async def test_valid_image(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Returns (base64, mime_type) for valid image."""
-        from gobby.llm.claude_payloads import prepare_image_data
+        from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.png"
         img_path.write_bytes(b"\x89PNG\r\n")
 
-        result = prepare_image_data(str(img_path))
+        result = await prepare_image_data(str(img_path))
         assert isinstance(result, tuple)
-        assert len(result) == 2
+        assert len(result) == 4
         assert result[1] == "image/png"
 
-    def test_unknown_mime_defaults_to_png(
+    async def test_unknown_mime_defaults_to_png(
         self, claude_config: DaemonConfig, tmp_path: Path
     ) -> None:
         """Unknown extensions default to image/png."""
-        from gobby.llm.claude_payloads import prepare_image_data
+        from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.xyz"
         img_path.write_bytes(b"data")
 
-        result = prepare_image_data(str(img_path))
+        result = await prepare_image_data(str(img_path))
         assert isinstance(result, tuple)
         assert result[1] == "image/png"
 
-    def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
+    async def test_read_error(self, claude_config: DaemonConfig, tmp_path: Path) -> None:
         """Raises a structured input error when the file can't be read."""
-        from gobby.llm.claude_payloads import prepare_image_data
+        from gobby.llm.image_payloads import prepare_image_data
 
         img_path = tmp_path / "test.png"
         img_path.write_bytes(b"data")
 
-        with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
+        with patch.object(Path, "open", side_effect=PermissionError("denied")):
             with pytest.raises(VisionInputError, match="Failed to read") as exc_info:
-                prepare_image_data(str(img_path))
+                await prepare_image_data(str(img_path))
 
         assert isinstance(exc_info.value.__cause__, PermissionError)
 
@@ -969,7 +969,7 @@ class TestDescribeImage:
         provider = ClaudeLLMProvider(claude_config)
         provider._sdk_client._verify_cli_path = AsyncMock(return_value="/bin/claude")
 
-        with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
+        with patch.object(Path, "open", side_effect=PermissionError("denied")):
             with pytest.raises(VisionInputError, match="Failed to read"):
                 await provider.describe_image(str(image_path))
 

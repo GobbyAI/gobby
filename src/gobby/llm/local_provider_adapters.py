@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
-import mimetypes
-from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -21,6 +18,7 @@ from gobby.llm.base import (
     VisionProviderUnavailableError,
     validate_vision_description,
 )
+from gobby.llm.image_payloads import prepare_image_data
 
 logger = logging.getLogger(__name__)
 
@@ -162,24 +160,6 @@ def _headers(api_key: str | None) -> dict[str, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
-
-
-def _image_data(image_path: str) -> tuple[Path, str, str, str]:
-    path = Path(image_path)
-    if not path.exists():
-        raise VisionInputError(f"Image not found: {image_path}")
-
-    mime_type, _ = mimetypes.guess_type(str(path))
-    if mime_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
-        mime_type = "image/png"
-
-    try:
-        image_bytes = path.read_bytes()
-    except OSError as exc:
-        raise VisionInputError(f"Failed to read image: {exc}") from exc
-    encoded = base64.standard_b64encode(image_bytes).decode("utf-8")
-    data_url = f"data:{mime_type};base64,{encoded}"
-    return path, mime_type, encoded, data_url
 
 
 def _ollama_usage(payload: dict[str, Any]) -> dict[str, int] | None:
@@ -349,7 +329,7 @@ class OpenAICompatibleLocalProviderAdapter:
             raise VisionProviderUnavailableError("Local LLM client not initialised")
 
         try:
-            _, mime_type, encoded, _ = _image_data(image_path)
+            _, mime_type, encoded, _ = await prepare_image_data(image_path, logger)
             prompt = _image_prompt(context)
             response = await self._client.chat.completions.create(
                 model=model,
@@ -435,7 +415,7 @@ class LMStudioLocalProviderAdapter:
         model: str,
     ) -> str:
         try:
-            _, _, _, data_url = _image_data(image_path)
+            _, _, _, data_url = await prepare_image_data(image_path, logger)
             payload: dict[str, Any] = {
                 "model": model,
                 "input": [
@@ -525,7 +505,7 @@ class OllamaLocalProviderAdapter:
         model: str,
     ) -> str:
         try:
-            _, _, encoded, _ = _image_data(image_path)
+            _, _, encoded, _ = await prepare_image_data(image_path, logger)
             payload = {
                 "model": model,
                 "messages": [

@@ -429,7 +429,7 @@ async def test_local_vision_unreadable_file_raises_input_error(
     image_path.write_bytes(b"image")
     adapter = _vision_adapter(provider)
 
-    with patch.object(Path, "read_bytes", side_effect=PermissionError("denied")):
+    with patch.object(Path, "open", side_effect=PermissionError("denied")):
         with pytest.raises(VisionInputError, match="Failed to read") as exc_info:
             await adapter.describe_image(
                 str(image_path),
