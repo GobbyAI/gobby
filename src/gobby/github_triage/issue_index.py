@@ -156,10 +156,9 @@ def content_hash(issue: IssueSnapshot) -> str:
     """Hash the parts of an issue that should trigger re-triage."""
     payload = {
         "body": issue.body,
-        "labels": list(issue.labels),
+        "labels": sorted(label for label in issue.labels if not label.startswith("gobby:")),
         "state": issue.state,
         "title": issue.title,
-        "updated_at": issue.updated_at,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

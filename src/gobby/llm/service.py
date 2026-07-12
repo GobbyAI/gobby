@@ -124,6 +124,7 @@ class LLMService:
         prompt: str,
         system_prompt: str | None = None,
         *,
+        max_tokens: int | None = None,
         caller: str | None = None,
         cwd: str | None = None,
     ) -> dict[str, Any]:
@@ -137,6 +138,7 @@ class LLMService:
                 feature_config,
                 prompt,
                 system_prompt=system_prompt,
+                max_tokens=max_tokens,
                 caller=caller,
                 cwd=cwd,
             )

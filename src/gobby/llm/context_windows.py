@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from gobby.llm.context_window_values import positive_context_window
+
 ContextLengthSource = Literal[
     "provider_reported",
     "provider_catalog",
@@ -67,6 +69,7 @@ _CONTEXT_WINDOW_MARKER_RE = re.compile(
     r"(?:\[(?:context[-_]?)?1m\]|[-_](?:context[-_])?1m)$",
     re.IGNORECASE,
 )
+_ONE_MILLION_CONTEXT_WINDOW = 1_000_000
 _VALID_CONTEXT_LENGTH_SOURCES: frozenset[str] = frozenset(
     {"provider_reported", "provider_catalog", "registry", "static_default"}
 )
@@ -78,7 +81,7 @@ logger = logging.getLogger(__name__)
 # Generic fallback defaults. These are intentionally last-resort values.
 _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "opus": 1_000_000,
-    "sonnet": 200_000,
+    "sonnet": 1_000_000,
     "haiku": 200_000,
     "fable": 1_000_000,
     "claude-fable-5": 1_000_000,
@@ -86,7 +89,7 @@ _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "claude-opus-4-6": 1_000_000,
     "claude-opus-4-6-fast": 1_000_000,
     "claude-opus-4-5": 1_000_000,
-    "claude-sonnet-4-6": 200_000,
+    "claude-sonnet-4-6": 1_000_000,
     "claude-sonnet-4-5": 200_000,
     "claude-haiku-4-5": 200_000,
     "gpt-5.5": 258_400,
@@ -145,6 +148,15 @@ class ResolvedContextWindow:
 
     value: int
     source: ContextWindowSource
+
+
+def _apply_context_window_marker_floor(
+    resolved: ResolvedContextWindow,
+    has_one_million_marker: bool,
+) -> ResolvedContextWindow:
+    if not has_one_million_marker or resolved.value >= _ONE_MILLION_CONTEXT_WINDOW:
+        return resolved
+    return ResolvedContextWindow(_ONE_MILLION_CONTEXT_WINDOW, resolved.source)
 
 
 @dataclass(frozen=True)
@@ -222,7 +234,7 @@ def normalize_model_lookup_id(value: str) -> str:
 
 def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
     """Avoid letting family aliases leak across unrelated providers."""
-    if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-fable"):
+    if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-"):
         return provider in {None, "claude", "droid"}
     if key.startswith("qwen3-coder"):
         return provider in {None, "qwen"}
@@ -311,11 +323,14 @@ def resolve_context_window_with_source(
     if not model:
         return None
 
+    has_one_million_marker = _CONTEXT_WINDOW_MARKER_RE.search(model.strip()) is not None
     model_lower = model.lower()
     for substr, window in (overrides or {}).items():
         context_window = coerce_context_length(window)
-        if context_window is not None and substr.lower() in model_lower:
-            return ResolvedContextWindow(context_window, "override")
+        if substr and context_window is not None and substr.lower() in model_lower:
+            return _apply_context_window_marker_floor(
+                ResolvedContextWindow(context_window, "override"), has_one_million_marker
+            )
 
     reported = coerce_context_length(provider_reported_context_window)
     if reported is None and isinstance(provider_metadata, dict):
@@ -324,34 +339,43 @@ def resolve_context_window_with_source(
             PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS,
         )
     if reported is not None:
-        return ResolvedContextWindow(reported, "provider_reported")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(reported, "provider_reported"), has_one_million_marker
+        )
 
     provider_name = provider.strip().lower() if isinstance(provider, str) else None
-    catalog_static: ResolvedContextWindow | None = None
+    catalog_fallback: ResolvedContextWindow | None = None
     catalog_result = _resolve_from_catalog(
         catalog or _get_provider_model_catalog(),
         provider_name,
         model,
     )
     if catalog_result and catalog_result.source in _AUTHORITATIVE_CATALOG_SOURCES:
-        return catalog_result
-    if catalog_result and catalog_result.source == "static_default":
-        catalog_static = catalog_result
+        return _apply_context_window_marker_floor(catalog_result, has_one_million_marker)
+    if catalog_result and catalog_result.source in {"registry", "static_default"}:
+        catalog_fallback = catalog_result
 
     provider_catalog_value = provider_catalog_context_length_for_model(provider_name, model)
     if provider_catalog_value is not None:
-        return ResolvedContextWindow(provider_catalog_value, "provider_catalog")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(provider_catalog_value, "provider_catalog"),
+            has_one_million_marker,
+        )
 
     registry_value = _registry_context_window(provider_name, model)
     if registry_value is not None:
-        return ResolvedContextWindow(registry_value, "registry")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(registry_value, "registry"), has_one_million_marker
+        )
 
-    if catalog_static is not None:
-        return catalog_static
+    if catalog_fallback is not None:
+        return _apply_context_window_marker_floor(catalog_fallback, has_one_million_marker)
 
     static_value = static_context_length_for_model(provider_name, model)
     if static_value is not None:
-        return ResolvedContextWindow(static_value, "static_default")
+        return _apply_context_window_marker_floor(
+            ResolvedContextWindow(static_value, "static_default"), has_one_million_marker
+        )
 
     return None
 
@@ -431,7 +455,7 @@ def _resolve_from_catalog(
         value = catalog.get_context_window(provider, model)
         context_window = coerce_context_length(value)
         if context_window is not None:
-            return ResolvedContextWindow(context_window, "provider_reported")
+            return ResolvedContextWindow(context_window, "static_default")
     return None
 
 
@@ -451,15 +475,17 @@ def _registry_context_window(provider: str | None, model: str) -> int | None:
 
     for candidate in _registry_lookup_candidates(provider, model):
         registry_val = lookup_context_window(candidate)
-        if registry_val is not None:
-            return registry_val
+        context_window = positive_context_window(registry_val)
+        if context_window is not None:
+            return context_window
     return None
 
 
 def _registry_lookup_candidates(provider: str | None, model: str) -> list[str]:
-    candidates = [model]
+    candidates = [f"{provider}/{model}" if provider else model, model]
     if provider == "qwen":
-        candidates.append(strip_qwen_auth_suffix(model))
+        stripped = strip_qwen_auth_suffix(model)
+        candidates.extend((f"qwen/{stripped}", stripped))
     return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 

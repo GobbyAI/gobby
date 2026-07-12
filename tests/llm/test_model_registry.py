@@ -2,19 +2,77 @@
 
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
+from psycopg_pool import PoolTimeout
 
 from gobby.llm.model_registry import (
     ModelInfo,
     _provider_for_model,
     fetch_models_sync,
     group_by_provider,
+    lookup_context_window,
     strip_provider_prefix,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "db_error",
+    [psycopg.OperationalError("database unavailable"), PoolTimeout("pool unavailable")],
+)
+def test_lookup_context_window_catalog_db_errors_degrade(
+    db_error: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = db_error
+
+    with caplog.at_level(logging.WARNING, logger="gobby.llm.model_registry"):
+        result = lookup_context_window("openai/gpt-5.4", db=db)
+
+    assert result is None
+    assert "Catalog context-window database lookup failed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "db_error",
+    [psycopg.OperationalError("database unavailable"), PoolTimeout("pool unavailable")],
+)
+def test_lookup_context_window_app_context_db_errors_degrade(
+    db_error: Exception,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = db_error
+    app_context = SimpleNamespace(database=db)
+
+    with (
+        patch("gobby.app_context.get_app_context", return_value=app_context),
+        caplog.at_level(logging.WARNING, logger="gobby.llm.model_registry"),
+    ):
+        result = lookup_context_window("openai/gpt-5.4")
+
+    assert result is None
+    assert "App-context context-window database lookup failed" in caplog.text
+
+
+def test_lookup_context_window_does_not_swallow_app_context_invariant_errors() -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = AttributeError("invalid row invariant")
+    app_context = SimpleNamespace(database=db)
+
+    with (
+        patch("gobby.app_context.get_app_context", return_value=app_context),
+        pytest.raises(AttributeError, match="invalid row invariant"),
+    ):
+        lookup_context_window("openai/gpt-5.4")
+
 
 # -- Fixtures ----------------------------------------------------------------
 
@@ -171,6 +229,47 @@ class TestFetchModelsSync:
         assert claude.name == "Anthropic: Claude Sonnet 4.6"
         assert claude.context_length == 200000
         assert claude.max_completion_tokens == 64000
+
+    @pytest.mark.parametrize(
+        "context_length",
+        [
+            pytest.param(None, id="null"),
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="bool"),
+            pytest.param("128000", id="string"),
+            pytest.param(128000.0, id="float"),
+        ],
+    )
+    @patch("gobby.llm.model_registry.httpx.get")
+    def test_skips_non_positive_integer_context_lengths(
+        self,
+        mock_get: MagicMock,
+        context_length: object,
+    ) -> None:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [
+                {
+                    "id": "openai/gpt-invalid-window",
+                    "name": "Invalid Window",
+                    "context_length": context_length,
+                }
+            ]
+        }
+        mock_get.return_value = mock_response
+
+        assert fetch_models_sync() == []
+
+    @patch("gobby.llm.model_registry.httpx.get")
+    def test_skips_missing_context_length(self, mock_get: MagicMock) -> None:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [{"id": "openai/gpt-missing-window", "name": "Missing Window"}]
+        }
+        mock_get.return_value = mock_response
+
+        assert fetch_models_sync() == []
 
     @patch("gobby.llm.model_registry.httpx.get")
     def test_network_failure_returns_empty(self, mock_get: MagicMock) -> None:

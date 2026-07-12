@@ -100,6 +100,72 @@ def test_github_triage_webhook_rejects_missing_or_bad_signature(
     assert response.status_code == 401
 
 
+def test_github_triage_webhook_authentication_failures_are_indistinguishable(
+    temp_db,
+    session_manager,
+    sample_project,
+    caplog,
+) -> None:
+    secret = "route-secret-must-not-leak"
+    store = GitHubTriageStore(temp_db)
+    config = GitHubTriageConfig(
+        project_id=sample_project["id"],
+        enabled=True,
+        webhook_enabled=True,
+        repositories=("owner/repo",),
+        webhook_secret_ref=secret,
+    )
+    store.upsert_config(config)
+    server = create_http_server(session_manager=session_manager, database=temp_db)
+    client = TestClient(server.app)
+    raw_body = b"{}"
+    endpoint = f"/api/github/webhooks/triage/{sample_project['id']}"
+
+    missing_signature = client.post(endpoint, content=raw_body)
+    invalid_signature = client.post(
+        endpoint,
+        content=raw_body,
+        headers={
+            "X-GitHub-Event": "ping",
+            "X-GitHub-Delivery": "delivery-invalid",
+            "X-Hub-Signature-256": "sha256=invalid",
+        },
+    )
+    unknown_project = client.post(
+        "/api/github/webhooks/triage/unknown-project",
+        content=raw_body,
+        headers=_signed_headers(raw_body, "attacker-controlled-secret"),
+    )
+    valid_signature = client.post(
+        endpoint,
+        content=raw_body,
+        headers=_signed_headers(raw_body, secret),
+    )
+    store.upsert_config(
+        GitHubTriageConfig(
+            project_id=config.project_id,
+            enabled=False,
+            webhook_enabled=True,
+            repositories=config.repositories,
+            webhook_secret_ref=secret,
+        )
+    )
+    disabled_triage = client.post(
+        endpoint,
+        content=raw_body,
+        headers=_signed_headers(raw_body, secret),
+    )
+
+    failures = [missing_signature, invalid_signature, unknown_project, disabled_triage]
+    assert {response.status_code for response in failures} == {401}
+    assert {response.content for response in failures} == {
+        b'{"detail":"GitHub webhook authentication failed"}'
+    }
+    assert valid_signature.status_code == 202
+    assert all(secret not in response.text for response in [*failures, valid_signature])
+    assert secret not in caplog.text
+
+
 class _WebhookRequest:
     headers = {"x-github-event": "issues"}
 

@@ -539,12 +539,19 @@ pub(crate) fn generate_hierarchical_docs(
     ))?;
     if let Some((project_root, ownership_meta)) = ownership {
         progress.emit("generating ownership docs");
+        // Ownership may only link module pages this run actually emitted;
+        // raw `file_modules` cluster names can diverge from that set (#18005).
+        let emitted_modules = module_docs
+            .iter()
+            .map(|module| module.module.clone())
+            .collect::<BTreeSet<String>>();
         emit(BuiltDoc::healthy(
             "code/_ownership.md",
             build_ownership_doc(
                 project_root,
                 &files,
                 &file_modules,
+                &emitted_modules,
                 ownership_meta,
                 OwnershipOptions::default(),
             )?,

@@ -142,7 +142,17 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
         })
         .collect::<String>();
 
-    cleaned
+    let mut escaped_brackets = String::with_capacity(cleaned.len());
+    let mut backslash_run = 0;
+    for ch in cleaned.chars() {
+        if matches!(ch, '[' | ']') && backslash_run % 2 == 0 {
+            escaped_brackets.push('\\');
+        }
+        escaped_brackets.push(ch);
+        backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
+    }
+
+    escaped_brackets
         .split_whitespace()
         .map(|token| {
             if token.starts_with('-') {
@@ -198,6 +208,14 @@ mod tests {
             "alpha betagamma"
         );
         assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
+        assert_eq!(
+            sanitize_pg_search_query("claude-opus-4-8[1m]"),
+            r"claude-opus-4-8\[1m\]"
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r"claude-opus-4-8\[1m\]"),
+            r"claude-opus-4-8\[1m\]"
+        );
     }
 
     #[test]
