@@ -479,7 +479,7 @@ class SessionCoordinator:
                     incomplete_workflow_error = (
                         f"{incomplete_workflow_error}\n\n{_format_no_activity_error(result)}"
                     )
-                self._agent_run_manager.fail(
+                updated_run = self._agent_run_manager.fail(
                     run_id=agent_run_id,
                     error=incomplete_workflow_error,
                     tool_calls_count=tool_calls_count,
@@ -489,12 +489,17 @@ class SessionCoordinator:
                     f"Agent run {agent_run_id} marked as failed: "
                     f"incomplete step workflow on session end"
                 )
-                self._notify_agent_completion(agent_run_id, "error")
+                notification_status = self._agent_run_notification_status(
+                    agent_run_id,
+                    updated_run,
+                    default="error",
+                )
+                self._notify_agent_completion(agent_run_id, notification_status)
                 return
 
             # Guard: agent exited cleanly but did nothing — treat as error
             if tool_calls_count == 0 and turns_used == 0:
-                self._agent_run_manager.fail(
+                updated_run = self._agent_run_manager.fail(
                     run_id=agent_run_id,
                     error=_format_no_activity_error(result),
                 )
@@ -502,11 +507,16 @@ class SessionCoordinator:
                     f"Agent run {agent_run_id} marked as failed: "
                     f"no activity detected (0 tool calls, 0 turns)"
                 )
-                self._notify_agent_completion(agent_run_id, "error")
+                notification_status = self._agent_run_notification_status(
+                    agent_run_id,
+                    updated_run,
+                    default="error",
+                )
+                self._notify_agent_completion(agent_run_id, notification_status)
                 return
 
             # Mark as success
-            self._agent_run_manager.complete(
+            updated_run = self._agent_run_manager.complete(
                 run_id=agent_run_id,
                 result=result,
                 tool_calls_count=tool_calls_count,
@@ -518,7 +528,12 @@ class SessionCoordinator:
             )
 
             # Notify completion registry (fallback if kill_agent didn't fire it)
-            self._notify_agent_completion(agent_run_id, "success")
+            notification_status = self._agent_run_notification_status(
+                agent_run_id,
+                updated_run,
+                default="success",
+            )
+            self._notify_agent_completion(agent_run_id, notification_status)
 
         except Exception as e:
             self.logger.error(f"Failed to complete agent run {agent_run_id}: {e}")
@@ -530,6 +545,27 @@ class SessionCoordinator:
                 self.release_session_worktrees(session.id)
             except Exception as e:
                 self.logger.warning(f"Failed to release worktrees for session {session.id}: {e}")
+
+    def _agent_run_notification_status(
+        self,
+        run_id: str,
+        updated_run: Any | None,
+        *,
+        default: str,
+    ) -> str:
+        """Return the persisted status when another terminalizer won the race."""
+        if updated_run is not None:
+            return default
+        stored_run = self._agent_run_manager.get(run_id) if self._agent_run_manager else None
+        if stored_run is None:
+            self.logger.warning("Agent run %s disappeared after terminalization race", run_id)
+            return default
+        self.logger.debug(
+            "Agent run %s terminalized concurrently with status %s",
+            run_id,
+            stored_run.status,
+        )
+        return stored_run.status
 
     def _incomplete_step_workflow_error(self, session_id: str) -> str | None:
         """Return a failure reason if an active step workflow is still incomplete."""
