@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
@@ -11,10 +11,6 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_lifecycle")
-
-
-class _RunStorageWithTmuxCleanup(Protocol):
-    def clear_tmux_session_name(self, run_id: str, tmux_session_name: str) -> bool: ...
 
 
 def _register_persisted_completion_subscribers(
@@ -35,20 +31,6 @@ def _register_persisted_completion_subscribers(
             continuation_prompt=continuation_prompt,
         )
     return subscribers
-
-
-def _cleanup_persisted_completion_subscribers(
-    runner: GobbyRunner,
-    completion_id: str,
-    subscribers: list[str],
-) -> None:
-    """Drop persisted/in-memory subscriber state after a restart notification."""
-    if not subscribers:
-        return
-    if runner.pipeline_execution_manager:
-        runner.pipeline_execution_manager.remove_completion_subscribers(completion_id)
-    if runner.completion_registry:
-        runner.completion_registry.cleanup(completion_id)
 
 
 def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) -> int:
@@ -251,113 +233,6 @@ async def _cleanup_missing_tmux_agent_run(
         terminal_payload=(f"tmux session {session_name!r} was missing after daemon restart"),
     )
     return True
-
-
-async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int:
-    """Replay durable wake notifications for daemon-restart agent cancellations."""
-    if (
-        runner.agent_runner is None
-        or runner.pipeline_execution_manager is None
-        or runner.completion_registry is None
-    ):
-        return 0
-
-    replayed = 0
-    seen_ids: set[str] = set()
-    offset = 0
-    while True:
-        batch = runner.agent_runner.run_storage.list_by_status(
-            "cancelled",
-            limit=_RUN_REPLAY_PAGE_SIZE,
-            offset=offset,
-        )
-        if not batch:
-            break
-        for run in batch:
-            if run.id in seen_ids:
-                continue
-            seen_ids.add(run.id)
-            if getattr(run, "terminal_reason", None) != "daemon_restart":
-                continue
-
-            await _cleanup_lingering_daemon_restart_tmux_session(
-                run,
-                runner.agent_runner.run_storage,
-            )
-
-            subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
-            if not subscribers:
-                continue
-
-            if not runner.completion_registry.is_registered(run.id):
-                runner.completion_registry.register(
-                    run.id,
-                    subscribers=subscribers,
-                    continuation_prompt=getattr(run, "continuation_prompt", None),
-                )
-
-            try:
-                await runner.completion_registry.notify(
-                    run.id,
-                    result={
-                        "status": "cancelled",
-                        "terminal_reason": "daemon_restart",
-                        "run_id": run.id,
-                        "completion_id": run.id,
-                    },
-                    message=(
-                        f"Agent {run.id} was interrupted by a daemon restart.\n"
-                        "Status: cancelled (daemon restarted)"
-                    ),
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to replay daemon-restart cancellation for agent %s: %s",
-                    run.id,
-                    e,
-                )
-                continue
-
-            _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
-            replayed += 1
-        offset += len(batch)
-        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
-            break
-
-    return replayed
-
-
-async def _cleanup_lingering_daemon_restart_tmux_session(
-    run: object,
-    run_storage: _RunStorageWithTmuxCleanup,
-) -> bool:
-    """Kill a tmux session left alive by a pre-fix daemon-restart cancellation."""
-    tmux_session_name = getattr(run, "tmux_session_name", None)
-    if not tmux_session_name:
-        return False
-
-    try:
-        from gobby.agents.tmux import get_tmux_session_manager
-
-        session_name = str(tmux_session_name)
-        killed = await get_tmux_session_manager().kill_session(session_name, missing_ok=True)
-        if killed:
-            run_storage.clear_tmux_session_name(str(getattr(run, "id", "unknown")), session_name)
-    except Exception as e:
-        logger.warning(
-            "Failed to clean lingering tmux session for cancelled agent %s: %s",
-            getattr(run, "id", "unknown"),
-            e,
-        )
-        return False
-
-    if killed:
-        logger.info(
-            "Cleaned lingering tmux session %s for cancelled agent %s",
-            tmux_session_name,
-            getattr(run, "id", "unknown"),
-        )
-    return killed
 
 
 async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:

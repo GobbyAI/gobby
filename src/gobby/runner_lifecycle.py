@@ -14,11 +14,9 @@ import uvicorn
 from gobby.app_context import clear_app_context
 from gobby.runner_lifecycle_agents import (
     _cancel_active_agent_runs_for_shutdown,
-    _cleanup_persisted_completion_subscribers,
     _reconcile_agent_runs_after_restart,
     _recover_agent_runs_after_restart,
     _register_persisted_completion_subscribers,
-    _replay_daemon_restart_agent_cancellations,
 )
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_lifecycle_shutdown import (
@@ -46,7 +44,6 @@ __all__ = [
     "StartupTracker",
     "_await_critical_stop_hook_grace_window",
     "_cancel_active_agent_runs_for_shutdown",
-    "_cleanup_persisted_completion_subscribers",
     "_init_subsystems",
     "_log_subsystem_init_result",
     "_reap_remaining_child_processes",
@@ -55,7 +52,6 @@ __all__ = [
     "_record_provider_model_refresh_result",
     "_refresh_provider_model_catalog",
     "_register_persisted_completion_subscribers",
-    "_replay_daemon_restart_agent_cancellations",
     "_shutdown_websocket_server",
     "_start_periodic_tasks",
     "get_startup_tracker",
