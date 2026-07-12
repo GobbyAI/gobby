@@ -255,37 +255,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "target_branch": merge_target,
             }
 
-        current_branch_result = await asyncio.to_thread(
-            resolved_git_mgr.run_git_command,
-            ["rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=merge_cwd,
-            timeout=10,
-        )
-        if current_branch_result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Failed to determine current branch: {current_branch_result.stderr.strip()}",
-                "worktree_path": wt_path,
-                "project_path": repo_path,
-                "target_worktree_path": target_worktree_path,
-                "source_branch": effective_source,
-                "target_branch": merge_target,
-            }
-        original_branch = current_branch_result.stdout.strip()
-        if target_worktree_path and original_branch != merge_target:
-            return {
-                "success": False,
-                "error": (
-                    f"Target branch '{merge_target}' is registered at "
-                    f"'{target_worktree_path}', but that checkout is on '{original_branch}'"
-                ),
-                "worktree_path": wt_path,
-                "project_path": repo_path,
-                "target_worktree_path": target_worktree_path,
-                "source_branch": effective_source,
-                "target_branch": merge_target,
-            }
-        checked_out_target = original_branch == merge_target
+        original_branch = ""
+        checked_out_target = False
 
         stash_oid: str | None = None
 
@@ -378,6 +349,40 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         try:
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
+            current_branch_result = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if current_branch_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": (
+                        "Failed to determine current branch: "
+                        f"{current_branch_result.stderr.strip()}"
+                    ),
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            original_branch = current_branch_result.stdout.strip()
+            if target_worktree_path and original_branch != merge_target:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Target branch '{merge_target}' is registered at "
+                        f"'{target_worktree_path}', but that checkout is on '{original_branch}'"
+                    ),
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            checked_out_target = original_branch == merge_target
             if original_branch != merge_target:
                 checkout_result = await run_thread_to_completion(
                     resolved_git_mgr.run_git_command,

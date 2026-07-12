@@ -198,6 +198,112 @@ async def test_merge_worktree_waits_for_checkout_mutation_lock(
     assert result["success"] is True
 
 
+async def test_queued_merge_snapshots_original_branch_after_lock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A queued merge must not retain another transaction's temporary branch."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    state_lock = threading.Lock()
+    current_branch = "develop"
+    branch_snapshots: list[str] = []
+    source_preflights = 0
+    merge_calls = 0
+    second_preflight_started = threading.Event()
+    continue_second_preflight = threading.Event()
+    first_merge_started = threading.Event()
+    release_first_merge = threading.Event()
+
+    def concurrent_git(args, cwd=None, timeout=30, check=False):
+        nonlocal current_branch, merge_calls, source_preflights
+        if args == ["show-ref", "--verify", "--quiet", "refs/heads/main"]:
+            return _make_git_result(0)
+        if args == ["show-ref", "--verify", "--quiet", "refs/heads/feat"]:
+            with state_lock:
+                source_preflights += 1
+                is_second = source_preflights == 2
+            if is_second:
+                second_preflight_started.set()
+                assert continue_second_preflight.wait(timeout=5)
+            return _make_git_result(0)
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            with state_lock:
+                branch_snapshots.append(current_branch)
+                branch = current_branch
+            return _make_git_result(0, stdout=branch)
+        if args == ["checkout", "main"]:
+            with state_lock:
+                current_branch = "main"
+            return _make_git_result(0)
+        if args == ["checkout", "develop"]:
+            with state_lock:
+                current_branch = "develop"
+            return _make_git_result(0)
+        if args == ["status", "--porcelain"]:
+            return _make_git_result(0)
+        if args == ["stash", "list", "-1", "--format=%H"]:
+            return _make_git_result(0)
+        if args[:2] == ["stash", "push"]:
+            return _make_git_result(0)
+        if args == ["merge", "refs/heads/feat", "--no-ff", "--no-edit"]:
+            with state_lock:
+                merge_calls += 1
+                is_first = merge_calls == 1
+            if is_first:
+                first_merge_started.set()
+                assert release_first_merge.wait(timeout=5)
+            return _make_git_result(0)
+        if args[:2] == ["merge-base", "--is-ancestor"]:
+            return _make_git_result(0)
+        if args == ["rev-parse", "HEAD"]:
+            return _make_git_result(0, stdout="abc123def456\n")
+        return _make_git_result(0)
+
+    ctx.git_manager._run_git.side_effect = concurrent_git
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+    lock = get_checkout_mutation_lock(ctx.git_manager.repo_path)
+    second_acquire_attempted = asyncio.Event()
+
+    class CountingLock:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def acquire(self) -> bool:
+            self.attempts += 1
+            if self.attempts == 2:
+                second_acquire_attempted.set()
+            return await lock.acquire()
+
+        def release(self) -> None:
+            lock.release()
+
+    observed_lock = CountingLock()
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.worktrees._sync.get_checkout_mutation_lock",
+        lambda _path: observed_lock,
+    )
+
+    first = asyncio.create_task(merge_tool("wt-123"))
+    assert await asyncio.to_thread(first_merge_started.wait, 2)
+    second = asyncio.create_task(merge_tool("wt-123"))
+    assert await asyncio.to_thread(second_preflight_started.wait, 2)
+    with state_lock:
+        assert current_branch == "main"
+    continue_second_preflight.set()
+    await asyncio.wait_for(second_acquire_attempted.wait(), timeout=2)
+    assert branch_snapshots == ["develop"]
+
+    release_first_merge.set()
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert first_result["success"] is True
+    assert second_result["success"] is True
+    assert branch_snapshots == ["develop", "develop"]
+    with state_lock:
+        assert current_branch == "develop"
+
+
 async def test_merge_worktree_cancellation_waits_for_git_worker_before_unlock():
     """Cancellation waits for merge abort and exact stash restore before unlock."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
