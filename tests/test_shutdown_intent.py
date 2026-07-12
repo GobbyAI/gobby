@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import threading
 import time
 from pathlib import Path
+from typing import TextIO
 
 import pytest
 
 from gobby.shutdown_intent import (
     ShutdownIntent,
+    _write_marker_atomically,
     get_active_shutdown_marker_path,
     get_shutdown_source_path,
     read_active_shutdown_intent,
@@ -196,34 +201,169 @@ def test_write_shutdown_intent_records_active_marker(tmp_path: Path) -> None:
     assert get_shutdown_source_path(tmp_path).exists()
 
 
-def test_write_shutdown_intent_cleans_partial_markers_on_failure(
+@pytest.mark.parametrize(
+    "filename",
+    ["shutdown_source.json", "shutdown_intent_active.json"],
+)
+def test_atomic_marker_write_uses_private_same_directory_temp(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    filename: str,
+) -> None:
+    marker = tmp_path / filename
+    payload = {"source": "new", "intent": "restart", "timestamp": 2.0}
+    observed_temps: list[Path] = []
+    original_replace = os.replace
+
+    def inspect_replace(source: str | Path, destination: str | Path) -> None:
+        temp_path = Path(source)
+        observed_temps.append(temp_path)
+        assert temp_path.parent == marker.parent
+        assert stat.S_IMODE(temp_path.stat().st_mode) == 0o600
+        original_replace(source, destination)
+
+    monkeypatch.setattr("gobby.shutdown_intent.os.replace", inspect_replace)
+
+    _write_marker_atomically(marker, payload)
+
+    assert json.loads(marker.read_text(encoding="utf-8")) == payload
+    assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+    assert len(observed_temps) == 1
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["shutdown_source.json", "shutdown_intent_active.json"],
+)
+@pytest.mark.parametrize("failure_stage", ["write", "replace"])
+def test_atomic_marker_failure_preserves_old_marker_and_cleans_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    failure_stage: str,
+) -> None:
+    marker = tmp_path / filename
+    old_payload = {"source": "old", "intent": "stop", "timestamp": 1.0}
+    marker.write_text(json.dumps(old_payload), encoding="utf-8")
+
+    if failure_stage == "write":
+
+        def fail_dump(_data: object, handle: TextIO) -> None:
+            handle.write('{"partial"')
+            raise OSError("injected write failure")
+
+        monkeypatch.setattr("gobby.shutdown_intent.json.dump", fail_dump)
+        expected_error = "injected write failure"
+    else:
+
+        def fail_replace(_source: str | Path, _destination: str | Path) -> None:
+            raise OSError("injected replace failure")
+
+        monkeypatch.setattr("gobby.shutdown_intent.os.replace", fail_replace)
+        expected_error = "injected replace failure"
+
+    with pytest.raises(OSError, match=expected_error):
+        _write_marker_atomically(
+            marker,
+            {"source": "new", "intent": "restart", "timestamp": 2.0},
+        )
+
+    assert json.loads(marker.read_text(encoding="utf-8")) == old_payload
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["shutdown_source.json", "shutdown_intent_active.json"],
+)
+def test_atomic_marker_concurrent_reader_sees_old_or_complete_new_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
+    marker = tmp_path / filename
+    old_payload = {"source": "old", "intent": "stop", "timestamp": 1.0}
+    new_payload = {"source": "new", "intent": "restart", "timestamp": 2.0}
+    marker.write_text(json.dumps(old_payload), encoding="utf-8")
+    replace_ready = threading.Event()
+    allow_replace = threading.Event()
+    original_replace = os.replace
+    writer_errors: list[BaseException] = []
+
+    def gated_replace(source: str | Path, destination: str | Path) -> None:
+        replace_ready.set()
+        if not allow_replace.wait(timeout=5):
+            raise TimeoutError("reader did not release atomic replace")
+        original_replace(source, destination)
+
+    def write_marker() -> None:
+        try:
+            _write_marker_atomically(marker, new_payload)
+        except BaseException as exc:
+            writer_errors.append(exc)
+
+    monkeypatch.setattr("gobby.shutdown_intent.os.replace", gated_replace)
+    writer = threading.Thread(target=write_marker)
+    writer.start()
+    assert replace_ready.wait(timeout=5)
+
+    observed = [json.loads(marker.read_text(encoding="utf-8"))]
+    allow_replace.set()
+    writer.join(timeout=5)
+    assert not writer.is_alive()
+    observed.append(json.loads(marker.read_text(encoding="utf-8")))
+
+    assert not writer_errors
+    assert observed == [old_payload, new_payload]
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_atomic_marker_uses_unique_temp_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = get_active_shutdown_marker_path(tmp_path)
+    temp_names: list[str] = []
+    original_replace = os.replace
+
+    def record_replace(source: str | Path, destination: str | Path) -> None:
+        temp_names.append(Path(source).name)
+        original_replace(source, destination)
+
+    monkeypatch.setattr("gobby.shutdown_intent.os.replace", record_replace)
+
+    _write_marker_atomically(marker, {"source": "first"})
+    _write_marker_atomically(marker, {"source": "second"})
+
+    assert len(temp_names) == 2
+    assert len(set(temp_names)) == 2
+
+
+def test_write_shutdown_intent_preserves_existing_active_marker_on_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_path = get_shutdown_source_path(tmp_path)
     active_path = get_active_shutdown_marker_path(tmp_path)
-    original_write_text = Path.write_text
+    old_active = {"source": "old", "intent": "stop", "timestamp": 1.0}
+    source_path.write_text(json.dumps(old_active), encoding="utf-8")
+    active_path.write_text(json.dumps(old_active), encoding="utf-8")
+    original_replace = os.replace
 
-    def write_text_with_active_failure(
-        self: Path,
-        data: str,
-        *args: object,
-        **kwargs: object,
-    ) -> int:
-        if self == active_path:
-            raise OSError("active write failed")
-        return original_write_text(self, data, *args, **kwargs)
+    def fail_active_replace(source: str | Path, destination: str | Path) -> None:
+        if Path(destination) == active_path:
+            raise OSError("active replace failed")
+        original_replace(source, destination)
 
-    caplog.set_level("ERROR", logger="gobby.shutdown_intent")
-    monkeypatch.setattr(Path, "write_text", write_text_with_active_failure)
+    monkeypatch.setattr("gobby.shutdown_intent.os.replace", fail_active_replace)
 
-    with pytest.raises(OSError, match="active write failed"):
+    with pytest.raises(OSError, match="active replace failed"):
         write_shutdown_intent("cli_restart", "restart", home=tmp_path)
 
-    assert not source_path.exists()
-    assert not active_path.exists()
-    assert "Failed to write shutdown intent markers" in caplog.text
+    assert json.loads(active_path.read_text(encoding="utf-8")) == old_active
+    assert json.loads(source_path.read_text(encoding="utf-8"))["source"] == "cli_restart"
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_read_active_shutdown_intent_returns_none_after_consuming_marker(

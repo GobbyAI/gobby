@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
+import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -92,26 +95,74 @@ def write_shutdown_intent(
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
-    written: list[Path] = []
-    current_marker: Path | None = None
     for marker in (get_shutdown_source_path(home), get_shutdown_marker_path(home)):
         try:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            current_marker = marker
-            marker.write_text(json.dumps(data), encoding="utf-8")
-            written.append(marker)
-            current_marker = None
+            _write_marker_atomically(marker, data)
         except OSError:
-            cleanup_targets = [*written]
-            if current_marker is not None:
-                cleanup_targets.append(current_marker)
-            for target in cleanup_targets:
-                try:
-                    target.unlink(missing_ok=True)
-                except Exception:
-                    logger.exception("Failed to clean up partial shutdown marker: %s", target)
             logger.exception("Failed to write shutdown intent markers")
             raise
+
+
+def _write_marker_atomically(marker: Path, data: Mapping[str, object]) -> None:
+    """Durably replace a shutdown marker with complete owner-only JSON."""
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{marker.name}.",
+        suffix=".tmp",
+        dir=marker.parent,
+        text=True,
+    )
+    temp_path = Path(temp_name)
+    file_object_created = False
+    try:
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        file_object_created = True
+        with handle:
+            json.dump(data, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.chmod(0o600)
+        os.replace(temp_path, marker)
+        _fsync_parent_directory(marker.parent)
+    except BaseException:
+        if not file_object_created:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Failed to clean up shutdown marker temp file: %s", temp_path)
+        raise
+
+
+def _fsync_parent_directory(directory: Path) -> None:
+    """Persist a same-directory replacement where directory fsync is supported."""
+    if os.name == "nt":
+        return
+    unsupported_errors = {
+        errno.EACCES,
+        errno.EBADF,
+        errno.EINVAL,
+        errno.ENOTSUP,
+        errno.EPERM,
+    }
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        directory_fd = os.open(directory, flags)
+    except OSError as exc:
+        if exc.errno in unsupported_errors:
+            return
+        raise
+    try:
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            if exc.errno not in unsupported_errors:
+                raise
+    finally:
+        os.close(directory_fd)
 
 
 def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
