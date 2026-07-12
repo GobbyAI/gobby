@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import inspect
 import json
 import logging
+import math
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 import psycopg
 
@@ -57,6 +60,68 @@ class TriageWebhookError(TriageError):
 
 class TriageDisabledError(TriageError):
     """Triage is disabled for the project."""
+
+
+class GitHubMCPError(RuntimeError):
+    """Safe typed failure returned by the GitHub MCP server."""
+
+    def __init__(
+        self,
+        *,
+        tool_name: str | None = None,
+        status_code: int | None = None,
+        retry_after_seconds: float | None = None,
+        rate_limit_remaining: int | None = None,
+        rate_limit_reset: float | None = None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.rate_limit_remaining = rate_limit_remaining
+        self.rate_limit_reset = rate_limit_reset
+        tool = f" tool {tool_name}" if tool_name else ""
+        status = f" (status={status_code})" if status_code is not None else ""
+        super().__init__(f"GitHub MCP{tool} failed{status}")
+
+    @property
+    def rate_limit_metadata(self) -> dict[str, int | float]:
+        """Return only the allowlisted rate-limit fields safe for logs and metrics."""
+        metadata: dict[str, int | float] = {}
+        if self.status_code is not None:
+            metadata["status_code"] = self.status_code
+        if self.retry_after_seconds is not None:
+            metadata["retry_after_seconds"] = self.retry_after_seconds
+        if self.rate_limit_remaining is not None:
+            metadata["rate_limit_remaining"] = self.rate_limit_remaining
+        if self.rate_limit_reset is not None:
+            metadata["rate_limit_reset"] = self.rate_limit_reset
+        return metadata
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return bool(
+            self.status_code == 429
+            or self.retry_after_seconds is not None
+            or self.rate_limit_reset is not None
+            or (self.status_code == 403 and self.rate_limit_remaining == 0)
+        )
+
+    def retry_delay(self, *, now: float, maximum: float) -> float:
+        """Choose a server-provided delay, bounded for cron and test safety."""
+        if self.retry_after_seconds is not None:
+            delay = self.retry_after_seconds
+        elif self.rate_limit_reset is not None:
+            delay = max(0.0, self.rate_limit_reset - now)
+        else:
+            delay = 1.0
+        return min(maximum, max(0.0, delay))
+
+
+class _RateLimitMetadata(TypedDict):
+    status_code: int | None
+    retry_after_seconds: float | None
+    rate_limit_remaining: int | None
+    rate_limit_reset: float | None
 
 
 class TriageJudge(Protocol):
@@ -113,7 +178,12 @@ class GitHubIssueTriageService:
         secret_store: Any | None = None,
         judge: TriageJudge | None = None,
         build_func: BuildFunc | None = None,
+        sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        time_func: Callable[[], float] = time.time,
+        max_rate_limit_delay: float = 60.0,
     ) -> None:
+        if max_rate_limit_delay < 0 or not math.isfinite(max_rate_limit_delay):
+            raise ValueError("max_rate_limit_delay must be a finite non-negative number")
         self.db = db
         self.mcp_manager = mcp_manager
         self.task_manager = task_manager or LocalTaskManager(db)
@@ -123,6 +193,9 @@ class GitHubIssueTriageService:
         self.judge = judge
         self.store = GitHubTriageStore(db)
         self._build_func = build_func
+        self._sleep_func = sleep_func
+        self._time_func = time_func
+        self._max_rate_limit_delay = max_rate_limit_delay
 
     async def handle_webhook_delivery(
         self, project_id: str, headers: dict[str, str], raw_body: bytes
@@ -239,16 +312,26 @@ class GitHubIssueTriageService:
             owner, repo_name = parse_github_repo(repo)
             page = 1
             while True:
-                issues = await self._github_call(
-                    "list_issues",
-                    {
-                        "owner": owner,
-                        "repo": repo_name,
-                        "state": "open",
-                        "per_page": 100,
-                        "page": page,
-                    },
-                )
+                try:
+                    issues = await self._github_call(
+                        "list_issues",
+                        {
+                            "owner": owner,
+                            "repo": repo_name,
+                            "state": "open",
+                            "per_page": 100,
+                            "page": page,
+                        },
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to list GitHub issues for %s page %s (%s)",
+                        repo,
+                        page,
+                        type(exc).__name__,
+                    )
+                    errors += 1
+                    break
                 if isinstance(issues, dict):
                     issues = issues.get("issues", [])
                 if not isinstance(issues, list) or not issues:
@@ -269,12 +352,12 @@ class GitHubIssueTriageService:
                             issue_data=issue,
                         )
                         triaged += 1
-                    except Exception:
+                    except Exception as exc:
                         logger.warning(
-                            "Failed to reconcile GitHub issue %s#%s",
+                            "Failed to reconcile GitHub issue %s#%s (%s)",
                             repo,
                             issue_number,
-                            exc_info=True,
+                            type(exc).__name__,
                         )
                         errors += 1
                 if len(issues) < 100:
@@ -565,19 +648,37 @@ class GitHubIssueTriageService:
                 raise RuntimeError("GitHub MCP manager is not configured")
             return None
 
-        if hasattr(self.mcp_manager, "call_tool"):
-            result = self.mcp_manager.call_tool(
-                server_name="github",
-                tool_name=tool_name,
-                arguments=arguments,
-            )
-            if inspect.isawaitable(result):
-                result = await result
-            return _parse_mcp_result(result)
+        for attempt in range(2):
+            try:
+                if hasattr(self.mcp_manager, "call_tool"):
+                    result = self.mcp_manager.call_tool(
+                        server_name="github",
+                        tool_name=tool_name,
+                        arguments=arguments,
+                    )
+                    if inspect.isawaitable(result):
+                        result = await result
+                else:
+                    session = await self.mcp_manager.get_client_session("github")
+                    result = await session.call_tool(tool_name, arguments)
+                return _parse_mcp_result(result, tool_name=tool_name)
+            except GitHubMCPError as exc:
+                if attempt or not exc.is_rate_limited:
+                    raise
+                delay = exc.retry_delay(
+                    now=self._time_func(),
+                    maximum=self._max_rate_limit_delay,
+                )
+                logger.warning(
+                    "GitHub MCP tool %s was rate limited; retrying once after %.3fs",
+                    tool_name,
+                    delay,
+                )
+                await self._sleep_func(delay)
+            except Exception:
+                raise GitHubMCPError(tool_name=tool_name) from None
 
-        session = await self.mcp_manager.get_client_session("github")
-        result = await session.call_tool(tool_name, arguments)
-        return _parse_mcp_result(result)
+        raise AssertionError("GitHub MCP retry loop exhausted unexpectedly")
 
     def _validate_signature(
         self, secret_ref: str | None, headers: dict[str, str], raw_body: bytes
@@ -712,15 +813,108 @@ def _initial_delivery_status(
     return "ignored"
 
 
-def _parse_mcp_result(result: Any) -> Any:
-    if hasattr(result, "content") and result.content:
-        for item in result.content:
-            if hasattr(item, "text"):
+def _parse_mcp_result(result: Any, *, tool_name: str | None = None) -> Any:
+    payload = _mcp_result_payload(result)
+    if bool(_mcp_field(result, "isError", "is_error")):
+        metadata = _safe_rate_limit_metadata(payload)
+        raise GitHubMCPError(
+            tool_name=tool_name,
+            status_code=metadata["status_code"],
+            retry_after_seconds=metadata["retry_after_seconds"],
+            rate_limit_remaining=metadata["rate_limit_remaining"],
+            rate_limit_reset=metadata["rate_limit_reset"],
+        )
+    return payload
+
+
+def _mcp_result_payload(result: Any) -> Any:
+    structured = _mcp_field(result, "structuredContent", "structured_content")
+    if structured is not None:
+        return structured
+    content = _mcp_field(result, "content")
+    if isinstance(content, list):
+        for item in content:
+            text = _mcp_field(item, "text")
+            if isinstance(text, str):
                 try:
-                    return json.loads(item.text)
-                except (json.JSONDecodeError, TypeError):
-                    return item.text
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    return text
     return result
+
+
+def _mcp_field(value: Any, *names: str) -> Any:
+    for name in names:
+        if isinstance(value, dict) and name in value:
+            return value[name]
+        if hasattr(value, name):
+            return getattr(value, name)
+    return None
+
+
+def _safe_rate_limit_metadata(payload: Any) -> _RateLimitMetadata:
+    values: dict[str, Any] = {}
+    for mapping in _nested_mappings(payload):
+        for key, value in mapping.items():
+            normalized = str(key).strip().lower().replace("_", "-")
+            values.setdefault(normalized, value)
+
+    status = _first_number(values, "status", "status-code", "statuscode", "http-status")
+    retry_after = _first_number(values, "retry-after", "retryafter")
+    remaining = _first_number(
+        values,
+        "x-ratelimit-remaining",
+        "x-rate-limit-remaining",
+        "rate-limit-remaining",
+    )
+    reset = _first_number(
+        values,
+        "x-ratelimit-reset",
+        "x-rate-limit-reset",
+        "rate-limit-reset",
+    )
+    status_code = (
+        int(status) if status is not None and status.is_integer() and 100 <= status <= 599 else None
+    )
+    rate_limit_remaining = (
+        int(remaining) if remaining is not None and remaining.is_integer() else None
+    )
+    return {
+        "status_code": status_code,
+        "retry_after_seconds": retry_after,
+        "rate_limit_remaining": rate_limit_remaining,
+        "rate_limit_reset": reset,
+    }
+
+
+def _nested_mappings(value: Any, *, depth: int = 0) -> list[dict[Any, Any]]:
+    if depth > 4:
+        return []
+    if isinstance(value, dict):
+        mappings = [value]
+        for nested in value.values():
+            mappings.extend(_nested_mappings(nested, depth=depth + 1))
+        return mappings
+    if isinstance(value, list):
+        mappings = []
+        for nested in value:
+            mappings.extend(_nested_mappings(nested, depth=depth + 1))
+        return mappings
+    return []
+
+
+def _first_number(values: dict[str, Any], *names: str) -> float | None:
+    for name in names:
+        value = values.get(name)
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number) and number >= 0:
+            return number
+    return None
 
 
 def _task_description(issue: IssueSnapshot) -> str:

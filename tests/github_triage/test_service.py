@@ -9,7 +9,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.github_triage.service import GitHubIssueTriageService, TriageWebhookError
+from gobby.github_triage import service as service_module
+from gobby.github_triage.service import (
+    GitHubIssueTriageService,
+    TriageOutcome,
+    TriageWebhookError,
+    create_github_triage_handler,
+)
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -38,6 +44,28 @@ class FakeGitHubMCP:
 
     def called(self, tool_name: str) -> list[dict[str, Any]]:
         return [arguments for name, arguments in self.calls if name == tool_name]
+
+
+def _mcp_error(
+    status: int,
+    *,
+    headers: dict[str, str] | None = None,
+    message: str = "GitHub request failed",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        isError=True,
+        content=[
+            SimpleNamespace(
+                text=json.dumps(
+                    {
+                        "status": status,
+                        "message": message,
+                        "headers": headers or {},
+                    }
+                )
+            )
+        ],
+    )
 
 
 def _payload(
@@ -353,3 +381,155 @@ async def test_close_linked_issue_after_merge_comments_labels_and_closes(
     assert "abc123" in github.called("add_issue_comment")[0]["body"]
     assert github.called("add_labels_to_issue")[0]["labels"] == ["gobby:resolved"]
     assert github.called("update_issue")[0]["state"] == "closed"
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_cron_handler_counts_github_mcp_errors(
+    temp_db,
+    sample_project,
+    status: int,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    github = FakeGitHubMCP(
+        {
+            "list_issues": _mcp_error(
+                status,
+                headers={"Retry-After": "0", "X-RateLimit-Remaining": "0"},
+            )
+        }
+    )
+    handler = create_github_triage_handler(
+        db=temp_db,
+        mcp_manager=github,
+        task_manager=LocalTaskManager(temp_db),
+    )
+
+    result = await handler(SimpleNamespace(project_id=sample_project["id"]))
+
+    assert "scanned=0 triaged=0 errors=1" in result
+
+
+async def test_reconcile_counts_later_page_failure(temp_db, sample_project) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    responses = [
+        {
+            "issues": [
+                {"number": number, "pull_request": {"url": "https://example.invalid/pr"}}
+                for number in range(100)
+            ]
+        },
+        _mcp_error(429, headers={"Retry-After": "0"}),
+        _mcp_error(429, headers={"Retry-After": "0"}),
+    ]
+    github = FakeGitHubMCP({"list_issues": lambda _: responses.pop(0)})
+    service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)
+
+    result = await service.reconcile_project_repos(sample_project["id"])
+
+    assert result == {"scanned": 0, "triaged": 0, "errors": 1}
+    assert [call["page"] for call in github.called("list_issues")] == [1, 2, 2]
+
+
+@pytest.mark.parametrize(
+    ("failed_tool", "close_after_label"),
+    [
+        ("add_issue_comment", False),
+        ("add_labels_to_issue", False),
+        ("update_issue", True),
+    ],
+)
+async def test_reconcile_counts_side_effect_failures_without_recording_success(
+    temp_db,
+    sample_project,
+    failed_tool: str,
+    close_after_label: bool,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    issue = json.loads(_payload().decode())["issue"]
+    github = FakeGitHubMCP(
+        {
+            "list_issues": {"issues": [issue]},
+            failed_tool: _mcp_error(403),
+        }
+    )
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        build_func=AsyncMock(),
+        judge=(
+            AsyncMock(return_value=TriageOutcome("skip", "done", close_issue=True))
+            if close_after_label
+            else None
+        ),
+    )
+
+    result = await service.reconcile_project_repos(sample_project["id"])
+
+    assert result == {"scanned": 1, "triaged": 0, "errors": 1}
+    record = GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
+    assert record is None
+
+
+async def test_github_mcp_error_preserves_only_safe_rate_limit_metadata(
+    temp_db,
+) -> None:
+    secret = "ghp_do-not-log-this"
+    github = FakeGitHubMCP(
+        {
+            "list_issues": _mcp_error(
+                429,
+                headers={
+                    "Retry-After": "3.5",
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": "12345",
+                    "Authorization": f"Bearer {secret}",
+                },
+                message=f"request rejected for token {secret}",
+            )
+        }
+    )
+    service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)
+
+    with pytest.raises(service_module.GitHubMCPError) as exc_info:
+        await service._github_call("list_issues", {})
+
+    error = exc_info.value
+    assert error.rate_limit_metadata == {
+        "status_code": 429,
+        "retry_after_seconds": 3.5,
+        "rate_limit_remaining": 0,
+        "rate_limit_reset": 12345.0,
+    }
+    assert secret not in str(error)
+    assert secret not in repr(error)
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_delay"),
+    [
+        ({"Retry-After": "2.5"}, 2.5),
+        ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1007"}, 5.0),
+        ({"Retry-After": "999999"}, 5.0),
+    ],
+)
+async def test_github_call_retries_once_with_bounded_rate_limit_delay(
+    temp_db,
+    headers: dict[str, str],
+    expected_delay: float,
+) -> None:
+    responses = [_mcp_error(429, headers=headers), {"issues": []}]
+    github = FakeGitHubMCP({"list_issues": lambda _: responses.pop(0)})
+    sleep = AsyncMock()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        sleep_func=sleep,
+        time_func=lambda: 1000.0,
+        max_rate_limit_delay=5.0,
+    )
+
+    result = await service._github_call("list_issues", {})
+
+    assert result == {"issues": []}
+    sleep.assert_awaited_once_with(expected_delay)
+    assert len(github.called("list_issues")) == 2
