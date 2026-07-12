@@ -267,9 +267,21 @@ def create_workflows_registry(
         source_path: str,
         workflow_name: str | None = None,
         is_global: bool = False,
-        project_path: str | None = None,
     ) -> dict[str, Any]:
-        return import_workflow(_loader, source_path, workflow_name, is_global, project_path)
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        project_path = None
+        if project_ctx:
+            project_path = project_ctx.get("project_path") or project_ctx.get("path")
+        return import_workflow(
+            _loader,
+            source_path,
+            workflow_name,
+            is_global,
+            project_path,
+            db=_db,
+            project_id=project_id,
+        )
 
     @registry.tool(
         name="reload_cache",
