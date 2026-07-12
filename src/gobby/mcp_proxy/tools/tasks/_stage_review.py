@@ -210,7 +210,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
@@ -297,7 +298,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
@@ -403,7 +405,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
@@ -517,7 +520,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         resolved_id, error = _resolve_task(ctx, task_id)
         if error is not None:
             return error
-        assert resolved_id is not None
+        if resolved_id is None:
+            raise RuntimeError("Task resolution returned neither a task ID nor an error")
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:

@@ -76,7 +76,8 @@ class HTTPTransportConnection(BaseTransportConnection):
 
     async def _open_streams(self, stack: AsyncExitStack) -> tuple[Any, Any]:
         """Enter the streamable HTTP client and return its read/write streams."""
-        assert self.config.url is not None
+        if self.config.url is None:
+            raise ValueError(f"URL is required for HTTP server '{self.config.name}'")
         http_client = create_mcp_http_client(headers=self.config.headers)
         managed_client = await stack.enter_async_context(http_client)
         read_stream, write_stream, _ = await stack.enter_async_context(

@@ -16,7 +16,8 @@ class SSETransportConnection(HTTPTransportConnection):
 
     async def _open_streams(self, stack: AsyncExitStack) -> tuple[Any, Any]:
         """Enter the SDK SSE client and return its read/write streams."""
-        assert self.config.url is not None
+        if self.config.url is None:
+            raise ValueError(f"URL is required for SSE server '{self.config.name}'")
         return await stack.enter_async_context(
             sse_client(
                 self.config.url,

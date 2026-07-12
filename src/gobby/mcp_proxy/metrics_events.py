@@ -156,7 +156,7 @@ class MetricsEventStore:
             WHERE {where}
             GROUP BY name
             ORDER BY eval_count DESC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [_round_fields(dict(row), ("avg_latency_ms",)) for row in rows]
@@ -189,7 +189,7 @@ class MetricsEventStore:
             WHERE {where}
             GROUP BY name, event_type
             ORDER BY count DESC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [_round_fields(dict(row), ("avg_latency_ms",)) for row in rows]
@@ -232,7 +232,7 @@ class MetricsEventStore:
             {where}
             ORDER BY created_at DESC
             LIMIT %s
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [dict(row) for row in rows]
@@ -287,7 +287,7 @@ class MetricsEventStore:
             FROM metrics_events
             WHERE {where}
             ORDER BY created_at ASC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         buckets = self._bucket_timeseries_rows(rows, bucket_label)
@@ -375,7 +375,7 @@ class MetricsEventStore:
             FROM metrics_events_archive
             {where}
             ORDER BY call_count DESC
-            """,
+            """,  # nosec # where contains only fixed predicates; values are bound.
             tuple(params),
         )
         return [dict(row) for row in rows]

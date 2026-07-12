@@ -189,7 +189,7 @@ class ToolMetricsStore:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         return self.db.fetchall(
-            f"SELECT * FROM tool_metrics WHERE {where_clause} ORDER BY call_count DESC",  # nosec B608
+            f"SELECT * FROM tool_metrics WHERE {where_clause} ORDER BY call_count DESC",  # nosec # fixed predicates; bound values.
             tuple(params),
         )
 
@@ -208,12 +208,12 @@ class ToolMetricsStore:
 
         if project_id:
             return self.db.fetchall(
-                f"SELECT * FROM tool_metrics WHERE project_id = %s ORDER BY {order_by} DESC LIMIT %s",  # nosec B608
+                f"SELECT * FROM tool_metrics WHERE project_id = %s ORDER BY {order_by} DESC LIMIT %s",  # nosec # order_by is allowlisted.
                 (project_id, limit),
             )
         else:
             return self.db.fetchall(
-                f"SELECT * FROM tool_metrics ORDER BY {order_by} DESC LIMIT %s",  # nosec B608
+                f"SELECT * FROM tool_metrics ORDER BY {order_by} DESC LIMIT %s",  # nosec # order_by is allowlisted.
                 (limit,),
             )
 
@@ -312,7 +312,7 @@ class ToolMetricsStore:
                 where_clause = " AND ".join(conditions)
                 table_params = ("tool_call", *params) if table == "metrics_events" else params
                 cursor = txn.execute(
-                    f"DELETE FROM {table} WHERE {where_clause}",  # nosec B608
+                    f"DELETE FROM {table} WHERE {where_clause}",  # nosec # table and predicates come from fixed tuples.
                     table_params,
                 )
                 if table == "tool_metrics":
@@ -483,7 +483,7 @@ class ToolMetricsStore:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         return self.db.fetchall(
-            f"SELECT * FROM tool_metrics_daily WHERE {where_clause} ORDER BY date DESC, call_count DESC",  # nosec B608
+            f"SELECT * FROM tool_metrics_daily WHERE {where_clause} ORDER BY date DESC, call_count DESC",  # nosec # fixed predicates; bound values.
             tuple(params),
         )
 

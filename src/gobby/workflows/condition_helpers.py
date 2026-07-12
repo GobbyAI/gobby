@@ -621,7 +621,7 @@ def _strip_uv_run_options(tokens: list[str]) -> list[str]:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token == "--":
+        if token == "--":  # nosec B105 # CLI option terminator, not a credential.
             return tokens[index + 1 :]
         if not token.startswith("-"):
             return tokens[index:]
@@ -640,9 +640,9 @@ def _python_module_tokens(tokens: list[str]) -> list[str] | None:
     options_with_value = {"-W", "-X", "--check-hash-based-pycs"}
     while index < len(tokens):
         token = tokens[index]
-        if token == "-m":
+        if token == "-m":  # nosec B105 # Python module flag, not a credential.
             return tokens[index + 1 :]
-        if token == "--":
+        if token == "--":  # nosec B105 # CLI option terminator, not a credential.
             return None
         if token in options_with_value and index + 1 < len(tokens):
             index += 2
