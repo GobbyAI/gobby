@@ -247,9 +247,6 @@ class WorkflowRuleEvaluator:
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self.database)
-            variables = sv_mgr.get_variables(session_id)
-            already_injected: set[str] = set(variables.get("injected_memory_ids", []))
-
             memories = result.get("memories", [])
             id_less = [m for m in memories if not m.get("id")]
             if id_less:
@@ -257,16 +254,18 @@ class WorkflowRuleEvaluator:
                     "Memory dedup: %d memories lack 'id' field and cannot be tracked",
                     len(id_less),
                 )
-            if not memories or not already_injected:
-                new_ids = [m["id"] for m in memories if m.get("id")]
-                if new_ids:
-                    sv_mgr.append_to_set_variable(session_id, "injected_memory_ids", new_ids)
+            if not memories:
                 return result
 
-            filtered = [m for m in memories if m.get("id") not in already_injected]
-            new_ids = [m["id"] for m in filtered if m.get("id")]
-            if new_ids:
-                sv_mgr.append_to_set_variable(session_id, "injected_memory_ids", new_ids)
+            memory_ids = [m["id"] for m in memories if m.get("id")]
+            claimed_ids = set(
+                sv_mgr.claim_set_variable_values(
+                    session_id,
+                    "injected_memory_ids",
+                    memory_ids,
+                )
+            )
+            filtered = [m for m in memories if not m.get("id") or m["id"] in claimed_ids]
 
             return {**result, "memories": filtered}
         except Exception as exc:
@@ -279,23 +278,26 @@ class WorkflowRuleEvaluator:
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self.database)
-            variables = sv_mgr.get_variables(session_id)
-            already_suggested: set[str] = set(variables.get("suggested_skill_names", []))
-
             results_list = result.get("results", [])
             if not results_list:
                 return result
 
+            relevant = [
+                item for item in results_list if item.get("score", 0) >= MIN_SKILL_RELEVANCE
+            ]
+            relevant_names = [item["skill_name"] for item in relevant if item.get("skill_name")]
+            claimed_names = set(
+                sv_mgr.claim_set_variable_values(
+                    session_id,
+                    "suggested_skill_names",
+                    relevant_names,
+                )
+            )
             filtered = [
                 item
-                for item in results_list
-                if item.get("score", 0) >= MIN_SKILL_RELEVANCE
-                and item.get("skill_name", "") not in already_suggested
+                for item in relevant
+                if not item.get("skill_name") or item["skill_name"] in claimed_names
             ]
-
-            new_names = [item["skill_name"] for item in filtered if item.get("skill_name")]
-            if new_names:
-                sv_mgr.append_to_set_variable(session_id, "suggested_skill_names", new_names)
 
             return {**result, "results": filtered, "count": len(filtered)}
         except Exception as exc:

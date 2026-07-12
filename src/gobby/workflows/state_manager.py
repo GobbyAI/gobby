@@ -336,6 +336,57 @@ class SessionVariableManager:
                 )
         return True
 
+    def claim_set_variable_values(
+        self,
+        session_id: str,
+        name: str,
+        values: list[str],
+    ) -> list[str]:
+        """Atomically store and return values that were not already present.
+
+        The returned values preserve input order and contain no duplicates. The
+        transaction serializes the read and write so concurrent callers cannot
+        both claim the same value.
+        """
+        if not values:
+            return []
+
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            stored = current_vars.get(name, [])
+            if not isinstance(stored, list):
+                stored = [stored] if stored else []
+
+            existing = set(stored)
+            claimed: list[str] = []
+            for value in values:
+                if value not in existing:
+                    existing.add(value)
+                    claimed.append(value)
+
+            if not claimed:
+                return []
+
+            current_vars[name] = sorted(existing)
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (json.dumps(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, json.dumps(current_vars), now),
+                )
+        return claimed
+
     def append_to_set_variable_and_conditional_merge(
         self,
         session_id: str,

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -360,6 +362,41 @@ def test_append_to_set_variable_noop_on_empty(db: Any) -> None:
 
     result = mgr.get_variables(NO_ROW_SESSION_ID)
     assert result == {}
+
+
+def test_claim_set_variable_values_returns_only_new_values(db: Any) -> None:
+    """Claims are deduplicated atomically and preserve input order."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.append_to_set_variable(S1, "injected", ["existing"])
+
+    first = mgr.claim_set_variable_values(S1, "injected", ["new-b", "existing", "new-a"])
+    second = mgr.claim_set_variable_values(S1, "injected", ["new-a", "new-b"])
+
+    assert first == ["new-b", "new-a"]
+    assert second == []
+    assert mgr.get_variables(S1)["injected"] == ["existing", "new-a", "new-b"]
+
+
+def test_claim_set_variable_values_serializes_concurrent_claims(db: Any) -> None:
+    """Only one concurrent caller can claim a newly injected value."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    barrier = threading.Barrier(3)
+
+    def claim() -> list[str]:
+        barrier.wait()
+        return mgr.claim_set_variable_values(S1, "injected", ["shared"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(claim) for _ in range(2)]
+        barrier.wait()
+        claims = [future.result() for future in futures]
+
+    assert sorted(claims) == [[], ["shared"]]
+    assert mgr.get_variables(S1)["injected"] == ["shared"]
 
 
 def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -> None:
