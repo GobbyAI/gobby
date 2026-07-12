@@ -439,7 +439,9 @@ class GitHubIssueTriageService:
             source,
             build_approved=judgment.build_approved,
             dispatch_build=existing_task_id is None,
+            defer_comment=True,
         )
+        deferred_comment = result.pop("_deferred_comment", None)
         task_id = (
             result.get("task_id") if isinstance(result.get("task_id"), str) else existing_task_id
         )
@@ -462,6 +464,18 @@ class GitHubIssueTriageService:
             source=source,
             source_text=build_issue_content(issue),
         )
+        if isinstance(deferred_comment, str):
+            try:
+                await self._comment(issue, deferred_comment)
+            except BaseException:
+                self.store.rollback_issue_record(
+                    project_id,
+                    repo,
+                    issue_number,
+                    content_hash=current_hash,
+                    previous=existing,
+                )
+                raise
         result["content_hash"] = current_hash
         result["vector_point_id"] = point_id
         return result
@@ -475,6 +489,7 @@ class GitHubIssueTriageService:
         *,
         build_approved: bool = False,
         dispatch_build: bool = True,
+        defer_comment: bool = False,
     ) -> dict[str, Any]:
         """Apply deterministic side effects for a triage outcome."""
         if outcome.verdict == "implement" and not build_approved:
@@ -487,39 +502,29 @@ class GitHubIssueTriageService:
             task = self._create_or_update_task(project_id, issue)
             if dispatch_build:
                 await self._run_build(task)
-            await self._comment_and_label(
-                issue,
-                outcome.comment or f"Accepted for implementation as Gobby task #{task.seq_num}.",
-                [TRIAGE_ACCEPTED_LABEL, *outcome.labels],
+            comment = (
+                outcome.comment or f"Accepted for implementation as Gobby task #{task.seq_num}."
             )
+            await self._apply_labels(issue, [TRIAGE_ACCEPTED_LABEL, *outcome.labels])
         elif outcome.verdict == "dedup":
             duplicate = outcome.duplicate
             duplicate_text = (
                 f"Duplicate of {duplicate.issue_key}" if duplicate else "Duplicate issue"
             )
-            await self._comment_and_label(
-                issue,
-                outcome.comment or duplicate_text,
-                [TRIAGE_DUPLICATE_LABEL, *outcome.labels],
-            )
+            comment = outcome.comment or duplicate_text
+            await self._apply_labels(issue, [TRIAGE_DUPLICATE_LABEL, *outcome.labels])
             if outcome.close_issue:
                 await self._close_issue(issue)
         elif outcome.verdict == "skip":
-            await self._comment_and_label(
-                issue,
-                outcome.comment or f"Skipped by Gobby triage: {outcome.reason}",
-                [TRIAGE_SKIPPED_LABEL, *outcome.labels],
-            )
+            comment = outcome.comment or f"Skipped by Gobby triage: {outcome.reason}"
+            await self._apply_labels(issue, [TRIAGE_SKIPPED_LABEL, *outcome.labels])
             if outcome.close_issue:
                 await self._close_issue(issue)
         else:
-            await self._comment_and_label(
-                issue,
-                outcome.comment or f"Gobby needs human triage: {outcome.reason}",
-                [TRIAGE_ESCALATED_LABEL, *outcome.labels],
-            )
+            comment = outcome.comment or f"Gobby needs human triage: {outcome.reason}"
+            await self._apply_labels(issue, [TRIAGE_ESCALATED_LABEL, *outcome.labels])
 
-        return {
+        result: dict[str, Any] = {
             "project_id": project_id,
             "repo": issue.repo,
             "issue_number": issue.issue_number,
@@ -527,6 +532,11 @@ class GitHubIssueTriageService:
             "verdict": outcome.verdict,
             "task_id": task.id if task else None,
         }
+        if defer_comment:
+            result["_deferred_comment"] = comment
+        else:
+            await self._comment(issue, comment)
+        return result
 
     async def close_linked_issue_after_merge(self, task_id: str, merge_sha: str | None) -> bool:
         """Comment, label, and close a task-linked GitHub issue after merge."""
@@ -545,12 +555,9 @@ class GitHubIssueTriageService:
             issue_url=None,
         )
         suffix = f" in {merge_sha}" if merge_sha else ""
-        await self._comment_and_label(
-            issue,
-            f"Resolved by merged Gobby task #{task.seq_num}{suffix}.",
-            [TRIAGE_RESOLVED_LABEL],
-        )
+        await self._apply_labels(issue, [TRIAGE_RESOLVED_LABEL])
         await self._close_issue(issue)
+        await self._comment(issue, f"Resolved by merged Gobby task #{task.seq_num}{suffix}.")
         return True
 
     def _create_or_update_task(self, project_id: str, issue: IssueSnapshot) -> Task:
@@ -605,9 +612,7 @@ class GitHubIssueTriageService:
             raise RuntimeError(f"GitHub get_issue returned {type(result).__name__}")
         return result
 
-    async def _comment_and_label(
-        self, issue: IssueSnapshot, comment: str, labels: list[str]
-    ) -> None:
+    async def _apply_labels(self, issue: IssueSnapshot, labels: list[str]) -> None:
         owner, repo_name = parse_github_repo(issue.repo)
         deduped_labels = sorted({label for label in labels if label})
         if deduped_labels:
@@ -621,6 +626,9 @@ class GitHubIssueTriageService:
                 },
                 required=False,
             )
+
+    async def _comment(self, issue: IssueSnapshot, comment: str) -> None:
+        owner, repo_name = parse_github_repo(issue.repo)
         await self._github_call(
             "add_issue_comment",
             {

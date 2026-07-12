@@ -555,6 +555,122 @@ async def test_retry_after_label_failure_posts_comment_once(
     assert record.task_id == result["task_id"]
 
 
+async def test_retry_after_index_failure_posts_comment_once(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    issue = json.loads(_payload().decode())["issue"]
+    vector_store = AsyncMock()
+    vector_store.search_with_payload.return_value = []
+    vector_store.upsert.side_effect = [TimeoutError("index unavailable"), None]
+    memory_manager = SimpleNamespace(
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=[0.1, 0.2]),
+    )
+    github = FakeGitHubMCP()
+    build_func = AsyncMock()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        memory_manager=memory_manager,
+        judge=AsyncMock(return_value=TriageOutcome("implement", "Approved")),
+        build_func=build_func,
+    )
+
+    with pytest.raises(TimeoutError, match="index unavailable"):
+        await service.triage_issue(
+            sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+        )
+    assert github.called("add_issue_comment") == []
+    assert (
+        GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42) is None
+    )
+
+    result = await service.triage_issue(
+        sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+    )
+
+    build_func.assert_awaited_once()
+    assert len(github.called("add_labels_to_issue")) == 2
+    assert len(github.called("add_issue_comment")) == 1
+    assert result["verdict"] == "implement"
+    record = GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
+    assert record is not None
+    assert record.task_id == result["task_id"]
+
+
+async def test_retry_after_close_failure_posts_comment_once(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    issue = json.loads(_payload().decode())["issue"]
+    close_responses = [_mcp_error(503), {}]
+    github = FakeGitHubMCP({"update_issue": lambda _: close_responses.pop(0)})
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("skip", "Not actionable", close_issue=True)),
+    )
+
+    with pytest.raises(GitHubMCPError):
+        await service.triage_issue(
+            sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+        )
+    assert github.called("add_issue_comment") == []
+    assert (
+        GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42) is None
+    )
+
+    result = await service.triage_issue(
+        sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+    )
+
+    assert len(github.called("add_labels_to_issue")) == 2
+    assert len(github.called("update_issue")) == 2
+    assert len(github.called("add_issue_comment")) == 1
+    assert result["verdict"] == "skip"
+    assert GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
+
+
+async def test_retriage_comment_failure_restores_previous_audit_record(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    comment_responses = [{}, _mcp_error(503)]
+    github = FakeGitHubMCP({"add_issue_comment": lambda _: comment_responses.pop(0)})
+    build_func = AsyncMock()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("implement", "Approved")),
+        build_func=build_func,
+    )
+    original = json.loads(_payload().decode())["issue"]
+    changed = json.loads(_payload(body="New reproduction details").decode())["issue"]
+
+    await service.triage_issue(
+        sample_project["id"], "owner/repo", 42, "webhook", issue_data=original
+    )
+    store = GitHubTriageStore(temp_db)
+    previous = store.get_issue_record(sample_project["id"], "owner/repo", 42)
+    assert previous is not None
+
+    with pytest.raises(GitHubMCPError):
+        await service.triage_issue(
+            sample_project["id"], "owner/repo", 42, "reconcile", issue_data=changed
+        )
+
+    restored = store.get_issue_record(sample_project["id"], "owner/repo", 42)
+    assert restored is not None
+    assert restored.content_hash == previous.content_hash
+    assert restored.decision_json == previous.decision_json
+    assert restored.updated_at == previous.updated_at
+    build_func.assert_awaited_once()
+
+
 async def test_github_mcp_error_preserves_only_safe_rate_limit_metadata(
     temp_db,
 ) -> None:

@@ -543,3 +543,54 @@ class GitHubTriageStore:
             (project_id, repo, issue_number),
         )
         return GitHubIssueTriageRecord.from_row(row) if row else None
+
+    def rollback_issue_record(
+        self,
+        project_id: str,
+        repo: str,
+        issue_number: int,
+        *,
+        content_hash: str,
+        previous: GitHubIssueTriageRecord | None,
+    ) -> None:
+        """Remove or restore an exact provisional audit row after comment failure."""
+        if previous is None:
+            self.db.execute(
+                "DELETE FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
+                "AND issue_number = %s AND content_hash = %s",
+                (project_id, repo, issue_number, content_hash),
+            )
+            return
+        self.db.execute(
+            """
+            UPDATE gh_issues_triaged
+               SET issue_url = %s, issue_state = %s, labels_json = %s,
+                   issue_updated_at = %s, content_hash = %s, verdict = %s,
+                   decision_json = %s, task_id = %s, vector_point_id = %s,
+                   dedup_issue_key = %s, source = %s, source_text = %s,
+                   last_triaged_at = %s, created_at = %s, updated_at = %s
+             WHERE project_id = %s AND repo = %s AND issue_number = %s
+               AND content_hash = %s
+            """,
+            (
+                previous.issue_url,
+                previous.issue_state,
+                _json_dumps(list(previous.labels)),
+                previous.issue_updated_at,
+                previous.content_hash,
+                previous.verdict,
+                previous.decision_json,
+                previous.task_id,
+                previous.vector_point_id,
+                previous.dedup_issue_key,
+                previous.source,
+                previous.source_text,
+                previous.last_triaged_at,
+                previous.created_at,
+                previous.updated_at,
+                project_id,
+                repo,
+                issue_number,
+                content_hash,
+            ),
+        )
