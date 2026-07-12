@@ -281,14 +281,29 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
-                    if stash_result.returncode == 0:
-                        stash_list_after = await asyncio.to_thread(
-                            git_manager.run_git_command,
-                            ["stash", "list"],
-                            cwd=git_manager.repo_path,
-                            timeout=10,
+                    if stash_result.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            stash_result.returncode,
+                            ["git", "stash", "push", "--", ".gobby/"],
+                            output=stash_result.stdout,
+                            stderr=stash_result.stderr,
                         )
-                        stash_created = stash_list_after.stdout != stash_list_before.stdout
+                    stash_list_after = await asyncio.to_thread(
+                        git_manager.run_git_command,
+                        ["stash", "list"],
+                        cwd=git_manager.repo_path,
+                        timeout=10,
+                    )
+                    stash_created = stash_list_after.stdout != stash_list_before.stdout
+                except subprocess.CalledProcessError as error:
+                    detail = (
+                        error.stderr or error.output or f"git exited with status {error.returncode}"
+                    )
+                    primary_result = {
+                        "success": False,
+                        "error": f"Stash failed: {detail}",
+                        "step": "stash",
+                    }
                 except (subprocess.TimeoutExpired, OSError) as error:
                     primary_result = _git_exception_result("stash", error)
                 else:

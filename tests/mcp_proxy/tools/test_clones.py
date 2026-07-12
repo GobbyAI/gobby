@@ -865,6 +865,34 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.assert_any_call("clone-123", status="active")
 
     @pytest.mark.asyncio
+    async def test_merge_clone_stash_failure_does_not_merge(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A nonzero stash command stops before the merge and still cleans up."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        mock_git_manager.run_git_command.side_effect = [
+            _git_result(),
+            _git_result(stdout=""),
+            _git_result(returncode=1, stderr="cannot write index"),
+            _git_result(),
+        ]
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Stash failed: cannot write index",
+            "step": "stash",
+        }
+        mock_git_manager.merge_branch.assert_not_called()
+        cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert cleanup_call.args[0][:2] == ["branch", "-D"]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
+    @pytest.mark.asyncio
     async def test_merge_clone_branch_cleanup_failure_warns_without_masking_success(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
