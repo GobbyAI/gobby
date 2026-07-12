@@ -582,8 +582,13 @@ class TestUpdateObservedFiles:
         task.id = "task-1"
         task.commits = ["abc123", "def456"]
         ctx.task_manager.get_task.return_value = task
+        affected_files = MagicMock()
 
         with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager",
+                return_value=affected_files,
+            ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._affected_files.resolve_task_id_for_mcp",
                 return_value="task-1",
@@ -610,6 +615,9 @@ class TestUpdateObservedFiles:
         assert result["commits_processed"] == 2
         assert result["files_observed"] == 3  # a.py, b.py, c.py (deduped)
         assert sorted(result["files"]) == ["src/a.py", "src/b.py", "src/c.py"]
+        affected_files.set_files.assert_called_once_with(
+            "task-1", ["src/a.py", "src/b.py", "src/c.py"], "observed"
+        )
 
     def test_invalid_task_id_returns_error(self) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
