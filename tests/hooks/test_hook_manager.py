@@ -471,6 +471,25 @@ class TestHandlePostProcessing:
         # The flag should have been consumed (popped)
         assert "_input_coerced" not in event.data
 
+    def test_raw_tool_input_is_not_copied_to_response_metadata(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._session_lookup.resolve.return_value = None
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        event = make_event(event_type=HookEventType.BEFORE_TOOL)
+        event.metadata["raw_tool_input"] = {"secret": "unneeded-copy"}
+
+        response = manager._handle_internal(event)
+
+        assert "_raw_tool_input" not in response.metadata
+
 
 class TestHookManagerHelpers:
     """Tests for HookManager helper methods."""

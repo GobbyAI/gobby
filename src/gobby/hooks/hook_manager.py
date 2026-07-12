@@ -460,10 +460,6 @@ class HookManager:
             observer_response.modified_input = event.metadata.pop("_modified_input")
             observer_response.auto_approve = event.metadata.pop("_auto_approve", False)
 
-        raw_tool_input = event.metadata.get("raw_tool_input")
-        if isinstance(raw_tool_input, dict):
-            observer_response.metadata.setdefault("_raw_tool_input", copy.deepcopy(raw_tool_input))
-
         normalized_tool_name = (event.data or {}).get("tool_name")
         if isinstance(normalized_tool_name, str):
             observer_response.metadata.setdefault("_normalized_tool_name", normalized_tool_name)

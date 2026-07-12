@@ -59,14 +59,26 @@ def _make_msg(
 def _make_enricher(
     msgs: list | None = None,
     session_manager: MagicMock | None = None,
+    injected_sessions: set[str] | None = None,
 ) -> EventEnricher:
     mgr = MagicMock()
     mgr.get_undelivered_messages.return_value = msgs or []
     return EventEnricher(
         session_manager=session_manager,
-        injected_sessions=set(),
+        injected_sessions=injected_sessions if injected_sessions is not None else set(),
         inter_session_msg_manager=mgr,
     )
+
+
+def test_session_end_releases_injection_marker() -> None:
+    injected_sessions: set[str] = set()
+    enricher = _make_enricher(injected_sessions=injected_sessions)
+
+    enricher.enrich(_make_event(HookEventType.SESSION_START), HookResponse(decision="allow"))
+    assert injected_sessions == {"sess-abc:claude"}
+
+    enricher.enrich(_make_event(HookEventType.SESSION_END), HookResponse(decision="allow"))
+    assert injected_sessions == set()
 
 
 # ---------------------------------------------------------------------------
