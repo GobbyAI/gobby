@@ -1155,6 +1155,65 @@ class TestMCPClientManagerConnectServer:
         assert manager.is_connected("test-server") is False
         assert manager.list_connections() == []
 
+    @pytest.mark.asyncio
+    async def test_connect_server_refreshes_resolved_config_on_cached_transport(self) -> None:
+        """A retry uses freshly resolved secrets on its cached transport."""
+        config = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            headers={"Authorization": "$secret:API_TOKEN"},
+        )
+        first_resolved = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            headers={"Authorization": "Bearer expired"},
+        )
+        second_resolved = MCPServerConfig(
+            name="test-server",
+            project_id="test-project",
+            transport="http",
+            url="http://localhost:8001",
+            headers={"Authorization": "Bearer rotated"},
+        )
+        manager = MCPClientManager(server_configs=[config])
+        mock_session = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.connect = AsyncMock(
+            side_effect=[RuntimeError("expired credentials"), mock_session]
+        )
+
+        def create_connection(
+            resolved_config: MCPServerConfig,
+            stdio_errlog_path: str | None = None,
+        ) -> MagicMock:
+            assert stdio_errlog_path is None
+            mock_connection.config = resolved_config
+            return mock_connection
+
+        with (
+            patch(
+                "gobby.mcp_proxy.manager.create_transport_connection",
+                side_effect=create_connection,
+            ) as mock_factory,
+            patch.object(
+                manager,
+                "_resolve_secrets_in_config",
+                side_effect=[first_resolved, second_resolved],
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="expired credentials"):
+                await manager._connect_server(config)
+            result = await manager._connect_server(config)
+
+        assert result is mock_session
+        assert mock_factory.call_count == 1
+        assert mock_connection.config is second_resolved
+        assert mock_connection.config.headers == {"Authorization": "Bearer rotated"}
+
 
 class TestMCPClientManagerDisconnect:
     """Tests for disconnect_all method."""

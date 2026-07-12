@@ -140,11 +140,13 @@ async def connect_server(
     try:
         resolved_config = await asyncio.to_thread(manager._resolve_secrets_in_config, config)
 
-        if config.name not in manager._connections:
+        connection = manager._connections.get(config.name)
+        if connection is None:
             connection = create_connection(resolved_config)
             manager._connections[config.name] = connection
+        else:
+            connection.config = resolved_config
 
-        connection = manager._connections[config.name]
         manager.health[config.name].state = ConnectionState.CONNECTING
 
         session = await connection.connect()
