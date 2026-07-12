@@ -32,6 +32,31 @@ if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
 
 logger = logging.getLogger(__name__)
+_MAX_WEBHOOK_RESPONSE_BYTES = 64 * 1024
+
+
+class _WebhookResponseTooLarge(ValueError):
+    """Raised when a webhook response exceeds the configured body ceiling."""
+
+
+async def _read_bounded_response(response: httpx.Response) -> bytes:
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > _MAX_WEBHOOK_RESPONSE_BYTES:
+            raise _WebhookResponseTooLarge
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > _MAX_WEBHOOK_RESPONSE_BYTES:
+            raise _WebhookResponseTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @dataclass
@@ -200,19 +225,43 @@ class WebhookDispatcher:
             attempts += 1
 
             try:
-                response = await client.post(
+                request = client.build_request(
+                    "POST",
                     url,
                     json=payload,
                     headers=headers,
                     timeout=endpoint.timeout,
                 )
+                response = await client.send(request, stream=True, follow_redirects=False)
+                try:
+                    response_content = await _read_bounded_response(response)
+                except _WebhookResponseTooLarge:
+                    duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+                    logger.warning(
+                        "Webhook %s response exceeded %d bytes",
+                        endpoint.name,
+                        _MAX_WEBHOOK_RESPONSE_BYTES,
+                    )
+                    return WebhookResult(
+                        endpoint_name=endpoint.name,
+                        success=False,
+                        status_code=response.status_code,
+                        error=f"Response body exceeds {_MAX_WEBHOOK_RESPONSE_BYTES} bytes",
+                        attempts=attempts,
+                        duration_ms=duration_ms,
+                        decision="block" if endpoint.can_block and endpoint.fail_closed else None,
+                    )
+                finally:
+                    await response.aclose()
 
                 duration_ms = (datetime.now() - start_time).total_seconds() * 1000
 
                 # Parse response body if JSON
                 response_body: dict[str, Any] | None = None
                 try:
-                    response_body = response.json()
+                    parsed_body = json.loads(response_content)
+                    if isinstance(parsed_body, dict):
+                        response_body = parsed_body
                 except (json.JSONDecodeError, ValueError):
                     pass
 

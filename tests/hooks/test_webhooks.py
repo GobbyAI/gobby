@@ -10,7 +10,11 @@ import pytest
 
 from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
+from gobby.hooks.webhooks import (
+    _MAX_WEBHOOK_RESPONSE_BYTES,
+    WebhookDispatcher,
+    WebhookResult,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -232,8 +236,8 @@ class TestWebhookDispatcherTrigger:
             json={"status": "ok"},
         )
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_response
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = mock_response
 
             results = await dispatcher.trigger(sample_event)
 
@@ -242,6 +246,37 @@ class TestWebhookDispatcherTrigger:
             assert results[0].status_code == 200
             assert results[0].endpoint_name == "test-webhook"
 
+        await dispatcher.close()
+
+    async def test_oversized_response_is_rejected(
+        self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
+    ) -> None:
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[basic_endpoint]))
+        response = httpx.Response(200, content=b"x" * (_MAX_WEBHOOK_RESPONSE_BYTES + 1))
+
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = response
+            results = await dispatcher.trigger(sample_event)
+
+        assert len(results) == 1
+        assert results[0].success is False
+        assert results[0].attempts == 1
+        assert results[0].error == (f"Response body exceeds {_MAX_WEBHOOK_RESPONSE_BYTES} bytes")
+        await dispatcher.close()
+
+    async def test_malformed_json_response_remains_successful(
+        self, sample_event: HookEvent, basic_endpoint: WebhookEndpointConfig
+    ) -> None:
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[basic_endpoint]))
+        response = httpx.Response(200, content=b"not-json")
+
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = response
+            results = await dispatcher.trigger(sample_event)
+
+        assert len(results) == 1
+        assert results[0].success is True
+        assert results[0].response_body is None
         await dispatcher.close()
 
     @pytest.mark.asyncio
@@ -292,7 +327,7 @@ class TestWebhookDispatcherTrigger:
         monkeypatch.setenv("WEBHOOK_RUNTIME_HOST", "bad host")
         dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             results = await dispatcher.trigger(sample_event)
 
         mock_post.assert_not_awaited()
@@ -344,7 +379,7 @@ class TestWebhookDispatcherTrigger:
         )
         dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = httpx.Response(200, json={"status": "ok"})
 
             results = await dispatcher.trigger(sample_event)
@@ -352,9 +387,11 @@ class TestWebhookDispatcherTrigger:
         assert results[0].success is True
         mock_post.assert_awaited_once()
         call = mock_post.await_args
-        assert call.args[0] == "https://hooks.example.com/hook"
-        assert call.kwargs["headers"]["Authorization"] == "Bearer secret-token"
-        assert call.kwargs["headers"]["X-Unresolved"] == "${WEBHOOK_UNSET}"
+        request = call.args[0]
+        assert str(request.url) == "https://hooks.example.com/hook"
+        assert request.headers["Authorization"] == "Bearer secret-token"
+        assert request.headers["X-Unresolved"] == "${WEBHOOK_UNSET}"
+        assert call.kwargs["stream"] is True
         await dispatcher.close()
 
     @pytest.mark.asyncio
@@ -367,7 +404,7 @@ class TestWebhookDispatcherTrigger:
 
         mock_response = httpx.Response(400, json={"error": "bad request"})
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
 
             results = await dispatcher.trigger(sample_event)
@@ -389,7 +426,7 @@ class TestWebhookDispatcherTrigger:
 
         mock_response = httpx.Response(500, json={"error": "server error"})
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
 
             results = await dispatcher.trigger(sample_event)
@@ -408,7 +445,7 @@ class TestWebhookDispatcherTrigger:
         config = WebhooksConfig(endpoints=[basic_endpoint])
         dispatcher = WebhookDispatcher(config)
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.side_effect = httpx.TimeoutException("timeout")
 
             results = await dispatcher.trigger(sample_event)
@@ -443,7 +480,7 @@ class TestBlockingWebhooks:
             json={"decision": "allow"},
         )
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
 
             results = await dispatcher.trigger(event)
@@ -475,7 +512,7 @@ class TestBlockingWebhooks:
             json={"decision": "block", "reason": "Not allowed"},
         )
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
 
             results = await dispatcher.trigger(event)
@@ -507,7 +544,7 @@ class TestBlockingWebhooks:
             json={"decision": "deny", "reason": "Dangerous command"},
         )
 
-        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+        with patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_response
 
             results = await dispatcher.trigger(event)
@@ -558,7 +595,7 @@ class TestBlockingWebhooks:
         )
 
         with (
-            patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post,
+            patch.object(httpx.AsyncClient, "send", new_callable=AsyncMock) as mock_post,
             patch("gobby.hooks.webhooks.asyncio.sleep", new_callable=AsyncMock),
         ):
             if failure_mode == "client_error":
