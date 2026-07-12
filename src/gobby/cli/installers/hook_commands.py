@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shlex
+from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,55 @@ def config_contains_gobby_hook(node: Any) -> bool:
         )
 
     return False
+
+
+def remove_gobby_hook_handlers(
+    groups: list[Any],
+    *,
+    is_gobby_hook: Callable[[Any], bool] = config_contains_gobby_hook,
+) -> tuple[list[Any], bool]:
+    """Remove Gobby handlers while retaining unrelated handlers and group metadata."""
+    cleaned_groups: list[Any] = []
+    removed = False
+
+    for group in groups:
+        handlers = group.get("hooks") if isinstance(group, dict) else None
+        if isinstance(handlers, list):
+            cleaned_handlers = [handler for handler in handlers if not is_gobby_hook(handler)]
+            removed |= len(cleaned_handlers) != len(handlers)
+            if cleaned_handlers:
+                cleaned_group = deepcopy(group)
+                cleaned_group["hooks"] = cleaned_handlers
+                cleaned_groups.append(cleaned_group)
+            continue
+
+        if is_gobby_hook(group):
+            removed = True
+        else:
+            cleaned_groups.append(deepcopy(group))
+
+    return cleaned_groups, removed
+
+
+def merge_gobby_hook_groups(
+    existing_groups: Any,
+    gobby_groups: Any,
+    *,
+    is_gobby_hook: Callable[[Any], bool] = config_contains_gobby_hook,
+) -> list[Any]:
+    """Preserve user hook handlers, replace old Gobby handlers, and append current ones."""
+    existing = (
+        existing_groups
+        if isinstance(existing_groups, list)
+        else ([] if existing_groups is None else [existing_groups])
+    )
+    managed = (
+        gobby_groups
+        if isinstance(gobby_groups, list)
+        else ([] if gobby_groups is None else [gobby_groups])
+    )
+    cleaned, _ = remove_gobby_hook_handlers(existing, is_gobby_hook=is_gobby_hook)
+    return [*cleaned, *deepcopy(managed)]
 
 
 def build_hook_command_prefix(

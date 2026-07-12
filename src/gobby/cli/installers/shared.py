@@ -18,7 +18,10 @@ from pathlib import Path
 from shutil import copy2, copytree
 from typing import TYPE_CHECKING, Any
 
-from gobby.cli.installers.hook_commands import config_contains_gobby_hook
+from gobby.cli.installers.hook_commands import (
+    config_contains_gobby_hook,
+    remove_gobby_hook_handlers,
+)
 from gobby.cli.utils import get_install_dir
 
 if TYPE_CHECKING:
@@ -121,7 +124,17 @@ def clean_project_hooks(settings_file: Path, *, flat: bool = False) -> list[str]
 
     removed: list[str] = []
     for hook_type in list(hooks_map.keys()):
-        if config_contains_gobby_hook(hooks_map[hook_type]):
+        hook_config = hooks_map[hook_type]
+        if isinstance(hook_config, list):
+            cleaned, handlers_removed = remove_gobby_hook_handlers(hook_config)
+            if not handlers_removed:
+                continue
+            if cleaned:
+                hooks_map[hook_type] = cleaned
+            else:
+                del hooks_map[hook_type]
+            removed.append(hook_type)
+        elif config_contains_gobby_hook(hook_config):
             del hooks_map[hook_type]
             removed.append(hook_type)
 
