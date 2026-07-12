@@ -619,11 +619,12 @@ async def test_merge_worktree_stash_restores_on_success():
 
     def interleaved_stash(args, cwd=None, timeout=30, check=False):
         nonlocal stash_head_calls
-        if args == ["rev-parse", "--verify", "-q", "refs/stash"]:
+        if args == ["stash", "list", "-1", "--format=%H"]:
             stash_head_calls += 1
-            if stash_head_calls == 1:
-                return _make_git_result(1)
-            return _make_git_result(0, stdout="stash-ours\n")
+            return _make_git_result(
+                0,
+                stdout="" if stash_head_calls == 1 else "stash-ours\n",
+            )
         if args == ["stash", "list", "--format=%gd%x00%H"]:
             return _make_git_result(
                 0,
@@ -670,6 +671,36 @@ async def test_merge_worktree_stash_push_failure_aborts_before_merge():
     assert not any(call.args[0][0] == "merge" for call in ctx.git_manager._run_git.call_args_list)
 
 
+async def test_merge_worktree_stash_identity_lookup_failure_aborts_before_merge():
+    """A successful stash push cannot merge without its exact stash identity."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    identity_calls = 0
+
+    def failing_identity_lookup(args, cwd=None, timeout=30, check=False):
+        nonlocal identity_calls
+        if args == ["rev-parse", "--verify", "-q", "refs/stash"]:
+            return _make_git_result(1, stderr="cannot resolve stash identity")
+        if args == ["stash", "list", "-1", "--format=%H"]:
+            identity_calls += 1
+            if identity_calls == 2:
+                return _make_git_result(1, stderr="cannot resolve stash identity")
+            return _make_git_result(0, stdout="")
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = failing_identity_lookup
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+
+    result = await merge_tool("wt-123")
+
+    assert result["success"] is False
+    assert result["step"] == "stash"
+    assert "cannot resolve stash identity" in result["error"]
+    assert not any(call.args[0][0] == "merge" for call in ctx.git_manager._run_git.call_args_list)
+
+
 async def test_merge_worktree_stash_restore_failure_is_surfaced():
     """An exact-stash restore failure cannot be logged as merge success."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
@@ -680,10 +711,10 @@ async def test_merge_worktree_stash_restore_failure_is_surfaced():
 
     def failing_restore(args, cwd=None, timeout=30, check=False):
         nonlocal stash_head_calls
-        if args == ["rev-parse", "--verify", "-q", "refs/stash"]:
+        if args == ["stash", "list", "-1", "--format=%H"]:
             stash_head_calls += 1
             return _make_git_result(
-                1 if stash_head_calls == 1 else 0,
+                0,
                 stdout="" if stash_head_calls == 1 else "stash-ours\n",
             )
         if args == ["stash", "list", "--format=%gd%x00%H"]:

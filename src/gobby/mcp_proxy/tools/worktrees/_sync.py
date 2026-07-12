@@ -306,9 +306,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     raise RuntimeError(f"Failed to locate merge_worktree stash: {detail}")
                 stash_ref = stash_ref_for_oid(stash_list.stdout, stash_oid)
                 if stash_ref is None:
-                    raise RuntimeError(
-                        f"Failed to locate exact merge_worktree stash {stash_oid}"
-                    )
+                    raise RuntimeError(f"Failed to locate exact merge_worktree stash {stash_oid}")
                 pop_result = await run_thread_to_completion(
                     resolved_git_mgr.run_git_command,
                     ["stash", "pop", stash_ref],
@@ -460,10 +458,26 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             # Stash dirty .gobby/ sync files and retain the exact object identity.
             stash_head_before = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
-                ["rev-parse", "--verify", "-q", "refs/stash"],
+                ["stash", "list", "-1", "--format=%H"],
                 cwd=merge_cwd,
                 timeout=10,
             )
+            if stash_head_before.returncode != 0:
+                detail = (
+                    stash_head_before.stderr
+                    or stash_head_before.stdout
+                    or "git stash identity lookup failed"
+                )
+                return {
+                    "success": False,
+                    "error": f"Failed to inspect target checkout stash identity: {detail}",
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
             stash_push = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
@@ -484,16 +498,28 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 }
             stash_head_after = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
-                ["rev-parse", "--verify", "-q", "refs/stash"],
+                ["stash", "list", "-1", "--format=%H"],
                 cwd=merge_cwd,
                 timeout=10,
             )
-            before_oid = (
-                stash_head_before.stdout.strip() if stash_head_before.returncode == 0 else None
-            )
-            after_oid = (
-                stash_head_after.stdout.strip() if stash_head_after.returncode == 0 else None
-            )
+            if stash_head_after.returncode != 0:
+                detail = (
+                    stash_head_after.stderr
+                    or stash_head_after.stdout
+                    or "git stash identity lookup failed"
+                )
+                return {
+                    "success": False,
+                    "error": f"Failed to identify target checkout stash: {detail}",
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            before_oid = stash_head_before.stdout.strip() or None
+            after_oid = stash_head_after.stdout.strip() or None
             if after_oid != before_oid:
                 if after_oid is None:
                     return {

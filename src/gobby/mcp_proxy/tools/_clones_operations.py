@@ -273,10 +273,17 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                 try:
                     stash_head_before = await run_thread_to_completion(
                         git_manager.run_git_command,
-                        ["rev-parse", "--verify", "-q", "refs/stash"],
+                        ["stash", "list", "-1", "--format=%H"],
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
+                    if stash_head_before.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            stash_head_before.returncode,
+                            ["git", "stash", "list", "-1", "--format=%H"],
+                            output=stash_head_before.stdout,
+                            stderr=stash_head_before.stderr,
+                        )
                     stash_result = await run_thread_to_completion(
                         git_manager.run_git_command,
                         [
@@ -299,21 +306,26 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                         )
                     stash_head_after = await run_thread_to_completion(
                         git_manager.run_git_command,
-                        ["rev-parse", "--verify", "-q", "refs/stash"],
+                        ["stash", "list", "-1", "--format=%H"],
                         cwd=git_manager.repo_path,
                         timeout=10,
                     )
-                    before_oid = (
-                        stash_head_before.stdout.strip()
-                        if stash_head_before.returncode == 0
-                        else None
-                    )
-                    after_oid = (
-                        stash_head_after.stdout.strip()
-                        if stash_head_after.returncode == 0
-                        else None
-                    )
-                    if after_oid and after_oid != before_oid:
+                    if stash_head_after.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            stash_head_after.returncode,
+                            ["git", "stash", "list", "-1", "--format=%H"],
+                            output=stash_head_after.stdout,
+                            stderr=stash_head_after.stderr,
+                        )
+                    before_oid = stash_head_before.stdout.strip() or None
+                    after_oid = stash_head_after.stdout.strip() or None
+                    if after_oid != before_oid:
+                        if after_oid is None:
+                            raise subprocess.CalledProcessError(
+                                1,
+                                ["git", "stash", "list", "-1", "--format=%H"],
+                                stderr="stash identity disappeared after stash push",
+                            )
                         stash_oid = after_oid
                 except subprocess.CalledProcessError as error:
                     detail = (

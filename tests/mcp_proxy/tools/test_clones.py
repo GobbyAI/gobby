@@ -989,6 +989,41 @@ class TestMergeCloneToTarget:
         assert cleanup_call.args[0][:2] == ["branch", "-D"]
         mock_clone_storage.update.assert_any_call("clone-123", status="active")
 
+    async def test_merge_clone_stash_identity_lookup_failure_does_not_merge(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A successful stash push still requires an exact post-push identity."""
+        mock_clone_storage.get.return_value = _merge_test_clone()
+        identity_calls = 0
+
+        def failing_identity_lookup(args, **_kwargs):
+            nonlocal identity_calls
+            if args in (
+                ["rev-parse", "--verify", "-q", "refs/stash"],
+                ["stash", "list", "-1", "--format=%H"],
+            ):
+                identity_calls += 1
+                if args[0] == "rev-parse" or identity_calls == 2:
+                    return _git_result(returncode=1, stderr="cannot resolve refs/stash")
+                return _git_result(stdout="")
+            return _git_result()
+
+        mock_git_manager.run_git_command.side_effect = failing_identity_lookup
+        mock_git_manager.merge_branch.return_value = MagicMock(success=True)
+
+        result = await registry.call(
+            "merge_clone",
+            {"clone_id": "clone-123", "target_branch": "main"},
+        )
+
+        assert result["success"] is False
+        assert result["step"] == "stash"
+        assert "cannot resolve refs/stash" in result["error"]
+        mock_git_manager.merge_branch.assert_not_called()
+        cleanup_call = mock_git_manager.run_git_command.call_args_list[-1]
+        assert cleanup_call.args[0][:2] == ["branch", "-D"]
+        mock_clone_storage.update.assert_any_call("clone-123", status="active")
+
     @pytest.mark.asyncio
     async def test_merge_clone_branch_cleanup_failure_warns_without_masking_success(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
