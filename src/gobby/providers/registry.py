@@ -33,10 +33,6 @@ class ProviderMetadata:
         """Return whether this provider's CLI binary is available."""
         return shutil.which(self.binary) is not None
 
-    def path(self) -> str | None:
-        """Return the resolved binary path if installed."""
-        return shutil.which(self.binary)
-
     def api_metadata(self) -> dict[str, object]:
         """Return optional provider metadata for HTTP/frontend surfaces."""
         return {

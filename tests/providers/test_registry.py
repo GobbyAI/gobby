@@ -20,6 +20,7 @@ def test_registry_exposes_only_live_provider_helpers() -> None:
     assert all(not hasattr(providers, name) for name in removed)
     assert all(not hasattr(registry, name) for name in removed)
     assert "installed_only" not in registry.ProviderMetadata.__dataclass_fields__
+    assert not hasattr(registry.ProviderMetadata, "path")
 
 
 def test_provider_metadata_preserves_order_and_live_api_metadata() -> None:
