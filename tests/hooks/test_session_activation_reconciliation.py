@@ -36,7 +36,13 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.definitions import (
+    RuleDefinitionBody,
+    RuleEffect,
+    RuleTriggerEvent,
+    WorkflowInstance,
+)
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
@@ -669,6 +675,116 @@ def test_stale_spawned_flag_is_repaired_from_session_depth(
     variables = _variables(db, child_id)
     assert result.changed is True
     assert variables["is_spawned_agent"] is True
+
+
+@pytest.mark.asyncio
+async def test_spawned_flag_survives_lagging_terminal_pickup_refresh(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    LocalWorkflowDefinitionManager(db).create(
+        name="autonomous-only",
+        definition_json=RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            audience="autonomous",
+            effects=[RuleEffect(type="block", tools=["Bash"], reason="autonomous only")],
+        ).model_dump_json(),
+        workflow_type="rule",
+        enabled=True,
+        priority=10,
+    )
+    parent_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="parent-external",
+    )
+    child_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="child-external",
+    )
+    LocalAgentRunManager(db).create(
+        parent_session_id=parent_id,
+        provider="claude",
+        prompt="do the work",
+        agent_name="worker",
+        child_session_id=child_id,
+        run_id="90e65240-4167-55c2-84df-72f933aee3a8",
+    )
+    SessionVariableManager(db).merge_variables(
+        child_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": ["autonomous-only"],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": True,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    with patch("gobby.hooks.session_activation._backfill_terminal_pickup", return_value=None):
+        reconcile_session_activation(
+            _event(HookEventType.BEFORE_TOOL, child_id, tmp_path),
+            handlers,
+        )
+
+    variables = _variables(db, child_id)
+    assert variables["is_spawned_agent"] is True
+
+    audience_event = _event(HookEventType.BEFORE_TOOL, child_id, tmp_path)
+    audience_event.data["tool_name"] = "Bash"
+    audience_result = await RuleEngine(db).evaluate(
+        audience_event,
+        session_id=child_id,
+        variables=variables,
+    )
+    assert audience_result.decision == "block"
+
+
+def test_spawned_flag_clears_after_agent_run_lookup_finds_no_run(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            MARKER_COMPLETED: True,
+            MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
+            MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
+            "_agent_type": "default",
+            "_active_rule_names": [],
+            "_active_skill_names": None,
+            "_skill_format": None,
+            "_agent_blocked_tools": [],
+            "_agent_blocked_mcp_tools": [],
+            "is_spawned_agent": True,
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        },
+    )
+
+    reconcile_session_activation(
+        _event(HookEventType.BEFORE_TOOL, session_id, tmp_path),
+        handlers,
+    )
+
+    assert _variables(db, session_id)["is_spawned_agent"] is False
 
 
 def test_baseline_dirty_initializes_once_and_preserves_session_edits(

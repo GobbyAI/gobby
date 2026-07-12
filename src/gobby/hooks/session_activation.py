@@ -70,6 +70,12 @@ class _AgentRunRecovery:
     prompt: str | None
 
 
+@dataclass(frozen=True)
+class _AgentRunLookup:
+    recovery: _AgentRunRecovery | None
+    confirmed_absent: bool
+
+
 def clear_active_rule_names_cache() -> None:
     """Clear cached active-rule selector resolution."""
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
@@ -152,11 +158,12 @@ def _reconcile_session_activation(
     variables = sv_mgr.get_variables(session_id)
     missing = _missing_marker_keys(variables)
 
-    agent_run = (
+    agent_run_lookup = (
         _recover_agent_run(db, session, event)
         if missing or _needs_agent_run(session, variables, event)
         else None
     )
+    agent_run = agent_run_lookup.recovery if agent_run_lookup is not None else None
     refreshed = _backfill_terminal_pickup(session_manager, session, agent_run)
     if refreshed is not None and refreshed is not session:
         session = refreshed
@@ -183,7 +190,12 @@ def _reconcile_session_activation(
                 reason="activation_failed",
             )
 
-    updates = _fallback_agent_updates(variables, session)
+    updates = _fallback_agent_updates(
+        variables,
+        session,
+        agent_run,
+        run_lookup_confirmed_absent=bool(agent_run_lookup and agent_run_lookup.confirmed_absent),
+    )
     active_rule_updates = _active_rule_name_updates(db, variables, session)
     if active_rule_updates:
         updates.update(active_rule_updates)
@@ -263,8 +275,14 @@ def _bool_variable(value: Any) -> bool:
     return False
 
 
-def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str, Any]:
-    spawned = _session_is_spawned(session)
+def _fallback_agent_updates(
+    variables: dict[str, Any],
+    session: Any,
+    agent_run: _AgentRunRecovery | None,
+    *,
+    run_lookup_confirmed_absent: bool,
+) -> dict[str, Any]:
+    spawned = _session_is_spawned(session) or agent_run is not None
     defaults: dict[str, Any] = {
         "_agent_type": "default",
         "_active_rule_names": None,
@@ -275,8 +293,11 @@ def _fallback_agent_updates(variables: dict[str, Any], session: Any) -> dict[str
         "is_spawned_agent": spawned,
     }
     updates = {key: value for key, value in defaults.items() if key not in variables}
-    if _bool_variable(variables.get("is_spawned_agent")) != spawned:
+    stored_spawned = _bool_variable(variables.get("is_spawned_agent"))
+    if spawned and not stored_spawned:
         updates["is_spawned_agent"] = spawned
+    elif stored_spawned and run_lookup_confirmed_absent:
+        updates["is_spawned_agent"] = False
     return updates
 
 
@@ -406,7 +427,7 @@ def _project_path(event: HookEvent) -> str | None:
     )
 
 
-def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunRecovery | None:
+def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunLookup:
     run_id = getattr(session, "agent_run_id", None) or _terminal_context_value(
         event,
         "agent_run_id",
@@ -417,7 +438,10 @@ def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunReco
             "SELECT id, workflow_name, agent_name, prompt FROM agent_runs WHERE id = %s",
             (run_id,),
         )
-        return _agent_run_from_row(row)
+        return _AgentRunLookup(
+            recovery=_agent_run_from_row(row),
+            confirmed_absent=row is None,
+        )
 
     row = db.fetchone(
         """
@@ -429,7 +453,10 @@ def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunReco
         """,
         (session.id, session.id),
     )
-    return _agent_run_from_row(row)
+    return _AgentRunLookup(
+        recovery=_agent_run_from_row(row),
+        confirmed_absent=row is None,
+    )
 
 
 def _agent_run_from_row(row: Any) -> _AgentRunRecovery | None:
