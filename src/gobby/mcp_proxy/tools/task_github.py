@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
+
+# Security: fixed gh executable invoked with an argv list and shell=False below.
+import subprocess  # nosec B404
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -60,7 +63,10 @@ def _fetch_issues_via_gh(
     if labels:
         cmd.extend(["--label", ",".join(labels)])
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    # Security: repository and filter values remain separate argv entries; no shell is used.
+    result = subprocess.run(  # nosec B603
+        cmd, capture_output=True, text=True, timeout=30
+    )
     if result.returncode != 0:
         raise RuntimeError(f"gh issue list failed: {result.stderr.strip()}")
 
@@ -111,6 +117,18 @@ def create_github_registry(
         if not project_id:
             return {"success": False, "error": "No project context available"}
 
+        resolved_parent_id: str | None = None
+        if parent_task_id:
+            try:
+                resolved_parent_id = resolve_task_id_for_mcp(
+                    task_manager, parent_task_id, project_id
+                )
+            except (TaskNotFoundError, ValueError) as e:
+                return {
+                    "success": False,
+                    "error": f"Could not resolve parent task '{parent_task_id}': {e}",
+                }
+
         # Fetch issues via gh CLI
         try:
             issues = _fetch_issues_via_gh(repo=repo, labels=labels, state=state)
@@ -133,11 +151,16 @@ def create_github_registry(
             # Dedup: check existing task by repo + issue number
             existing = _find_task_by_github_issue(task_manager, repo, issue_number, project_id)
             if existing:
+                update_fields: dict[str, Any] = {
+                    "title": title,
+                    "description": body,
+                    "labels": issue_labels or None,
+                }
+                if resolved_parent_id is not None:
+                    update_fields["parent_task_id"] = resolved_parent_id
                 task_manager.update_task(
                     existing.id,
-                    title=title,
-                    description=body,
-                    labels=issue_labels or None,
+                    **update_fields,
                 )
                 updated.append(task_manager.get_task(existing.id).to_brief())
             else:
@@ -145,19 +168,11 @@ def create_github_registry(
                     project_id=project_id,
                     title=title,
                     description=body,
+                    parent_task_id=resolved_parent_id,
                     github_issue_number=issue_number,
                     github_repo=repo,
                     labels=issue_labels or None,
                 )
-                # Set parent if specified
-                if parent_task_id:
-                    try:
-                        resolved_parent = resolve_task_id_for_mcp(
-                            task_manager, parent_task_id, project_id
-                        )
-                        task_manager.update_task(task.id, parent_task_id=resolved_parent)
-                    except Exception as e:
-                        logger.warning(f"Failed to set parent task: {e}")
                 imported.append(task.to_brief())
 
         return {
