@@ -423,7 +423,7 @@ class GitHubIssueTriageService:
             issue,
             outcome,
             source,
-            build_approved=judgment.build_approved,
+            build_approved=judgment.build_approved and existing_task_id is None,
         )
         task_id = (
             result.get("task_id") if isinstance(result.get("task_id"), str) else existing_task_id

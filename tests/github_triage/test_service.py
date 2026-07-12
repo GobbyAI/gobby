@@ -75,6 +75,7 @@ def _payload(
     issue_number: int = 42,
     title: str = "Crash on launch",
     body: str = "Steps to reproduce",
+    updated_at: str = "2026-05-03T00:00:00Z",
     labels: list[str] | None = None,
 ) -> bytes:
     return json.dumps(
@@ -87,7 +88,7 @@ def _payload(
                 "body": body,
                 "state": "open",
                 "labels": [{"name": label} for label in (labels or ["bug"])],
-                "updated_at": "2026-05-03T00:00:00Z",
+                "updated_at": updated_at,
                 "html_url": f"https://github.com/{repo}/issues/{issue_number}",
             },
         }
@@ -631,3 +632,115 @@ async def test_judge_failure_or_malformed_response_escalates_without_build(
     assert result["verdict"] == "escalate"
     assert result["task_id"] is None
     build_func.assert_not_awaited()
+
+
+async def test_two_reconcile_cycles_apply_acceptance_side_effects_once(
+    temp_db,
+    sample_project,
+) -> None:
+    first = json.loads(_payload().decode())["issue"]
+    self_mutated = json.loads(
+        _payload(
+            labels=["bug", "gobby:accepted"],
+            updated_at="2026-05-03T01:00:00Z",
+        ).decode()
+    )["issue"]
+    pages = [{"issues": [first]}, {"issues": [self_mutated]}]
+    github = FakeGitHubMCP({"list_issues": lambda _: pages.pop(0)})
+    build_func = AsyncMock()
+    _enable_config(temp_db, sample_project["id"])
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("implement", "Approved")),
+        build_func=build_func,
+    )
+
+    first_result = await service.reconcile_project_repos(sample_project["id"])
+    second_result = await service.reconcile_project_repos(sample_project["id"])
+
+    assert first_result == {"scanned": 1, "triaged": 1, "errors": 0}
+    assert second_result == {"scanned": 1, "triaged": 1, "errors": 0}
+    assert len(github.called("add_issue_comment")) == 1
+    assert len(github.called("add_labels_to_issue")) == 1
+    build_func.assert_awaited_once()
+
+
+async def test_self_mutation_does_not_repeat_close_side_effects(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    github = FakeGitHubMCP()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("skip", "Not actionable", close_issue=True)),
+    )
+
+    await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "webhook",
+        issue_data=json.loads(_payload().decode())["issue"],
+    )
+    await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "reconcile",
+        issue_data=json.loads(
+            _payload(
+                labels=["bug", "gobby:skipped"],
+                updated_at="2026-05-03T01:00:00Z",
+            ).decode()
+        )["issue"],
+    )
+
+    assert len(github.called("add_issue_comment")) == 1
+    assert len(github.called("add_labels_to_issue")) == 1
+    assert len(github.called("update_issue")) == 1
+
+
+@pytest.mark.parametrize(
+    "changed_issue",
+    [
+        _payload(body="New reproduction details"),
+        _payload(labels=["bug", "customer-impact"]),
+    ],
+    ids=["body", "user-label"],
+)
+async def test_user_content_change_retriages_without_rebuilding_existing_task(
+    temp_db,
+    sample_project,
+    changed_issue: bytes,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    github = FakeGitHubMCP()
+    build_func = AsyncMock()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=AsyncMock(return_value=TriageOutcome("implement", "Approved")),
+        build_func=build_func,
+    )
+
+    await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "webhook",
+        issue_data=json.loads(_payload().decode())["issue"],
+    )
+    await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "reconcile",
+        issue_data=json.loads(changed_issue.decode())["issue"],
+    )
+
+    assert len(github.called("add_issue_comment")) == 2
+    assert len(github.called("add_labels_to_issue")) == 2
+    build_func.assert_awaited_once()
