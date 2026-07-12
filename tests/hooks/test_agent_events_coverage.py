@@ -743,6 +743,28 @@ class TestGenerateHelpContent:
         assert context["command_prefix"] == "$gobby"
         assert "- `$gobby expand` — Expand tasks" in context["skills_list"]
 
+    def test_generate_help_logs_active_skill_filter_failure(self) -> None:
+        handler = _TestHandler()
+        skill = MagicMock()
+        skill.name = "expand"
+        skill.description = "Expand tasks."
+        skill.is_always_apply.return_value = False
+        handler._skill_manager.discover_core_skills.return_value = [skill]
+
+        with (
+            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls,
+            patch(
+                "gobby.hooks.event_handlers._agent._load_agent_prompt",
+                return_value="help",
+            ),
+        ):
+            mock_svm_cls.return_value.get_variables.side_effect = RuntimeError("database offline")
+            result = handler._generate_help_content(session_id="sess-1")
+
+        assert result == "help"
+        handler.logger.warning.assert_called_once()
+        assert "active skills" in handler.logger.warning.call_args.args[0]
+
     def test_generate_help_filters_always_apply(self) -> None:
         handler = _TestHandler()
         regular_skill = MagicMock()

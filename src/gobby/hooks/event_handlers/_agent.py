@@ -338,8 +338,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     if active_names is not None:
                         active_set = set(active_names)
                         skills = [s for s in skills if s.name in active_set]
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to filter help content by active skills for session %s: %s",
+                    session_id,
+                    e,
+                )
 
         # Sort alphabetically, skip always-apply skills and the router entrypoint.
         user_skills = sorted(
