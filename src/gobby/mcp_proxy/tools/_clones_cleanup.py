@@ -139,13 +139,23 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                     continue
 
                 result_item["record_terminal"] = True
-                git_result = await asyncio.to_thread(
-                    ctx.git_manager.delete_clone,
-                    c.clone_path,
-                    force=True,
-                )
-                result_item["files_deleted"] = git_result.success
-                if git_result.success:
+                delete_error: str | None
+                try:
+                    git_result = await asyncio.to_thread(
+                        ctx.git_manager.delete_clone,
+                        c.clone_path,
+                        force=True,
+                    )
+                except Exception as error:
+                    delete_error = str(error)
+                    result_item["files_deleted"] = False
+                else:
+                    delete_error = (
+                        None if git_result.success else git_result.error or "Unknown error"
+                    )
+                    result_item["files_deleted"] = git_result.success
+
+                if delete_error is None:
                     try:
                         deleted = ctx.clone_storage.delete(c.id)
                     except Exception as error:
@@ -158,7 +168,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                         if not deleted:
                             result_item["record_already_missing"] = True
                 else:
-                    result_item["delete_error"] = git_result.error or "Unknown error"
+                    result_item["delete_error"] = delete_error
                     cleanup_succeeded = False
                     try:
                         restored = ctx.clone_storage.update(

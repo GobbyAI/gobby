@@ -2081,6 +2081,46 @@ class TestCleanupStaleClones:
         )
         mock_clone_storage.delete.assert_not_called()
 
+    async def test_cleanup_delete_files_exception_restores_stale_record(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """A raised filesystem error restores the row so cleanup can retry."""
+        mock_clone_storage.cleanup_stale.return_value = [
+            Clone(
+                id="clone-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="old-feature",
+                clone_path="/tmp/clones/old",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status=CloneStatus.STALE.value,
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            ),
+        ]
+        mock_git_manager.delete_clone.side_effect = OSError("filesystem unavailable")
+
+        result = await registry.call(
+            "cleanup_stale_clones",
+            {"hours": 24, "dry_run": False, "delete_files": True},
+        )
+
+        assert result["success"] is False
+        assert result["cleaned"][0]["files_deleted"] is False
+        assert result["cleaned"][0]["record_deleted"] is False
+        assert result["cleaned"][0]["delete_error"] == "filesystem unavailable"
+        assert result["cleaned"][0]["record_terminal"] is False
+        assert result["cleaned"][0]["record_restored"] is True
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-1",
+            status=CloneStatus.STALE.value,
+        )
+        mock_clone_storage.delete.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_cleanup_record_delete_failure_is_reported_after_files_removed(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
