@@ -10,6 +10,10 @@ from gobby.mcp_proxy.tools.tasks._stage_read import (
     STAGE_REGISTRY_ENTRY_SCHEMA,
     TASK_TYPE_DEFAULT_STAGE_SCHEMA,
 )
+from gobby.storage.tasks._stage_registry import (
+    EDITABLE_STAGE_UPDATE_FIELDS,
+    StageRegistryNotFoundError,
+)
 from gobby.storage.tasks._stage_views import stage_registry_entry_view
 
 STAGE_REGISTRY_MUTATION_SCHEMA: dict[str, Any] = {
@@ -17,9 +21,20 @@ STAGE_REGISTRY_MUTATION_SCHEMA: dict[str, Any] = {
     "properties": {
         "ok": {"type": "boolean"},
         "stage": STAGE_REGISTRY_ENTRY_SCHEMA,
+        "error": {"type": "string"},
+        "message": {"type": "string"},
     },
-    "required": ["ok", "stage"],
+    "required": ["ok"],
 }
+
+
+def _stage_mutation_error(error: ValueError, operation: str) -> dict[str, Any]:
+    error_code = (
+        "stage_not_found"
+        if isinstance(error, StageRegistryNotFoundError)
+        else f"invalid_stage_{operation}"
+    )
+    return {"ok": False, "error": error_code, "message": str(error)}
 
 
 def create_stage_registry_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -31,7 +46,10 @@ def create_stage_registry_ops_registry(ctx: RegistryContext) -> InternalToolRegi
 
     def update_stage(name: str, updates: dict[str, Any]) -> dict[str, Any]:
         """Update editable stage registry metadata."""
-        entry = ctx.task_manager.stages_registry.update_stage(name, updates)
+        try:
+            entry = ctx.task_manager.stages_registry.update_stage(name, updates)
+        except ValueError as error:
+            return _stage_mutation_error(error, "update")
         return {"ok": True, "stage": stage_registry_entry_view(entry)}
 
     registry.register(
@@ -41,7 +59,11 @@ def create_stage_registry_ops_registry(ctx: RegistryContext) -> InternalToolRegi
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "updates": {"type": "object"},
+                "updates": {
+                    "type": "object",
+                    "properties": {field: {} for field in EDITABLE_STAGE_UPDATE_FIELDS},
+                    "additionalProperties": False,
+                },
             },
             "required": ["name", "updates"],
         },
@@ -51,7 +73,10 @@ def create_stage_registry_ops_registry(ctx: RegistryContext) -> InternalToolRegi
 
     def restore_stage(name: str) -> dict[str, Any]:
         """Restore a bundled stage row."""
-        entry = ctx.task_manager.stages_registry.restore_stage(name)
+        try:
+            entry = ctx.task_manager.stages_registry.restore_stage(name)
+        except ValueError as error:
+            return _stage_mutation_error(error, "restore")
         return {"ok": True, "stage": stage_registry_entry_view(entry)}
 
     registry.register(
@@ -68,7 +93,10 @@ def create_stage_registry_ops_registry(ctx: RegistryContext) -> InternalToolRegi
 
     def delete_stage(name: str) -> dict[str, Any]:
         """Soft-delete an unused stage registry row."""
-        entry = ctx.task_manager.stages_registry.delete_stage(name)
+        try:
+            entry = ctx.task_manager.stages_registry.delete_stage(name)
+        except ValueError as error:
+            return _stage_mutation_error(error, "delete")
         return {"ok": True, "stage": stage_registry_entry_view(entry)}
 
     registry.register(
