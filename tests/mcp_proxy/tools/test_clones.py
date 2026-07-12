@@ -846,9 +846,14 @@ class TestMergeCloneToTarget:
 
         assert await asyncio.to_thread(worker_started.wait, 2)
         operation.cancel()
-        await asyncio.sleep(0)
-        contender = asyncio.create_task(lock.acquire())
-        await asyncio.sleep(0)
+        contender_started = asyncio.Event()
+
+        async def acquire_lock() -> None:
+            contender_started.set()
+            await lock.acquire()
+
+        contender = asyncio.create_task(acquire_lock())
+        await contender_started.wait()
         assert operation.done() is False
         assert contender.done() is False
         assert lock.locked() is True
