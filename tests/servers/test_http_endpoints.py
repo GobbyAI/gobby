@@ -551,6 +551,58 @@ class TestHooksEndpoints:
             mock_hook_manager,
         )
 
+    def test_execute_hook_routes_grok_source_to_grok_adapter(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        services = ServiceContainer(
+            config=None,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+            auth_mode="disabled",
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with patch("gobby.adapters.grok.GrokAdapter") as MockAdapter:
+            mock_adapter_instance = MagicMock()
+            mock_adapter_instance.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter_instance
+
+            client = TestClient(server.app)
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(
+                    hook_type="session_start",
+                    source="grok",
+                    input_data={
+                        "session_id": "grok-hook-session",
+                        "cwd": "/tmp/project",
+                    },
+                ),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        mock_adapter_instance.handle_native.assert_called_once_with(
+            {
+                "hook_type": "session_start",
+                "input_data": {
+                    "session_id": "grok-hook-session",
+                    "cwd": "/tmp/project",
+                },
+                "source": "grok",
+            },
+            mock_hook_manager,
+        )
+
     def test_execute_hook_graceful_error_on_adapter_exception(
         self, session_storage: SessionManager
     ) -> None:

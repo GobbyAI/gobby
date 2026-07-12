@@ -523,8 +523,8 @@ class TestGetProjectContextEnvOverride:
         assert "project_path" in result
         assert Path(result["project_path"]).resolve() == tmp_path.resolve()
 
-    def test_env_override_mismatched_cwd_returns_minimal(self, tmp_path: Path, monkeypatch) -> None:
-        """When GOBBY_PROJECT_ID differs from CWD project, return minimal context."""
+    def test_explicit_cwd_overrides_mismatched_env(self, tmp_path: Path, monkeypatch) -> None:
+        """An explicit CWD project takes precedence over GOBBY_PROJECT_ID."""
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
         project_data = {"id": "cwd-project-id", "name": "CWD Project"}
@@ -534,7 +534,9 @@ class TestGetProjectContextEnvOverride:
 
         result = get_project_context(tmp_path)
         assert result is not None
-        assert result == {"id": "different-project-id"}
+        assert result["id"] == "cwd-project-id"
+        assert result["name"] == "CWD Project"
+        assert Path(result["project_path"]).resolve() == tmp_path.resolve()
 
     def test_no_env_override_uses_cwd(self, tmp_path: Path, monkeypatch) -> None:
         """Without GOBBY_PROJECT_ID, standard CWD-based resolution is used."""

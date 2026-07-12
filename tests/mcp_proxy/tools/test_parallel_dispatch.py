@@ -9,11 +9,23 @@ Tests for:
 
 import asyncio
 import threading
+from collections.abc import Callable, Iterator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 pytestmark = pytest.mark.unit
+
+ToolCallable = Callable[..., Any]
+RegistryDeps = tuple[MagicMock, MagicMock, MagicMock, MagicMock]
+
+
+def _require_tool(registry: Any, name: str) -> ToolCallable:
+    """Return a registered tool after asserting the test registry contains it."""
+    tool = registry.get_tool(name)
+    assert tool is not None
+    return cast(ToolCallable, tool)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -62,7 +74,7 @@ class TestScoreTasks:
         leaf = self._make_task("leaf", priority=2)
 
         # parent has children, leaf doesn't
-        def list_tasks_side(**kwargs):
+        def list_tasks_side(**kwargs: Any) -> list[MagicMock]:
             if kwargs.get("parent_task_id") == "parent":
                 return [MagicMock()]
             return []
@@ -117,7 +129,7 @@ class TestScoreTasks:
         t2 = self._make_task("t2", priority=2)
 
         # t1 has the active task as ancestor (should get proximity boost)
-        def mock_get_task(tid):
+        def mock_get_task(tid: str) -> MagicMock:
             task = MagicMock()
             if tid == "t1":
                 task.parent_task_id = "active-task"
@@ -143,7 +155,7 @@ class TestScoreTasks:
 
 
 @pytest.fixture
-def mock_project_context():
+def mock_project_context() -> Iterator[MagicMock]:
     """Fixture providing mock project context for registry creation."""
     with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
         mock_ctx.return_value = {"id": "test-project-id"}
@@ -172,7 +184,7 @@ class TestSuggestNextTasks:
         af.file_path = file_path
         return af
 
-    def test_non_conflicting_tasks_returned_together(self, mock_project_context) -> None:
+    def test_non_conflicting_tasks_returned_together(self, mock_project_context: MagicMock) -> None:
         """Tasks touching different files should all be returned."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -187,7 +199,7 @@ class TestSuggestNextTasks:
         with patch("gobby.mcp_proxy.tools.task_readiness.TaskAffectedFileManager") as MockAFM:
             mock_af = MockAFM.return_value
 
-            def get_files(task_id):
+            def get_files(task_id: str) -> list[MagicMock]:
                 files_map = {
                     "t1": [self._make_af("src/a.py")],
                     "t2": [self._make_af("src/b.py")],
@@ -198,7 +210,7 @@ class TestSuggestNextTasks:
             mock_af.get_files.side_effect = get_files
 
             registry = create_readiness_registry(task_manager=tm)
-            suggest_tasks = registry.get_tool("suggest_next_task")
+            suggest_tasks = _require_tool(registry, "suggest_next_task")
             result = suggest_tasks(count=3)
 
         assert len(result["suggestions"]) == 3
@@ -206,7 +218,7 @@ class TestSuggestNextTasks:
         assert result["count"] == 3
         assert result["skipped_refs"] == []
 
-    def test_conflicting_tasks_excluded(self, mock_project_context) -> None:
+    def test_conflicting_tasks_excluded(self, mock_project_context: MagicMock) -> None:
         """Tasks sharing files should not be in the same batch."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -220,14 +232,14 @@ class TestSuggestNextTasks:
         with patch("gobby.mcp_proxy.tools.task_readiness.TaskAffectedFileManager") as MockAFM:
             mock_af = MockAFM.return_value
 
-            def get_files(task_id):
+            def get_files(task_id: str) -> list[MagicMock]:
                 # Both touch the same file
                 return [self._make_af("src/shared.py")]
 
             mock_af.get_files.side_effect = get_files
 
             registry = create_readiness_registry(task_manager=tm)
-            suggest_tasks = registry.get_tool("suggest_next_task")
+            suggest_tasks = _require_tool(registry, "suggest_next_task")
             result = suggest_tasks(count=3)
 
         # Only t1 (higher priority) should be selected
@@ -237,7 +249,9 @@ class TestSuggestNextTasks:
         assert result["count"] == 3
         assert result["skipped_refs"] == ["#t2"]
 
-    def test_no_file_annotations_treated_as_non_conflicting(self, mock_project_context) -> None:
+    def test_no_file_annotations_treated_as_non_conflicting(
+        self, mock_project_context: MagicMock
+    ) -> None:
         """Tasks with no file annotations are allowed (optimistic)."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -251,7 +265,7 @@ class TestSuggestNextTasks:
         with patch("gobby.mcp_proxy.tools.task_readiness.TaskAffectedFileManager") as MockAFM:
             mock_af = MockAFM.return_value
 
-            def get_files(task_id):
+            def get_files(task_id: str) -> list[MagicMock]:
                 if task_id == "t1":
                     return [self._make_af("src/a.py")]
                 return []  # t2 has no annotations
@@ -259,14 +273,14 @@ class TestSuggestNextTasks:
             mock_af.get_files.side_effect = get_files
 
             registry = create_readiness_registry(task_manager=tm)
-            suggest_tasks = registry.get_tool("suggest_next_task")
+            suggest_tasks = _require_tool(registry, "suggest_next_task")
             result = suggest_tasks(count=3)
 
         assert len(result["suggestions"]) == 2
         assert result["conflicts_avoided"] == 0
         assert result["skipped_refs"] == []
 
-    def test_count_respected(self, mock_project_context) -> None:
+    def test_count_respected(self, mock_project_context: MagicMock) -> None:
         """Should not return more than count tasks."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -280,14 +294,14 @@ class TestSuggestNextTasks:
             mock_af.get_files.return_value = []  # No annotations
 
             registry = create_readiness_registry(task_manager=tm)
-            suggest_tasks = registry.get_tool("suggest_next_task")
+            suggest_tasks = _require_tool(registry, "suggest_next_task")
             result = suggest_tasks(count=2)
 
         assert len(result["suggestions"]) == 2
         assert result["total_ready"] == 5
         assert result["count"] == 2
 
-    def test_in_progress_files_excluded(self, mock_project_context) -> None:
+    def test_in_progress_files_excluded(self, mock_project_context: MagicMock) -> None:
         """Files from in-progress tasks should block candidate selection."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -297,7 +311,7 @@ class TestSuggestNextTasks:
 
         tm.list_ready_tasks.return_value = [ready_task, ip_task]
 
-        def list_tasks_side(**kwargs):
+        def list_tasks_side(**kwargs: Any) -> list[MagicMock]:
             if kwargs.get("current_stage_state") == "in_progress":
                 return [ip_task]
             return []
@@ -307,7 +321,7 @@ class TestSuggestNextTasks:
         with patch("gobby.mcp_proxy.tools.task_readiness.TaskAffectedFileManager") as MockAFM:
             mock_af = MockAFM.return_value
 
-            def get_files(task_id):
+            def get_files(task_id: str) -> list[MagicMock]:
                 if task_id == "ip":
                     return [self._make_af("src/busy.py")]
                 if task_id == "ready":
@@ -317,7 +331,7 @@ class TestSuggestNextTasks:
             mock_af.get_files.side_effect = get_files
 
             registry = create_readiness_registry(task_manager=tm)
-            suggest_tasks = registry.get_tool("suggest_next_task")
+            suggest_tasks = _require_tool(registry, "suggest_next_task")
             result = suggest_tasks(count=3)
 
         # ready task conflicts with in-progress file
@@ -325,7 +339,7 @@ class TestSuggestNextTasks:
         assert result["conflicts_avoided"] == 1
         assert result["skipped_refs"] == ["#ready"]
 
-    def test_skipped_refs_capped_at_ten(self, mock_project_context) -> None:
+    def test_skipped_refs_capped_at_ten(self, mock_project_context: MagicMock) -> None:
         """skipped_refs should be capped at 10 entries."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -342,14 +356,14 @@ class TestSuggestNextTasks:
             mock_af.get_files.return_value = [self._make_af("src/shared.py")]
 
             registry = create_readiness_registry(task_manager=tm)
-            suggest_tasks = registry.get_tool("suggest_next_task")
+            suggest_tasks = _require_tool(registry, "suggest_next_task")
             result = suggest_tasks(count=10)
 
         assert len(result["suggestions"]) == 1
         assert result["conflicts_avoided"] == 15
         assert len(result["skipped_refs"]) == 10  # Capped
 
-    def test_no_ready_tasks_returns_empty(self, mock_project_context) -> None:
+    def test_no_ready_tasks_returns_empty(self, mock_project_context: MagicMock) -> None:
         """Should handle no ready tasks gracefully."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
@@ -357,7 +371,7 @@ class TestSuggestNextTasks:
         tm.list_ready_tasks.return_value = []
 
         registry = create_readiness_registry(task_manager=tm)
-        suggest_tasks = registry.get_tool("suggest_next_task")
+        suggest_tasks = _require_tool(registry, "suggest_next_task")
         result = suggest_tasks(count=3)
 
         assert result["suggestions"] == []
@@ -373,7 +387,7 @@ class TestDispatchBatch:
     """Tests for dispatch_batch concurrent agent spawning."""
 
     @pytest.fixture
-    def registry_deps(self):
+    def registry_deps(self) -> RegistryDeps:
         """Create mock dependencies for spawn_agent registry."""
         runner = MagicMock()
         runner.spawn = AsyncMock(return_value={"run_id": "run-1", "success": True})
@@ -383,7 +397,7 @@ class TestDispatchBatch:
         return runner, tm, db, session_manager
 
     @pytest.mark.asyncio
-    async def test_dispatches_multiple_agents(self, registry_deps) -> None:
+    async def test_dispatches_multiple_agents(self, registry_deps: RegistryDeps) -> None:
         runner, tm, db, session_manager = registry_deps
 
         with (
@@ -403,7 +417,7 @@ class TestDispatchBatch:
                 db=db,
                 session_manager=session_manager,
             )
-            dispatch = registry.get_tool("dispatch_batch")
+            dispatch = _require_tool(registry, "dispatch_batch")
 
             suggestions = [
                 {"id": "task-1", "ref": "#1", "title": "Task 1"},
@@ -420,13 +434,15 @@ class TestDispatchBatch:
         assert all(r["success"] for r in result["results"])
 
     @pytest.mark.asyncio
-    async def test_dispatch_batch_bounds_concurrent_spawns(self, registry_deps) -> None:
+    async def test_dispatch_batch_bounds_concurrent_spawns(
+        self, registry_deps: RegistryDeps
+    ) -> None:
         runner, tm, db, session_manager = registry_deps
         in_flight = 0
         max_seen = 0
         release = asyncio.Event()
 
-        async def mock_impl(**_kwargs):
+        async def mock_impl(**_kwargs: Any) -> dict[str, Any]:
             nonlocal in_flight, max_seen
             in_flight += 1
             max_seen = max(max_seen, in_flight)
@@ -459,7 +475,7 @@ class TestDispatchBatch:
                 db=db,
                 session_manager=session_manager,
             )
-            dispatch = registry.get_tool("dispatch_batch")
+            dispatch = _require_tool(registry, "dispatch_batch")
 
             suggestions = [
                 {"id": f"task-{index}", "ref": f"#{index}", "title": f"Task {index}"}
@@ -473,7 +489,7 @@ class TestDispatchBatch:
         assert max_seen <= 2
 
     @pytest.mark.asyncio
-    async def test_empty_suggestions(self, registry_deps) -> None:
+    async def test_empty_suggestions(self, registry_deps: RegistryDeps) -> None:
         runner, tm, db, session_manager = registry_deps
 
         from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
@@ -487,19 +503,19 @@ class TestDispatchBatch:
                 db=db,
                 session_manager=session_manager,
             )
-            dispatch = registry.get_tool("dispatch_batch")
+            dispatch = _require_tool(registry, "dispatch_batch")
             result = await dispatch(suggestions=[])
 
         assert result["dispatched"] == 0
         assert result["results"] == []
 
     @pytest.mark.asyncio
-    async def test_partial_failure(self, registry_deps) -> None:
+    async def test_partial_failure(self, registry_deps: RegistryDeps) -> None:
         runner, tm, db, session_manager = registry_deps
 
         call_count = 0
 
-        async def mock_impl(**kwargs):
+        async def mock_impl(**kwargs: Any) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             if call_count == 2:
@@ -523,7 +539,7 @@ class TestDispatchBatch:
                 db=db,
                 session_manager=session_manager,
             )
-            dispatch = registry.get_tool("dispatch_batch")
+            dispatch = _require_tool(registry, "dispatch_batch")
 
             suggestions = [
                 {"id": "task-1", "ref": "#1", "title": "Task 1"},
@@ -547,7 +563,7 @@ class TestDispatchBatch:
 class TestUpdateObservedFiles:
     """Tests for update_observed_files post-hoc annotation."""
 
-    def _make_ctx(self):
+    def _make_ctx(self) -> MagicMock:
         ctx = MagicMock()
         ctx.task_manager = MagicMock()
         return ctx
@@ -567,7 +583,7 @@ class TestUpdateObservedFiles:
             return_value="task-1",
         ):
             registry = create_core_affected_files_registry(ctx)
-            update_obs = registry.get_tool("update_observed_files")
+            update_obs = _require_tool(registry, "update_observed_files")
             result = update_obs(task_id="task-1")
 
         assert result["commits_processed"] == 0
@@ -583,21 +599,19 @@ class TestUpdateObservedFiles:
         task.id = "task-1"
         task.commits = ["abc123", "def456"]
         ctx.task_manager.get_task.return_value = task
-        affected_files = MagicMock()
 
         with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager",
-                return_value=affected_files,
-            ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._affected_files.resolve_task_id_for_mcp",
                 return_value="task-1",
             ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
+            ) as affected_file_manager_cls,
             patch("subprocess.run") as mock_run,
         ):
             # First commit changes 2 files, second changes 1 (with overlap)
-            def run_side(cmd, **kwargs):
+            def run_side(cmd: list[str], **kwargs: Any) -> MagicMock:
                 sha = cmd[-1]
                 result = MagicMock()
                 result.returncode = 0
@@ -610,15 +624,17 @@ class TestUpdateObservedFiles:
             mock_run.side_effect = run_side
 
             registry = create_core_affected_files_registry(ctx)
-            update_obs = registry.get_tool("update_observed_files")
+            update_obs = _require_tool(registry, "update_observed_files")
             result = update_obs(task_id="task-1")
 
+        affected_file_manager_cls.return_value.set_files.assert_called_once_with(
+            "task-1",
+            ["src/a.py", "src/b.py", "src/c.py"],
+            "observed",
+        )
         assert result["commits_processed"] == 2
         assert result["files_observed"] == 3  # a.py, b.py, c.py (deduped)
         assert sorted(result["files"]) == ["src/a.py", "src/b.py", "src/c.py"]
-        affected_files.set_files.assert_called_once_with(
-            "task-1", ["src/a.py", "src/b.py", "src/c.py"], "observed"
-        )
 
     @pytest.mark.asyncio
     async def test_registry_call_offloads_git_subprocess(self) -> None:
@@ -672,7 +688,7 @@ class TestUpdateObservedFiles:
             side_effect=TaskNotFoundError("not found"),
         ):
             registry = create_core_affected_files_registry(ctx)
-            update_obs = registry.get_tool("update_observed_files")
+            update_obs = _require_tool(registry, "update_observed_files")
             result = update_obs(task_id="nonexistent")
 
         assert "error" in result
@@ -700,7 +716,7 @@ class TestUpdateObservedFiles:
             mock_run.return_value = result_mock
 
             registry = create_core_affected_files_registry(ctx)
-            update_obs = registry.get_tool("update_observed_files")
+            update_obs = _require_tool(registry, "update_observed_files")
             result = update_obs(task_id="task-1")
 
         assert result["commits_processed"] == 0

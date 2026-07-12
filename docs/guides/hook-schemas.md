@@ -67,6 +67,64 @@ the same `X-Gobby-Envelope-Id`, not as a terminal failure. Retry with
 exponential backoff and the same envelope ID; the daemon replays a stored
 terminal response once the original delivery finishes.
 
+### Daemon-Down Critical Posture
+
+"Daemon down" means that `ghook` cannot deliver the envelope to the Python
+daemon because the connection fails or times out. The envelope remains queued
+for replay, but only `ghook` and the host CLI can decide whether the current
+invocation blocks. A planned Gobby stop or restart is a separate case: a fresh
+shutdown marker makes `ghook` return a continue response for Stop hooks so an
+intentional daemon shutdown cannot strand an agent.
+
+The deliberate terminal-hook policy is that only Codex fails closed when an
+unplanned daemon outage prevents Stop evaluation:
+
+| Source / CLI | Terminal Hook | Daemon-Down Posture |
+| --- | --- | --- |
+| `claude` | `stop` | Fail open; non-critical transport failure |
+| `agy` | `Stop` | Fail open; non-critical transport failure |
+| `qwen` | `AfterAgent` | Fail open; Qwen has no native Stop hook |
+| `codex` | `Stop` | **Fail closed**; critical transport failure |
+| `droid` | `Stop` | Fail open; non-critical transport failure |
+| `grok` | `stop` | Fail open; non-critical transport failure |
+
+Non-critical transport failures use `ghook`'s exit-1 error path. Critical
+transport failures use exit 2 and do not emit a continue response. This policy
+does not make every Codex hook critical: Codex `SessionStart` and `Stop` are the
+critical set. The other transport-critical hooks are Claude `session-start`,
+`session-end`, and `pre-compact`; Qwen `SessionStart`; AGY `SessionStart`; and
+Grok `session_start`, `session_end`, and `pre_compact`. Droid has no critical
+transport hooks.
+
+This transport policy is intentionally narrower than the daemon's evaluation
+failure posture. Once a request reaches the daemon, every `Stop` / `stop` hook
+fails closed on an evaluation exception or timeout, regardless of source. Any
+hook whose envelope explicitly carries `critical: true` also fails closed.
+
+`ghook` is versioned in the external
+[`GobbyAI/gobby-cli`](https://github.com/GobbyAI/gobby-cli/tree/main/crates/ghook)
+repository; there is no `gobby-cli/crates` tree in this repository. As of
+2026-07-12, that external source still marks AGY `Stop` and Grok `stop` as
+critical. Gobby task #17962 tracks aligning the external binary and release with
+the policy above. Gemini is retired and is not a supported source or a `ghook`
+CLI.
+
+### Runtime Schema Compatibility
+
+Running `ghook --version` writes
+`$GOBBY_HOME/bin/.ghook-runtime.json` with the binary's `schema_version` and
+`ghook_version`. The daemon reads this stamp for `/api/admin/health` and
+`/api/admin/status`, and `gobby status` renders incompatible states as health
+issues. Diagnostics use explicit `absent`, `compatible`, `malformed`,
+`schema_mismatch`, and `stale_version` states.
+
+An absent stamp does not degrade health so existing installations continue to
+run until ghook has emitted runtime metadata. A malformed stamp, envelope schema
+mismatch, or ghook version below the managed minimum does degrade health. The
+daemon currently accepts envelope schema `1`; its ghook floor comes directly
+from the managed binary version policy (`0.7.1` at this verification date), so a
+pin update also updates the runtime compatibility threshold.
+
 ## Native To Workflow Mapping
 
 ### Semantic Rule Events
@@ -451,4 +509,4 @@ AGY and Qwen communicate block decisions in JSON; their hook commands should
 exit `0` so the CLI treats the hook response as successful rather than a hook
 process failure.
 
-_Last verified: 2026-06-10_
+_Last verified: 2026-07-12_

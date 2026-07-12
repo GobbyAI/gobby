@@ -137,6 +137,7 @@ class LocalTextGenerateAdapter:
             request.prompt,
             system_prompt=request.system_prompt,
             model=request.model,
+            max_tokens=request.max_tokens,
             reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )
@@ -440,7 +441,8 @@ class AgyCLITextGenerateAdapter:
             request.reasoning_effort,
         )
         if request.model is not None:
-            assert model is not None
+            if model is None:
+                raise RuntimeError("AGY model normalization returned no model")
             command.extend(["--model", resolve_agy_display(model, reasoning_effort)])
         command.extend(["--print", _compose_prompt(request)])
         return command

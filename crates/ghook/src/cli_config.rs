@@ -137,6 +137,14 @@ mod tests {
     }
 
     #[test]
+    fn installer_cli_names_are_recognized_with_matching_sources() {
+        for cli in ["claude", "grok", "agy", "qwen", "codex", "droid"] {
+            let config = CliConfig::for_cli(cli).expect("installer CLI must be recognized");
+            assert_eq!(config.source, cli, "{cli} must preserve its source");
+        }
+    }
+
+    #[test]
     fn unknown_cli_falls_back_to_claude_for_dispatch() {
         let c = CliConfig::for_dispatch("cursor");
         assert_eq!(c.source, "claude");

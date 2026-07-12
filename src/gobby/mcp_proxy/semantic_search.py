@@ -292,7 +292,15 @@ class SemanticToolSearch:
                 collection_name=self._collection_name,
             )
             return len(results) > 0
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Failed to check embeddings for project %s in collection %s (%s: %s)",
+                project_id,
+                self._collection_name,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return False
 
     @staticmethod

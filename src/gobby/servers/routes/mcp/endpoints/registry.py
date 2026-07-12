@@ -303,7 +303,10 @@ async def refresh_mcp_tools(
                     tool_name = tool["name"]
                     if tool_name in changes["new"] or tool_name in changes["changed"]:
                         schema = tool.get("inputSchema")
-                        schema_hash = compute_schema_hash(schema)
+                        schema_hash = compute_schema_hash(
+                            schema,
+                            description=tool.get("description"),
+                        )
                         schema_hash_manager.store_hash(
                             server_name=server_name,
                             tool_name=tool_name,

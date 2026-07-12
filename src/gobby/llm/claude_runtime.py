@@ -3,16 +3,29 @@
 import asyncio
 import logging
 import random
+import re
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions
+from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.llm.claude_errors import ClaudeSDKProviderFailure, classify_result_message
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
+_STDERR_MAX_LINES = 200
+_PERMANENT_ERROR_PATTERN = re.compile(
+    r"\b(?:401|403|404)\b"
+    r"|\binvalid[_ ]api[_ ]key\b"
+    r"|\bauthentication\b"
+    r"|\bunauthorized\b"
+    r"|\binvalid[_ ]request\b"
+    r"|\bpermission denied\b"
+    r"|\bnot_found\b",
+    re.IGNORECASE,
+)
 
 
 class ClaudeSDKShutdownCancellation(LLMProviderCancellation):
@@ -23,6 +36,8 @@ def is_transient_error(error: Exception) -> bool:
     """Classify whether an error is worth retrying."""
     if isinstance(error, LLMProviderCancellation):
         return False
+    if isinstance(error, CLINotFoundError):
+        return False
     if is_sdk_sigterm_shutdown(error):
         return False
     if isinstance(error, ClaudeSDKProviderFailure):
@@ -30,20 +45,7 @@ def is_transient_error(error: Exception) -> bool:
     if _is_error_result_success(error):
         return False
 
-    message = str(error).lower()
-    permanent_patterns = [
-        "401",
-        "403",
-        "invalid_api_key",
-        "authentication",
-        "unauthorized",
-        "invalid request",
-        "invalid_request",
-        "permission denied",
-        "not_found",
-        "404",
-    ]
-    return not any(pattern in message for pattern in permanent_patterns)
+    return _PERMANENT_ERROR_PATTERN.search(str(error)) is None
 
 
 def _is_error_result_success(error: BaseException) -> bool:
@@ -128,6 +130,9 @@ async def retry_async[T](
     on_retry: Callable[[int, Exception], None] | None = None,
 ) -> T:
     """Execute an async operation with retry logic and error classification."""
+    if max_retries < 1:
+        raise ValueError("max_retries must be at least 1")
+
     for attempt in range(max_retries):
         try:
             return await operation()
@@ -141,7 +146,7 @@ async def retry_async[T](
                 await asyncio.sleep(backoff)
             else:
                 raise
-    raise RuntimeError("retry_async exhausted without returning or raising")
+    raise AssertionError("retry_async exhausted without returning or raising")
 
 
 async def execute_sdk_query[T](
@@ -159,7 +164,7 @@ async def execute_sdk_query[T](
     if not options.setting_sources:
         options.setting_sources = []
 
-    stderr_lines: list[str] = []
+    stderr_lines: deque[str] = deque(maxlen=_STDERR_MAX_LINES)
     options.stderr = lambda line: stderr_lines.append(line)
 
     def _on_retry(attempt: int, error: Exception) -> None:
@@ -169,7 +174,7 @@ async def execute_sdk_query[T](
                 operation,
                 attempt + 1,
                 error,
-                stderr_lines,
+                list(stderr_lines),
             )
         else:
             logger.warning(

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from gobby.adapters.droid_contract import DROID_HOOK_CONTRACTS
 from gobby.hooks.events import (
     EVENT_TYPE_CLI_SUPPORT,
     HookEvent,
@@ -137,3 +138,13 @@ class TestEventTypeMapping:
             assert "claude" in EVENT_TYPE_CLI_SUPPORT[event_type]
             assert "agy" in EVENT_TYPE_CLI_SUPPORT[event_type]
             assert "codex" in EVENT_TYPE_CLI_SUPPORT[event_type]
+            assert "droid" in EVENT_TYPE_CLI_SUPPORT[event_type]
+
+    def test_droid_mapping_matches_adapter_contract(self) -> None:
+        expected = {
+            contract.event_type: contract.hook_event_name
+            for contract in DROID_HOOK_CONTRACTS.values()
+        }
+
+        for event_type in HookEventType:
+            assert EVENT_TYPE_CLI_SUPPORT[event_type]["droid"] == expected.get(event_type)

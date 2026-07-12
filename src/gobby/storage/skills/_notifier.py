@@ -2,9 +2,13 @@
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 from gobby.storage.skills._models import ChangeEvent, ChangeEventType
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -104,3 +108,15 @@ class SkillChangeNotifier:
     def listener_count(self) -> int:
         """Return the number of registered listeners."""
         return len(self._listeners)
+
+
+_NOTIFIERS: WeakKeyDictionary[HubDatabase, SkillChangeNotifier] = WeakKeyDictionary()
+
+
+def get_skill_change_notifier(db: HubDatabase) -> SkillChangeNotifier:
+    """Return the process-local mutation notifier shared by users of a database."""
+    notifier = _NOTIFIERS.get(db)
+    if notifier is None:
+        notifier = SkillChangeNotifier()
+        _NOTIFIERS[db] = notifier
+    return notifier

@@ -21,34 +21,23 @@ Parent: gt-30cebd (Decompose tasks.py)
 """
 
 from datetime import UTC, datetime
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Import from NEW module location - will fail until extraction is complete
-# This is intentional for TDD red phase
-try:
-    from gobby.mcp_proxy.tools.task_validation import (
-        create_validation_registry,
-    )
-
-    IMPORT_SUCCEEDED = True
-except ImportError:
-    IMPORT_SUCCEEDED = False
-    create_validation_registry = None
-
+from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 
-# Skip all tests if module doesn't exist yet (TDD red phase)
-pytestmark = pytest.mark.skipif(
-    not IMPORT_SUCCEEDED,
-    reason="tasks_validation module not yet extracted (TDD red phase)",
-)
+pytestmark = pytest.mark.unit
+
+_TEST_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
+_TEST_TIMESTAMP_TEXT = _TEST_TIMESTAMP.isoformat()
+_StageState = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
 
 
-def _stage(task_id: str, state: str) -> StageState:
-    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+def _stage(task_id: str, state: _StageState) -> StageState:
     return StageState(
         task_id=task_id,
         stage_name="development",
@@ -56,7 +45,7 @@ def _stage(task_id: str, state: str) -> StageState:
         state=state,
         review_policy="required",
         reviewer_agent=None,
-        entered_at=timestamp,
+        entered_at=_TEST_TIMESTAMP_TEXT,
         entered_by_session_id=None,
         completed_at=None,
         completed_by_session_id=None,
@@ -67,29 +56,28 @@ def _stage(task_id: str, state: str) -> StageState:
         max_review_rounds=None,
         artifact_refs=None,
         notes=None,
-        updated_at=timestamp,
+        updated_at=_TEST_TIMESTAMP,
     )
 
 
-def _task(**kwargs) -> Task:
-    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+def _task(**kwargs: Any) -> Task:
     status = kwargs.pop("status", "open")
     task_id = kwargs["id"]
     if status == "closed":
-        kwargs.setdefault("closed_at", timestamp)
+        kwargs.setdefault("closed_at", "now")
     elif status == "escalated":
         kwargs.setdefault("is_escalated", True)
-        kwargs.setdefault("escalated_at", timestamp)
+        kwargs.setdefault("escalated_at", "now")
     elif status in {"ready", "in_progress", "needs_review", "review_approved"}:
         kwargs.setdefault("stages", (_stage(task_id, status),))
-    for field_name in ("created_at", "updated_at"):
+    for field_name in ("created_at", "updated_at", "closed_at", "escalated_at"):
         if kwargs.get(field_name) == "now":
-            kwargs[field_name] = timestamp
+            kwargs[field_name] = _TEST_TIMESTAMP
     return Task(**kwargs)
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
@@ -97,18 +85,15 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def mock_task_validator():
+def mock_task_validator() -> AsyncMock:
     """Create a mock task validator."""
     validator = AsyncMock(spec=TaskValidator)
     return validator
 
 
 @pytest.fixture
-def validation_registry(mock_task_manager, mock_task_validator):
+def validation_registry(mock_task_manager: MagicMock, mock_task_validator: AsyncMock) -> Any:
     """Create a validation tool registry with mocked dependencies."""
-    if not IMPORT_SUCCEEDED:
-        pytest.skip("Module not extracted yet")
-
     with patch("gobby.mcp_proxy.tools.task_validation.ValidationHistoryManager"):
         registry = create_validation_registry(
             task_manager=mock_task_manager,
@@ -127,8 +112,11 @@ class TestValidateTaskTool:
 
     @pytest.mark.asyncio
     async def test_validate_task_leaf_task_valid(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_task_validator: AsyncMock,
+        validation_registry: Any,
+    ) -> None:
         """Test validate_task returns valid for a leaf task that passes validation."""
         task = _task(
             id="t1",
@@ -161,8 +149,11 @@ class TestValidateTaskTool:
 
     @pytest.mark.asyncio
     async def test_validate_task_leaf_task_invalid(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_task_validator: AsyncMock,
+        validation_registry: Any,
+    ) -> None:
         """Test validate_task returns invalid for a leaf task that fails validation."""
         task = _task(
             id="t1",
@@ -195,8 +186,8 @@ class TestValidateTaskTool:
 
     @pytest.mark.asyncio
     async def test_validate_task_parent_all_children_closed(
-        self, mock_task_manager, validation_registry
-    ):
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test validate_task for parent task when all children are closed."""
         parent_task = _task(
             id="t1",
@@ -242,7 +233,9 @@ class TestValidateTaskTool:
         assert "child tasks" in result["feedback"].lower()
 
     @pytest.mark.asyncio
-    async def test_validate_task_parent_open_children(self, mock_task_manager, validation_registry):
+    async def test_validate_task_parent_open_children(
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test validate_task for parent task with open children."""
         parent_task = _task(
             id="t1",
@@ -337,7 +330,9 @@ class TestValidateTaskTool:
         ]
 
     @pytest.mark.asyncio
-    async def test_validate_task_not_found(self, mock_task_manager, validation_registry):
+    async def test_validate_task_not_found(
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test validate_task with non-existent task."""
         mock_task_manager.get_task.return_value = None
 
@@ -347,8 +342,11 @@ class TestValidateTaskTool:
 
     @pytest.mark.asyncio
     async def test_validate_task_creates_fix_task_on_failure(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_task_validator: AsyncMock,
+        validation_registry: Any,
+    ) -> None:
         """Test that validate_task creates a fix task after validation failure."""
         task = _task(
             id="t1",
@@ -396,8 +394,11 @@ class TestValidateTaskTool:
 
     @pytest.mark.asyncio
     async def test_validate_task_increments_fail_count(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_task_validator: AsyncMock,
+        validation_registry: Any,
+    ) -> None:
         """Test that validate_task increments fail count on invalid result."""
         task = _task(
             id="t1",
@@ -442,8 +443,11 @@ class TestValidateTaskTool:
 
     @pytest.mark.asyncio
     async def test_validate_task_auto_gathers_context(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
+        self,
+        mock_task_manager: MagicMock,
+        mock_task_validator: AsyncMock,
+        validation_registry: Any,
+    ) -> None:
         """Test that validate_task auto-gathers context when changes_summary not provided."""
         task = _task(
             id="t1",
@@ -488,8 +492,8 @@ class TestGetValidationStatusTool:
 
     @pytest.mark.asyncio
     async def test_get_validation_status_returns_all_fields(
-        self, mock_task_manager, validation_registry
-    ):
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test that get_validation_status returns all validation-related fields."""
         task = _task(
             id="t1",
@@ -516,7 +520,9 @@ class TestGetValidationStatusTool:
         assert result["validation_fail_count"] == 2
 
     @pytest.mark.asyncio
-    async def test_get_validation_status_not_found(self, mock_task_manager, validation_registry):
+    async def test_get_validation_status_not_found(
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test get_validation_status with non-existent task."""
         mock_task_manager.get_task.return_value = None
 
@@ -534,7 +540,9 @@ class TestResetValidationCountTool:
     """Tests for reset_validation_count MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_reset_validation_count_success(self, mock_task_manager, validation_registry):
+    async def test_reset_validation_count_success(
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test that reset_validation_count resets to zero."""
         task = _task(
             id="t1",
@@ -569,7 +577,9 @@ class TestResetValidationCountTool:
         mock_task_manager.update_task.assert_called_with("t1", validation_fail_count=0)
 
     @pytest.mark.asyncio
-    async def test_reset_validation_count_not_found(self, mock_task_manager, validation_registry):
+    async def test_reset_validation_count_not_found(
+        self, mock_task_manager: MagicMock, validation_registry: Any
+    ) -> None:
         """Test reset_validation_count with non-existent task."""
         mock_task_manager.get_task.return_value = None
 
@@ -588,43 +598,43 @@ class TestResetValidationCountTool:
 class TestValidationToolsRegistration:
     """Tests verifying validation tools are properly registered in the new module."""
 
-    def test_validate_task_tool_registered(self, validation_registry) -> None:
+    def test_validate_task_tool_registered(self, validation_registry: Any) -> None:
         """Test that validate_task is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "validate_task" in tool_names
 
-    def test_get_validation_status_tool_registered(self, validation_registry) -> None:
+    def test_get_validation_status_tool_registered(self, validation_registry: Any) -> None:
         """Test that get_validation_status is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "get_validation_status" in tool_names
 
-    def test_reset_validation_count_tool_registered(self, validation_registry) -> None:
+    def test_reset_validation_count_tool_registered(self, validation_registry: Any) -> None:
         """Test that reset_validation_count is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "reset_validation_count" in tool_names
 
-    def test_get_validation_history_tool_registered(self, validation_registry) -> None:
+    def test_get_validation_history_tool_registered(self, validation_registry: Any) -> None:
         """Test that get_validation_history is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "get_validation_history" in tool_names
 
-    def test_get_recurring_issues_tool_registered(self, validation_registry) -> None:
+    def test_get_recurring_issues_tool_registered(self, validation_registry: Any) -> None:
         """Test that get_recurring_issues is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "get_recurring_issues" in tool_names
 
-    def test_clear_validation_history_tool_registered(self, validation_registry) -> None:
+    def test_clear_validation_history_tool_registered(self, validation_registry: Any) -> None:
         """Test that clear_validation_history is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "clear_validation_history" in tool_names
 
-    def test_de_escalate_task_tool_registered(self, validation_registry) -> None:
+    def test_de_escalate_task_tool_registered(self, validation_registry: Any) -> None:
         """Test that de_escalate_task is registered."""
         tools = validation_registry.list_tools()
         tool_names = [t["name"] for t in tools]
@@ -639,7 +649,7 @@ class TestValidationToolsRegistration:
 class TestValidationToolSchemas:
     """Tests for tool input schemas."""
 
-    def test_validate_task_schema(self, validation_registry) -> None:
+    def test_validate_task_schema(self, validation_registry: Any) -> None:
         """Test validate_task has correct input schema."""
         schema = validation_registry.get_schema("validate_task")
         assert schema is not None

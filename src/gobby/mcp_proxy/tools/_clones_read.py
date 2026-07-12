@@ -115,19 +115,13 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         session_id = get_current_session_id()
         if not session_id:
             return {"success": False, "error": "No session context available"}
-        clone = ctx.clone_storage.get(clone_id)
-        if not clone:
-            return {"success": False, "error": f"Clone not found: {clone_id}"}
-
-        if clone.agent_session_id and clone.agent_session_id != session_id:
-            return {
-                "success": False,
-                "error": f"Clone already claimed by session '{clone.agent_session_id}'",
-            }
-
         updated = ctx.clone_storage.claim(clone_id, session_id)
         if not updated:
-            return {"success": False, "error": "Failed to claim clone"}
+            clone = ctx.clone_storage.get(clone_id)
+            if not clone:
+                return {"success": False, "error": f"Clone not found: {clone_id}"}
+            owner = f" by session '{clone.agent_session_id}'" if clone.agent_session_id else ""
+            return {"success": False, "error": f"Clone already claimed{owner}"}
 
         return {"success": True}
 

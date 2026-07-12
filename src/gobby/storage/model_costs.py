@@ -9,11 +9,27 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, NamedTuple
 
+from gobby.llm.context_window_values import positive_context_window
+
 if TYPE_CHECKING:
     from gobby.llm.model_registry import ModelInfo
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+
+def _model_lookup_parts(model_id: str) -> tuple[str | None, str]:
+    """Return an optional Gobby provider and the provider-local model id."""
+    from gobby.llm.model_registry import PROVIDER_MAP, strip_provider_prefix
+
+    if "/" in model_id:
+        prefix, suffix = model_id.split("/", 1)
+        provider = PROVIDER_MAP.get(f"{prefix}/")
+        if provider is not None:
+            return provider, suffix
+        if prefix in PROVIDER_MAP.values():
+            return prefix, suffix
+    return None, strip_provider_prefix(model_id)
 
 
 class ModelMetadata(NamedTuple):
@@ -79,12 +95,12 @@ class ModelCostStore:
         return len(rows)
 
     def get_all(self) -> dict[str, ModelMetadata]:
-        """Return all model metadata as {model: ModelMetadata}."""
+        """Return all model metadata keyed by ``provider/model``."""
         rows = self.db.fetchall(
-            "SELECT model, context_length, max_completion_tokens FROM model_costs"
+            "SELECT provider, model, context_length, max_completion_tokens FROM model_costs"
         )
         return {
-            row["model"]: ModelMetadata(
+            f"{row['provider']}/{row['model']}": ModelMetadata(
                 context_length=row["context_length"],
                 max_completion_tokens=row["max_completion_tokens"],
             )
@@ -93,19 +109,42 @@ class ModelCostStore:
 
     def get_context_window(self, model: str) -> int | None:
         """Look up context_length for a model (exact match, then prefix match)."""
-        from gobby.llm.model_registry import strip_provider_prefix
+        provider, model = _model_lookup_parts(model)
 
-        model = strip_provider_prefix(model)
-
-        row = self.db.fetchone("SELECT context_length FROM model_costs WHERE model = %s", (model,))
-        if row and row["context_length"]:
-            return int(row["context_length"])
+        if provider is None:
+            exact_query = (
+                "SELECT context_length FROM model_costs "
+                "WHERE model = %s AND context_length > 0 "
+                "ORDER BY provider LIMIT 1"
+            )
+            exact_params: tuple[str, ...] = (model,)
+        else:
+            exact_query = (
+                "SELECT context_length FROM model_costs "
+                "WHERE provider = %s AND model = %s AND context_length > 0"
+            )
+            exact_params = (provider, model)
+        row = self.db.fetchone(exact_query, exact_params)
+        exact_context_window = positive_context_window(row["context_length"] if row else None)
+        if exact_context_window is not None:
+            return exact_context_window
 
         # Prefix match — find longest matching model key via SQL
-        row = self.db.fetchone(
-            "SELECT context_length FROM model_costs "
-            "WHERE %s LIKE model || '%%' AND context_length IS NOT NULL "
-            "ORDER BY LENGTH(model) DESC LIMIT 1",
-            (model,),
-        )
-        return int(row["context_length"]) if row else None
+        prefix_params: tuple[str, ...]
+        if provider is None:
+            prefix_query = (
+                "SELECT context_length FROM model_costs "
+                "WHERE LEFT(%s, LENGTH(model)) = model AND context_length > 0 "
+                "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
+            )
+            prefix_params = (model,)
+        else:
+            prefix_query = (
+                "SELECT context_length FROM model_costs "
+                "WHERE provider = %s AND LEFT(%s, LENGTH(model)) = model "
+                "AND context_length > 0 "
+                "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
+            )
+            prefix_params = (provider, model)
+        row = self.db.fetchone(prefix_query, prefix_params)
+        return positive_context_window(row["context_length"] if row else None)

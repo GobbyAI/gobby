@@ -8,16 +8,108 @@ Provides functions to extract git repository information including:
 Handles git worktrees, detached HEAD, and missing remotes gracefully.
 """
 
+import asyncio
 import logging
 import os
 import shutil
 import subprocess  # nosec B404 # subprocess needed for git commands
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypedDict
+from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 logger = logging.getLogger(__name__)
 
 GIT_FALLBACK_PATHS = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")
+_CHECKOUT_MUTATION_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
+
+
+def get_checkout_mutation_lock(checkout_path: str | Path) -> asyncio.Lock:
+    """Return the current event loop's lock for mutations of a checkout."""
+    loop = asyncio.get_running_loop()
+    loop_locks = _CHECKOUT_MUTATION_LOCKS.setdefault(loop, {})
+    key = str(Path(checkout_path).resolve())
+    return loop_locks.setdefault(key, asyncio.Lock())
+
+
+def stash_ref_for_oid(stash_list: str, stash_oid: str) -> str | None:
+    """Resolve the current reflog selector for an exact stash object."""
+    for line in stash_list.splitlines():
+        stash_ref, separator, candidate_oid = line.partition("\0")
+        if separator and candidate_oid == stash_oid:
+            return stash_ref
+    return None
+
+
+def new_stash_marker(operation: str) -> str:
+    """Return a collision-resistant marker for one operation-owned stash."""
+    return f"gobby-{operation}:{uuid4().hex}"
+
+
+def stash_oid_for_marker(stash_list: str, marker: str) -> str | None:
+    """Resolve the stash object whose reflog subject ends with an exact marker."""
+    for line in stash_list.splitlines():
+        stash_oid, separator, subject = line.partition("\0")
+        if separator and subject.endswith(marker):
+            return stash_oid
+    return None
+
+
+async def run_to_completion[T](
+    awaitable: Awaitable[T],
+    *,
+    on_cancel: Callable[[], None] | None = None,
+) -> T:
+    """Keep work alive through caller cancellation, then propagate cancellation.
+
+    ``on_cancel`` lets a shielded transaction observe the cancellation request at
+    its commit boundary. Work that has not started mutating shared state can stop;
+    work past that boundary continues through cleanup before cancellation escapes.
+    """
+    worker = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
+        if worker.done() and worker.cancelled():
+            raise
+
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                if worker.done() and worker.cancelled():
+                    raise
+
+        if not worker.cancelled():
+            try:
+                worker.result()
+            except BaseException as error:
+                logger.warning(
+                    "Offloaded work failed after its caller was cancelled: %s",
+                    error,
+                    exc_info=True,
+                )
+        raise
+
+
+async def run_thread_to_completion[**P, T](
+    func: Callable[P, T],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Run blocking work without abandoning its thread when the caller is cancelled.
+
+    ``asyncio.to_thread`` cannot stop its worker after cancellation. Callers that
+    protect external state with an asyncio lock must therefore wait for the worker
+    to finish before releasing that lock, while still propagating cancellation.
+    """
+    return await run_to_completion(asyncio.to_thread(func, *args, **kwargs))
 
 
 class GitMetadata(TypedDict, total=False):

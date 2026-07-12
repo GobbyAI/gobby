@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 from gobby.llm.base import LLMProviderCancellation
-from gobby.llm.resolver import ProviderError
 from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
 from gobby.prompts.loader import PromptLoader
 
@@ -23,7 +22,6 @@ _EXPECTED_PLANNER_ERRORS = (
     ValueError,
     TypeError,
     LLMProviderCancellation,
-    ProviderError,
     OSError,
     TimeoutError,
     ConnectionError,

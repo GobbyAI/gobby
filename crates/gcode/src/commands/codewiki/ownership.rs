@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::time::Duration;
 
@@ -70,6 +70,7 @@ pub(crate) fn build_ownership_doc(
     project_root: &Path,
     files: &[String],
     file_modules: &HashMap<String, String>,
+    emitted_modules: &BTreeSet<String>,
     meta: &mut OwnershipMeta,
     options: OwnershipOptions,
 ) -> anyhow::Result<String> {
@@ -108,7 +109,7 @@ pub(crate) fn build_ownership_doc(
         return Ok(doc);
     }
 
-    write_modules(&mut doc, &by_file, file_modules);
+    write_modules(&mut doc, &by_file, file_modules, emitted_modules);
     write_files(&mut doc, &by_file);
     Ok(doc)
 }

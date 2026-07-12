@@ -104,7 +104,11 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     )
 
     result = await service.call_json_feature(
-        config, "prompt", system_prompt="system", cwd="/tmp/project"
+        config,
+        "prompt",
+        system_prompt="system",
+        max_tokens=321,
+        cwd="/tmp/project",
     )
 
     assert result == {"ok": True}
@@ -114,6 +118,7 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     assert request.candidates[0].candidate == "claude/haiku"
     assert request.candidates[0].reasoning_effort is None
     assert request.cwd == "/tmp/project"
+    assert request.max_tokens == 321
     assert request.candidate_timeout_seconds is None
     assert request.cli_candidate_timeout_seconds == 180.0
 

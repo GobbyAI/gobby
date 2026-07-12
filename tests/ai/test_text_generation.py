@@ -10,7 +10,6 @@ from typing import Any, ClassVar
 import pytest
 
 import gobby.ai._text_generation_adapters as text_generation_adapters
-from gobby.adapters.acp_client import StreamEvent
 from gobby.ai import (
     AgyCLITextGenerateAdapter,
     AIAdapterStyle,
@@ -509,7 +508,7 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="qwen",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen-model",),
             ),
@@ -551,7 +550,7 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="qwen",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen-model",),
             ),
@@ -2046,7 +2045,9 @@ class FakeNativeTextProvider:
         self.text_calls: list[
             tuple[str, str | None, str | None, int | None, str | None, str | None]
         ] = []
-        self.json_calls: list[tuple[str, str | None, str | None, str | None, str | None]] = []
+        self.json_calls: list[
+            tuple[str, str | None, str | None, int | None, str | None, str | None]
+        ] = []
         self.__class__.last_instance = self
 
     async def generate_text_result(
@@ -2070,15 +2071,17 @@ class FakeNativeTextProvider:
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
         *,
         reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
-        self.json_calls.append((prompt, system_prompt, model, reasoning_effort, caller))
+        self.json_calls.append((prompt, system_prompt, model, max_tokens, reasoning_effort, caller))
         return {
             "prompt": prompt,
             "system_prompt": system_prompt,
             "model": model,
+            "max_tokens": max_tokens,
             "reasoning_effort": reasoning_effort,
             "caller": caller,
         }
@@ -2126,6 +2129,7 @@ async def test_local_text_generate_adapter_forwards_json_request(
             prompt="json please",
             system_prompt="system",
             model="model-b",
+            max_tokens=64,
             reasoning_effort="high",
             caller="test",
         )
@@ -2135,44 +2139,15 @@ async def test_local_text_generate_adapter_forwards_json_request(
     assert provider is not None
     assert provider.config is config
     assert provider.endpoint_name == "lm-studio"
-    assert provider.json_calls == [("json please", "system", "model-b", "high", "test")]
+    assert provider.json_calls == [("json please", "system", "model-b", 64, "high", "test")]
     assert response == {
         "prompt": "json please",
         "system_prompt": "system",
         "model": "model-b",
+        "max_tokens": 64,
         "reasoning_effort": "high",
         "caller": "test",
     }
-
-
-class FakeACPClient:
-    def __init__(self, events: list[StreamEvent] | None = None) -> None:
-        self.started: dict[str, object] | None = None
-        self.sent: list[dict[str, object]] = []
-        self.stopped = False
-        self.events = events or [
-            StreamEvent(event_type="content_delta", data={"content": "hello "}),
-            StreamEvent(event_type="content_delta", data={"content": "world"}),
-            StreamEvent(event_type="result", data={"content": "ignored fallback"}),
-        ]
-
-    async def start(self, **kwargs: object) -> None:
-        self.started = kwargs
-
-    async def stop(self) -> None:
-        self.stopped = True
-
-    async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
-        self.sent.append({"message": message, **kwargs})
-        for event in self.events:
-            yield event
-
-
-class HangingACPClient(FakeACPClient):
-    async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
-        self.sent.append({"message": message, **kwargs})
-        await asyncio.Event().wait()
-        yield StreamEvent(event_type="content_delta", data={"content": "unreachable"})
 
 
 class FakeCodexAppServerClient:
@@ -3854,7 +3829,6 @@ def test_candidate_timeout_selection_by_adapter_style() -> None:
         AIAdapterStyle.CLI,
         AIAdapterStyle.DAEMON,
         AIAdapterStyle.LLM_PROVIDER,
-        AIAdapterStyle.ACP,
     ):
         assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 150.0
 

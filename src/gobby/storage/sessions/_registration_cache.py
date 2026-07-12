@@ -13,6 +13,10 @@ from gobby.terminal_context import merge_terminal_context, terminal_context_has_
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
+SessionMappingKey = tuple[str, str, str | None, str | None]
+_SESSION_MAPPING_TTL_SECONDS = 60 * 60
+_SESSION_MAPPING_MAX_ENTRIES = 4096
+
 
 def _recovery_score(session: Session) -> tuple[bool, bool, bool, bool]:
     """Score recovery candidates by metadata completeness only."""
@@ -29,11 +33,15 @@ def _recovery_rank(session: Session) -> tuple[bool, bool, bool, bool, datetime, 
     return (*_recovery_score(session), session.created_at, session.id)
 
 
-class _ManagerState(Protocol):
+class _SessionMappingState(Protocol):
+    _session_mapping: dict[SessionMappingKey, str]
+    _session_mapping_timestamps: dict[SessionMappingKey, float]
+    _session_mapping_lock: Any
+
+
+class _ManagerState(_SessionMappingState, Protocol):
     db: HubDatabase
     logger: logging.Logger
-    _session_mapping: dict[tuple[str, str], str]
-    _session_mapping_lock: Any
     _session_metadata: dict[str, dict[str, Any]]
     _session_metadata_lock: Any
 
@@ -74,7 +82,92 @@ class _ManagerState(Protocol):
         terminal_context: dict[str, Any] | None = ...,
     ) -> Session | None: ...
 
-    def cache_session_mapping(self, external_id: str, source: str, session_id: str) -> None: ...
+    def cache_session_mapping(
+        self,
+        external_id: str,
+        source: str,
+        session_id: str,
+        machine_id: str | None = None,
+        project_id: str | None = None,
+    ) -> None: ...
+
+
+def _session_mapping_key(
+    external_id: str,
+    source: str,
+    machine_id: str | None,
+    project_id: str | None,
+) -> SessionMappingKey:
+    return (external_id, source, machine_id, project_id)
+
+
+def _purge_session_mapping(state: _SessionMappingState, now: float) -> None:
+    stale_keys = [
+        key
+        for key, cached_at in state._session_mapping_timestamps.items()
+        if key not in state._session_mapping or now - cached_at >= _SESSION_MAPPING_TTL_SECONDS
+    ]
+    for key in stale_keys:
+        state._session_mapping.pop(key, None)
+        state._session_mapping_timestamps.pop(key, None)
+
+
+def _get_session_mapping(
+    state: _SessionMappingState,
+    *,
+    external_id: str,
+    source: str,
+    machine_id: str | None,
+    project_id: str | None,
+) -> str | None:
+    now = time.monotonic()
+    with state._session_mapping_lock:
+        _purge_session_mapping(state, now)
+        if machine_id is not None or project_id is not None:
+            key = _session_mapping_key(external_id, source, machine_id, project_id)
+            session_id = state._session_mapping.get(key)
+            if session_id is not None:
+                state._session_mapping_timestamps[key] = now
+            return session_id
+
+        matches = {
+            session_id
+            for (cached_external, cached_source, _, _), session_id in state._session_mapping.items()
+            if cached_external == external_id and cached_source == source
+        }
+        if len(matches) != 1:
+            return None
+        session_id = matches.pop()
+        for key, cached_session_id in state._session_mapping.items():
+            if cached_session_id == session_id and key[:2] == (external_id, source):
+                state._session_mapping_timestamps[key] = now
+        return session_id
+
+
+def _put_session_mapping(
+    state: _SessionMappingState,
+    *,
+    external_id: str,
+    source: str,
+    session_id: str,
+    machine_id: str | None,
+    project_id: str | None,
+) -> None:
+    now = time.monotonic()
+    key = _session_mapping_key(external_id, source, machine_id, project_id)
+    with state._session_mapping_lock:
+        _purge_session_mapping(state, now)
+        if key not in state._session_mapping and len(state._session_mapping) >= (
+            _SESSION_MAPPING_MAX_ENTRIES
+        ):
+            oldest_key = min(
+                state._session_mapping,
+                key=lambda cached_key: state._session_mapping_timestamps.get(cached_key, 0.0),
+            )
+            state._session_mapping.pop(oldest_key, None)
+            state._session_mapping_timestamps.pop(oldest_key, None)
+        state._session_mapping[key] = session_id
+        state._session_mapping_timestamps[key] = now
 
 
 class _RegistrationCacheMixin:
@@ -187,10 +280,15 @@ class _RegistrationCacheMixin:
             session_id (database PK) or None if not found
         """
         try:
-            cache_key = (external_id, source)
-            with self._session_mapping_lock:
-                if cache_key in self._session_mapping:
-                    return self._session_mapping[cache_key]
+            cached_session_id = _get_session_mapping(
+                self,
+                external_id=external_id,
+                source=source,
+                machine_id=machine_id,
+                project_id=project_id,
+            )
+            if cached_session_id is not None:
+                return cached_session_id
 
             session = self.find_by_external_id(external_id, machine_id, project_id, source)
             if session:
@@ -200,8 +298,14 @@ class _RegistrationCacheMixin:
                     session_id,
                     external_id,
                 )
-                with self._session_mapping_lock:
-                    self._session_mapping[cache_key] = session_id
+                _put_session_mapping(
+                    self,
+                    external_id=external_id,
+                    source=source,
+                    session_id=session_id,
+                    machine_id=machine_id,
+                    project_id=project_id,
+                )
                 return session_id
 
             return None
@@ -257,7 +361,13 @@ class _RegistrationCacheMixin:
                 return None
 
             recovered = ranked[0]
-            self.cache_session_mapping(external_id, source, recovered.id)
+            self.cache_session_mapping(
+                external_id,
+                source,
+                recovered.id,
+                machine_id=machine_id,
+                project_id=project_id,
+            )
             return recovered
 
         except Exception as e:
@@ -269,33 +379,60 @@ class _RegistrationCacheMixin:
             )
             return None
 
-    def get_session_id(self: _ManagerState, external_id: str, source: str) -> str | None:
+    def get_session_id(
+        self: _ManagerState,
+        external_id: str,
+        source: str,
+        machine_id: str | None = None,
+        project_id: str | None = None,
+    ) -> str | None:
         """
-        Get cached session_id for an external_id and source.
+        Get a cached session ID for the supplied registration identity.
 
         Args:
             external_id: External session identifier
             source: CLI source identifier (e.g., "claude", "qwen", "codex")
+            machine_id: Optional machine scope. When omitted with project_id,
+                lookup succeeds only if the external/source mapping is unique.
+            project_id: Optional project scope.
 
         Returns:
             session_id or None if not cached
         """
-        with self._session_mapping_lock:
-            return self._session_mapping.get((external_id, source))
+        return _get_session_mapping(
+            self,
+            external_id=external_id,
+            source=source,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
 
     def cache_session_mapping(
-        self: _ManagerState, external_id: str, source: str, session_id: str
+        self: _ManagerState,
+        external_id: str,
+        source: str,
+        session_id: str,
+        machine_id: str | None = None,
+        project_id: str | None = None,
     ) -> None:
         """
-        Cache an (external_id, source) -> session_id mapping.
+        Cache a fully scoped registration identity to session ID mapping.
 
         Args:
             external_id: External session identifier
             source: CLI source identifier (e.g., "claude", "agy", "codex")
             session_id: Database session ID
+            machine_id: Machine identifier, when known.
+            project_id: Project identifier, when known.
         """
-        with self._session_mapping_lock:
-            self._session_mapping[(external_id, source)] = session_id
+        _put_session_mapping(
+            self,
+            external_id=external_id,
+            source=source,
+            session_id=session_id,
+            machine_id=machine_id,
+            project_id=project_id,
+        )
 
     def backfill_terminal_context(
         self: _ManagerState,

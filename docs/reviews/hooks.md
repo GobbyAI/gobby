@@ -8,9 +8,9 @@
   `_dispatch.py`, `_misc.py`, `_plan.py`, `_session_responses.py`), broadcast/dispatch
   (`broadcaster.py`, `dispatchers/`, `webhooks.py`, `mcp_dispatch.py`, `inbox.py`,
   `session_summary_dispatcher.py`), and verification/health/misc (`verification_runner.py`,
-  `health_monitor.py`, `health_gate.py`, `git.py`, `code_navigation.py`, `project_context.py`,
-  `event_enrichment.py`, `skill_manager.py`). Plus the END-TO-END DELIVERY SEAM: the `ghook`
-  binary (sibling repo `gobby-cli/crates/ghook/`, read cross-repo), `servers/routes/mcp/hooks.py`
+  `health_monitor.py`, `health_gate.py`, `code_navigation.py`, `project_context.py`,
+  `event_enrichment.py`, `skill_manager.py`). Plus the END-TO-END DELIVERY SEAM: the in-repo
+  `crates/ghook/` binary, `servers/routes/mcp/hooks.py`
   (receiving route), and `cli/installers/` hook registration. **Split boundary:** adapters/
   internals belong to #15781; workflows/hooks.py (rule bridge) was reviewed in #15775.
 - **Reviewer:** Claude Fable 5 — 7-agent parallel fan-out, all Blockers synthesizer-verified
@@ -68,11 +68,11 @@
 
 ### [BLOCKER] Grok hook traffic is mis-sourced as "claude" by the installed ghook — all Grok enforcement is silently inert
 
-- **Where:** `cli/installers/grok.py:116-125` + `install/grok/hooks-template.json` write `ghook --gobby-owned --cli=grok --type=<snake_case>`; the ghook binary (sibling repo `gobby-cli/crates/ghook/src/cli_config.rs:21-56`) has **no grok arm** and `for_dispatch` falls back to the **claude** config; nothing sets `GOBBY_SOURCE` on the install path; envelope arrives `source: "claude"` → route selects `ClaudeCodeAdapter` (`servers/routes/mcp/hooks.py:540`) instead of the existing `GrokAdapter` (`:548-549`); grok's snake_case hook types are unknown to the Claude contract (`adapters/claude_contract.py:225-240`) → every event degrades to `NOTIFICATION` (the contract's explicit fail-open fallback, `claude_code.py:158-161`).
+- **Where:** `cli/installers/grok.py:116-125` + `install/grok/hooks-template.json` write `ghook --gobby-owned --cli=grok --type=<snake_case>`; `crates/ghook/src/cli_config.rs:21-56` has **no grok arm** and `for_dispatch` falls back to the **claude** config; nothing sets `GOBBY_SOURCE` on the install path; envelope arrives `source: "claude"` → route selects `ClaudeCodeAdapter` (`servers/routes/mcp/hooks.py:540`) instead of the existing `GrokAdapter` (`:548-549`); grok's snake_case hook types are unknown to the Claude contract (`adapters/claude_contract.py:225-240`) → every event degrades to `NOTIFICATION` (the contract's explicit fail-open fallback, `claude_code.py:158-161`).
 - **Failure mode:** No PreToolUse gating, no stop gate, no session registration — 100% of the time, not just degraded states. The claude-fallback critical set (kebab-case `session-start`/…) also never matches grok's snake_case types, so every grok hook additionally fails open on daemon-down. Droid had this exact hazard and got both an upstream ghook route and an installer version gate (`cli/installers/droid.py:212-235`); grok got neither. Installed ghook 0.4.6 matches workspace source — no version skew masking this.
 - **Why it matters:** A daemon-supported CLI with a dedicated adapter and installer ships with enforcement off.
-- **Minimal fix:** Add a grok arm to ghook's `CliConfig` (cross-repo) and bump the floor in `install/version_pins.py:8`; until that ships, gate `install_grok` with a version check mirroring droid's. Add a conformance test asserting every `--cli=` value emitted by installers is a recognized ghook route.
-- **Confidence:** high (all links verified; ghook side read cross-repo with binary version confirmed).
+- **Minimal fix:** Add a grok arm to `crates/ghook`'s `CliConfig` and bump the floor in `install/version_pins.py:8`; until that ships, gate `install_grok` with a version check mirroring droid's. Add a conformance test asserting every `--cli=` value emitted by installers is a recognized ghook route.
+- **Confidence:** high (all links and the installed binary version verified).
 
 ### [IMPORTANT] Route exception handling fails STOP open while timeout fails it closed
 
@@ -307,52 +307,26 @@
 - **Failure mode:** On a DB write failure, new edits neither extend `session_edited_files` nor reset `verification_evidence_recorded` — stale evidence stays fresh over unvalidated edits.
 - **Minimal fix:** Warn loudly; consider failing the freshness flag closed.
 
-### [NIT] hook_manager small items
+### Nit sweep resolution (2026-07-12)
 
-- **Where:** `rule_evaluator.py:211-270` (memory/skill dedup RMW race → duplicate injection); `hook_manager.py:382-384` (write-only `_raw_tool_input` deepcopy per tool event); `:100-103` (`_injected_sessions` unbounded).
+The stale nit checklist was re-audited against the current repository and split by
+implementation domain. No cross-repository file references remain in this section.
 
-### [NIT] `EVENT_TYPE_CLI_SUPPORT` omits droid entirely; dead branch in `normalize_mcp_fields`
-
-- **Where:** `events.py:176-364` (no droid column despite `SessionSource.DROID` and a full adapter — documentation table, not routing); `_normalization_mcp.py:128` (`mcp_gobby_call_tool` unreachable after the pre-normalizer).
-
-### [NIT] Session-lookup cache key drops machine/project and never evicts
-
-- **Where:** `storage/sessions/_registration_cache.py:194-293` — composite contract advertised, `(external_id, source)` used; entries live forever.
-
-### [NIT] session_activation small items
-
-- **Where:** `:564-567` (`_workflow_definition_exists` not project-scoped, unlike its sibling); `:477-489` (`update_terminal_pickup_metadata` via hasattr, absent from the protocol); `hook_manager.py:309-313` (#N resolution comment overclaims — never propagated to the CLI via `updatedInput`).
-
-### [NIT] session_coordinator stores entire tmux scrollback as the run result on the success path
-
-- **Where:** `session_coordinator.py:435-455` (`capture-pane -S -` unbounded; error paths truncate, success doesn't).
-
-### [NIT] session-start response assembly
-
-- **Where:** `_session_responses.py:151-239` (dead `agent_info`/`claimed_tasks_info` params; `_get_claimed_task_info` runs twice per boot, second result dropped); `_session_start/agents.py:184-225` (`skills_count` hardcoded 0 vs docstring); coordinator `_registered_sessions` never unregistered on session end; compact-continuation marker consumed even when scheduling fails (`flow.py:81-99` → `compact_continuation.py:188-205`).
-
-### [NIT] Dead/legacy code
-
-- **Where:** `event_handlers/_dispatch.py:27-117` (agent/expansion dispatch handlers unwired; docstrings describe behavior that never executes), `:313-321` (`_release_run_mutex` wrong-arity fallback is an obfuscated no-op); `hooks/git.py` (MergeHookManager has zero production callers; a raising gate hook is treated as allow — and verified: it shares none of the workflows/git_utils porcelain-parsing family); `webhooks.py:262-318` (`trigger()` production-dead; tests validate the dead copy).
-
-### [NIT] Verification/CLI cosmetics
-
-- **Where:** `verification_runner.py:53-56` (skipped results double-counted as passed); `terminal_context.py:29-32` (whitespace-only strings accepted); `_agent.py:375-395` (`handle_after_agent` skips debug echo unlike its two siblings).
-
-### [NIT] Broadcast path
-
-- **Where:** `servers/websocket/broadcast.py:107-112` (sequential per-client send, no timeout — head-of-line blocking behind a slow-but-ponging client); `broadcaster.py:269,354-355` (malformed adapter input → event silently dropped with a single warning); `webhooks.py:183` (unbounded `response.json()`); `dispatchers/mcp.py:534-540` (background-flagged calls run synchronously without a loop).
-
-### [NIT] ghook contract drift docs
-
-- **Where:** non-critical failure exits 1 vs design doc's exit 0 (`main.rs:470-481` vs completed plan + `docs/guides/hook-schemas.md:436-438`); grok template `"timeout": 30` vs gemini/qwen `30000` — units unverified.
+- **Hook manager and rule evaluation:** fixed atomic memory/skill injection claims in #18048; removed write-only raw tool input and bounded session enrichment lifecycle state in #18050.
+- **Event metadata and normalization:** added Droid support metadata and removed the unreachable MCP alias branch in #18052.
+- **Session registration and activation:** made the registration cache fully scoped and bounded in #18053; scoped workflow-definition lookup to the session project in #18055. The previously cited pickup protocol and input-propagation comments no longer exist.
+- **Agent result storage:** bounded completed-run tmux output in #18056.
+- **Session-start responses:** removed dead response parameters and duplicate claimed-task lookup, and reported actual skill metadata in #18058. Session coordinator unregister support already exists. Failed compact-continuation scheduling now restores the exact pending marker without overwriting a newer marker in #18068.
+- **Dead compatibility paths:** corrected the invalid storage-less mutex fallback in #18069, then removed the unwired agent/expansion dispatch callbacks and the unused merge-hook compatibility module in #18071. The stage-pipeline terminal callbacks remain wired through `runner_broadcasting.py`. `WebhookDispatcher.trigger` is live through `dispatch_webhooks` and was therefore refuted as dead.
+- **Verification and CLI normalization:** excluded skipped checks from the passed count in #18060; rejected whitespace-only terminal identifiers in #18062; applied debug echo to after-agent responses in #18063.
+- **Broadcast and webhook paths:** made WebSocket sends concurrent and timeout-bounded in #18064; bounded webhook response bodies before JSON decoding in #18066; aligned the remaining loop-local client test double with streamed responses in #18072. Malformed broadcast adapter input remains a deliberately non-gating telemetry failure and emits a warning. Background MCP calls already use loop-aware scheduling and a strongly referenced background-task helper.
 
 ## Systemic patterns
 
 1. **Fail-open is the ambient default, decided independently at six+ seams that disagree.** Health gate (allow, all events incl. STOP), route exceptions (allow incl. STOP), rule-evaluator swallow (filed in #15775), handler exceptions (allow, pre-rule for SESSION_START), blocking webhooks (allow on any failure, no fail-closed option), ghook non-critical failures (exit 1 → proceed), unknown hook types (NOTIFICATION), unknown CLIs (claude fallback — the Grok Blocker). Fail-closed islands exist (route Stop timeout, workflows variable-load, codex Stop, cancellation) but posture is keyed to *failure class*, not *event criticality* — the same STOP event is fail-closed for one failure mode and fail-open for four others. One explicit per-event-type posture table would close the class.
-2. **Per-CLI contract data is quadruplicated with no conformance test**: ghook `CliConfig` (sibling repo), `FAIL_SAFE_HOOK_TYPES`, the `events.py` support table, and six install templates each encode hook names/criticality independently. Grok fell through exactly this gap; droid avoided it only via a hand-written installer gate.
+2. **Per-CLI contract data is quadruplicated with no conformance test**: `crates/ghook`'s `CliConfig`, `FAIL_SAFE_HOOK_TYPES`, the `events.py` support table, and six install templates each encode hook names/criticality independently. Grok fell through exactly this gap; droid avoided it only via a hand-written installer gate.
 3. **Absence of signal treated as success** — `_shell_tool_succeeded` defaults True, undefined verification commands "pass", skipped stages exit 0, hold-open never consults the computed result. Inference-by-default is the root of both gate-poisoning findings.
-4. **Three mcp_call dispatchers with three success contracts** (deferred: default-False; inline: default-True; web-chat: none), plus two webhook dispatch copies (one dead). Any rule behaves differently per surface.
+4. **Three mcp_call dispatchers with three success contracts** (deferred: default-False; inline: default-True; web-chat: none). Any rule behaves differently per surface; webhook entry paths now converge on the live `WebhookDispatcher.trigger` implementation.
 5. **Thread/loop bridging by convention, not abstraction** — the `get_running_loop → create_task | run_coroutine_threadsafe | asyncio.run` triad is hand-copied in 6+ places with per-copy bugs (dead flush, never-firing broadcast, cross-loop clients, missing strong refs). One audited `schedule_on_daemon_loop()` helper would fix the class.
 6. **Wrong-scope wiring of daemon-global singletons** (skill manager, pipeline-execution manager pinned to the personal project; forever-caches without invalidation) — same class as the agents review's scattered TmuxConfig.
 7. **Pre-created vs fresh session-start path drift** — profile seeding, handoff variables, skip flags each live on exactly one path.

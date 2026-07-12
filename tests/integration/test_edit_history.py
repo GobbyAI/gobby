@@ -59,8 +59,9 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     )
 
     # 5. Simulate Edit Tool execution
-    # Ensure tool name is in EDIT_TOOLS (case insensitive test)
-    edit_tool = list(EDIT_TOOLS)[0]
+    # NotebookEdit must use the canonical write-tool tracking path.
+    edit_tool = "NotebookEdit"
+    assert edit_tool.lower() in EDIT_TOOLS
 
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,

@@ -206,7 +206,7 @@ class TestBroadcast:
 
         result = await b.broadcast({"type": "test"})
         assert result is None
-        assert ws in b.clients
+        assert ws not in b.clients
 
     @pytest.mark.asyncio
     async def test_broadcast_handles_generic_exception(self) -> None:
@@ -216,7 +216,61 @@ class TestBroadcast:
 
         result = await b.broadcast({"type": "test"})
         assert result is None
-        assert ws in b.clients
+        assert ws not in b.clients
+
+    async def test_broadcast_removes_client_when_subscription_check_fails(self) -> None:
+        failed = FakeWebSocket(subscriptions={"*"})
+        healthy = FakeWebSocket(subscriptions={"*"})
+
+        class SubscriptionFailureBroadcaster(FakeBroadcaster):
+            def _is_subscribed(self, websocket: Any, message: dict[str, Any]) -> bool:
+                if websocket is failed:
+                    raise RuntimeError("subscription check failed")
+                return super()._is_subscribed(websocket, message)
+
+        b = SubscriptionFailureBroadcaster()
+        b.clients = {failed: {}, healthy: {}}
+
+        await b.broadcast({"type": "test"})
+
+        assert failed not in b.clients
+        assert _sent_message(healthy) == {"type": "test"}
+
+    async def test_broadcast_sends_concurrently(self) -> None:
+        barrier = asyncio.Barrier(2)
+
+        class BarrierWebSocket(FakeWebSocket):
+            async def send(self, message: str) -> None:
+                await barrier.wait()
+                await super().send(message)
+
+        b = FakeBroadcaster()
+        clients = [BarrierWebSocket(subscriptions={"*"}) for _ in range(2)]
+        b.clients = {client: {} for client in clients}
+
+        await asyncio.wait_for(b.broadcast({"type": "test"}), timeout=0.5)
+
+        assert all(client.sent for client in clients)
+
+    async def test_broadcast_times_out_and_removes_stalled_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        never = asyncio.Event()
+
+        class StalledWebSocket(FakeWebSocket):
+            async def send(self, message: str) -> None:
+                await never.wait()
+
+        stalled = StalledWebSocket(subscriptions={"*"})
+        healthy = FakeWebSocket(subscriptions={"*"})
+        b = FakeBroadcaster()
+        b.clients = {stalled: {}, healthy: {}}
+        monkeypatch.setattr(broadcast_module, "BROADCAST_SEND_TIMEOUT_SECONDS", 0.01)
+
+        await b.broadcast({"type": "test"})
+
+        assert healthy.sent
+        assert stalled not in b.clients
 
     @pytest.mark.asyncio
     async def test_broadcast_multiple_clients(self) -> None:

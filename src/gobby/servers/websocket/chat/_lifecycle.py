@@ -222,8 +222,25 @@ class ChatLifecycleMixin:
 
             # Dispatch mcp_call effects from rule engine (parity with CLI path)
             mcp_calls = (response.metadata or {}).get("mcp_calls", [])
+            mcp_context: list[str] = []
             if mcp_calls:
-                await self._dispatch_mcp_calls(mcp_calls, event)
+                dispatch_results = await self._dispatch_mcp_calls(mcp_calls, event)
+                from gobby.hooks.dispatchers.mcp import format_discovery_result
+                from gobby.hooks.rule_evaluator import process_dispatch_results
+
+                mcp_block = process_dispatch_results(
+                    event,
+                    dispatch_results,
+                    mcp_context,
+                    format_discovery_result=format_discovery_result,
+                )
+                if mcp_block:
+                    return {
+                        "decision": mcp_block.decision,
+                        "context": mcp_block.context,
+                        "reason": mcp_block.reason,
+                        "system_message": mcp_block.system_message,
+                    }
 
             # Dispatch to event handler (parity with CLI HookManager.handle)
             # This is where skill interception lives (handle_before_agent)
@@ -231,6 +248,13 @@ class ChatLifecycleMixin:
 
             # Merge handler context with rule engine context
             merged_context = response.context
+            if mcp_context:
+                captured_context = "\n\n".join(mcp_context)
+                merged_context = (
+                    f"{merged_context}\n\n{captured_context}"
+                    if merged_context
+                    else captured_context
+                )
             if handler_context:
                 if merged_context:
                     merged_context = merged_context + "\n\n" + handler_context
@@ -373,25 +397,30 @@ class ChatLifecycleMixin:
         self,
         mcp_calls: list[dict[str, Any]],
         event: HookEvent,
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         """Dispatch MCP calls defined in rule effects."""
-        mcp_manager = getattr(self, "mcp_manager", None)
-        if not mcp_manager:
-            return
+        tool_proxy_getter = getattr(self, "tool_proxy_getter", None)
+        if not callable(tool_proxy_getter):
+            logger.warning("_dispatch_mcp_calls: tool proxy unavailable")
+            return []
 
         from gobby.hooks.mcp_dispatch import dispatch_mcp_calls
 
-        internal_mgr = getattr(self, "internal_manager", None)
-
         async def _call_tool(server: str, tool: str, arguments: dict[str, Any]) -> Any:
-            """Route to internal registries first, then external."""
-            if internal_mgr and internal_mgr.is_internal(server):
-                registry = internal_mgr.get_registry(server)
-                if registry:
-                    return await registry.call(tool, arguments)
-            return await mcp_manager.call_tool(server, tool, arguments)
+            proxy = tool_proxy_getter()
+            if proxy is None:
+                return {"success": False, "error": "tool proxy unavailable"}
+            session_id = arguments.get("session_id")
+            return await proxy.call_tool(
+                server,
+                tool,
+                arguments,
+                session_id=session_id if isinstance(session_id, str) else None,
+                strip_unknown=True,
+                enforce_workflow=False,
+            )
 
-        await dispatch_mcp_calls(mcp_calls, event, _call_tool, logger)
+        return await dispatch_mcp_calls(mcp_calls, event, _call_tool, logger)
 
     async def _dispatch_event_handlers(
         self,

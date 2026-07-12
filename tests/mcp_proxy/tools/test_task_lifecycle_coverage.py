@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -301,6 +302,78 @@ class TestCloseTask:
         assert result.get("success", True) is not False
         mock_task_manager.close_task.assert_called_once()
         mock_epic_terminal.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "archive_error",
+        [
+            PermissionError("archive denied"),
+            OSError("archive filesystem unavailable"),
+            sqlite3.DatabaseError("archive database unavailable"),
+        ],
+        ids=["permission", "os", "database"],
+    )
+    async def test_archive_failure_after_epic_close_preserves_notification_and_claim_cleanup(
+        self,
+        mock_task_manager: MagicMock,
+        mock_sync_manager: MagicMock,
+        archive_error: Exception,
+    ) -> None:
+        session_id = "session-archive-failure"
+        epic = _make_task(
+            task_type="epic",
+            commits=None,
+            claimed_by_session_id=session_id,
+        )
+        mock_task_manager.get_task.return_value = epic
+        mock_task_manager.list_tasks.return_value = []
+        order: list[str] = []
+
+        def close_committed(*_args: Any, **_kwargs: Any) -> Task:
+            order.append("close")
+            return epic
+
+        def archive_failed(*_args: Any, **_kwargs: Any) -> None:
+            order.append("archive")
+            raise archive_error
+
+        def notify_parent(*_args: Any, **_kwargs: Any) -> None:
+            order.append("notify")
+
+        mock_task_manager.close_task.side_effect = close_committed
+        mock_svm = MagicMock()
+        mock_svm.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {epic.id: "#42"},
+            "active_task_id": epic.id,
+            "task_edited_files": {},
+        }
+        mock_svm.merge_variables.side_effect = lambda *_args, **_kwargs: order.append("cleanup")
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager",
+                return_value=mock_svm,
+            ),
+            patch(
+                "gobby.hooks.event_handlers._plan.LocalPlanManager.archive_plan",
+                side_effect=archive_failed,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.notify_parent_on_task_state_change",
+                side_effect=notify_parent,
+            ) as mock_notify_parent,
+        ):
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call("close_task", {"task_id": epic.id})
+
+        assert result == {"success": True}
+        assert order == ["close", "archive", "notify", "cleanup"]
+        mock_notify_parent.assert_called_once()
+        mock_svm.merge_variables.assert_called_once()
+        merged_claim_state = mock_svm.merge_variables.call_args.args[1]
+        assert merged_claim_state["task_claimed"] is False
+        assert merged_claim_state["claimed_tasks"] == {}
+        assert merged_claim_state["active_task_id"] is None
 
     @pytest.mark.asyncio
     async def test_close_commit_requirements_fail(self, mock_task_manager, mock_sync_manager):

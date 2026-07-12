@@ -10,6 +10,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sql_dialect import newer_than_now_expr
 
 MAX_ACTIVE_SESSION_SCAN = 250
+MAX_HANDOFF_PARENT_CANDIDATES = 8
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -66,6 +67,14 @@ def _terminal_context_match_score(
             return None
         score += 1
     return score
+
+
+def _handoff_candidate_matches(session: Session, requested_context: dict[str, Any]) -> bool:
+    """Return whether a handoff candidate matches the child's terminal identity."""
+    if requested_context.get("gobby_session_id") == session.id:
+        return True
+    score = _terminal_context_match_score(requested_context, session.terminal_context or {})
+    return score is not None and score > 0
 
 
 class _ManagerState(Protocol):
@@ -208,6 +217,8 @@ class _DiscoveryMixin:
         source: str | None = None,
         status: str = "handoff_ready",
         max_age_minutes: int = 10,
+        terminal_context: dict[str, Any] | str | None = None,
+        candidate_limit: int = 1,
     ) -> Session | None:
         """
         Find most recent parent session with specific status.
@@ -220,13 +231,16 @@ class _DiscoveryMixin:
             max_age_minutes: Only match sessions updated within this many minutes.
                 Legitimate handoffs happen within seconds; stale sessions should
                 not be matched. Default 10 minutes.
+            terminal_context: Child terminal identity used to select the matching parent.
+            candidate_limit: Number of newest candidates to scan, bounded at eight.
 
         Returns:
             Session object or None
         """
         updated_recent_sql = newer_than_now_expr(self.db, "updated_at", "%s", "minute")
+        # newer_than_now_expr returns a trusted static fragment for the active SQL dialect.
         query = (
-            "SELECT * FROM sessions WHERE machine_id = %s AND status = %s AND project_id = %s"
+            "SELECT * FROM sessions WHERE machine_id = %s AND status = %s AND project_id = %s"  # nosec B608
             f" AND {updated_recent_sql}"
         )
         params: list[Any] = [machine_id, status, project_id, max_age_minutes]
@@ -235,10 +249,27 @@ class _DiscoveryMixin:
             query += " AND source = %s"
             params.append(source)
 
-        query += " ORDER BY updated_at DESC LIMIT 1"
+        bounded_limit = max(1, min(candidate_limit, MAX_HANDOFF_PARENT_CANDIDATES))
+        query += " ORDER BY updated_at DESC LIMIT %s"
+        params.append(bounded_limit)
 
-        row = self.db.fetchone(query, tuple(params))
-        return Session.from_row(row) if row else None
+        rows = self.db.fetchall(query, tuple(params))
+        candidates = [Session.from_row(row) for row in rows]
+        if not candidates:
+            return None
+
+        requested_context = _parse_terminal_context_value(terminal_context)
+        if not requested_context:
+            return candidates[0] if len(candidates) == 1 else None
+
+        return next(
+            (
+                candidate
+                for candidate in candidates
+                if _handoff_candidate_matches(candidate, requested_context)
+            ),
+            None,
+        )
 
     def find_active_by_terminal_context(
         self: _ManagerState,

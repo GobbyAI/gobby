@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field, field_validator
 from gobby.config.feature_base import FeatureDefaultConfig, FeatureProfile
 from gobby.config.url_validation import validate_optional_endpoint_url
 
+DEFAULT_WORKFLOW_TIMEOUT_SECONDS = 15.0
+
 __all__ = [
     "CompactHandoffConfig",
     "FileExtractionConfig",
@@ -610,8 +612,8 @@ class WorkflowConfig(BaseModel):
         description="Enable workflow engine",
     )
     timeout: float = Field(
-        default=0.0,
-        description="Timeout in seconds for workflow execution. 0 = no timeout (default)",
+        default=DEFAULT_WORKFLOW_TIMEOUT_SECONDS,
+        description="Positive timeout in seconds for workflow execution",
     )
     debug_echo_context: bool = Field(
         default=False,
@@ -621,9 +623,11 @@ class WorkflowConfig(BaseModel):
     @field_validator("timeout")
     @classmethod
     def validate_timeout(cls, v: float) -> float:
-        """Validate timeout is non-negative."""
+        """Normalize the former zero default while rejecting invalid timeouts."""
         if v < 0:
-            raise ValueError("Timeout must be non-negative (0 = no timeout)")
+            raise ValueError("Timeout must be non-negative")
+        if v == 0:
+            return DEFAULT_WORKFLOW_TIMEOUT_SECONDS
         return v
 
 

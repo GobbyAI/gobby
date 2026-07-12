@@ -56,6 +56,14 @@ fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
 fn sanitize_pg_search_query_preserves_dsl_punctuation() {
     assert_eq!(sanitize_pg_search_query(":: + ()"), ":: + ()");
     assert_eq!(sanitize_pg_search_query(r"\-foo -bar"), r"\-foo \-bar");
+    assert_eq!(
+        sanitize_pg_search_query("claude-opus-4-8[1m]"),
+        r"claude-opus-4-8\[1m\]"
+    );
+    assert_eq!(
+        sanitize_pg_search_query(r"claude-opus-4-8\[1m\]"),
+        r"claude-opus-4-8\[1m\]"
+    );
 }
 
 #[test]

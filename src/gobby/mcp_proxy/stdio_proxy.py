@@ -60,6 +60,7 @@ class DaemonProxyDependencies:
     check_daemon_http_health: CheckDaemonHealth
     read_project_id: Callable[[], str | None]
     resolve_session_id_from_terminal_context: ResolveSessionIdFromTerminalContext
+    http_client_factory: Callable[[], httpx.AsyncClient]
     logger: logging.Logger
 
 
@@ -75,6 +76,7 @@ def default_daemon_proxy_dependencies() -> DaemonProxyDependencies:
         check_daemon_http_health=_check_daemon_http_health,
         read_project_id=_read_project_id,
         resolve_session_id_from_terminal_context=_resolve_session_id_from_terminal_context,
+        http_client_factory=httpx.AsyncClient,
         logger=logging.getLogger("gobby.mcp.stdio"),
     )
 
@@ -95,6 +97,21 @@ class DaemonProxy:
         self._last_bootstrap_attempt_at: float = 0.0
         self._last_health_ok_at = 0.0
         self._auth_headers = daemon_auth_headers()
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = self._deps_factory().http_client_factory()
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the reusable HTTP client owned by this proxy."""
+        client = self._client
+        if client is None:
+            return
+        await client.aclose()
+        if self._client is client:
+            self._client = None
 
     async def _resolve_session_id(self) -> str | None:
         if self._session_id:
@@ -157,30 +174,29 @@ class DaemonProxy:
             headers["X-Gobby-Session-Id"] = effective_session_id
 
         try:
-            async with httpx.AsyncClient() as client:
-                request_headers = {**headers, **self._auth_headers}
+            client = self._get_client()
+            request_headers = {**headers, **self._auth_headers}
+            resp = await client.request(
+                method,
+                f"{self.base_url}{path}",
+                json=json,
+                headers=request_headers,
+                timeout=timeout,
+            )
+            if resp.status_code == 401:
+                self._auth_headers = daemon_auth_headers()
+                retry_headers = {**headers, **self._auth_headers}
                 resp = await client.request(
                     method,
                     f"{self.base_url}{path}",
                     json=json,
-                    headers=request_headers,
+                    headers=retry_headers,
                     timeout=timeout,
                 )
-                if resp.status_code == 401:
-                    self._auth_headers = daemon_auth_headers()
-                    retry_headers = {**headers, **self._auth_headers}
-                    resp = await client.request(
-                        method,
-                        f"{self.base_url}{path}",
-                        json=json,
-                        headers=retry_headers,
-                        timeout=timeout,
-                    )
-                if resp.status_code == 200:
-                    data: dict[str, Any] = resp.json()
-                    result: dict[str, Any] = _strip_none(data)
-                    return result
-                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
+            if resp.status_code == 200:
+                data: dict[str, Any] = resp.json()
+                return data
+            return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
         except httpx.ConnectError:
             return _daemon_unavailable_result(self.port, "connection failed")
         except httpx.TimeoutException:
@@ -200,11 +216,14 @@ class DaemonProxy:
     ) -> dict[str, Any]:
         """List tools from MCP servers."""
         if server_name:
-            return await self._request(
-                "GET",
-                f"/api/mcp/{server_name}/tools",
-                session_id=session_id,
+            listing_response: dict[str, Any] = _strip_none(
+                await self._request(
+                    "GET",
+                    f"/api/mcp/{server_name}/tools",
+                    session_id=session_id,
+                )
             )
+            return listing_response
         status = await self.get_status(session_id=session_id)
         if status.get("success") is False:
             return status
@@ -218,10 +237,13 @@ class DaemonProxy:
             )
             if result.get("success"):
                 all_tools[srv_name] = result.get("tools", [])
-        return {
-            "success": True,
-            "servers": [{"name": n, "tools": t} for n, t in all_tools.items()],
-        }
+        listing_response = _strip_none(
+            {
+                "success": True,
+                "servers": [{"name": n, "tools": t} for n, t in all_tools.items()],
+            }
+        )
+        return listing_response
 
     async def call_tool(
         self,
@@ -257,10 +279,7 @@ class DaemonProxy:
             try:
                 arg_timeout = float(raw_timeout)
             except (TypeError, ValueError):
-                return {
-                    "success": False,
-                    "error": f"Invalid wait timeout: {raw_timeout!r}",
-                }
+                arg_timeout = 300.0
             if not math.isfinite(arg_timeout) or arg_timeout <= 0:
                 return {
                     "success": False,
@@ -308,14 +327,17 @@ class DaemonProxy:
         )
         if "error" in result:
             return {"success": False, "error": result["error"]}
-        return {
-            "success": True,
-            "tool": {
-                "name": result.get("name"),
-                "description": result.get("description"),
-                "inputSchema": result.get("inputSchema"),
-            },
-        }
+        schema_response: dict[str, Any] = _strip_none(
+            {
+                "success": True,
+                "tool": {
+                    "name": result.get("name"),
+                    "description": result.get("description"),
+                    "inputSchema": result.get("inputSchema"),
+                },
+            }
+        )
+        return schema_response
 
     async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
         """List configured MCP servers (includes internal gobby-* servers)."""

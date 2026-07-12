@@ -189,7 +189,7 @@ class ToolMetricsStore:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         return self.db.fetchall(
-            f"SELECT * FROM tool_metrics WHERE {where_clause} ORDER BY call_count DESC",  # nosec B608
+            f"SELECT * FROM tool_metrics WHERE {where_clause} ORDER BY call_count DESC",  # nosec # fixed predicates; bound values.
             tuple(params),
         )
 
@@ -208,12 +208,12 @@ class ToolMetricsStore:
 
         if project_id:
             return self.db.fetchall(
-                f"SELECT * FROM tool_metrics WHERE project_id = %s ORDER BY {order_by} DESC LIMIT %s",  # nosec B608
+                f"SELECT * FROM tool_metrics WHERE project_id = %s ORDER BY {order_by} DESC LIMIT %s",  # nosec # order_by is allowlisted.
                 (project_id, limit),
             )
         else:
             return self.db.fetchall(
-                f"SELECT * FROM tool_metrics ORDER BY {order_by} DESC LIMIT %s",  # nosec B608
+                f"SELECT * FROM tool_metrics ORDER BY {order_by} DESC LIMIT %s",  # nosec # order_by is allowlisted.
                 (limit,),
             )
 
@@ -285,29 +285,40 @@ class ToolMetricsStore:
         """
         Reset/delete metrics in the hub database.
         """
-        conditions = []
-        params: list[Any] = []
-
+        filters: list[tuple[str, str]] = []
         if project_id:
-            conditions.append("project_id = %s")
-            params.append(project_id)
+            filters.append(("project_id", project_id))
         if server_name:
-            conditions.append("server_name = %s")
-            params.append(server_name)
+            filters.append(("server_name", server_name))
         if tool_name:
-            conditions.append("tool_name = %s")
-            params.append(tool_name)
+            filters.append(("tool_name", tool_name))
 
-        if conditions:
-            where_clause = " AND ".join(conditions)
-            cursor = self.db.execute(
-                f"DELETE FROM tool_metrics WHERE {where_clause}",  # nosec B608
-                tuple(params),
-            )
-        else:
-            cursor = self.db.execute("DELETE FROM tool_metrics")
+        if not filters:
+            raise ValueError("reset_metrics requires at least one filter")
 
-        return cursor.rowcount
+        params = tuple(value for _, value in filters)
+        deleted_tool_metrics = 0
+        with self.db.transaction() as txn:
+            for table, tool_column in (
+                ("tool_metrics", "tool_name"),
+                ("tool_metrics_daily", "tool_name"),
+                ("metrics_events", "name"),
+            ):
+                conditions = ["event_type = %s"] if table == "metrics_events" else []
+                conditions.extend(
+                    f"{tool_column if column == 'tool_name' else column} = %s"
+                    for column, _ in filters
+                )
+                where_clause = " AND ".join(conditions)
+                table_params = ("tool_call", *params) if table == "metrics_events" else params
+                cursor = txn.execute(
+                    f"DELETE FROM {table} WHERE {where_clause}",  # nosec # table and predicates come from fixed tuples.
+                    table_params,
+                )
+                if table == "tool_metrics":
+                    deleted_tool_metrics = cursor.rowcount
+
+        return deleted_tool_metrics
 
     def aggregate_to_daily(self, retention_days: int = DEFAULT_RETENTION_DAYS) -> int:
         """
@@ -377,21 +388,67 @@ class ToolMetricsStore:
 
         return aggregated
 
-    def cleanup_old_metrics(self, retention_days: int = DEFAULT_RETENTION_DAYS) -> int:
-        """
-        Delete metrics older than retention period.
-        """
-        cutoff = utc_now() - timedelta(days=retention_days)
+    def cleanup_old_metrics(self, cutoff: datetime) -> int:
+        """Atomically roll up and delete metrics older than ``cutoff``."""
+        now = utc_now()
+        with self.db.transaction() as txn:
+            row = txn.execute(
+                """
+                WITH archived AS (
+                    DELETE FROM tool_metrics
+                    WHERE last_called_at < %s
+                    RETURNING
+                        project_id, server_name, tool_name, last_called_at,
+                        call_count, success_count, failure_count, total_latency_ms
+                ),
+                rollup AS (
+                    SELECT
+                        project_id,
+                        server_name,
+                        tool_name,
+                        date(last_called_at) AS metric_date,
+                        SUM(call_count) AS total_calls,
+                        SUM(success_count) AS total_success,
+                        SUM(failure_count) AS total_failure,
+                        SUM(total_latency_ms) AS total_latency
+                    FROM archived
+                    GROUP BY project_id, server_name, tool_name, date(last_called_at)
+                ),
+                upserted AS (
+                    INSERT INTO tool_metrics_daily (
+                        project_id, server_name, tool_name, date,
+                        call_count, success_count, failure_count,
+                        total_latency_ms, avg_latency_ms, created_at
+                    )
+                    SELECT
+                        project_id,
+                        server_name,
+                        tool_name,
+                        metric_date,
+                        total_calls,
+                        total_success,
+                        total_failure,
+                        total_latency,
+                        total_latency / NULLIF(total_calls, 0),
+                        %s
+                    FROM rollup
+                    ON CONFLICT(project_id, server_name, tool_name, date) DO UPDATE SET
+                        call_count = tool_metrics_daily.call_count + excluded.call_count,
+                        success_count = tool_metrics_daily.success_count + excluded.success_count,
+                        failure_count = tool_metrics_daily.failure_count + excluded.failure_count,
+                        total_latency_ms = tool_metrics_daily.total_latency_ms +
+                                           excluded.total_latency_ms,
+                        avg_latency_ms = (
+                            tool_metrics_daily.total_latency_ms + excluded.total_latency_ms
+                        ) / (tool_metrics_daily.call_count + excluded.call_count)
+                    RETURNING 1
+                )
+                SELECT COUNT(*) AS deleted_count FROM archived
+                """,
+                (cutoff, now),
+            ).fetchone()
 
-        cursor = self.db.execute(
-            """
-            DELETE FROM tool_metrics
-            WHERE last_called_at < %s
-            """,
-            (cutoff,),
-        )
-
-        return cursor.rowcount
+        return int(row["deleted_count"]) if row is not None else 0
 
     def get_daily_metrics(
         self,
@@ -426,7 +483,7 @@ class ToolMetricsStore:
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         return self.db.fetchall(
-            f"SELECT * FROM tool_metrics_daily WHERE {where_clause} ORDER BY date DESC, call_count DESC",  # nosec B608
+            f"SELECT * FROM tool_metrics_daily WHERE {where_clause} ORDER BY date DESC, call_count DESC",  # nosec # fixed predicates; bound values.
             tuple(params),
         )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from typing import Any, Protocol, cast
@@ -112,8 +113,12 @@ def get_server_config(manager: Any, name: str) -> MCPServerConfig | None:
 
 
 def list_connections(manager: Any) -> list[MCPServerConfig]:
-    """List configs for currently tracked connections."""
-    return [manager._configs[name] for name in manager._connections.keys()]
+    """List configs for live transport connections."""
+    return [
+        manager._configs[name]
+        for name, connection in manager._connections.items()
+        if connection.is_connected
+    ]
 
 
 def get_available_servers(manager: Any) -> list[str]:
@@ -136,8 +141,9 @@ def has_server(manager: Any, server_name: str) -> bool:
 
 
 def is_connected(manager: Any, server_name: str) -> bool:
-    """Return whether a server has a tracked runtime connection."""
-    return server_name in manager._connections
+    """Return whether a server has a live transport connection."""
+    connection = manager._connections.get(server_name)
+    return bool(connection is not None and connection.is_connected)
 
 
 async def _discover_and_cache_tools(
@@ -164,7 +170,7 @@ async def _discover_and_cache_tools(
         return []
 
     if tool_schemas:
-        manager.cache_discovered_tools(config.name, tool_schemas)
+        await asyncio.to_thread(manager.cache_discovered_tools, config.name, tool_schemas)
     return tool_schemas
 
 
@@ -178,32 +184,50 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     manager._lazy_connector.register_server(config.name)
 
     if manager.mcp_db_manager and config.project_id:
-        manager.mcp_db_manager.upsert(
-            name=config.name,
-            transport=config.transport,
-            project_id=config.project_id,
-            url=config.url,
-            command=config.command,
-            args=config.args,
-            env=config.env,
-            headers=config.headers,
-            enabled=config.enabled,
-            description=config.description,
-            requires_oauth=config.requires_oauth,
-            oauth_provider=config.oauth_provider,
-            connect_timeout=config.connect_timeout,
-        )
+        try:
+            await asyncio.to_thread(
+                manager.mcp_db_manager.upsert,
+                name=config.name,
+                transport=config.transport,
+                project_id=config.project_id,
+                url=config.url,
+                command=config.command,
+                args=config.args,
+                env=config.env,
+                headers=config.headers,
+                enabled=config.enabled,
+                description=config.description,
+                requires_oauth=config.requires_oauth,
+                oauth_provider=config.oauth_provider,
+                connect_timeout=config.connect_timeout,
+            )
+        except Exception:
+            del manager._configs[config.name]
+            manager._lazy_connector.unregister_server(config.name)
+            raise
 
     tool_schemas: list[dict[str, Any]] = []
+    connected = False
+    connection_error: str | None = None
     if config.enabled:
-        session = await manager._connect_server(config)
-        tool_schemas = await _discover_and_cache_tools(manager, config, session)
+        try:
+            session = await manager._connect_server(config)
+        except Exception as exc:
+            connection_error = str(exc)
+            LOGGER.warning("Failed to connect newly added MCP server %s: %s", config.name, exc)
+        else:
+            connected = session is not None
+            tool_schemas = await _discover_and_cache_tools(manager, config, session)
 
-    return {
+    result: dict[str, Any] = {
         "success": True,
         "name": config.name,
+        "connected": connected,
         "full_tool_schemas": tool_schemas,
     }
+    if connection_error is not None:
+        result["error"] = connection_error
+    return result
 
 
 async def remove_server(
@@ -220,16 +244,18 @@ async def remove_server(
         raise ValueError(f"Internal MCP server '{name}' cannot be removed")
     effective_project_id = project_id or config.project_id
 
-    if name in manager._connections:
-        await manager._connections[name].disconnect()
-        del manager._connections[name]
-
-    del manager._configs[name]
-    manager.health.pop(name, None)
-    manager._lazy_connector.unregister_server(name)
-
     if manager.mcp_db_manager and effective_project_id:
-        manager.mcp_db_manager.remove_server(name, effective_project_id)
+        await asyncio.to_thread(manager.mcp_db_manager.remove_server, name, effective_project_id)
+
+    connection = manager._connections.pop(name, None)
+    try:
+        if connection is not None:
+            await connection.disconnect()
+    finally:
+        manager._tool_schema_cache.pop(name, None)
+        del manager._configs[name]
+        manager.health.pop(name, None)
+        manager._lazy_connector.unregister_server(name)
 
     return {"success": True, "name": name}
 
@@ -261,18 +287,9 @@ async def update_server(
 
     config.validate()
 
-    if name in manager._connections:
-        await manager._connections[name].disconnect()
-        del manager._connections[name]
-    manager.health.pop(name, None)
-    manager._lazy_connector.unregister_server(name)
-
-    manager._configs[name] = config
-    if config.enabled:
-        manager._lazy_connector.register_server(name)
-
     if manager.mcp_db_manager and effective_project_id:
-        manager.mcp_db_manager.update_server(
+        await asyncio.to_thread(
+            manager.mcp_db_manager.update_server,
             name,
             effective_project_id,
             transport=config.transport,
@@ -288,7 +305,39 @@ async def update_server(
             connect_timeout=config.connect_timeout,
         )
 
+    connection = manager._connections.pop(name, None)
+    try:
+        if connection is not None:
+            await connection.disconnect()
+    finally:
+        manager._tool_schema_cache.pop(name, None)
+        manager.health.pop(name, None)
+        manager._lazy_connector.unregister_server(name)
+
+        manager._configs[name] = config
+        if config.enabled:
+            manager._lazy_connector.register_server(name)
+
     return {"success": True, "name": name}
+
+
+async def set_server_description(manager: Any, name: str, description: str) -> None:
+    """Persist a generated description and update the registered config."""
+    config = manager._configs.get(name)
+    if config is None:
+        raise ValueError(f"MCP server '{name}' not found")
+
+    if manager.mcp_db_manager and config.project_id:
+        persisted = await asyncio.to_thread(
+            manager.mcp_db_manager.update_server,
+            name,
+            config.project_id,
+            description=description,
+        )
+        if persisted is None:
+            raise RuntimeError(f"Persisted MCP server '{name}' not found")
+
+    config.description = description
 
 
 async def set_server_enabled(
@@ -317,11 +366,17 @@ async def set_server_enabled(
         return {"success": True, "name": name, "enabled": enabled}
 
     if enabled:
+        manager._tool_schema_cache.pop(name, None)
         session = await manager._connect_server(config)
         await _discover_and_cache_tools(manager, config, session)
         if manager.mcp_db_manager and effective_project_id:
             try:
-                manager.mcp_db_manager.update_server(name, effective_project_id, enabled=True)
+                await asyncio.to_thread(
+                    manager.mcp_db_manager.update_server,
+                    name,
+                    effective_project_id,
+                    enabled=True,
+                )
             except Exception:
                 try:
                     if name in manager._connections:
@@ -332,19 +387,29 @@ async def set_server_enabled(
                         "Failed to clean up MCP server connection after enable rollback",
                         exc_info=True,
                     )
+                finally:
+                    manager._tool_schema_cache.pop(name, None)
                 manager.health.pop(name, None)
                 raise
         config.enabled = True
         manager._lazy_connector.register_server(name)
     else:
         if manager.mcp_db_manager and effective_project_id:
-            manager.mcp_db_manager.update_server(name, effective_project_id, enabled=False)
+            await asyncio.to_thread(
+                manager.mcp_db_manager.update_server,
+                name,
+                effective_project_id,
+                enabled=False,
+            )
         config.enabled = False
-        if name in manager._connections:
-            await manager._connections[name].disconnect()
-            del manager._connections[name]
-        manager.health.pop(name, None)
-        manager._lazy_connector.unregister_server(name)
+        connection = manager._connections.pop(name, None)
+        try:
+            if connection is not None:
+                await connection.disconnect()
+        finally:
+            manager._tool_schema_cache.pop(name, None)
+            manager.health.pop(name, None)
+            manager._lazy_connector.unregister_server(name)
 
     return {"success": True, "name": name, "enabled": enabled}
 
@@ -380,3 +445,4 @@ def remove_server_config(manager: Any, name: str, logger: logging.Logger) -> Non
 
     if name in manager._configs:
         del manager._configs[name]
+    manager._tool_schema_cache.pop(name, None)

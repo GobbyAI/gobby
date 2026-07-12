@@ -95,6 +95,7 @@ def test_hook_manager_integration() -> None:
 
         response = manager.handle(event)
 
+        assert MockHandlerClass.call_args.kwargs["timeout"] == 15.0
         mock_handler_instance.handle.assert_called_once()
         assert mock_handler_instance.handle.call_count == 1
         assert mock_handler_instance.handle.call_args is not None

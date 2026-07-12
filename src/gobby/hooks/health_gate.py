@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Protocol
+from typing import Literal, Protocol
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
@@ -17,6 +17,7 @@ CRITICAL_HOOKS = {
     HookEventType.AFTER_AGENT,
     HookEventType.STOP,
 }
+FAIL_CLOSED_HOOKS = {HookEventType.STOP, HookEventType.AFTER_AGENT}
 RETRY_DELAYS = (0.5, 1.0, 2.0)
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
 
@@ -48,14 +49,19 @@ def _unavailable_response(
             reason=f"Daemon restarting ({restart_source}): {error_reason or 'Unknown'}",
         )
 
+    decision: Literal["block", "allow"] = (
+        "block" if event.event_type in FAIL_CLOSED_HOOKS else "allow"
+    )
+    action = "blocking" if decision == "block" else "skipping"
     logger.warning(
-        "Daemon not available after retries, skipping hook execution: %s. Status: %s, Error: %s",
+        "Daemon not available after retries, %s hook execution: %s. Status: %s, Error: %s",
+        action,
         event.event_type,
         daemon_status,
         error_reason,
     )
     return HookResponse(
-        decision="allow",
+        decision=decision,
         reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
     )
 
@@ -74,26 +80,32 @@ def ensure_daemon_ready(
     health_monitor: HealthMonitorProtocol,
     logger: logging.Logger,
 ) -> HookResponse | None:
-    """Return fail-open response when daemon is unavailable."""
+    """Return the event-specific response when the daemon is unavailable."""
     is_ready, _, daemon_status, error_reason = health_monitor.get_cached_status()
 
-    if not is_ready and event.event_type in CRITICAL_HOOKS:
-        for attempt, delay in enumerate(RETRY_DELAYS, 1):
-            time.sleep(delay)
-            is_ready = health_monitor.check_now()
-            if is_ready:
-                logger.info(
-                    "Daemon recovered after %d retry(ies) for %s",
+    if not is_ready:
+        if event.event_type in CRITICAL_HOOKS:
+            for attempt, delay in enumerate(RETRY_DELAYS, 1):
+                time.sleep(delay)
+                is_ready = health_monitor.check_now()
+                if is_ready:
+                    logger.info(
+                        "Daemon recovered after %d retry(ies) for %s",
+                        attempt,
+                        event.event_type,
+                    )
+                    break
+                logger.debug(
+                    "Daemon still unavailable, retry %d/%d for %s",
                     attempt,
+                    len(RETRY_DELAYS),
                     event.event_type,
                 )
-                break
-            logger.debug(
-                "Daemon still unavailable, retry %d/%d for %s",
-                attempt,
-                len(RETRY_DELAYS),
-                event.event_type,
-            )
+        else:
+            is_ready = health_monitor.check_now()
+
+        if not is_ready:
+            _, _, daemon_status, error_reason = health_monitor.get_cached_status()
 
     if is_ready:
         return None
@@ -109,23 +121,29 @@ async def ensure_daemon_ready_async(
     """Async daemon readiness gate for event-loop hook callers."""
     is_ready, _, daemon_status, error_reason = health_monitor.get_cached_status()
 
-    if not is_ready and event.event_type in CRITICAL_HOOKS:
-        for attempt, delay in enumerate(RETRY_DELAYS, 1):
-            await asyncio.sleep(delay)
-            is_ready = await asyncio.to_thread(health_monitor.check_now)
-            if is_ready:
-                logger.info(
-                    "Daemon recovered after %d retry(ies) for %s",
+    if not is_ready:
+        if event.event_type in CRITICAL_HOOKS:
+            for attempt, delay in enumerate(RETRY_DELAYS, 1):
+                await asyncio.sleep(delay)
+                is_ready = await asyncio.to_thread(health_monitor.check_now)
+                if is_ready:
+                    logger.info(
+                        "Daemon recovered after %d retry(ies) for %s",
+                        attempt,
+                        event.event_type,
+                    )
+                    break
+                logger.debug(
+                    "Daemon still unavailable, retry %d/%d for %s",
                     attempt,
+                    len(RETRY_DELAYS),
                     event.event_type,
                 )
-                break
-            logger.debug(
-                "Daemon still unavailable, retry %d/%d for %s",
-                attempt,
-                len(RETRY_DELAYS),
-                event.event_type,
-            )
+        else:
+            is_ready = await asyncio.to_thread(health_monitor.check_now)
+
+        if not is_ready:
+            _, _, daemon_status, error_reason = health_monitor.get_cached_status()
 
     if is_ready:
         return None

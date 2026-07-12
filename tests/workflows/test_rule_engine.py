@@ -368,6 +368,48 @@ class TestInjectContextEffect:
         # fencing lives only in the session_start handoff/compact templates.
         assert INJECTED_CONTEXT_BEGIN not in context
 
+    async def test_installed_user_profile_rule_renders_seeded_content(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """The bundled profile rule renders content seeded by session start."""
+        from pathlib import Path
+
+        import yaml
+
+        rule_path = (
+            Path(__file__).parents[2]
+            / "src/gobby/install/shared/workflows/rules/context-handoff/inject-user-profile.yaml"
+        )
+        document = yaml.safe_load(rule_path.read_text())
+        rule_data = document["rules"]["inject-user-profile"]
+        priority = rule_data.pop("priority")
+        enabled = rule_data.pop("enabled")
+        _insert_rule(
+            manager,
+            "inject-user-profile",
+            RuleDefinitionBody.model_validate(rule_data),
+            priority=priority,
+            enabled=enabled,
+            tags=document["tags"],
+        )
+
+        event = _make_event(
+            HookEventType.SESSION_START,
+            data={"source": "startup"},
+        )
+        response = await _assert_evaluation(
+            db,
+            event,
+            "allow",
+            variables={
+                "user_profile_content": "Prefers concise status updates.",
+                "is_spawned_agent": False,
+            },
+        )
+
+        assert "## Global User Profile" in (response.context or "")
+        assert "Prefers concise status updates." in (response.context or "")
+
     @pytest.mark.asyncio
     async def test_multiple_inject_context_accumulate(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager

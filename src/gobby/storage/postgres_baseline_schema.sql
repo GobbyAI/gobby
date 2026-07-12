@@ -1375,12 +1375,13 @@ CREATE TABLE auth_sessions (
 CREATE INDEX idx_auth_sessions_expires ON auth_sessions(expires_at);
 
 CREATE TABLE model_costs (
-    model TEXT PRIMARY KEY,
-    provider TEXT,
+    model TEXT NOT NULL,
+    provider TEXT NOT NULL,
     context_length INTEGER,
     max_completion_tokens INTEGER,
     source TEXT NOT NULL DEFAULT 'registry',
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (provider, model)
 );
 
 CREATE TABLE token_events (

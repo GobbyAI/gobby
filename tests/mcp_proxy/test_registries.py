@@ -1,4 +1,6 @@
+from typing import Any
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -9,7 +11,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def temp_db(hub_db):
+def temp_db(hub_db: Any) -> Any:
     return hub_db
 
 
@@ -142,7 +144,10 @@ def test_setup_with_worktree_storage_only() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_ref_kind", ["hash", "uuid"], ids=["hash-ref", "uuid-ref"])
 async def test_setup_worktrees_registry_claim_resolves_session_refs(
-    temp_db, project_manager, session_manager, session_ref_kind: str
+    temp_db: Any,
+    project_manager: Any,
+    session_manager: Any,
+    session_ref_kind: str,
 ) -> None:
     """Worktree registry wiring resolves shorthand and UUID session refs."""
     mock_config = MagicMock()
@@ -200,7 +205,7 @@ def test_setup_sessions_with_session_manager() -> None:
     assert "gobby-sessions" in registry_names
 
 
-def test_setup_hub_registry_with_active_database(temp_db) -> None:
+def test_setup_hub_registry_with_active_database(temp_db: Any) -> None:
     """Test hub registry is created from the active runtime database."""
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
@@ -242,7 +247,7 @@ def test_setup_tasks_disabled_by_config() -> None:
     assert "gobby-tasks" not in registry_names
 
 
-def test_setup_plans_registry_when_db_exists_even_without_tasks(temp_db) -> None:
+def test_setup_plans_registry_when_db_exists_even_without_tasks(temp_db: Any) -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
@@ -288,7 +293,7 @@ def test_setup_tasks_missing_sync_manager() -> None:
     assert "gobby-tasks" not in registry_names
 
 
-def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db) -> None:
+def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db: Any) -> None:
     """The stage-native build flow no longer exposes front_half_tick."""
     from gobby.storage.tasks import LocalTaskManager
 
@@ -336,7 +341,7 @@ def test_setup_merge_requires_both_storage_and_resolver() -> None:
 # --- Skills Registry Tests ---
 
 
-def test_setup_with_active_database(hub_db) -> None:
+def test_setup_with_active_database(hub_db: Any) -> None:
     """Test registries are created when an active database is provided."""
     db = hub_db
 
@@ -373,7 +378,7 @@ def test_setup_skills_registry_not_created_without_database() -> None:
     assert "gobby-skills" not in registry_names
 
 
-def test_setup_hub_registry_has_expected_tools(hub_db) -> None:
+def test_setup_hub_registry_has_expected_tools(hub_db: Any) -> None:
     """Test hub registry has expected tools."""
     db = hub_db
 
@@ -397,14 +402,14 @@ def test_setup_hub_registry_has_expected_tools(hub_db) -> None:
     assert len(tool_names) > 0
 
 
-def test_setup_hub_registry_accepts_project_id(hub_db) -> None:
+def test_setup_hub_registry_accepts_project_id(hub_db: Any) -> None:
     """Test hub registry accepts project_id when provided."""
     db = hub_db
 
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
     # Create a project in the database for foreign key constraint
-    project_id = "11111111-1111-4111-8111-111111111123"
+    project_id = str(uuid4())
     db.execute(
         "INSERT INTO projects (id, name, repo_path, github_url, created_at, updated_at) VALUES (%s, %s, %s, %s, NOW(), NOW())",
         (project_id, "Test Project", "/tmp/test", None),
@@ -553,7 +558,7 @@ def test_setup_pipelines_tools_accessible_without_executor() -> None:
 class TestHubApiKeyResolution:
     """Hub auth at the registries layer resolves from SecretStore, never env."""
 
-    def _build_skills_config(self):
+    def _build_skills_config(self) -> Any:
         from gobby.config.skills import HubConfig, SkillsConfig
 
         return SkillsConfig(
@@ -567,16 +572,16 @@ class TestHubApiKeyResolution:
             }
         )
 
-    def _run_setup_with_captured_hub_manager(self, db, skills_config):
+    def _run_setup_with_captured_hub_manager(self, db: Any, skills_config: Any) -> dict[str, Any]:
         """Invoke setup_internal_registries with a sentinel HubManager to capture kwargs."""
         from unittest.mock import patch as patch_fn
 
         from gobby.skills.hubs.manager import HubManager
 
-        captured: dict = {}
+        captured: dict[str, Any] = {}
 
         class RecordingHubManager(HubManager):
-            def __init__(self, *args, **kwargs):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 captured["args"] = args
                 captured["kwargs"] = kwargs
                 super().__init__(*args, **kwargs)
@@ -595,7 +600,9 @@ class TestHubApiKeyResolution:
 
         return captured
 
-    def test_hub_api_key_resolution_ignores_environment(self, hub_db, monkeypatch) -> None:
+    def test_hub_api_key_resolution_ignores_environment(
+        self, hub_db: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Env vars are never consulted for hub auth — only SecretStore."""
         db = hub_db
         try:
@@ -609,7 +616,7 @@ class TestHubApiKeyResolution:
         finally:
             db.close()
 
-    def test_hub_api_key_resolution_reads_secret_store(self, hub_db) -> None:
+    def test_hub_api_key_resolution_reads_secret_store(self, hub_db: Any) -> None:
         """When a secret is stored in SecretStore, the HubManager receives it."""
         from gobby.storage.secrets import SecretStore
 

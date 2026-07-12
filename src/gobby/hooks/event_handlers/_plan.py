@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
+
+logger = logging.getLogger(__name__)
 
 _TERMINAL_CLOSURE_REASONS = {"completed", "obsolete"}
 
@@ -29,6 +32,9 @@ def on_epic_terminal(event: object, *, db: Any) -> PlanRecord | None:
             reason=_archive_reason(event),
         )
     except (FileNotFoundError, PlanNotFoundError):
+        return None
+    except Exception:
+        logger.exception("Failed to archive plan for terminal epic %s", task_ref)
         return None
 
 

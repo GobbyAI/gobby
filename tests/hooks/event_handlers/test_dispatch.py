@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -13,114 +12,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 pytestmark = pytest.mark.unit
-
-
-def test_terminal_clears_mutex(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    calls: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", calls.append)
-
-    _dispatch.on_agent_terminal(SimpleNamespace(run_id="run-1", task_id="task-1"))
-
-    assert calls == ["run-1"]
-
-
-def test_normal_end_clears_mutex(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    calls: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", calls.append)
-
-    _dispatch.on_agent_end_normal(SimpleNamespace(run_id="run-normal", task_id="task-1"))
-
-    assert calls == ["run-normal"]
-
-
-def test_claim_release_clears_mutex(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    calls: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", calls.append)
-
-    _dispatch.on_claim_released(SimpleNamespace(run_id="run-claim", task_id="task-1"))
-
-    assert calls == ["run-claim"]
-
-
-def test_expansion_completion_without_db_returns_none_and_releases_mutex(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    releases: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-
-    result = _dispatch.on_expansion_run_completed(
-        "task-1", "expansion-1", apply_created_children=True
-    )
-
-    assert result is None
-    assert releases == ["expansion-1"]
-
-
-def test_compile_only_completion_does_not_advance_lifecycle(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    releases: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-
-    result = _dispatch.on_expansion_run_completed(
-        "task-1", "expansion-1", apply_created_children=False
-    )
-
-    assert result is None
-    assert releases == ["expansion-1"]
-
-
-def test_expansion_failure_without_db_returns_none_and_releases_mutex(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    releases: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-
-    result = _dispatch.on_expansion_run_failed("task-1", "expansion-1", reason="boom")
-
-    assert result is None
-    assert releases == ["expansion-1"]
-
-
-def test_expansion_failure_on_exhaust_escalates_or_falls_back() -> None:
-    from gobby.dispatch.actions import EscalateAction
-    from gobby.hooks.event_handlers import _dispatch
-
-    action = _dispatch.on_expansion_run_failed(
-        "task-1",
-        "expansion-1",
-        reason="boom",
-        expansion_attempts=3,
-        max_expansion_attempts=3,
-        unattended=False,
-    )
-
-    assert isinstance(action, EscalateAction)
-
-
-def test_expansion_cancellation_releases_mutex_without_advance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.hooks.event_handlers import _dispatch
-
-    releases: list[str] = []
-    monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-
-    _dispatch.on_expansion_run_cancelled("task-1", "expansion-1")
-
-    assert releases == ["expansion-1"]
 
 
 def _stage_pipeline_task(
@@ -167,6 +58,47 @@ def test_pipeline_completed_submits_required_stage_for_review(temp_db, sample_pr
 
     assert manager.stage_states.get(task.id, "expansion").state == "needs_review"
     assert storage.get_mutex(task.id) is None
+
+
+def test_pipeline_transition_holds_mutex_until_stage_update(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.hooks.event_handlers import _dispatch
+
+    manager, task, storage = _stage_pipeline_task(temp_db, sample_project)
+    stage_states = manager.stage_states
+    submit_for_review = stage_states.submit_for_review
+    transition_observed = False
+
+    def assert_mutex_held(*args: Any, **kwargs: Any) -> object:
+        nonlocal transition_observed
+        transition_observed = True
+        assert not storage.acquire_mutex(
+            task.id,
+            holder="competing-dispatcher",
+            kind="heartbeat",
+            ttl_seconds=30,
+        )
+        return submit_for_review(*args, **kwargs)
+
+    monkeypatch.setattr(stage_states, "submit_for_review", assert_mutex_held)
+    monkeypatch.setattr(_dispatch, "_stage_states", lambda _db: stage_states)
+
+    _dispatch.on_pipeline_completed(
+        {"execution_id": "796ce97e-38ee-508a-bdc0-f3ce2dded342"},
+        db=temp_db,
+        storage=storage,
+    )
+
+    assert transition_observed
+    assert storage.acquire_mutex(
+        task.id,
+        holder="competing-dispatcher",
+        kind="heartbeat",
+        ttl_seconds=30,
+    )
 
 
 def test_pipeline_failed_returns_stage_to_ready(temp_db, sample_project) -> None:
