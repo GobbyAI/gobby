@@ -39,7 +39,8 @@ def secret_store(
     mock_machine_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> SecretStore:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     return SecretStore(db)
 
 
