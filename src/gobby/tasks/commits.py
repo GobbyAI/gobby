@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.git import run_git_command
 
 if TYPE_CHECKING:
@@ -578,11 +579,13 @@ class AutoLinkResult:
         linked_tasks: Dict mapping task_id -> list of newly linked commit SHAs.
         total_linked: Total number of commits newly linked.
         skipped: Number of commits skipped (already linked or task not found).
+        skipped_refs: Dict mapping unknown task refs -> commit SHAs that mentioned them.
     """
 
     linked_tasks: dict[str, list[str]] = field(default_factory=dict)
     total_linked: int = 0
     skipped: int = 0
+    skipped_refs: dict[str, list[str]] = field(default_factory=dict)
 
 
 def _resolve_branch_for_task(
@@ -741,28 +744,32 @@ def auto_link_commits(
                     resolved_tid = task_manager.resolve_task_reference(tid, project_id)
 
                 task = task_manager.get_task(resolved_tid)
-
-                # Check if already linked
-                existing_commits = task.commits or []
-                if commit_sha in existing_commits:
-                    result.skipped += 1
-                    continue
-
-                # Link the commit using UUID
-                task_manager.link_commit(task.id, commit_sha, cwd=cwd)
-
-                # Track in result using original #N format for readability
-                if tid not in result.linked_tasks:
-                    result.linked_tasks[tid] = []
-                result.linked_tasks[tid].append(commit_sha)
-                result.total_linked += 1
-
-                logger.debug(f"Auto-linked commit {commit_sha} to task {tid}")
-
-            except ValueError:
-                # Task doesn't exist, skip
+            except (TaskNotFoundError, ValueError):
                 logger.debug(f"Skipping commit {commit_sha}: task {tid} not found")
                 result.skipped += 1
+                result.skipped_refs.setdefault(tid, []).append(commit_sha)
                 continue
+
+            # Check if already linked
+            existing_commits = task.commits or []
+            if commit_sha in existing_commits:
+                result.skipped += 1
+                continue
+
+            try:
+                # Link the commit using UUID
+                task_manager.link_commit(task.id, commit_sha, cwd=cwd)
+            except ValueError as error:
+                logger.debug(f"Skipping commit {commit_sha} for task {tid}: {error}")
+                result.skipped += 1
+                continue
+
+            # Track in result using original #N format for readability
+            if tid not in result.linked_tasks:
+                result.linked_tasks[tid] = []
+            result.linked_tasks[tid].append(commit_sha)
+            result.total_linked += 1
+
+            logger.debug(f"Auto-linked commit {commit_sha} to task {tid}")
 
     return result
