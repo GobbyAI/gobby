@@ -97,42 +97,31 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
         if ctx is not None:
             return ctx
 
-    # 2. Environment override (set by web chat subprocess for correct project routing)
-    override_id = os.environ.get("GOBBY_PROJECT_ID")
-    if override_id:
+    # 2. An explicit cwd is authoritative. A daemon or web-chat subprocess may
+    # inherit GOBBY_PROJECT_ID from its launcher, but that process-wide value
+    # must not override the project identified by a caller-provided path.
+    if cwd is not None:
         root = find_project_root(cwd)
         if root:
             try:
                 with open(root / ".gobby" / "project.json") as f:
                     data = json.load(f)
                 data["project_path"] = str(root)
-                if data.get("id") == override_id:
-                    return cast(dict[str, Any], data)
+                return cast(dict[str, Any], data)
             except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError) as e:
-                logger.debug(f"Failed to read project.json for override ID {override_id}: {e}")
-        # CWD doesn't match — return minimal context with just the ID
+                logger.warning(f"Failed to read project context: {e}")
+
+    # 3. Environment fallback (set by web chat subprocess for correct project routing)
+    override_id = os.environ.get("GOBBY_PROJECT_ID")
+    if override_id:
         return {"id": override_id}
 
-    # Only search the filesystem when an explicit cwd was provided.
+    # Only search the filesystem when an explicit cwd was provided. When no
+    # cwd project or environment fallback exists, resolution is unavailable.
     # When cwd is None, the caller is in daemon context where os.getcwd()
     # points to the daemon's directory, NOT the calling session's project.
     # The stdio proxy injects the correct project via HTTP headers instead.
-    if cwd is None:
-        return None
-
-    root = find_project_root(cwd)
-    if not root:
-        return None
-
-    project_file = root / ".gobby" / "project.json"
-    try:
-        with open(project_file) as f:
-            data = json.load(f)
-        data["project_path"] = str(root)
-        return cast(dict[str, Any], data)
-    except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Failed to read project context: {e}")
-        return None
+    return None
 
 
 def _build_and_set_project_context(
