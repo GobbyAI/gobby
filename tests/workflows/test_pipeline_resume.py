@@ -121,6 +121,7 @@ class TestPipelineResume:
         await executor.approve("valid-token")
 
         # 4. Assertions
+        mock_loader.load_pipeline.assert_awaited_once_with("resume-pipeline", "test-project")
 
         # Verify step1 was marked approved
         mock_execution_manager.update_step_execution.assert_any_call(

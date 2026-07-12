@@ -320,7 +320,7 @@ class CronExecutor:
         loader = self.pipeline_executor.loader
         if not loader:
             raise RuntimeError("pipeline_executor has no loader configured")
-        pipeline = await loader.load_pipeline(pipeline_name)
+        pipeline = await loader.load_pipeline(pipeline_name, job.project_id)
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found")
 

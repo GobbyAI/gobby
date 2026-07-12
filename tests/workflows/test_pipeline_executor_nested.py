@@ -46,7 +46,7 @@ class TestExecuteNestedPipeline:
         context: dict = {"inputs": {}, "steps": {}}
         await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
 
-        mock_loader.load_pipeline.assert_called_once_with("child-pipeline")
+        mock_loader.load_pipeline.assert_called_once_with("child-pipeline", "proj-123")
         assert mock_loader.load_pipeline.call_count == 1
         assert mock_loader.load_pipeline.call_args is not None
 
@@ -183,7 +183,7 @@ class TestExecuteNestedPipelineDictForm:
         context: dict = {"inputs": {}, "steps": {}}
         await executor._execute_nested_pipeline(pipeline_ref, context, "proj-123")
 
-        mock_loader.load_pipeline.assert_called_once_with("command-listener")
+        mock_loader.load_pipeline.assert_called_once_with("command-listener", "proj-123")
         assert mock_loader.load_pipeline.call_count == 1
         assert mock_loader.load_pipeline.call_args is not None
 
@@ -280,7 +280,7 @@ class TestExecuteNestedPipelineDictForm:
         context: dict = {"inputs": {"foo": "bar"}, "steps": {}, "session_id": "sess-x"}
         await executor._execute_nested_pipeline("command-listener", context, "proj-123")
 
-        mock_loader.load_pipeline.assert_called_once_with("command-listener")
+        mock_loader.load_pipeline.assert_called_once_with("command-listener", "proj-123")
         assert mock_loader.load_pipeline.call_count == 1
         assert mock_loader.load_pipeline.call_args is not None
 

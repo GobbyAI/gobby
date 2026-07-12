@@ -293,6 +293,9 @@ class TestRunPipeline:
         assert response.status_code == 200
         data = response.json()
         assert data["execution_id"] == "pe-123"
+        mock_server.services.workflow_loader.load_pipeline.assert_awaited_once_with(
+            "test-pipeline", "proj-1"
+        )
 
     def test_run_pipeline_approval_required(
         self, client: TestClient, mock_server: MagicMock

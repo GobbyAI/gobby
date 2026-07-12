@@ -362,7 +362,11 @@ class _FakePipeline:
 
 
 class _FakePipelineLoader:
-    async def load_pipeline(self, name: str):
+    def __init__(self) -> None:
+        self.project_ids: list[str] = []
+
+    async def load_pipeline(self, name: str, project_id: str):
+        self.project_ids.append(project_id)
         return _FakePipeline() if name == "02e3e743-e572-51b3-a0f4-83e68271282f" else None
 
 
@@ -382,12 +386,12 @@ class _FakePipelineExecutor:
 
 
 class _ValueErrorPipelineLoader:
-    async def load_pipeline(self, _name: str) -> NoReturn:
+    async def load_pipeline(self, _name: str, _project_id: str) -> NoReturn:
         raise ValueError("bad pipeline")
 
 
 class _RuntimeErrorPipelineLoader:
-    async def load_pipeline(self, _name: str) -> NoReturn:
+    async def load_pipeline(self, _name: str, _project_id: str) -> NoReturn:
         raise RuntimeError("loader unavailable")
 
 
@@ -3728,6 +3732,7 @@ async def test_start_pipeline_action_links_execution_id(
     assert mutex is not None
     assert mutex.run_id is not None
     assert mutex.action_kind == "stage-pipeline:expansion"
+    assert services.pipeline_executor.loader.project_ids == [sample_project["id"]]
 
 
 def test_dispatcher_run_heartbeat_cold_imports(repo_root) -> None:

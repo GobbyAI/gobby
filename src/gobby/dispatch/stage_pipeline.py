@@ -72,8 +72,9 @@ async def start_pipeline_action(
     if loader is None:
         return escalate_pipeline_dispatch(action, mutex, db, "pipeline_loader_missing")
 
+    project_id = str(field(context, "project_id", ""))
     try:
-        pipeline = await loader.load_pipeline(action.pipeline_name)
+        pipeline = await loader.load_pipeline(action.pipeline_name, project_id)
     except ValueError as exc:
         return escalate_pipeline_dispatch(action, mutex, db, f"pipeline_invalid:{exc}")
     if pipeline is None:
@@ -126,7 +127,7 @@ async def start_pipeline_action(
             executor,
             pipeline,
             inputs,
-            str(field(context, "project_id", "")),
+            project_id,
             execution_id,
             action.pipeline_name,
             session_id=getattr(services, "triggering_session_id", None),

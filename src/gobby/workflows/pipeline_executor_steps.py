@@ -170,7 +170,9 @@ class PipelineExecutorStepMixin:
         # Resume execution
         if self.loader:
             try:
-                pipeline = await self.loader.load_pipeline(execution.pipeline_name)
+                pipeline = await self.loader.load_pipeline(
+                    execution.pipeline_name, execution.project_id
+                )
                 if pipeline:
                     inputs = {}
                     if execution.inputs_json:
@@ -250,7 +252,7 @@ class PipelineExecutorStepMixin:
 
         try:
             # Load the nested pipeline
-            nested_pipeline = await self.loader.load_pipeline(pipeline_name)
+            nested_pipeline = await self.loader.load_pipeline(pipeline_name, project_id)
 
             if not nested_pipeline:
                 raise RuntimeError(f"Pipeline '{pipeline_name}' not found")

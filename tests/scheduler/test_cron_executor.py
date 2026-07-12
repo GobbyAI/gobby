@@ -282,6 +282,9 @@ async def test_execute_pipeline_recreates_missing_system_session(
     assert cron_session is not None
     assert cron_session["source"] == "cron"
     assert cron_session["parent_session_id"] == SYSTEM_SESSION_ID
+    pipeline_executor.loader.load_pipeline.assert_awaited_once_with(
+        "cron-test-pipeline", job.project_id
+    )
 
 
 @pytest.mark.asyncio
@@ -364,6 +367,7 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
 
     assert result.status == "dispatched"
     assert result.pipeline_execution_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeee0203"
+    pipeline_executor.loader.load_pipeline.assert_awaited_once_with("approval", job.project_id)
 
 
 @pytest.mark.asyncio
