@@ -607,7 +607,7 @@ def _missing_step_workflow(
         if (
             agent_run
             and agent_run.agent_name
-            and _workflow_definition_exists(db, agent_run.agent_name)
+            and _workflow_definition_exists(db, agent_run.agent_name, session.project_id)
         ):
             return [f"{agent_run.agent_name}-steps"]
         return []
@@ -621,10 +621,16 @@ def _missing_step_workflow(
     return []
 
 
-def _workflow_definition_exists(db: Any, agent_name: str) -> bool:
+def _workflow_definition_exists(db: Any, agent_name: str, project_id: str | None) -> bool:
     from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
-    return LocalWorkflowDefinitionManager(db).get_by_name(f"{agent_name}-steps") is not None
+    return (
+        LocalWorkflowDefinitionManager(db).get_by_name(
+            f"{agent_name}-steps",
+            project_id=project_id,
+        )
+        is not None
+    )
 
 
 def _ensure_step_workflow_from_definition(

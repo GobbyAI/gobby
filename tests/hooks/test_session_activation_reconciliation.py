@@ -28,6 +28,7 @@ from gobby.hooks.session_activation import (
     SESSION_ACTIVATION_CONTRACT_HASH,
     SESSION_ACTIVATION_CONTRACT_VERSION,
     _agent_run_from_row,
+    _workflow_definition_exists,
     clear_active_rule_names_cache,
     reconcile_session_activation,
 )
@@ -75,6 +76,19 @@ def session_manager(db: HubDatabase) -> SessionManager:
 @pytest.fixture
 def handlers(session_manager: SessionManager) -> EventHandlers:
     return EventHandlers(session_manager=session_manager)  # type: ignore[arg-type]
+
+
+def test_workflow_definition_exists_uses_project_scope(db: HubDatabase) -> None:
+    with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as manager_cls:
+        manager_cls.return_value.get_by_name.return_value = object()
+
+        exists = _workflow_definition_exists(db, "reviewer", "project-id")
+
+    assert exists is True
+    manager_cls.return_value.get_by_name.assert_called_once_with(
+        "reviewer-steps",
+        project_id="project-id",
+    )
 
 
 def _event(event_type: HookEventType, session_id: str, tmp_path: Path) -> HookEvent:
