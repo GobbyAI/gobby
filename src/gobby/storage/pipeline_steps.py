@@ -151,7 +151,7 @@ class PipelineStepStorageMixin:
         )
         return StepExecution.from_row(row) if row else None
 
-    def get_expired_approval_steps(self) -> list[StepExecution]:
+    def get_expired_approval_steps(self, *, limit: int = 100) -> list[StepExecution]:
         """Get step executions where approval has timed out.
 
         Finds steps that are waiting_approval with a configured timeout
@@ -169,9 +169,9 @@ class PipelineStepStorageMixin:
             "pe.project_id IS NULL" if self.project_id is None else "pe.project_id = %s"
         )
         params: tuple[Any, ...] = (
-            (StepStatus.WAITING_APPROVAL.value,)
+            (StepStatus.WAITING_APPROVAL.value, limit)
             if self.project_id is None
-            else (StepStatus.WAITING_APPROVAL.value, self.project_id)
+            else (StepStatus.WAITING_APPROVAL.value, self.project_id, limit)
         )
         rows = self.db.fetchall(
             f"""
@@ -182,6 +182,8 @@ AND se.approval_timeout_seconds IS NOT NULL
 AND se.started_at IS NOT NULL
 AND {timeout_expired_sql}
 AND {project_predicate}
+ORDER BY se.started_at ASC
+LIMIT %s
 """,  # nosec B608 # timeout expression is selected by storage dialect.
             params,
         )

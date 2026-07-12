@@ -60,12 +60,20 @@ class MetricSnapshotStorage:
             )
         return results
 
-    def delete_old_snapshots(self, retention_hours: int = 24) -> int:
+    def delete_old_snapshots(self, retention_hours: int = 24, *, limit: int = 1000) -> int:
         """Purge snapshots older than retention period."""
         expired_sql = older_than_now_expr(self.db, "timestamp", "%s", "hour")
         cursor = self.db.execute(
-            f"DELETE FROM metric_snapshots WHERE {expired_sql}",  # nosec B608
-            (retention_hours,),
+            f"""
+DELETE FROM metric_snapshots
+WHERE id IN (
+    SELECT id FROM metric_snapshots
+    WHERE {expired_sql}
+    ORDER BY timestamp ASC
+    LIMIT %s
+)
+""",  # nosec B608
+            (retention_hours, limit),
         )
         return cursor.rowcount
 

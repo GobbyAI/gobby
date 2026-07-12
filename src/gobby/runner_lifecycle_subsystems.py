@@ -143,9 +143,14 @@ async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker 
         tracker.error("Embeddings", failure_reason)
 
 
-def _cleanup_metrics_on_startup(runner: GobbyRunner) -> None:
+async def _cleanup_metrics_on_startup(runner: GobbyRunner) -> None:
     try:
-        deleted = runner.metrics_manager.cleanup_old_metrics()
+        db_executor = getattr(runner, "db_executor", None)
+        run_db = getattr(db_executor, "run", None)
+        if run_db is None:
+            deleted = await asyncio.to_thread(runner.metrics_manager.cleanup_old_metrics)
+        else:
+            deleted = await run_db(runner.metrics_manager.cleanup_old_metrics)
         if deleted > 0:
             logger.info(f"Startup metrics cleanup: removed {deleted} old entries")
     except Exception as e:
@@ -572,7 +577,7 @@ async def init_subsystems(
     await _connect_mcp_servers(runner, tracker)
     await _check_external_services(runner, tracker)
     await _check_embedding_service(runner, tracker)
-    _cleanup_metrics_on_startup(runner)
+    await _cleanup_metrics_on_startup(runner)
     await _initialize_vector_store(runner, rebuild_vector_store, tracker)
     await _start_core_services(runner, tracker)
     await _check_tmux_health(tracker)

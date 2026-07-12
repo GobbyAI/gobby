@@ -179,7 +179,8 @@ def test_metric_snapshot_queries_use_postgres_intervals() -> None:
     assert "timestamp >= NOW() - (%s::double precision * INTERVAL '1 hour')" in db.queries[0]
     assert db.params[0] == (6, 120)
     assert "timestamp < NOW() - (%s::double precision * INTERVAL '1 hour')" in db.queries[1]
-    assert db.params[1] == (24,)
+    assert "LIMIT %s" in db.queries[1]
+    assert db.params[1] == (24, 1000)
 
 
 def test_token_timeseries_uses_postgres_bucket_and_window_sql() -> None:

@@ -475,8 +475,11 @@ class TestGobbyRunnerShutdown:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
+            loop = asyncio.get_running_loop()
+            cleanup_started = asyncio.Event()
 
             def fail_cleanup() -> None:
+                loop.call_soon_threadsafe(cleanup_started.set)
                 runner._shutdown_requested = True
                 raise Exception("Cleanup failed")
 
@@ -484,7 +487,11 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+
+                async def serve_until_cleanup() -> None:
+                    await cleanup_started.wait()
+
+                mock_server.serve = AsyncMock(side_effect=serve_until_cleanup)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):

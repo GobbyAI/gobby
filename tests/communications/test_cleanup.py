@@ -42,7 +42,7 @@ async def test_cleanup_deletes_old_messages(mock_attachment_manager: MagicMock):
 
     sleep_mock.assert_called_once_with(24 * 60 * 60)
     mock_store.delete_messages_before.assert_called_once()
-    mock_attachment_manager.cleanup_old.assert_called_once_with(days=30)
+    mock_attachment_manager.cleanup_old.assert_called_once_with(days=30, limit=500)
     cutoff_arg = mock_store.delete_messages_before.call_args[0][0]
     assert isinstance(cutoff_arg, datetime)
     # Cutoff should be approximately 30 days ago

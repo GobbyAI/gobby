@@ -216,7 +216,11 @@ def start_periodic_tasks(
         name="zombie-message-cleanup",
     )
     runner._comms_messages_task = asyncio.create_task(
-        loops["cleanup_comms_messages_loop"](runner.database, lambda: runner._shutdown_requested),
+        loops["cleanup_comms_messages_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
         name="comms-message-cleanup",
     )
     chat_config = getattr(runner.config, "chat", None)
@@ -249,7 +253,11 @@ def start_periodic_tasks(
         name="expired-isolation-cleanup",
     )
     runner._metric_snapshot_task = asyncio.create_task(
-        loops["metric_snapshot_loop"](runner.database, lambda: runner._shutdown_requested),
+        loops["metric_snapshot_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
+        ),
         name="metric-snapshot",
     )
     runner._hook_inbox_task = asyncio.create_task(
@@ -273,7 +281,9 @@ def start_periodic_tasks(
     if runner.pipeline_execution_manager:
         runner._approval_timeout_task = asyncio.create_task(
             loops["expire_approval_timeouts_loop"](
-                runner.pipeline_execution_manager, lambda: runner._shutdown_requested
+                runner.pipeline_execution_manager,
+                lambda: runner._shutdown_requested,
+                run_db=getattr(db_executor, "run", None),
             ),
             name="approval-timeout-expiry",
         )

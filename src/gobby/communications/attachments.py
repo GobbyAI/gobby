@@ -75,7 +75,7 @@ class AttachmentManager:
             return None
         return max(candidates, key=lambda path: path.stat().st_mtime)
 
-    def cleanup_old(self, days: int = 30) -> int:
+    def cleanup_old(self, days: int = 30, *, limit: int = 500) -> int:
         """Remove attachments older than the retention period."""
         cutoff = time.time() - (days * 86400)
         removed = 0
@@ -83,6 +83,8 @@ class AttachmentManager:
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1
+                if removed >= limit:
+                    break
         if removed:
             logger.info(f"Cleaned up {removed} attachments older than {days} days")
         return removed

@@ -51,6 +51,9 @@ logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
+_COMMS_CLEANUP_BATCH_LIMIT = 500
+_APPROVAL_EXPIRY_BATCH_LIMIT = 100
+_METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT = 1000
 
 
 def _positive_int_or_default(value: Any, default: int) -> int:
@@ -406,6 +409,8 @@ async def cleanup_comms_messages_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
     retention_days: int = 30,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     from gobby.communications.attachments import AttachmentManager
     from gobby.storage.communications import LocalCommunicationsStore
@@ -420,8 +425,17 @@ async def cleanup_comms_messages_loop(
             await asyncio.sleep(interval_seconds)
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
-            deleted_messages = store.delete_messages_before(cutoff)
-            deleted_attachments = attachment_manager.cleanup_old(days=retention_days)
+            deleted_messages = await _run_db(
+                run_db,
+                store.delete_messages_before,
+                cutoff,
+                limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
+            deleted_attachments = await asyncio.to_thread(
+                attachment_manager.cleanup_old,
+                days=retention_days,
+                limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
 
             if deleted_messages > 0:
                 logger.info(f"Comms message cleanup: removed {deleted_messages} old messages")
@@ -515,6 +529,8 @@ async def expire_approval_timeouts_loop(
     pipeline_execution_manager: Any,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 60,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Expire pipeline steps that have exceeded their approval timeout.
 
@@ -524,10 +540,16 @@ async def expire_approval_timeouts_loop(
     while not is_shutdown_requested():
         try:
             await asyncio.sleep(interval_seconds)
-            expired_steps = pipeline_execution_manager.get_expired_approval_steps()
+            expired_steps = await _run_db(
+                run_db,
+                pipeline_execution_manager.get_expired_approval_steps,
+                limit=_APPROVAL_EXPIRY_BATCH_LIMIT,
+            )
             for step in expired_steps:
                 try:
-                    pipeline_execution_manager.expire_approval_timeout(
+                    await _run_db(
+                        run_db,
+                        pipeline_execution_manager.expire_approval_timeout,
                         step_execution_id=step.id,
                         execution_id=step.execution_id,
                     )
@@ -551,6 +573,8 @@ async def metric_snapshot_loop(
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 60,
     retention_hours: int = 24,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Background loop that snapshots OTel metrics every interval.
 
@@ -566,8 +590,13 @@ async def metric_snapshot_loop(
         try:
             update_daemon_metrics()
             metrics = get_all_metrics()
-            storage.save_snapshot(metrics)
-            deleted = storage.delete_old_snapshots(retention_hours=retention_hours)
+            await _run_db(run_db, storage.save_snapshot, metrics)
+            deleted = await _run_db(
+                run_db,
+                storage.delete_old_snapshots,
+                retention_hours=retention_hours,
+                limit=_METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT,
+            )
             if deleted > 0:
                 logger.debug(f"Metric snapshot cleanup: removed {deleted} old snapshots")
         except asyncio.CancelledError:
