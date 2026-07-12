@@ -22,6 +22,7 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 - Webhooks endpoints
 """
 
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -3044,18 +3045,30 @@ class TestHooksEndpoints:
         self,
         session_storage: SessionManager,
     ) -> None:
-        """Non-critical hook timeouts degrade before the CLI transport timeout."""
+        """A stalled non-critical hook degrades before its adapter finishes."""
         server = create_http_server(
             port=60887,
             test_mode=True,
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
+        assert NON_CRITICAL_HOOK_TIMEOUT_SECONDS < 30
+        release_adapter = threading.Event()
+        adapter_finished = threading.Event()
 
-        timeout_mock = AsyncMock(side_effect=TimeoutError())
+        def stalled_evaluation(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+            if not release_adapter.wait(timeout=1):
+                raise AssertionError("test did not release stalled adapter")
+            adapter_finished.set()
+            return {"continue": True}
+
         with (
             TestClient(server.app) as client,
-            patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
+            patch(
+                "gobby.adapters.droid.DroidAdapter.handle_native",
+                side_effect=stalled_evaluation,
+            ),
+            patch("gobby.servers.routes.mcp.hooks.NON_CRITICAL_HOOK_TIMEOUT_SECONDS", 0.01),
         ):
             response = client.post(
                 "/api/hooks/execute",
@@ -3065,20 +3078,36 @@ class TestHooksEndpoints:
                     input_data={"session_id": "droid-123", "tool_name": "Read"},
                 ),
             )
+            assert adapter_finished.is_set() is False
+            release_adapter.set()
+            assert adapter_finished.wait(timeout=1)
 
         assert response.status_code == 200
         data = response.json()
         assert data["continue"] is True
-        assert "timed out after 25s" in data["systemMessage"]
-        assert (
-            timeout_mock.await_args.kwargs["timeout_seconds"] == NON_CRITICAL_HOOK_TIMEOUT_SECONDS
-        )
+        assert "timed out after 0.01s" in data["systemMessage"]
 
-    def test_execute_hook_stop_timeout_blocks_fail_safe(
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "critical", "adapter_patch"),
+        [
+            (
+                "codex",
+                "Stop",
+                False,
+                "gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter",
+            ),
+            ("claude", "session-start", True, "gobby.adapters.claude_code.ClaudeCodeAdapter"),
+        ],
+    )
+    def test_execute_hook_fail_safe_timeout_blocks(
         self,
         session_storage: SessionManager,
+        source: str,
+        hook_type: str,
+        critical: bool,
+        adapter_patch: str,
     ) -> None:
-        """Critical/fail-safe hook timeouts still return provider-native blocks."""
+        """Stop and CLI-critical hook timeouts return provider-native blocks."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -3089,7 +3118,7 @@ class TestHooksEndpoints:
         timeout_mock = AsyncMock(side_effect=TimeoutError())
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
+            patch(adapter_patch) as MockAdapter,
             patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
         ):
             mock_adapter = MagicMock()
@@ -3103,8 +3132,9 @@ class TestHooksEndpoints:
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(
-                    hook_type="Stop",
-                    source="codex",
+                    hook_type=hook_type,
+                    source=source,
+                    critical=critical,
                     input_data={"session_id": "test-stop"},
                 ),
             )
