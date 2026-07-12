@@ -13,6 +13,12 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
+SESSION_1 = "00000000-0000-0000-0000-000000000001"
+SESSION_2 = "00000000-0000-0000-0000-000000000002"
+SESSION_LEAKED = "00000000-0000-0000-0000-000000000003"
+SESSION_WRAPPER = "00000000-0000-0000-0000-000000000004"
+SESSION_STRING = "00000000-0000-0000-0000-000000000005"
+
 
 @pytest.fixture
 def temp_db(postgres_db: HubDatabase) -> HubDatabase:
@@ -59,7 +65,7 @@ async def test_first_invalid_call_includes_schema_and_records_latch(proxy_parts)
         "test-server",
         "test_tool",
         {"wrong": "value"},
-        session_id="session-1",
+        session_id=SESSION_1,
     )
 
     assert result["success"] is False
@@ -69,7 +75,7 @@ async def test_first_invalid_call_includes_schema_and_records_latch(proxy_parts)
         "Unknown parameter 'wrong'. Valid parameters: ['name']",
         "Missing required parameter 'name'",
     ]
-    variables = SessionVariableManager(db).get_variables("session-1")
+    variables = SessionVariableManager(db).get_variables(SESSION_1)
     assert "test-server:test_tool" in variables["unlocked_tools"]
 
 
@@ -87,13 +93,13 @@ async def test_second_invalid_call_omits_schema(proxy_parts) -> None:
         "test-server",
         "test_tool",
         {"wrong": "value"},
-        session_id="session-2",
+        session_id=SESSION_2,
     )
     result = await proxy.call_tool(
         "test-server",
         "test_tool",
         {"wrong": "value"},
-        session_id="session-2",
+        session_id=SESSION_2,
     )
 
     assert result["success"] is False
@@ -119,7 +125,7 @@ async def test_leaked_routing_fields_are_invalid_target_arguments(proxy_parts) -
             "server_name": "gobby-tasks",
             "tool_name": "create_task",
         },
-        session_id="session-leaked",
+        session_id=SESSION_LEAKED,
     )
 
     assert result["success"] is False
@@ -142,15 +148,15 @@ async def test_required_session_id_injected_from_wrapper_context(proxy_parts) ->
         "gobby-sessions",
         "needs_session",
         {},
-        session_id="session-wrapper",
+        session_id=SESSION_WRAPPER,
     )
 
     assert result["success"] is True
     mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
         "needs_session",
-        {"session_id": "session-wrapper"},
-        session_id="session-wrapper",
+        {"session_id": SESSION_WRAPPER},
+        session_id=SESSION_WRAPPER,
     )
 
 
@@ -168,7 +174,7 @@ async def test_malformed_string_arguments_return_schema_guidance(proxy_parts) ->
         "test-server",
         "test_tool",
         "not valid json {",
-        session_id="session-string",
+        session_id=SESSION_STRING,
     )
 
     assert result["success"] is False
