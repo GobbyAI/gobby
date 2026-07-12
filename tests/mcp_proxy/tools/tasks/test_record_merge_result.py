@@ -564,12 +564,12 @@ async def test_close_linked_github_issue_tool_comments_labels_and_closes(
 
     assert result == {"ok": True, "task_id": task.id, "closed": True}
     assert [name for name, _args in github.calls] == [
-        "add_issue_comment",
         "add_labels_to_issue",
         "update_issue",
+        "add_issue_comment",
     ]
-    assert github.calls[1][1]["labels"] == ["gobby:resolved"]
-    assert github.calls[2][1]["state"] == "closed"
+    assert github.calls[0][1]["labels"] == ["gobby:resolved"]
+    assert github.calls[1][1]["state"] == "closed"
 
 
 def test_failure_path(temp_db, sample_project) -> None:
