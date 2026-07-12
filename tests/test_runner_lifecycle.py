@@ -251,6 +251,22 @@ class TestGobbyRunnerRun:
         ]
         assert "WebSocket server startup failed" in caplog.text
 
+    async def test_subsystem_init_failure_finishes_startup_tracker(self) -> None:
+        tracker = runner_lifecycle.StartupTracker()
+
+        async def fail_init() -> None:
+            raise RuntimeError("init exploded")
+
+        task = asyncio.create_task(fail_init())
+        await asyncio.wait({task})
+
+        runner_lifecycle._log_subsystem_init_result(task, tracker)
+
+        assert tracker.to_dict()["done"] is True
+        assert tracker.errors == [
+            {"subsystem": "Subsystem initialization", "error": "init exploded"}
+        ]
+
 
 class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
@@ -677,6 +693,143 @@ class TestInitSubsystems:
         assert "Agent restart reconciliation failed during startup" in caplog.text
         assert "Agent stale pending cleanup failed during startup" in caplog.text
         assert "Agent lifecycle monitor start failed during startup" in caplog.text
+
+    async def test_start_failures_do_not_abort_init_and_readiness_is_last(self) -> None:
+        events: list[str] = []
+
+        class RecordingServices:
+            provider_model_catalog = None
+            shutdown_in_progress = False
+
+            def __init__(self) -> None:
+                self._startup_ready = False
+
+            @property
+            def startup_ready(self) -> bool:
+                return self._startup_ready
+
+            @startup_ready.setter
+            def startup_ready(self, value: bool) -> None:
+                events.append(f"ready:{value}")
+                self._startup_ready = value
+
+        class RecordingTracker(runner_lifecycle.StartupTracker):
+            def finish(self) -> None:
+                events.append("tracker-finish")
+                super().finish()
+
+        async def message_start() -> None:
+            events.append("message-start")
+            raise RuntimeError("message failed")
+
+        async def communications_start() -> None:
+            events.append("communications-start")
+
+        async def lifecycle_start() -> None:
+            events.append("lifecycle-start")
+            raise RuntimeError("lifecycle failed")
+
+        async def cron_start() -> None:
+            events.append("cron-start")
+            raise RuntimeError("cron failed")
+
+        async def automation_start() -> None:
+            events.append("automation-start")
+
+        async def recover_pipelines(*_args: object) -> None:
+            events.append("recover-pipelines")
+
+        services = RecordingServices()
+        tracker = RecordingTracker()
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(services=services),
+            message_processor=SimpleNamespace(start=AsyncMock(side_effect=message_start)),
+            communications_manager=SimpleNamespace(
+                start=AsyncMock(side_effect=communications_start)
+            ),
+            lifecycle_manager=SimpleNamespace(start=AsyncMock(side_effect=lifecycle_start)),
+            cron_scheduler=SimpleNamespace(start=AsyncMock(side_effect=cron_start)),
+            cron_storage=None,
+            system_automation_loop=SimpleNamespace(start=AsyncMock(side_effect=automation_start)),
+        )
+        async_noop = AsyncMock()
+
+        with (
+            patch.object(runner_lifecycle_subsystems, "_schedule_provider_model_refresh"),
+            patch.object(runner_lifecycle_subsystems, "_connect_mcp_servers", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_external_services", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
+            patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
+            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_agent_lifecycle_monitor",
+                async_noop,
+            ),
+            patch.object(runner_lifecycle_subsystems, "_register_wiki_cron_handlers", async_noop),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_code_index_tasks",
+                side_effect=lambda *_args: events.append("code-index"),
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_recover_pipelines",
+                side_effect=recover_pipelines,
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_start_websocket_server",
+                side_effect=lambda *_args: events.append("websocket"),
+            ),
+            patch.object(
+                runner_lifecycle_subsystems,
+                "_maybe_start_ui_dev_server",
+                side_effect=lambda *_args: events.append("ui"),
+            ),
+        ):
+            await runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), tracker)
+
+        assert events == [
+            "message-start",
+            "communications-start",
+            "lifecycle-start",
+            "cron-start",
+            "code-index",
+            "recover-pipelines",
+            "websocket",
+            "ui",
+            "automation-start",
+            "tracker-finish",
+            "ready:True",
+        ]
+        assert tracker.errors == [
+            {"subsystem": "Message processor", "error": "message failed"},
+            {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
+            {"subsystem": "Cron scheduler", "error": "cron failed"},
+        ]
+        assert tracker.steps_completed == [
+            "Communications manager",
+            "System automation loop",
+        ]
+        assert tracker.done is True
+        assert services.startup_ready is True
+
+    async def test_automation_start_failure_is_tracked_without_raising(self) -> None:
+        tracker = runner_lifecycle.StartupTracker()
+        runner = SimpleNamespace(
+            system_automation_loop=SimpleNamespace(
+                start=AsyncMock(side_effect=RuntimeError("automation failed"))
+            )
+        )
+
+        await runner_lifecycle_subsystems._start_system_automation_loop(runner, tracker)
+
+        assert tracker.steps_completed == []
+        assert tracker.errors == [
+            {"subsystem": "System automation loop", "error": "automation failed"}
+        ]
 
 
 class TestShutdownDaemonServices:

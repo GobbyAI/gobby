@@ -196,25 +196,49 @@ async def _initialize_vector_store(
         logger.warning(f"VectorStore initialization failed; lazy retry will continue: {e}")
 
 
-async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    if runner.message_processor:
-        await runner.message_processor.start()
+async def _start_tracked_service(
+    service: Any,
+    subsystem: str,
+    tracker: StartupTracker | None,
+) -> None:
+    if service is None:
+        return
+    try:
+        await service.start()
+    except Exception as e:
+        logger.error("%s start failed: %s", subsystem, e, exc_info=True)
         if tracker:
-            tracker.complete("Message processor")
-
-    if runner.communications_manager:
-        try:
-            await runner.communications_manager.start()
-            if tracker:
-                tracker.complete("Communications manager")
-        except Exception as e:
-            logger.error(f"CommunicationsManager start failed: {e}")
-            if tracker:
-                tracker.error("Communications manager", str(e))
-
-    await runner.lifecycle_manager.start()
+            tracker.error(subsystem, str(e))
+        return
     if tracker:
-        tracker.complete("Session lifecycle manager")
+        tracker.complete(subsystem)
+
+
+def _run_tracked_start(
+    operation: Callable[[], None],
+    subsystem: str,
+    tracker: StartupTracker | None,
+) -> None:
+    try:
+        operation()
+    except Exception as e:
+        logger.error("%s start failed: %s", subsystem, e, exc_info=True)
+        if tracker:
+            tracker.error(subsystem, str(e))
+
+
+async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
+    await _start_tracked_service(runner.message_processor, "Message processor", tracker)
+    await _start_tracked_service(
+        runner.communications_manager,
+        "Communications manager",
+        tracker,
+    )
+    await _start_tracked_service(
+        runner.lifecycle_manager,
+        "Session lifecycle manager",
+        tracker,
+    )
 
 
 async def _check_tmux_health(tracker: StartupTracker | None) -> None:
@@ -275,9 +299,7 @@ async def _start_agent_lifecycle_monitor(
 async def _start_cron_scheduler(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     if runner.cron_scheduler:
         await _register_wiki_cron_handlers(runner, tracker)
-        await runner.cron_scheduler.start()
-        if tracker:
-            tracker.complete("Cron scheduler")
+        await _start_tracked_service(runner.cron_scheduler, "Cron scheduler", tracker)
 
 
 async def _register_wiki_cron_handlers(
@@ -322,10 +344,7 @@ async def _start_system_automation_loop(
     tracker: StartupTracker | None,
 ) -> None:
     automation_loop = getattr(runner, "system_automation_loop", None)
-    if automation_loop:
-        await automation_loop.start()
-        if tracker:
-            tracker.complete("System automation loop")
+    await _start_tracked_service(automation_loop, "System automation loop", tracker)
 
 
 def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
@@ -563,19 +582,33 @@ async def init_subsystems(
         reconcile_agent_runs_after_restart,
     )
     await _start_cron_scheduler(runner, tracker)
-    _start_code_index_tasks(runner, tracker)
+    _run_tracked_start(
+        lambda: _start_code_index_tasks(runner, tracker),
+        "Code index tasks",
+        tracker,
+    )
     await _recover_pipelines(runner, tracker)
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
 
-    _start_websocket_server(runner, tracker)
-    _maybe_start_ui_dev_server(runner)
-
-    if services is not None:
-        services.startup_ready = True
+    _run_tracked_start(
+        lambda: _start_websocket_server(runner, tracker),
+        "WebSocket server",
+        tracker,
+    )
+    _run_tracked_start(
+        lambda: _maybe_start_ui_dev_server(runner),
+        "UI development server",
+        tracker,
+    )
     await _start_system_automation_loop(runner, tracker)
+    if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
+        logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
+        return
     if tracker:
         tracker.finish()
+    if services is not None:
+        services.startup_ready = True
     logger.info("Subsystem initialization complete")

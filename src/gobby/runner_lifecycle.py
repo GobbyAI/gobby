@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
@@ -200,7 +201,9 @@ async def run_daemon(runner: GobbyRunner) -> None:
                     _init_subsystems(runner, rebuild_vector_store),
                     name="subsystem-init",
                 )
-                runner._subsystem_init_task.add_done_callback(_log_subsystem_init_result)
+                runner._subsystem_init_task.add_done_callback(
+                    partial(_log_subsystem_init_result, tracker=_startup_tracker)
+                )
 
                 _start_periodic_tasks(
                     runner,
