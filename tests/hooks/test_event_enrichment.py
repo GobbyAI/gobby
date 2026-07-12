@@ -197,6 +197,38 @@ class TestMessageGrouping:
         assert "from_session=from-1111-2222-3333-444444444444" in response.context
 
 
+class TestMessageDeliveryOrdering:
+    """Messages become delivered only after response attachment succeeds."""
+
+    def test_formatting_failure_leaves_message_retryable(self) -> None:
+        msg = _make_msg()
+        enricher = _make_enricher([msg])
+        enricher._resolve_sender_label = MagicMock(side_effect=RuntimeError("format failed"))
+        response = HookResponse()
+
+        enricher.enrich(_make_event(HookEventType.BEFORE_AGENT), response)
+
+        enricher._inter_session_msg_manager.mark_delivered.assert_not_called()
+        assert response.context is None
+
+    def test_mark_failure_warns_and_leaves_attached_message(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        msg = _make_msg()
+        enricher = _make_enricher([msg])
+        enricher._inter_session_msg_manager.mark_delivered.side_effect = RuntimeError(
+            "database unavailable"
+        )
+        response = HookResponse()
+
+        with caplog.at_level("WARNING", logger="gobby.hooks.event_enrichment"):
+            enricher.enrich(_make_event(HookEventType.BEFORE_AGENT), response)
+
+        assert response.context is not None
+        assert "hello" in response.context
+        assert "Failed to mark piggyback message msg-1 delivered" in caplog.text
+
+
 class TestUrgentPriority:
     """Verify urgent messages are tagged."""
 
