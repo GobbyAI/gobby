@@ -816,6 +816,19 @@ def health(ctx: click.Context) -> None:
     try:
         response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=2.0)
         if response.status_code == 200:
+            try:
+                health_payload = response.json()
+            except (TypeError, ValueError):
+                health_payload = {}
+            if isinstance(health_payload, dict) and health_payload.get("status") == "degraded":
+                hook_runtime = health_payload.get("hook_runtime")
+                runtime_state = (
+                    hook_runtime.get("state") if isinstance(hook_runtime, dict) else "unknown"
+                )
+                click.echo(f"Gobby daemon: degraded (PID: {pid}, hook runtime: {runtime_state})")
+                if isinstance(hook_runtime, dict) and isinstance(hook_runtime.get("detail"), str):
+                    click.echo(f"  {hook_runtime['detail']}")
+                sys.exit(1)
             # Get uptime and memory for the one-liner
             try:
                 proc = psutil.Process(pid)
