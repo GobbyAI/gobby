@@ -134,6 +134,23 @@ def consume_compact_self_continuation_pending(
     fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
 ) -> str | None:
     """Consume a fresh pending marker and return its prompt."""
+    pending = _take_compact_self_continuation_pending(
+        db,
+        session_id,
+        now=now,
+        fresh_seconds=fresh_seconds,
+    )
+    return pending[0] if pending is not None else None
+
+
+def _take_compact_self_continuation_pending(
+    db: HubDatabase,
+    session_id: str,
+    *,
+    now: datetime | None = None,
+    fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+) -> tuple[str, dict[str, Any]] | None:
+    """Atomically take a fresh marker while retaining its exact payload."""
     try:
         value = _pop_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE)
     except Exception:
@@ -159,7 +176,10 @@ def consume_compact_self_continuation_pending(
         return None
 
     prompt = value.get("prompt")
-    return prompt if isinstance(prompt, str) and prompt.strip() else COMPACT_SELF_CONTINUE_PROMPT
+    resolved_prompt = (
+        prompt if isinstance(prompt, str) and prompt.strip() else COMPACT_SELF_CONTINUE_PROMPT
+    )
+    return resolved_prompt, value
 
 
 def schedule_compact_self_continuation(
@@ -204,15 +224,36 @@ def consume_and_schedule_compact_self_continuation(
     loop: Any | None = None,
 ) -> bool:
     """Consume a fresh marker from one session and schedule the prompt on another."""
-    prompt = None
+    pending: tuple[str, dict[str, Any]] | None = None
+    source_session_id: str | None = None
     if pending_session_id:
-        prompt = consume_compact_self_continuation_pending(db, pending_session_id)
-    if prompt is None and fallback_pending_session_id != pending_session_id:
+        pending = _take_compact_self_continuation_pending(db, pending_session_id)
+        if pending is not None:
+            source_session_id = pending_session_id
+    if pending is None and fallback_pending_session_id != pending_session_id:
         if fallback_pending_session_id:
-            prompt = consume_compact_self_continuation_pending(db, fallback_pending_session_id)
-    if prompt is None:
+            pending = _take_compact_self_continuation_pending(db, fallback_pending_session_id)
+            if pending is not None:
+                source_session_id = fallback_pending_session_id
+    if pending is None or source_session_id is None:
         return False
-    return schedule_compact_self_continuation(target_session, prompt, loop=loop)
+    prompt, payload = pending
+    if schedule_compact_self_continuation(target_session, prompt, loop=loop):
+        return True
+    try:
+        _restore_session_variable_if_absent(
+            db,
+            source_session_id,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            payload,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to restore compact_self continuation pending for session %s",
+            source_session_id,
+            exc_info=True,
+        )
+    return False
 
 
 def schedule_compact_self_continuation_fallback(
@@ -367,6 +408,37 @@ def _merge_session_variable(
                 "VALUES (%s, %s, %s)",
                 (session_id, json.dumps(variables), now),
             )
+
+
+def _restore_session_variable_if_absent(
+    db: HubDatabase,
+    session_id: str,
+    name: str,
+    value: Any,
+) -> bool:
+    """Restore a consumed value without replacing a concurrently written value."""
+    now = datetime.now(UTC).isoformat()
+    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+        row = conn.execute(
+            "SELECT variables FROM session_variables WHERE session_id = %s",
+            (session_id,),
+        ).fetchone()
+        variables = _load_variables(_row_variables(row))
+        if name in variables:
+            return False
+        variables[name] = value
+        if row:
+            conn.execute(
+                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
+                (json.dumps(variables), now, session_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO session_variables (session_id, variables, updated_at) "
+                "VALUES (%s, %s, %s)",
+                (session_id, json.dumps(variables), now),
+            )
+        return True
 
 
 def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
