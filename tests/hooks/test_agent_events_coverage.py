@@ -906,6 +906,7 @@ class TestHandleAfterAgent:
 
     def test_with_session(self) -> None:
         handler = _TestHandler()
+        handler._apply_debug_echo = MagicMock()
         event = _make_event(
             event_type=HookEventType.AFTER_AGENT,
             metadata={"_platform_session_id": "sess-1"},
@@ -914,6 +915,7 @@ class TestHandleAfterAgent:
         result = handler.handle_after_agent(event)
         assert result.decision == "allow"
         handler._session_manager.update_session_status.assert_called_with("sess-1", "paused")
+        handler._apply_debug_echo.assert_called_once_with(result)
 
     def test_without_session(self) -> None:
         handler = _TestHandler()

@@ -489,10 +489,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug(f"AFTER_AGENT: cli={cli_source}")
 
-        return HookResponse(
+        response = HookResponse(
             decision="allow",
             context="\n\n".join(context_parts) if context_parts else None,
         )
+        self._apply_debug_echo(response)
+        return response
 
     def handle_stop(self, event: HookEvent) -> HookResponse:
         """Handle STOP event (Claude Code only)."""
