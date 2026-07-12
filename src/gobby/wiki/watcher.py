@@ -44,7 +44,9 @@ class WikiWatcher:
         self._coordinator = coordinator
         self._debounce_interval = debounce_interval
         self._poll_interval = poll_interval
-        self._ignore_globs = ignore_globs or list(DEFAULT_WIKI_IGNORE_GLOBS)
+        self._ignore_globs = (
+            list(DEFAULT_WIKI_IGNORE_GLOBS) if ignore_globs is None else list(ignore_globs)
+        )
         self._pending: dict[str, set[Path]] = {}
         self._pending_since: float | None = None
         self._last_index_time: float | None = None
@@ -96,39 +98,38 @@ class WikiWatcher:
                     for scope, paths in self._pending.items()
                     if paths
                 }
+                pending_since = self._pending_since
+                self._pending.clear()
 
             if not pending:
                 return None
-            result = await self._coordinator.handle_local_changes(pending)
-            handoff = result.get("index_handoff") if isinstance(result, dict) else None
-            if not isinstance(handoff, dict):
-                handoff = {}
-            degraded = handoff.get("status") == "degraded"
-            if degraded:
-                indexed_scopes = self._degraded_indexed_scopes(handoff)
-                self._log_degraded_handoff(handoff, pending, indexed_scopes)
-            else:
-                indexed_scopes = set(pending)
-            async with self._lock:
-                for scope in indexed_scopes:
-                    paths = pending.get(scope)
-                    if not paths:
-                        continue
-                    current = self._pending.get(scope)
-                    if current is None:
-                        continue
-                    current.difference_update(paths)
-                    if not current:
-                        self._pending.pop(scope, None)
-                if not self._pending:
-                    self._pending_since = None
-                elif degraded:
-                    # Restart the debounce window so retries back off instead of
-                    # re-flushing on every poll tick while gwiki stays degraded.
-                    self._pending_since = time.monotonic()
-            if not degraded:
-                self._last_index_time = time.time()
-            return result
+            completed = False
+            try:
+                result = await self._coordinator.handle_local_changes(pending)
+                handoff = result.get("index_handoff") if isinstance(result, dict) else None
+                if not isinstance(handoff, dict):
+                    handoff = {}
+                degraded = handoff.get("status") == "degraded"
+                if degraded:
+                    indexed_scopes = self._degraded_indexed_scopes(handoff)
+                    self._log_degraded_handoff(handoff, pending, indexed_scopes)
+                else:
+                    indexed_scopes = set(pending)
+                async with self._lock:
+                    for scope in set(pending) - indexed_scopes:
+                        self._pending.setdefault(scope, set()).update(pending[scope])
+                    self._pending_since = time.monotonic() if self._pending else None
+                if not degraded:
+                    self._last_index_time = time.time()
+                completed = True
+                return result
+            finally:
+                if not completed:
+                    async with self._lock:
+                        for scope, paths in pending.items():
+                            self._pending.setdefault(scope, set()).update(paths)
+                        if self._pending_since is None:
+                            self._pending_since = pending_since or time.monotonic()
 
     @staticmethod
     def _degraded_indexed_scopes(handoff: dict[str, Any]) -> set[str]:

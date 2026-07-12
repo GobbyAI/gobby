@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
-import mimetypes
-from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
 
 from gobby.config.ai import LocalGenerationEndpointConfig
-from gobby.llm.base import LLMTextResult
+from gobby.llm.base import (
+    LLMProviderError,
+    LLMTextResult,
+    VisionInputError,
+    VisionProviderError,
+    VisionProviderUnavailableError,
+    validate_vision_description,
+)
+from gobby.llm.image_payloads import prepare_image_data
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,19 @@ _UNSUPPORTED_PARAMETER_MARKERS = (
     "unknown parameter",
     "unrecognized",
     "unexpected keyword",
+)
+_LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS = 120.0
+_LOCAL_OPENAI_CONNECT_TIMEOUT_SECONDS = 5.0
+_LOCAL_OPENAI_READ_TIMEOUT_SECONDS = 120.0
+_LOCAL_OPENAI_WRITE_TIMEOUT_SECONDS = 30.0
+_LOCAL_OPENAI_POOL_TIMEOUT_SECONDS = 5.0
+_LOCAL_OPENAI_MAX_RETRIES = 0
+_LOCAL_OPENAI_TIMEOUT = httpx.Timeout(
+    _LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS,
+    connect=_LOCAL_OPENAI_CONNECT_TIMEOUT_SECONDS,
+    read=_LOCAL_OPENAI_READ_TIMEOUT_SECONDS,
+    write=_LOCAL_OPENAI_WRITE_TIMEOUT_SECONDS,
+    pool=_LOCAL_OPENAI_POOL_TIMEOUT_SECONDS,
 )
 
 
@@ -57,6 +75,7 @@ class LocalProviderAdapter(Protocol):
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Generate and parse JSON."""
@@ -102,21 +121,24 @@ def _usage_dict(usage: Any) -> dict[str, int] | None:
     return result or None
 
 
-def _is_unsupported_parameter_error(error: BaseException, parameter: str) -> bool:
-    message = str(error).lower()
-    return parameter.lower() in message and any(
-        marker in message for marker in _UNSUPPORTED_PARAMETER_MARKERS
-    )
-
-
 def _is_unsupported_json_mode_error(error: BaseException) -> bool:
+    response = getattr(error, "response", None)
+    if getattr(response, "status_code", None) != 400:
+        return False
+
+    parameter = str(getattr(error, "param", "") or "").lower()
+    code = str(getattr(error, "code", "") or "").lower().replace("_", " ")
+    code_rejects_parameter = any(marker in code for marker in _UNSUPPORTED_PARAMETER_MARKERS) and (
+        parameter == "response_format" or "response format" in code
+    )
     message = str(error).lower()
     mentions_json_mode = (
         "response_format" in message or "json_object" in message or "json mode" in message
     )
-    return mentions_json_mode and any(
+    message_rejection = mentions_json_mode and any(
         marker in message for marker in _UNSUPPORTED_PARAMETER_MARKERS
     )
+    return code_rejects_parameter or message_rejection
 
 
 def _strip_json_fences(content: str) -> str:
@@ -155,20 +177,6 @@ def _headers(api_key: str | None) -> dict[str, str]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
-
-
-def _image_data(image_path: str) -> tuple[Path, str, str, str]:
-    path = Path(image_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
-
-    mime_type, _ = mimetypes.guess_type(str(path))
-    if mime_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
-        mime_type = "image/png"
-
-    encoded = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
-    data_url = f"data:{mime_type};base64,{encoded}"
-    return path, mime_type, encoded, data_url
 
 
 def _ollama_usage(payload: dict[str, Any]) -> dict[str, int] | None:
@@ -219,6 +227,8 @@ class OpenAICompatibleLocalProviderAdapter:
             self._client = AsyncOpenAI(
                 base_url=endpoint.api_base,
                 api_key=api_key,
+                timeout=_LOCAL_OPENAI_TIMEOUT,
+                max_retries=_LOCAL_OPENAI_MAX_RETRIES,
             )
             logger.debug(
                 "OpenAI-compatible local provider initialised (url=%s, model=%s)",
@@ -260,8 +270,14 @@ class OpenAICompatibleLocalProviderAdapter:
         if reasoning_effort is not None:
             request["reasoning_effort"] = reasoning_effort
         response = await self._client.chat.completions.create(**request)
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise LLMProviderError(
+                "OpenAI-compatible provider "
+                f"at {self._endpoint.api_base!r} using model {model!r} returned blank content"
+            )
         return LLMTextResult(
-            text=response.choices[0].message.content or "",
+            text=content,
             usage=_usage_dict(getattr(response, "usage", None)),
         )
 
@@ -271,6 +287,7 @@ class OpenAICompatibleLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         if not self._client:
@@ -286,14 +303,16 @@ class OpenAICompatibleLocalProviderAdapter:
                 },
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 8000,
+            "max_tokens": max_tokens if max_tokens is not None else 8000,
             "response_format": {"type": "json_object"},
         }
         if reasoning_effort is not None:
             request["reasoning_effort"] = reasoning_effort
+        from openai import BadRequestError
+
         try:
             response = await self._client.chat.completions.create(**request)
-        except Exception as json_mode_err:
+        except BadRequestError as json_mode_err:
             if not _is_unsupported_json_mode_error(json_mode_err):
                 raise
             logger.debug(
@@ -304,20 +323,7 @@ class OpenAICompatibleLocalProviderAdapter:
             request["messages"][0]["content"] = (
                 system_prompt or "You are a helpful assistant. Respond with valid JSON only."
             )
-            try:
-                response = await self._client.chat.completions.create(**request)
-            except Exception as reasoning_err:
-                if reasoning_effort is None or not _is_unsupported_parameter_error(
-                    reasoning_err,
-                    "reasoning_effort",
-                ):
-                    raise
-                logger.debug(
-                    "reasoning_effort rejected (%s), retrying without reasoning_effort",
-                    reasoning_err,
-                )
-                request.pop("reasoning_effort", None)
-                response = await self._client.chat.completions.create(**request)
+            response = await self._client.chat.completions.create(**request)
 
         return _parse_json_response(response.choices[0].message.content)
 
@@ -329,10 +335,10 @@ class OpenAICompatibleLocalProviderAdapter:
         model: str,
     ) -> str:
         if not self._client:
-            return "Image description unavailable (local LLM client not initialised)"
+            raise VisionProviderUnavailableError("Local LLM client not initialised")
 
         try:
-            _, mime_type, encoded, _ = _image_data(image_path)
+            _, mime_type, encoded, _ = await prepare_image_data(image_path, logger)
             prompt = _image_prompt(context)
             response = await self._client.chat.completions.create(
                 model=model,
@@ -352,10 +358,12 @@ class OpenAICompatibleLocalProviderAdapter:
                 ],
                 max_tokens=1024,
             )
-            return response.choices[0].message.content or "No description generated"
+            return validate_vision_description(response.choices[0].message.content or "")
+        except (VisionInputError, VisionProviderError):
+            raise
         except Exception as exc:
             logger.error("Failed to describe image with local LLM: %s", exc)
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"Local image description failed: {exc}") from exc
 
 
 class LMStudioLocalProviderAdapter:
@@ -396,6 +404,7 @@ class LMStudioLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         result = await self.generate_text_result(
@@ -403,7 +412,7 @@ class LMStudioLocalProviderAdapter:
             system_prompt=system_prompt
             or "You are a helpful assistant. Respond with valid JSON only.",
             model=model,
-            max_tokens=8000,
+            max_tokens=max_tokens if max_tokens is not None else 8000,
             reasoning_effort=reasoning_effort,
         )
         return _parse_json_response(result.text)
@@ -416,7 +425,7 @@ class LMStudioLocalProviderAdapter:
         model: str,
     ) -> str:
         try:
-            _, _, _, data_url = _image_data(image_path)
+            _, _, _, data_url = await prepare_image_data(image_path, logger)
             payload: dict[str, Any] = {
                 "model": model,
                 "input": [
@@ -427,10 +436,13 @@ class LMStudioLocalProviderAdapter:
                 "store": False,
                 "max_output_tokens": 1024,
             }
-            return _lmstudio_text(await self._post_chat(payload, timeout=300.0))
+            result = _lmstudio_text(await self._post_chat(payload, timeout=300.0))
+            return validate_vision_description(result)
+        except (VisionInputError, VisionProviderError):
+            raise
         except Exception as exc:
             logger.error("Failed to describe image with LM Studio: %s", exc)
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"LM Studio image description failed: {exc}") from exc
 
     async def _post_chat(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:
@@ -482,6 +494,7 @@ class OllamaLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         payload = _ollama_chat_payload(
@@ -489,7 +502,7 @@ class OllamaLocalProviderAdapter:
             system_prompt=system_prompt
             or "You are a helpful assistant. Respond with valid JSON only.",
             model=model,
-            max_tokens=8000,
+            max_tokens=max_tokens if max_tokens is not None else 8000,
         )
         payload["format"] = "json"
         data = await self._post_chat(payload, timeout=300.0)
@@ -503,7 +516,7 @@ class OllamaLocalProviderAdapter:
         model: str,
     ) -> str:
         try:
-            _, _, encoded, _ = _image_data(image_path)
+            _, _, encoded, _ = await prepare_image_data(image_path, logger)
             payload = {
                 "model": model,
                 "messages": [
@@ -517,10 +530,13 @@ class OllamaLocalProviderAdapter:
                 "keep_alive": -1,
                 "options": {"num_predict": 1024},
             }
-            return _ollama_text(await self._post_chat(payload, timeout=300.0))
+            result = _ollama_text(await self._post_chat(payload, timeout=300.0))
+            return validate_vision_description(result)
+        except (VisionInputError, VisionProviderError):
+            raise
         except Exception as exc:
             logger.error("Failed to describe image with Ollama: %s", exc)
-            return f"Image description failed: {exc}"
+            raise VisionProviderError(f"Ollama image description failed: {exc}") from exc
 
     async def _post_chat(self, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         async with httpx.AsyncClient() as client:

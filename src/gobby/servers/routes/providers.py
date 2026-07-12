@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import shutil
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
@@ -251,7 +252,9 @@ async def _probe_providers() -> list[tuple[str, str | None]]:
 
     Returns a list of (name, path_or_none) tuples.
     """
-    paths = await asyncio.gather(*[asyncio.to_thread(meta.path) for meta in provider_metadata()])
+    paths = await asyncio.gather(
+        *[asyncio.to_thread(shutil.which, meta.binary) for meta in provider_metadata()]
+    )
     return [(name, path) for (name, _binary), path in zip(_PROVIDER_DEFS, paths, strict=False)]
 
 

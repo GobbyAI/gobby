@@ -67,7 +67,7 @@ class TestProviderModelCatalog:
             "value": "sonnet",
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
-            "context_length": 200_000,
+            "context_length": 1_000_000,
             "context_length_source": "static_default",
             "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
         }

@@ -19,7 +19,6 @@ from gobby.wiki.scheduled_jobs import (
     WIKI_SCHEDULED_GATEWAY_TIMEOUT_SECONDS,
     _create_gateway,
     _previous_utc_day,
-    configured_wiki_cron_scopes,
     create_wiki_audit_handler,
     create_wiki_health_handler,
     create_wiki_librarian_handler,
@@ -844,7 +843,7 @@ async def test_default_wiki_cron_scope_resolves_project_root(
         cron_executor=executor,
         project_id=project_id,
         db=temp_db,
-        scopes=configured_wiki_cron_scopes(None, project_id),
+        scopes=None,
         gateway_factory=lambda scope: resolved_scopes.append(scope) or RecordingGateway(),
     )
 
