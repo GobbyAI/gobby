@@ -435,6 +435,65 @@ class TestCloseTask:
         assert close_call is not None
         assert close_call.kwargs["closed_commit_sha"] == "abc1234"
 
+    async def test_close_task_accepts_active_external_project_worktree(
+        self, mock_task_manager, mock_sync_manager, tmp_path
+    ):
+        """An active worktree may belong to a different project and sibling task."""
+        task_repo = tmp_path / "task-repo"
+        external_worktree = tmp_path / "external-project" / "worktree"
+        task_repo.mkdir()
+        external_worktree.mkdir(parents=True)
+        task = _make_task(commits=["abc1234"])
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.link_commit.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+        mock_task_manager.artifacts.get_artifacts.return_value = MagicMock(
+            worktree_path=None,
+            clone_path=None,
+        )
+        worktree = MagicMock(task_id="sibling-task", worktree_path=str(external_worktree))
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockPM,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch("gobby.mcp_proxy.tools.task_repo_paths.LocalWorktreeManager") as worktree_manager,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+            ) as mock_vcr,
+            patch(
+                "gobby.utils.git.normalize_commit_sha",
+                side_effect=lambda sha, cwd=None: sha,
+            ) as mock_norm,
+        ):
+            MockPM.return_value.get.return_value = MagicMock(repo_path=str(task_repo))
+            MockSVM.return_value.get_variables.return_value = {
+                "task_edited_files": {task.id: ["src/owned.py"]},
+            }
+            worktree_manager.return_value.list_worktrees.return_value = [worktree]
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task.id,
+                    "changes_summary": "done",
+                    "commit_sha": "abc1234",
+                    "project_path": str(external_worktree),
+                },
+            )
+
+        expected_cwd = str(external_worktree)
+        assert "error" not in result
+        assert result.get("success", True) is not False
+        mock_task_manager.link_commit.assert_called_with(
+            task.id,
+            "abc1234",
+            cwd=expected_cwd,
+        )
+        mock_norm.assert_called_with("abc1234", cwd=expected_cwd)
+        mock_vcr.assert_called_with(task, "completed", expected_cwd)
+
     @pytest.mark.asyncio
     async def test_close_task_rejects_missing_project_path_before_git(
         self, mock_task_manager, mock_sync_manager, tmp_path
