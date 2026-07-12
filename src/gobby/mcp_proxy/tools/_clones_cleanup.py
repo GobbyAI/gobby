@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
@@ -116,7 +117,11 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
             }
 
             if delete_files and not dry_run and ctx.git_manager:
-                git_result = ctx.git_manager.delete_clone(c.clone_path, force=True)
+                git_result = await asyncio.to_thread(
+                    ctx.git_manager.delete_clone,
+                    c.clone_path,
+                    force=True,
+                )
                 result_item["files_deleted"] = git_result.success
                 if not git_result.success:
                     result_item["delete_error"] = git_result.error or "Unknown error"

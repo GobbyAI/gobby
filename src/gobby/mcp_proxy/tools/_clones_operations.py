@@ -54,7 +54,11 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             logger.error("Failed to mark clone %s as deleting: %s", clone_id, e, exc_info=True)
             return {"success": False, "error": f"Failed to mark clone deleting: {e}"}
 
-        result = git_manager.delete_clone(clone_path, force=force)
+        result = await asyncio.to_thread(
+            git_manager.delete_clone,
+            clone_path,
+            force=force,
+        )
         if not result.success:
             logger.error(
                 f"Failed to delete clone files for {clone_id}: {result.error or result.message}"
@@ -130,7 +134,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         ctx.clone_storage.mark_syncing(clone_id)
 
         try:
-            result = git_manager.sync_clone(
+            result = await asyncio.to_thread(
+                git_manager.sync_clone,
                 clone_path=clone.clone_path,
                 direction=direction,
             )

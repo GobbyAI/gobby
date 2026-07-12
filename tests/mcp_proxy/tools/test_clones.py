@@ -9,6 +9,8 @@ Tests for the gobby-clones MCP server tools:
 - merge_clone
 """
 
+import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -115,6 +117,53 @@ class TestCreateClone:
         assert result["success"] is False
         assert "failed" in result["error"].lower()
         mock_clone_storage.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_clone_slow_git_does_not_block_event_loop(
+        self, registry: Any, mock_git_manager: Any
+    ) -> None:
+        """A slow clone subprocess runs outside the event-loop thread."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_clone(**_kwargs: object) -> MagicMock:
+            started.set()
+            if not release.wait(timeout=2):
+                raise TimeoutError("test did not release clone operation")
+            return MagicMock(success=False, error="expected test failure")
+
+        mock_git_manager.shallow_clone.side_effect = slow_clone
+        operation = asyncio.create_task(
+            registry.call(
+                "create_clone",
+                {
+                    "branch_name": "main",
+                    "clone_path": "/tmp/clones/test",
+                    "remote_url": "https://github.com/user/repo.git",
+                },
+            )
+        )
+
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+            assert operation.done() is False
+            progress = asyncio.Event()
+            allow_progress = asyncio.Event()
+
+            async def mark_progress() -> None:
+                await allow_progress.wait()
+                progress.set()
+
+            progress_task = asyncio.create_task(mark_progress())
+            allow_progress.set()
+            await asyncio.wait_for(progress.wait(), timeout=0.1)
+            await progress_task
+            assert operation.done() is False
+        finally:
+            release.set()
+
+        result = await asyncio.wait_for(operation, timeout=1)
+        assert result["success"] is False
 
     @pytest.mark.asyncio
     async def test_create_clone_with_task_id(
@@ -1134,6 +1183,67 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["marked_stale"] is True
         assert result["cleaned"][0]["files_deleted"] is True
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/old", force=True)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_slow_git_does_not_block_event_loop(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Slow stale-clone deletion runs outside the event-loop thread."""
+        mock_clone_storage.cleanup_stale.return_value = [
+            Clone(
+                id="clone-1",
+                project_id="11111111-1111-4111-8111-111111110001",
+                branch_name="old-feature",
+                clone_path="/tmp/clones/old",
+                base_branch="main",
+                task_id=None,
+                agent_session_id=None,
+                status="stale",
+                remote_url=None,
+                last_sync_at=None,
+                cleanup_after=None,
+                created_at=STALE_TIMESTAMP,
+                updated_at=STALE_TIMESTAMP,
+            ),
+        ]
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_delete(*_args: object, **_kwargs: object) -> MagicMock:
+            started.set()
+            if not release.wait(timeout=2):
+                raise TimeoutError("test did not release clone cleanup")
+            return MagicMock(success=True)
+
+        mock_git_manager.delete_clone.side_effect = slow_delete
+        operation = asyncio.create_task(
+            registry.call(
+                "cleanup_stale_clones",
+                {"hours": 24, "dry_run": False, "delete_files": True},
+            )
+        )
+
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=1)
+            assert operation.done() is False
+            progress = asyncio.Event()
+            allow_progress = asyncio.Event()
+
+            async def mark_progress() -> None:
+                await allow_progress.wait()
+                progress.set()
+
+            progress_task = asyncio.create_task(mark_progress())
+            allow_progress.set()
+            await asyncio.wait_for(progress.wait(), timeout=0.1)
+            await progress_task
+            assert operation.done() is False
+        finally:
+            release.set()
+
+        result = await asyncio.wait_for(operation, timeout=1)
+        assert result["success"] is True
+        assert result["cleaned"][0]["files_deleted"] is True
 
     @pytest.mark.asyncio
     async def test_cleanup_delete_files_failure(

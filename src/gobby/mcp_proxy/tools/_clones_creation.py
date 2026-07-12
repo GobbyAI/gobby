@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -68,23 +69,25 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                 # Clone from local repo path - always full clone
                 # Clone base_branch first, then create branch_name as new branch
                 source = str(git_manager.repo_path)
-                result = git_manager.full_clone(
+                result = await asyncio.to_thread(
+                    git_manager.full_clone,
                     remote_url=source,
                     clone_path=clone_path,
                     branch=base_branch,
                 )
                 if result.success and branch_name != base_branch:
-                    git_manager.run_git_command(
+                    await asyncio.to_thread(
+                        git_manager.run_git_command,
                         ["checkout", "-b", branch_name],
                         cwd=clone_path,
                         check=True,
                     )
                 if not remote_url:
-                    remote_url = git_manager.get_remote_url() or source
+                    remote_url = await asyncio.to_thread(git_manager.get_remote_url) or source
             else:
                 # Get remote URL if not provided
                 if not remote_url:
-                    remote_url = git_manager.get_remote_url()
+                    remote_url = await asyncio.to_thread(git_manager.get_remote_url)
                     if not remote_url:
                         return {
                             "success": False,
@@ -92,7 +95,8 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                         }
 
                 # Create the clone
-                result = git_manager.shallow_clone(
+                result = await asyncio.to_thread(
+                    git_manager.shallow_clone,
                     remote_url=remote_url,
                     clone_path=clone_path,
                     branch=branch_name,
