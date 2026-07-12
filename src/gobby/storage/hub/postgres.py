@@ -704,6 +704,8 @@ async def _await_task_completion(
         try:
             return await asyncio.shield(task), cancellation
         except asyncio.CancelledError as exc:
+            if task.cancelled():
+                raise
             cancellation = exc
 
 

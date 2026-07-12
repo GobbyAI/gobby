@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -11,6 +12,32 @@ pytestmark = pytest.mark.unit
 
 def _postgres_module():
     return importlib.import_module("gobby.storage.hub.postgres")
+
+
+@pytest.mark.asyncio
+async def test_await_task_completion_propagates_inner_cancellation_without_spinning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    shield_calls = 0
+
+    async def cancelled_operation() -> None:
+        raise asyncio.CancelledError("inner operation cancelled")
+
+    async def bounded_shield(task: asyncio.Task[object]) -> object:
+        nonlocal shield_calls
+        shield_calls += 1
+        if shield_calls > 1:
+            raise AssertionError("cancelled inner task was awaited repeatedly")
+        return await task
+
+    monkeypatch.setattr(module.asyncio, "shield", bounded_shield)
+    task = asyncio.create_task(cancelled_operation())
+
+    with pytest.raises(asyncio.CancelledError, match="inner operation cancelled"):
+        await module._await_task_completion(task)
+
+    assert shield_calls == 1
 
 
 def test_postgres_hub_database_exposes_backend_neutral_surface() -> None:
