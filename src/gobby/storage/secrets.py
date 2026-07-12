@@ -38,6 +38,7 @@ _KEK_FILENAME = ".secret_kek"
 # these, or envelope decryption breaks (Rust gcore reads GOBBY_HOME/.secret_kek).
 SECRET_MATERIAL_FILENAMES: tuple[str, ...] = (_SALT_FILENAME, _KEK_FILENAME)
 
+# These B105 suppressions are scoped to metadata literals, never secret values.
 # Stable key identifier, not a credential.
 SECRET_KEY_ID = "default"  # nosec B105
 POSTURE_KEY_FILE = "key_file"
