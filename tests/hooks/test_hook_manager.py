@@ -104,6 +104,30 @@ def test_record_machine_ingress_upserts_payload_metadata(
 class TestHandleInternalDaemonNotReady:
     """Tests for _handle_internal when daemon is not ready."""
 
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+    def test_terminal_hook_blocks_before_rule_evaluation(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+        event_type: HookEventType,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._health_monitor.get_cached_status.return_value = (
+            False,
+            None,
+            "unreachable",
+            "Connection refused",
+        )
+        manager._health_monitor.check_now.return_value = False
+        manager._workflow_handler.handle.reset_mock()
+
+        with patch("time.sleep"), patch.object(manager, "_handle_after_daemon_ready") as downstream:
+            response = manager._handle_internal(make_event(event_type=event_type))
+
+        assert response.decision == "block"
+        downstream.assert_not_called()
+        manager._workflow_handler.handle.assert_not_called()
+
     def test_handle_returns_allow_when_daemon_not_ready_for_non_critical(
         self,
         manager_with_mocks: HookManager,

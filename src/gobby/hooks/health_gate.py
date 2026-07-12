@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Protocol
+from typing import Literal, Protocol
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
@@ -17,6 +17,7 @@ CRITICAL_HOOKS = {
     HookEventType.AFTER_AGENT,
     HookEventType.STOP,
 }
+FAIL_CLOSED_HOOKS = {HookEventType.STOP, HookEventType.AFTER_AGENT}
 RETRY_DELAYS = (0.5, 1.0, 2.0)
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
 
@@ -48,14 +49,19 @@ def _unavailable_response(
             reason=f"Daemon restarting ({restart_source}): {error_reason or 'Unknown'}",
         )
 
+    decision: Literal["block", "allow"] = (
+        "block" if event.event_type in FAIL_CLOSED_HOOKS else "allow"
+    )
+    action = "blocking" if decision == "block" else "skipping"
     logger.warning(
-        "Daemon not available after retries, skipping hook execution: %s. Status: %s, Error: %s",
+        "Daemon not available after retries, %s hook execution: %s. Status: %s, Error: %s",
+        action,
         event.event_type,
         daemon_status,
         error_reason,
     )
     return HookResponse(
-        decision="allow",
+        decision=decision,
         reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
     )
 
@@ -74,7 +80,7 @@ def ensure_daemon_ready(
     health_monitor: HealthMonitorProtocol,
     logger: logging.Logger,
 ) -> HookResponse | None:
-    """Return fail-open response when daemon is unavailable."""
+    """Return the event-specific response when the daemon is unavailable."""
     is_ready, _, daemon_status, error_reason = health_monitor.get_cached_status()
 
     if not is_ready and event.event_type in CRITICAL_HOOKS:
