@@ -61,6 +61,9 @@ class HealthMonitor:
         # Threading state
         self._health_check_timer: threading.Timer | None = None
         self._health_check_lock = threading.Lock()
+        self._fresh_check_condition = threading.Condition()
+        self._fresh_check_in_progress = False
+        self._fresh_check_waiters = 0
         self._is_shutdown: bool = False
 
     def start(self) -> None:
@@ -78,21 +81,9 @@ class HealthMonitor:
             def health_check_loop() -> None:
                 """Background health check loop."""
                 try:
-                    # Update daemon status cache
-                    # check_status() returns tuple: (is_ready, message, status, error)
-                    is_ready, message, status, error = self._daemon_client.check_status()
-                    with self._health_check_lock:
-                        self._cached_daemon_is_ready = is_ready
-                        self._cached_daemon_message = message
-                        self._cached_daemon_status = status
-                        self._cached_daemon_error = error
+                    self.check_now()
                 except Exception as e:
-                    # Daemon not responding is expected when stopped, log at debug level
                     self.logger.debug(f"Health check failed: {e}", exc_info=True)
-                    with self._health_check_lock:
-                        self._cached_daemon_is_ready = False
-                        self._cached_daemon_status = "not_running"
-                        self._cached_daemon_error = str(e)
                 finally:
                     # Schedule next check only if not shutting down
                     with self._health_check_lock:
@@ -151,21 +142,38 @@ class HealthMonitor:
         Returns:
             True if daemon is healthy, False otherwise
         """
+        with self._fresh_check_condition:
+            if self._fresh_check_in_progress:
+                self._fresh_check_waiters += 1
+                try:
+                    while self._fresh_check_in_progress:
+                        self._fresh_check_condition.wait()
+                finally:
+                    self._fresh_check_waiters -= 1
+                with self._health_check_lock:
+                    return self._cached_daemon_is_ready
+            self._fresh_check_in_progress = True
+
         try:
-            is_ready, message, status, error = self._daemon_client.check_status()
-            with self._health_check_lock:
-                self._cached_daemon_is_ready = is_ready
-                self._cached_daemon_message = message
-                self._cached_daemon_status = status
-                self._cached_daemon_error = error
-            return is_ready
-        except Exception as e:
-            self.logger.debug(f"Immediate health check failed: {e}")
-            with self._health_check_lock:
-                self._cached_daemon_is_ready = False
-                self._cached_daemon_status = "not_running"
-                self._cached_daemon_error = str(e)
-            return False
+            try:
+                is_ready, message, status, error = self._daemon_client.check_status()
+                with self._health_check_lock:
+                    self._cached_daemon_is_ready = is_ready
+                    self._cached_daemon_message = message
+                    self._cached_daemon_status = status
+                    self._cached_daemon_error = error
+                return is_ready
+            except Exception as e:
+                self.logger.debug(f"Immediate health check failed: {e}")
+                with self._health_check_lock:
+                    self._cached_daemon_is_ready = False
+                    self._cached_daemon_status = "not_running"
+                    self._cached_daemon_error = str(e)
+                return False
+        finally:
+            with self._fresh_check_condition:
+                self._fresh_check_in_progress = False
+                self._fresh_check_condition.notify_all()
 
 
 __all__ = ["HealthMonitor"]
