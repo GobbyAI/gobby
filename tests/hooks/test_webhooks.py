@@ -1,5 +1,7 @@
 """Tests for the webhook dispatcher."""
 
+import asyncio
+import time
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
@@ -241,6 +243,87 @@ class TestWebhookDispatcherTrigger:
             assert results[0].endpoint_name == "test-webhook"
 
         await dispatcher.close()
+
+    @pytest.mark.asyncio
+    async def test_redirect_does_not_forward_auth_headers(self, sample_event: HookEvent) -> None:
+        requests: list[httpx.Request] = []
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.url.host == "origin.example":
+                return httpx.Response(
+                    302,
+                    headers={"Location": "http://target.internal/collect"},
+                )
+            return httpx.Response(200)
+
+        endpoint = WebhookEndpointConfig(
+            name="redirecting",
+            url="https://origin.example/hook",
+            headers={"Authorization": "Bearer secret"},
+            retry_count=3,
+        )
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
+
+        with patch("gobby.hooks.webhooks.httpx.AsyncClient", return_value=client) as client_cls:
+            results = await dispatcher.trigger(sample_event)
+
+        assert [request.url.host for request in requests] == ["origin.example"]
+        assert requests[0].headers["Authorization"] == "Bearer secret"
+        assert results[0].success is False
+        assert results[0].attempts == 1
+        client_cls.assert_called_once()
+        assert client_cls.call_args.kwargs["follow_redirects"] is False
+        await dispatcher.close()
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_is_rejected_before_request(
+        self,
+        sample_event: HookEvent,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("WEBHOOK_RUNTIME_HOST", "hooks.example.com")
+        endpoint = WebhookEndpointConfig(
+            name="invalid-url",
+            url="https://${WEBHOOK_RUNTIME_HOST}/collect",
+            retry_count=0,
+        )
+        monkeypatch.setenv("WEBHOOK_RUNTIME_HOST", "bad host")
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[endpoint]))
+
+        with patch.object(httpx.AsyncClient, "post", new_callable=AsyncMock) as mock_post:
+            results = await dispatcher.trigger(sample_event)
+
+        mock_post.assert_not_awaited()
+        assert results[0].success is False
+        assert "Invalid webhook URL" in (results[0].error or "")
+        await dispatcher.close()
+
+    @pytest.mark.asyncio
+    async def test_blocking_endpoint_respects_aggregate_deadline(
+        self,
+        sample_event: HookEvent,
+        blocking_endpoint: WebhookEndpointConfig,
+    ) -> None:
+        blocking_endpoint.events = []
+        dispatcher = WebhookDispatcher(WebhooksConfig(endpoints=[blocking_endpoint]))
+
+        async def slow_dispatch(*_args: object, **_kwargs: object) -> WebhookResult:
+            await asyncio.Event().wait()
+            return WebhookResult(endpoint_name="blocking-webhook", success=True)
+
+        with patch.object(dispatcher, "_dispatch_single", side_effect=slow_dispatch):
+            started = time.monotonic()
+            results = await dispatcher.trigger(
+                sample_event,
+                deadline=started + 0.02,
+            )
+            elapsed = time.monotonic() - started
+
+        assert elapsed < 0.5
+        assert results[0].success is False
+        assert results[0].error == "Aggregate blocking deadline exceeded"
 
     @pytest.mark.asyncio
     async def test_trigger_expands_environment_in_url_and_headers(

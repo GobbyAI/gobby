@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from gobby.hooks.effect_deadline import remaining_blocking_effect_seconds
 from gobby.hooks.events import HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
@@ -73,7 +74,11 @@ def run_coro_blocking(
             return None
     else:
         try:
-            return asyncio.run(coro)
+
+            async def run_with_timeout() -> Any:
+                return await asyncio.wait_for(coro, timeout=timeout_seconds)
+
+            return asyncio.run(run_with_timeout())
         except Exception as e:
             logger.error(
                 f"run_coro_blocking{label_suffix}: asyncio.run failed: {type(e).__name__}: {e}",
@@ -389,6 +394,8 @@ def dispatch_mcp_calls(
     tool_proxy_getter: Any,
     loop: asyncio.AbstractEventLoop | None,
     logger: logging.Logger,
+    *,
+    deadline: float | None = None,
 ) -> list[dict[str, Any]]:
     """Dispatch mcp_call effects from rule engine evaluation.
 
@@ -534,12 +541,18 @@ def dispatch_mcp_calls(
         if needs_capture:
             event_type_label = getattr(event.event_type, "value", event.event_type)
             label = f"{event_type_label}:{server}/{tool}"
-            result = run_coro_blocking(
-                _call(server, tool, arguments),
-                loop,
-                logger,
-                label=label,
-            )
+            timeout_seconds = remaining_blocking_effect_seconds(deadline, maximum=30.0)
+            if timeout_seconds <= 0:
+                logger.error("dispatch_mcp_calls[%s]: aggregate blocking deadline exceeded", label)
+                result = None
+            else:
+                result = run_coro_blocking(
+                    _call(server, tool, arguments),
+                    loop,
+                    logger,
+                    label=label,
+                    timeout_seconds=timeout_seconds,
+                )
             success = mcp_call_succeeded(result)
             dispatch_results.append(
                 {
@@ -605,6 +618,17 @@ def dispatch_mcp_calls(
             # Blocking dispatch -- must await completion, not fire-and-forget
             event_type_label = getattr(event.event_type, "value", event.event_type)
             label = f"{event_type_label}:{server}/{tool}"
-            run_coro_blocking(coro, loop, logger, label=label)
+            timeout_seconds = remaining_blocking_effect_seconds(deadline, maximum=30.0)
+            if timeout_seconds <= 0:
+                coro.close()
+                logger.error("dispatch_mcp_calls[%s]: aggregate blocking deadline exceeded", label)
+            else:
+                run_coro_blocking(
+                    coro,
+                    loop,
+                    logger,
+                    label=label,
+                    timeout_seconds=timeout_seconds,
+                )
 
     return dispatch_results

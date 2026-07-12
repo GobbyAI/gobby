@@ -20,6 +20,7 @@ import psycopg
 from gobby.hooks.broadcaster import schedule_hook_broadcast
 from gobby.hooks.dispatchers import mcp as mcp_dispatcher
 from gobby.hooks.dispatchers import webhook as webhook_dispatcher
+from gobby.hooks.effect_deadline import new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
@@ -316,8 +317,14 @@ class HookManager:
 
         return await asyncio.to_thread(self._handle_after_daemon_ready, event)
 
-    def _handle_after_daemon_ready(self, event: HookEvent) -> HookResponse:
+    def _handle_after_daemon_ready(
+        self,
+        event: HookEvent,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
         """Run hook handling after the daemon readiness gate has passed."""
+        if blocking_deadline is None:
+            blocking_deadline = new_blocking_effect_deadline()
         self._record_machine_ingress(event)
 
         # SESSION_START is special: the handler establishes the canonical
@@ -388,14 +395,16 @@ class HookManager:
             reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
             with create_span("hook.session_start.rules"):
-                workflow_context, blocking_response = self._evaluate_workflow_rules(event)
+                workflow_context, blocking_response = self._evaluate_workflow_rules(
+                    event, blocking_deadline
+                )
                 if blocking_response:
                     return self._complete_response(
                         event, blocking_response, workflow_context, preserve_original=True
                     )
 
             with create_span("hook.session_start.webhooks"):
-                webhook_block = self._evaluate_blocking_webhooks(event)
+                webhook_block = self._evaluate_blocking_webhooks(event, blocking_deadline)
                 if webhook_block:
                     return self._complete_response(
                         event, webhook_block, workflow_context, preserve_original=True
@@ -404,7 +413,9 @@ class HookManager:
             if event.event_type in (HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL):
                 reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
-            workflow_context, blocking_response = self._evaluate_workflow_rules(event)
+            workflow_context, blocking_response = self._evaluate_workflow_rules(
+                event, blocking_deadline
+            )
             if blocking_response:
                 return self._complete_response(
                     event, blocking_response, workflow_context, preserve_original=True
@@ -412,7 +423,7 @@ class HookManager:
             if event.event_type == HookEventType.BEFORE_AGENT:
                 workflow_context = self._append_memory_recall_context(event, workflow_context)
 
-            webhook_block = self._evaluate_blocking_webhooks(event)
+            webhook_block = self._evaluate_blocking_webhooks(event, blocking_deadline)
             if webhook_block:
                 return self._complete_response(
                     event, webhook_block, workflow_context, preserve_original=True
@@ -525,9 +536,13 @@ class HookManager:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._evaluate_workflow_rules(event)
 
-    def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
+    def _evaluate_workflow_rules(
+        self,
+        event: HookEvent,
+        blocking_deadline: float | None = None,
+    ) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
-        return self._create_rule_evaluator().evaluate(event)
+        return self._create_rule_evaluator(blocking_deadline).evaluate(event)
 
     def _append_memory_recall_context(
         self,
@@ -688,20 +703,40 @@ class HookManager:
         except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
             self.logger.warning("Deferred daemon memory recall failed: %s", exc)
 
-    def _create_rule_evaluator(self) -> WorkflowRuleEvaluator:
+    def _create_rule_evaluator(
+        self,
+        blocking_deadline: float | None = None,
+    ) -> WorkflowRuleEvaluator:
         """Create a rule evaluator bound to the manager's current dependencies."""
+
+        def dispatch_mcp_calls(
+            calls: list[dict[str, Any]],
+            event: HookEvent,
+        ) -> list[dict[str, Any]]:
+            if blocking_deadline is None:
+                return self._dispatch_mcp_calls(calls, event)
+            return self._dispatch_mcp_calls(calls, event, deadline=blocking_deadline)
+
         return WorkflowRuleEvaluator(
             workflow_handler=self._workflow_handler,
-            dispatch_mcp_calls=lambda calls, event: self._dispatch_mcp_calls(calls, event),
+            dispatch_mcp_calls=dispatch_mcp_calls,
             format_discovery_result=self._format_discovery_result,
             database=self._database,
             logger=self.logger,
         )
 
-    def _evaluate_blocking_webhooks(self, event: HookEvent) -> HookResponse | None:
+    def _evaluate_blocking_webhooks(
+        self,
+        event: HookEvent,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse | None:
         """Evaluate blocking webhooks before handler execution."""
         return webhook_dispatcher.evaluate_blocking_webhooks(
-            event, self._webhook_dispatcher, self.logger, self._loop
+            event,
+            self._webhook_dispatcher,
+            self.logger,
+            self._loop,
+            deadline=blocking_deadline,
         )
 
     def _dispatch_webhooks_sync(self, event: HookEvent, blocking_only: bool = False) -> list[Any]:
@@ -719,11 +754,20 @@ class HookManager:
         )
 
     def _dispatch_mcp_calls(
-        self, mcp_calls: list[dict[str, Any]], event: HookEvent
+        self,
+        mcp_calls: list[dict[str, Any]],
+        event: HookEvent,
+        *,
+        deadline: float | None = None,
     ) -> list[dict[str, Any]]:
         """Dispatch mcp_call effects from rule engine evaluation."""
         return mcp_dispatcher.dispatch_mcp_calls(
-            mcp_calls, event, self.tool_proxy_getter, self._loop, self.logger
+            mcp_calls,
+            event,
+            self.tool_proxy_getter,
+            self._loop,
+            self.logger,
+            deadline=deadline,
         )
 
     def _run_coro_blocking(

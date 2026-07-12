@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import logging
 
+from gobby.hooks.effect_deadline import new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
@@ -42,6 +43,8 @@ def evaluate_blocking_webhooks(
     webhook_dispatcher: WebhookDispatcher,
     logger: logging.Logger,
     loop: asyncio.AbstractEventLoop | None,
+    *,
+    deadline: float | None = None,
 ) -> HookResponse | None:
     """Evaluate blocking webhooks before handler execution.
 
@@ -60,6 +63,7 @@ def evaluate_blocking_webhooks(
             webhook_dispatcher,
             logger,
             blocking_only=True,
+            deadline=deadline,
         )
         decision, reason = webhook_dispatcher.get_blocking_decision(webhook_results)
         if decision == "block":
@@ -85,6 +89,8 @@ def dispatch_webhooks_sync(
     webhook_dispatcher: WebhookDispatcher,
     logger: logging.Logger,
     blocking_only: bool = False,
+    *,
+    deadline: float | None = None,
 ) -> list[WebhookResult]:
     """Dispatch webhooks synchronously (for blocking webhooks).
 
@@ -114,12 +120,18 @@ def dispatch_webhooks_sync(
 
     # Build payload once
     payload = webhook_dispatcher._build_payload(event)
+    blocking_deadline = deadline if deadline is not None else new_blocking_effect_deadline()
 
     # Run async dispatch in sync context
     async def dispatch_all() -> list[WebhookResult]:
         results: list[WebhookResult] = []
         for endpoint in matching_endpoints:
-            result = await webhook_dispatcher._dispatch_single(endpoint, payload)
+            if endpoint.can_block:
+                result = await webhook_dispatcher._dispatch_blocking(
+                    endpoint, payload, blocking_deadline
+                )
+            else:
+                result = await webhook_dispatcher._dispatch_single(endpoint, payload)
             results.append(result)
         return results
 

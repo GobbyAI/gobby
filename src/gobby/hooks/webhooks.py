@@ -19,11 +19,17 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.config.url_validation import validate_endpoint_url
+from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
+    new_blocking_effect_deadline,
+    remaining_blocking_effect_seconds,
+)
+from gobby.hooks.events import HookEvent, HookResponse
 from gobby.utils.env import expand_env_mapping, expand_env_variables
 
 if TYPE_CHECKING:
     from gobby.config.extensions import WebhookEndpointConfig, WebhooksConfig
-from gobby.hooks.events import HookEvent, HookResponse
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +89,7 @@ class WebhookDispatcher:
                 if self._client is None:
                     self._client = httpx.AsyncClient(
                         timeout=httpx.Timeout(self.config.default_timeout),
-                        follow_redirects=True,
+                        follow_redirects=False,
                     )
         return self._client
 
@@ -170,7 +176,18 @@ class WebhookDispatcher:
             "X-Gobby-Event": payload.get("event_type", "unknown"),
         }
         headers.update(expand_env_mapping(endpoint.headers) or {})
-        url = expand_env_variables(endpoint.url)
+        try:
+            url = validate_endpoint_url(
+                expand_env_variables(endpoint.url),
+                field_name="webhook URL",
+            )
+        except ValueError as exc:
+            return WebhookResult(
+                endpoint_name=endpoint.name,
+                success=False,
+                error=f"Invalid webhook URL: {exc}",
+                decision="block" if endpoint.can_block and endpoint.fail_closed else None,
+            )
 
         while attempts <= endpoint.retry_count:
             attempts += 1
@@ -210,9 +227,12 @@ class WebhookDispatcher:
                         decision=decision,
                     )
 
-                # 4xx errors are not retryable (client error)
-                if 400 <= response.status_code < 500:
-                    logger.warning(f"Webhook {endpoint.name} client error: {response.status_code}")
+                # Redirects and client errors are not retryable. Redirect following is disabled,
+                # so returning immediately also prevents repeated requests to the origin.
+                if 300 <= response.status_code < 500:
+                    logger.warning(
+                        f"Webhook {endpoint.name} non-success response: {response.status_code}"
+                    )
                     return WebhookResult(
                         endpoint_name=endpoint.name,
                         success=False,
@@ -267,7 +287,41 @@ class WebhookDispatcher:
             decision="block" if endpoint.can_block and endpoint.fail_closed else None,
         )
 
-    async def trigger(self, event: HookEvent) -> list[WebhookResult]:
+    async def _dispatch_blocking(
+        self,
+        endpoint: WebhookEndpointConfig,
+        payload: dict[str, Any],
+        deadline: float,
+    ) -> WebhookResult:
+        """Dispatch one blocking endpoint within the shared hook deadline."""
+        remaining = remaining_blocking_effect_seconds(
+            deadline,
+            maximum=BLOCKING_EFFECT_BUDGET_SECONDS,
+        )
+        if remaining <= 0:
+            return self._blocking_deadline_result(endpoint)
+        try:
+            async with asyncio.timeout(remaining):
+                return await self._dispatch_single(endpoint, payload)
+        except TimeoutError:
+            logger.error("Blocking webhook %s exceeded aggregate deadline", endpoint.name)
+            return self._blocking_deadline_result(endpoint)
+
+    @staticmethod
+    def _blocking_deadline_result(endpoint: WebhookEndpointConfig) -> WebhookResult:
+        return WebhookResult(
+            endpoint_name=endpoint.name,
+            success=False,
+            error="Aggregate blocking deadline exceeded",
+            decision="block" if endpoint.fail_closed else None,
+        )
+
+    async def trigger(
+        self,
+        event: HookEvent,
+        *,
+        deadline: float | None = None,
+    ) -> list[WebhookResult]:
         """Trigger webhooks for a hook event.
 
         Dispatches HTTP POST requests to all matching webhook endpoints.
@@ -300,10 +354,11 @@ class WebhookDispatcher:
         non_blocking = [ep for ep in matching_endpoints if not ep.can_block]
 
         results: list[WebhookResult] = []
+        blocking_deadline = deadline if deadline is not None else new_blocking_effect_deadline()
 
         # Dispatch blocking webhooks first (sequentially, need their decisions)
         for endpoint in blocking:
-            result = await self._dispatch_single(endpoint, payload)
+            result = await self._dispatch_blocking(endpoint, payload, blocking_deadline)
             results.append(result)
 
             # If a blocking webhook says "block", we might stop processing

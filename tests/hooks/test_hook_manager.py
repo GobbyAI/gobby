@@ -331,6 +331,37 @@ class TestHandleSessionStart:
 class TestHandleNonSessionStart:
     """Tests for non-SESSION_START handler ordering (rules before handler)."""
 
+    def test_rules_and_webhooks_share_blocking_deadline(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        manager = manager_with_mocks
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._session_lookup.resolve.return_value = None
+
+        with (
+            patch.object(
+                manager,
+                "_evaluate_workflow_rules",
+                return_value=(None, None),
+            ) as evaluate_rules,
+            patch.object(
+                manager,
+                "_evaluate_blocking_webhooks",
+                return_value=None,
+            ) as evaluate_webhooks,
+            patch("gobby.hooks.hook_manager.time.monotonic", return_value=100.0),
+        ):
+            manager._handle_internal(make_event(event_type=HookEventType.BEFORE_TOOL))
+
+        rules_deadline = evaluate_rules.call_args.args[1]
+        webhooks_deadline = evaluate_webhooks.call_args.args[1]
+        assert rules_deadline == webhooks_deadline
+        assert 100.0 < rules_deadline < 120.0
+
     def test_non_session_start_runs_rules_before_handler(
         self,
         manager_with_mocks: HookManager,
