@@ -162,25 +162,15 @@ def register_pipeline_tools(
         name="get_pipeline",
         description="Get details about a specific pipeline definition including steps and inputs.",
     )
-    async def _get_pipeline(
-        name: str,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
+    async def _get_pipeline(name: str) -> dict[str, Any]:
         if _loader is None:
             return {"success": False, "error": "Pipeline tools require a workflow loader"}
 
-        from pathlib import Path
-
-        from gobby.utils.project_context import get_workflow_project_path
         from gobby.workflows.definitions import PipelineDefinition
 
-        if not project_path:
-            discovered = get_workflow_project_path()
-            if discovered:
-                project_path = str(discovered)
-
-        proj = Path(project_path) if project_path else None
-        definition = await _loader.load_workflow(name, proj)
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        definition = await _loader.load_workflow(name, project_id)
 
         if not definition:
             return {"success": False, "error": f"Pipeline '{name}' not found"}

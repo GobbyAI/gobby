@@ -147,9 +147,10 @@ async def test_concurrent_double_resume_spawns_one_executor() -> None:
     arrivals = 0
     both_loading = asyncio.Event()
 
-    async def _load_pipeline(name: str) -> MagicMock:
+    async def _load_pipeline(name: str, project_id: str) -> MagicMock:
         nonlocal arrivals
         assert name == execution.pipeline_name
+        assert project_id == execution.project_id
         arrivals += 1
         if arrivals == 2:
             both_loading.set()
@@ -226,7 +227,7 @@ async def test_resume_rolls_back_claim_when_step_reset_fails() -> None:
     )
     execution_manager.claim_failed_execution_for_resume.assert_called_once_with(execution.id)
     execution_manager.reset_steps_from.assert_called_once_with(execution.id, "failed-step")
-    loader.load_pipeline.assert_awaited_once_with(pipeline.name)
+    loader.load_pipeline.assert_awaited_once_with(pipeline.name, execution.project_id)
     executor.execute.assert_not_awaited()
 
 

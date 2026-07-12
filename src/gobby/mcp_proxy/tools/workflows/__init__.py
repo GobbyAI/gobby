@@ -56,7 +56,7 @@ from gobby.mcp_proxy.tools.workflows._variables import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.utils.project_context import get_workflow_project_path
+from gobby.utils.project_context import get_project_context, get_workflow_project_path
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import (
     SessionVariableManager,
@@ -153,11 +153,10 @@ def create_workflows_registry(
         name="get_workflow",
         description="Get details about a specific workflow definition.",
     )
-    async def _get_workflow(
-        name: str,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
-        return await get_workflow(_loader, name, project_path)
+    async def _get_workflow(name: str) -> dict[str, Any]:
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        return await get_workflow(_loader, name, project_id)
 
     @registry.tool(
         name="list_workflows",

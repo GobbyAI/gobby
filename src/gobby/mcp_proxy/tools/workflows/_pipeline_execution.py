@@ -329,7 +329,7 @@ async def run_pipeline(
 
     # Load the pipeline definition
     try:
-        pipeline = await loader.load_pipeline(name)
+        pipeline = await loader.load_pipeline(name, project_id)
     except ValueError as e:
         return {"success": False, "error": f"Invalid pipeline '{name}': {e}"}
 
@@ -423,7 +423,7 @@ async def resume_pipeline(
 
     # Load the pipeline definition
     try:
-        pipeline = await loader.load_pipeline(execution.pipeline_name)
+        pipeline = await loader.load_pipeline(execution.pipeline_name, execution.project_id)
     except ValueError as e:
         return {"success": False, "error": f"Invalid pipeline '{execution.pipeline_name}': {e}"}
 

@@ -18,7 +18,13 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _session_and_project_context():
     """Provide session and project context for all pipeline tests."""
-    token = set_project_context({"id": "proj-test", "name": "test-project"})
+    token = set_project_context(
+        {
+            "id": "11111111-1111-4111-8111-111111110001",
+            "name": "test-project",
+            "path": "/tmp/test-project",
+        }
+    )
     with session_context_for_test("sess-1"):
         yield
     reset_project_context(token)
@@ -365,7 +371,9 @@ class TestRunPipelineTool:
             {"name": "deploy", "inputs": {}},
         )
 
-        mock_loader.load_pipeline.assert_called_once_with("deploy")
+        mock_loader.load_pipeline.assert_called_once_with(
+            "deploy", "11111111-1111-4111-8111-111111110001"
+        )
         assert mock_loader.load_pipeline.call_count == 1
         assert mock_loader.load_pipeline.call_args is not None
 

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 async def get_workflow(
     loader: WorkflowLoader,
     name: str,
-    project_path: str | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Get workflow details including steps, triggers, and settings.
@@ -32,19 +32,12 @@ async def get_workflow(
     Args:
         loader: WorkflowLoader instance
         name: Workflow name (without .yaml extension)
-        project_path: Project directory path. Auto-discovered from cwd if not provided.
+        project_id: Project UUID for scoped lookup.
 
     Returns:
         Workflow definition details
     """
-    # Auto-discover project path if not provided
-    if not project_path:
-        discovered = get_workflow_project_path()
-        if discovered:
-            project_path = str(discovered)
-
-    proj = Path(project_path) if project_path else None
-    definition = await loader.load_workflow(name, proj)
+    definition = await loader.load_workflow(name, project_id)
 
     if not definition:
         return {"success": False, "error": f"Workflow '{name}' not found"}
