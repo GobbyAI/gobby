@@ -23,7 +23,6 @@ _CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 _HTTP_CONNECTION_DRAIN_SECONDS = 3.0
 _HTTP_CONNECTION_GRACE_SECONDS = 0.25
 _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
-_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 _GRACEFUL_SHUTDOWN_BUDGET_SECONDS = 14.0
 _OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
 _GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
@@ -538,27 +537,14 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
 
 
 async def _shutdown_database_executor(db_executor: Any) -> None:
-    """Bound executor shutdown without blocking the event loop."""
+    """Stop queued database work without stranding the event-loop executor."""
     try:
-        await asyncio.wait_for(
-            asyncio.to_thread(db_executor.shutdown, wait=True),
-            timeout=_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        logger.warning("Database executor shutdown timed out; cancelling queued work")
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(
-                    db_executor.shutdown,
-                    wait=False,
-                    cancel_futures=True,
-                ),
-                timeout=_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            logger.warning("Database executor shutdown fallback timed out")
-        except Exception as e:
-            logger.warning(f"Database executor shutdown fallback failed: {e}")
+        # ThreadPoolExecutor.shutdown(wait=False) is non-blocking. Running
+        # operations are allowed to finish while queued operations are
+        # cancelled. Do not put wait=True in asyncio's default executor: a
+        # timed-out to_thread call keeps running, and asyncio.run() waits for
+        # that worker again while closing the event loop.
+        db_executor.shutdown(wait=False, cancel_futures=True)
     except Exception as e:
         logger.warning(f"Database executor shutdown failed: {e}")
 

@@ -1300,8 +1300,8 @@ class TestShutdownDaemonServices:
             events.append("reap")
 
         def shutdown_executor(*, wait: bool, cancel_futures: bool = False) -> None:
-            assert wait is True
-            assert cancel_futures is False
+            assert wait is False
+            assert cancel_futures is True
             events.append("db-executor")
 
         runner.cron_scheduler = SimpleNamespace(stop=fail_cron_stop)
@@ -1386,59 +1386,51 @@ class TestShutdownDaemonServices:
         assert marker.exists() is False
 
     @pytest.mark.asyncio
-    async def test_db_executor_shutdown_timeout_does_not_block_database_close(
+    async def test_db_executor_shutdown_cancels_queued_work_without_default_executor(
         self,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
-        server = SimpleNamespace(should_exit=False)
-        executor_shutdown = MagicMock()
-        runner.db_executor = SimpleNamespace(shutdown=executor_shutdown)
-        cleanup_pid_file = MagicMock()
-        to_thread_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+        shutdown_calls: list[tuple[bool, bool]] = []
 
-        async def blocked_to_thread(
-            func: object,
-            /,
-            *args: object,
-            **kwargs: object,
-        ) -> None:
-            to_thread_calls.append((func, args, kwargs))
-            await asyncio.Event().wait()
+        def shutdown_executor(*, wait: bool, cancel_futures: bool = False) -> None:
+            shutdown_calls.append((wait, cancel_futures))
 
-        async def completed_server() -> None:
-            return None
-
-        monkeypatch.setattr(runner_lifecycle_shutdown.asyncio, "to_thread", blocked_to_thread)
-        monkeypatch.setattr(
-            runner_lifecycle_shutdown,
-            "_DB_EXECUTOR_SHUTDOWN_TIMEOUT_SECONDS",
-            0.01,
+        await runner_lifecycle_shutdown._shutdown_database_executor(
+            SimpleNamespace(shutdown=shutdown_executor)
         )
 
-        await asyncio.wait_for(
-            runner_lifecycle_shutdown.shutdown_daemon_services(
-                runner,
-                server,
-                asyncio.create_task(completed_server()),
-                1,
-                await_critical_stop_hook_grace_window=AsyncMock(),
-                shutdown_websocket_server=AsyncMock(),
-                cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
-                reap_remaining_child_processes=AsyncMock(),
-                shutdown_telemetry=MagicMock(),
-                cleanup_pid_file=cleanup_pid_file,
-            ),
-            timeout=0.25,
+        assert shutdown_calls == [(False, True)]
+
+    def test_db_executor_shutdown_does_not_strand_asyncio_run(self) -> None:
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent(
+            """
+            import asyncio
+            import threading
+
+            from gobby.runner_lifecycle_shutdown import _shutdown_database_executor
+
+            class BlockingExecutor:
+                def shutdown(self, *, wait: bool, cancel_futures: bool = False) -> None:
+                    if wait:
+                        threading.Event().wait()
+                    assert cancel_futures is True
+
+            asyncio.run(_shutdown_database_executor(BlockingExecutor()))
+            """
         )
 
-        assert to_thread_calls == [
-            (executor_shutdown, (), {"wait": True}),
-            (executor_shutdown, (), {"wait": False, "cancel_futures": True}),
-        ]
-        assert server.should_exit is True
-        runner.database.close.assert_called_once_with()
-        cleanup_pid_file.assert_called_once_with()
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=1.0,
+        )
+
+        assert completed.returncode == 0, completed.stderr
 
     @pytest.mark.asyncio
     async def test_pending_interactions_and_http_sessions_stop_before_uvicorn_exit(self) -> None:
