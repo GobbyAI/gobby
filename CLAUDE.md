@@ -65,69 +65,13 @@ A local-first daemon to unify your AI coding tools. Session tracking and handoff
 
 ## Plan-Coverage Contract
 
-The full reference is `docs/contracts/plan-coverage.md`. The authoring surface
-is `src/gobby/install/shared/skills/plan-draft/SKILL.md`; review and expansion
+The full contract — canonical section-heading regex, section kinds,
+acceptance-item shape, typed deferrals, `covers:` labels, the
+`## M1 Task Manifest` schema, parser modes, CLI synopsis, and plan-registry
+storage — lives in `docs/contracts/plan-coverage.md`. Read it before authoring,
+reviewing, or expanding any plan. The authoring surface is
+`src/gobby/install/shared/skills/plan-draft/SKILL.md`; review and expansion
 surfaces link back to it.
-
-Canonical section-heading regex:
-
-```regex
-^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
-```
-
-- Section kind enum: `deliverable | framing | verification | deferred`.
-  `deliverable` sections require an `**Acceptance:**` block; `framing` and
-  `verification` sections do not carry acceptance items; `deferred` sections
-  require the typed deferral object.
-- Acceptance-item shape: IDs use `A<section>.<n>` dotted suffixes — read the
-  shorthand as "section ID followed by `.<n>`" verbatim, with no synthetic
-  letter added. Section `A1` (letter-prefixed) emits `A1.1`, `A1.2`; section
-  `1.1` (numeric) emits `1.1.1`, `1.1.2` (no `A`). The parser enforces
-  `item_id.startswith(f"{section_id}.")`. Each item names at least one
-  artifact kind: `file`, `symbol`, `test`, or `behavior`.
-- Typed deferral object fields: `task_ref`, `reason`, `owner`,
-  `original_acceptance_items`; the task must be open and carry provenance label
-  `deferred-from:<plan-id>:<section-id>`. A closed task fails the gate.
-- Structured coverage record format:
-  `covers:<plan-id>:<section-id>:<item-id>`. Free-form `plan-ref:` labels are
-  not honored.
-- Manifest section: implementation plans carry a single `## M1 Task Manifest`
-  section at the end of the document with `kind: manifest` and one YAML entry
-  per `kind: deliverable` section (fields: `title`, `category`, `task_type`,
-  `depends_on`, `validation_criteria`, `labels`, `assigned_agent`, `tdd`,
-  `source_section`). Planners author narrative only; `plan-adversary` writes
-  the manifest as the final act of approval. Parser modes:
-  `parse_mode="draft"` tolerates a missing manifest (used by adversary
-  pre-verdict review and `/gobby plan` Phase 3a); `parse_mode="expansion"` and
-  default `parse_mode="strict"` require the manifest and enforce the
-  deliverable→entry 1:1 invariant plus `covers:` label resolution. Full
-  schema, invariants, and adversary-writes-on-approval contract live in
-  `docs/contracts/plan-coverage.md`.
-- CLI synopsis:
-  `gobby plan coverage --plan <path> --plan-id <id> --plan-hash <sha256> --task-tree <db|jsonl|path> [--root-task <ref>] [--project-id <id>] [--matrix-file <path>] [--evidence <kind>] [--manifest <path>] [--regenerate]`.
-  Required flags: `--plan`, `--plan-id`, `--plan-hash`, `--task-tree`.
-  Optional flags: `--root-task`, `--project-id`, `--matrix-file`,
-  `--evidence`, `--manifest`, `--regenerate`. Exit codes: `0`, `2`, `3`, `4`,
-  `5`, `6`, `7`, `8`.
-- Evidence kinds: `commits | task-diff | worktree-diff | coverage-matrix | none`.
-- Bootstrap-ledger requirement: every new epic plan ships a
-  `.coverage-ledger.yaml` companion file, adversary-reviewed before expansion,
-  until the contract tooling is mature.
-- Plan storage: the `plans` table is the authoritative registry. Use the
-  `gobby-plans` MCP server or `gobby plans` CLI to create, list, update, and
-  archive plan records. Each row carries `plan_id`, `project_id`,
-  `root_task_ref`, `plan_path`, `plan_hash`, `plan_kind`, and `state`.
-  `plan_kind` is one of:
-  - `implementation` — parsed strict; requires a generated manifest with
-    matching `plan_hash` and every row `status: covered`.
-  - `strategy` — parsed permissive; no manifest permitted.
-  `state` is one of `active` or `archived`; archived plans live under
-  `.gobby/plans/completed/`.
-- Table-row decomposition rule: any `deliverable` section whose body uses a
-  markdown table to enumerate work items MUST emit one acceptance item per data
-  row with stable IDs. Plan-adversary qualitatively rejects deliverables that
-  enumerate work in tables without per-row acceptance items.
-  Table-row decomposition requires one acceptance item per table data row.
 
 ## Development Commands
 
@@ -175,159 +119,21 @@ uv run gobby build <plan_or_task>      # Opt a plan, epic, or leaf task into sta
 
 ### Rust workspace (`crates/`)
 
-The former `gobby-cli` repo now lives here — Gobby is a monorepo. The Rust code is
-a Cargo workspace (`Cargo.toml`, `Cargo.lock`, and `rust-toolchain.toml` at the
-repo root). Use `cargo` for all Rust operations, respect `rust-toolchain.toml`,
-and load the `rust` skill before editing Rust. Detailed Rust conventions live in
-`AGENTS.md`.
-
-```bash
-# Build / check a specific crate (use -p; avoid whole-workspace builds unless needed)
-cargo build -p gobby-code                 # gcode CLI
-cargo build --release -p gobby-code       # release artifact (installed to ~/.gobby/bin/gcode)
-
-# Lint & format — match repo config; never relax lints to pass
-cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-hooks, gobby-wiki
-cargo fmt -p <package> -- --check         # drop --check to auto-format
-
-# Tests — scope with -p (or a test name). NEVER run bare `cargo test` across the workspace
-cargo test -p gobby-code
-cargo test <name> -p gobby-code
-```
-
-Crate → binary map: `gobby-code` → `gcode`, `gobby-hooks` → `ghook`,
-`gobby-wiki` → `gwiki`; `gobby-core` is the shared library crate. The daemon and
-hooks shell out to the installed `~/.gobby/bin/{gcode,ghook,gwiki}` binaries, so
-rebuild **and reinstall** those after changing crate behavior — a committed change
-is not live until the binary is reinstalled.
+Cargo workspace: `gobby-code` → `gcode`, `gobby-hooks` → `ghook`, `gobby-wiki` →
+`gwiki`, plus the `gobby-core` shared library. Load the `rust` skill before
+editing Rust; commands and conventions live in `crates/CLAUDE.md` and `AGENTS.md`.
+The daemon and hooks shell out to the installed `~/.gobby/bin/{gcode,ghook,gwiki}`
+binaries, so rebuild **and reinstall** after changing crate behavior — a committed
+change is not live until the binary is reinstalled.
 
 ## Architecture Overview
 
-### Directory Structure
+### Repo Layout
 
-```text
-src/gobby/
-├── cli/                    # CLI commands (Click, ~25 modules)
-│   ├── __init__.py        # Main CLI group
-│   ├── daemon.py          # start, stop, restart, status
-│   ├── agents.py          # Agent management
-│   ├── rules.py           # Rule management
-│   ├── sessions.py        # Session management
-│   └── ...                # worktrees, memory, pipelines, etc.
-│
-├── runner.py              # Main daemon entry point (GobbyRunner)
-├── runner_broadcasting.py # WebSocket event broadcasting wiring
-├── runner_maintenance.py  # Background maintenance jobs
-│
-├── servers/               # HTTP and WebSocket servers
-│   ├── http.py           # FastAPI HTTP server
-│   ├── routes/           # HTTP API routes (tasks, sessions, agents, etc.)
-│   └── websocket/        # WebSocket server (broadcast, chat, voice, tmux)
-│
-├── mcp_proxy/            # MCP proxy layer
-│   ├── server.py         # FastMCP server implementation
-│   ├── manager.py        # MCPClientManager (connection pooling)
-│   ├── instructions.py   # MCP server instructions (progressive discovery)
-│   ├── tools/            # 20+ internal tool modules
-│   └── transports/       # HTTP, stdio, WebSocket transports
-│
-├── hooks/                # Hook event system
-│   ├── hook_manager.py   # Central coordinator
-│   ├── events.py         # HookEvent, HookResponse models
-│   ├── skill_manager.py  # Skill discovery for hooks
-│   └── ...               # Broadcasting, git, health, verification
-│
-├── adapters/             # CLI-specific hook adapters
-│   ├── claude_code.py    # Claude Code adapter
-│   ├── agy.py            # AGY hook adapter
-│   └── codex_impl/       # Codex adapter implementation
-│
-├── agents/               # Agent spawning and lifecycle
-│   ├── spawn.py          # Agent spawner
-│   ├── runner.py         # AgentRunner process management
-│   ├── definitions.py    # Agent definition models
-│   ├── registry.py       # Agent registry (DB-backed)
-│   ├── isolation.py      # Worktree/clone isolation
-│   └── ...               # Session, context, lifecycle monitor
-│
-├── sessions/             # Session lifecycle
-│   ├── lifecycle.py      # Background jobs
-│   ├── processor.py      # SessionMessageProcessor
-│   └── transcripts/      # Parsers for Claude/Codex/ACP-family data
-│
-├── tasks/                # Task system
-│   ├── expansion/        # ExpansionService (LLM-based decomposition)
-│   ├── validation.py     # TaskValidator
-│   └── prompts/          # LLM prompts for expansion
-│
-├── workflows/            # Rule engine and workflow system (~56 modules)
-│   ├── engine/           # RuleEngine (engine/core.py, declarative enforcement)
-│   ├── definitions.py    # Rule/workflow/agent definition models
-│   ├── safe_evaluator.py # Safe expression evaluator (AST-based)
-│   ├── state_manager.py  # WorkflowInstanceManager (per-session state)
-│   ├── pipeline_executor.py  # PipelineExecutor (sequential execution)
-│   ├── loader.py         # YAML workflow/rule loading and sync
-│   └── ...               # Actions, observers, state, templates
-│
-├── dispatch/             # State-driven task dispatch
-│   ├── rules.py          # Ordered lifecycle dispatch rules
-│   └── dispatcher.py     # Cron heartbeat scanner and action executor
-│
-├── build/                # gobby build shared service
-│   └── service.py        # CLI, MCP, and HTTP build core
-│
-├── memory/               # Persistent memory system
-│   ├── manager.py        # MemoryManager
-│   └── embeddings.py     # Embedding-based recall
-│
-├── skills/               # Skill management
-│   ├── loader.py         # SkillLoader (filesystem, GitHub, ZIP)
-│   ├── parser.py         # SKILL.md parser
-│   └── sync.py           # Bundled skill sync on startup
-│
-├── storage/              # PostgreSQL hub storage and legacy import helpers
-│   ├── hub/postgres.py   # PostgresHubDatabase (connection management)
-│   ├── migrations.py     # PostgreSQL schema migrations
-│   ├── sessions/         # Session CRUD (SessionManager)
-│   ├── tasks/            # Task CRUD (LocalTaskManager)
-│   └── ...               # Memory, skills, agents, workflows, etc.
-│
-├── llm/                  # Multi-provider LLM abstraction
-│   ├── service.py        # LLMService manager
-│   ├── claude.py         # Claude provider (API)
-│   ├── claude_cli.py     # Claude CLI execution
-│   └── local.py          # Local endpoint provider
-│
-├── config/               # Configuration (~15 modules)
-│   ├── app.py            # DaemonConfig (YAML config model)
-│   ├── bootstrap.py      # Pre-DB bootstrap settings
-│   └── ...               # Features, logging, MCP, tasks, etc.
-│
-├── autonomous/           # Autonomous execution support
-├── clones/               # Git clone management
-├── scheduler/            # Cron job scheduler
-├── search/               # Keyword and semantic search
-├── sync/                 # Task/memory sync (JSONL)
-├── voice/                # Voice chat support
-├── worktrees/            # Git worktree management
-└── utils/                # Utilities (git, daemon client, etc.)
-```
-
-The Rust CLIs live alongside the Python daemon in the same repo (`crates/`):
-
-```text
-crates/
-├── gcode/                # `gobby-code` → `gcode` binary: code index + graph/vector CLI
-│   └── src/
-│       ├── commands/     # CLI subcommands (index, search, graph, vector, outline, ...)
-│       ├── index/        # Indexer pipeline (PostgreSQL symbols/files/chunks)
-│       ├── projection/   # Graph (FalkorDB) + vector (Qdrant) projection sync
-│       └── index_lock.rs # Per-project pg advisory lock covering index + projection sync
-│
-├── gcore/                # `gobby-core`: shared library crate (config, progress, db helpers)
-├── ghook/                # `gobby-hooks` → `ghook` binary: sandbox-tolerant hook dispatcher
-└── gwiki/                # `gobby-wiki` → `gwiki` binary: wiki/document ingest CLI
-```
+Use `gcode repo-outline` or `gcode tree` for the live module map — never rely on
+a hardcoded tree. Python daemon in `src/gobby/`, Rust CLIs in `crates/`
+(see `crates/CLAUDE.md`), web UI in `web/`, docs in `docs/`, bundled templates
+in `src/gobby/install/shared/`.
 
 ### Key File Locations
 
@@ -350,119 +156,16 @@ The DB is the source of truth for what's active, not the YAML template files.
 
 ### Dispatch Architecture
 
-Gobby task automation is stage-manifest dispatch. The dispatcher is a
-deterministic heartbeat that scans tasks with `allow_automation=true`, reads the
-task's current manifest row, evaluates ordered rules, acquires a per-task mutex,
-and executes the selected action.
-
-The dispatch chain is:
-
-```text
-task_stages_registry -> task_stage_states manifest -> ordered rule -> action
-```
-
-Dispatch rules live in `src/gobby/dispatch/rules.py`. To add a rule:
-
-1. Add a small rule function that checks the current manifest row, artifacts,
-   labels, and automation fields.
-2. Return an explicit action such as start stage, spawn agent, start expansion,
-   create isolation, advance stage, append audit marker, or escalate.
-3. Register it in the ordered rule list near the manifest stage it belongs to.
-4. Keep the rule deterministic. Prompting belongs in spawned agents; the
-   dispatcher only routes manifest state.
-
-Build state is resolved before dispatch:
-
-- `allow_automation` is the opt-in gate. Backlog tasks stay invisible until `gobby build`
-  enables them.
-- `unattended` means rules choose deterministic fallbacks instead of escalating when possible.
-- `isolation` is explicit task state: `none`, `worktree`, or `clone`.
-- `stages` is the ordered manifest materialized in `task_stage_states` from the
-  stage registry. The current stage is the first row whose state is not `done`.
-- Build profiles are DB-backed registry rows synced from
-  `src/gobby/install/shared/registry/build_profiles.yaml`. The `default`
-  profile resolves unless a caller supplies another profile; explicit CLI,
-  MCP, and HTTP build fields override profile defaults for the same fields.
-  Profile skip stages only shape a new lifecycle. Existing manifests must be
-  cleaned or restarted before their stage shape changes.
-- `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
-  falls back to `backend-developer` with an audit marker.
-
-`gobby build` is the single entry point for turning a plan, epic, or leaf task into
-dispatchable state. The CLI command, MCP tool (`gobby-tasks-ops:build_task`), and HTTP
-route (`POST /api/build`) must all call the shared build service in
-`src/gobby/build/service.py`, returning the same `BuildResult`.
-`gobby build stop <ref> [--yes]` is the task-scoped CLI inverse for an
-existing built task: it stops automation for the resolved task or subtree
-through the shared build control path without deleting task history or build
-artifacts. Sibling lifecycle actions on the same command are `resume`,
-`clean`, and `restart`.
-
-Concurrency and audit data are adjacent to tasks:
-
-- `task_dispatch_mutex` stores short-lived leases. Dispatcher code is the normal writer:
-  acquire before side effects, release in `finally`, sweep expired leases on startup, and
-  use the force-release escape hatch only for operator recovery.
-- `task_artifacts` stores sparse pointers such as `plan_file_path`, `target_branch`,
-  worktree/clone path and ID pairs, expansion run IDs, PR URL, and future merge SHA.
-  Write related fields atomically, especially worktree/clone pairs.
-- Audit rows are append-only. Stage helpers write them when changing manifest
-  rows; readers use them for history and diagnostics.
-
-The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10). When
-the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
-manifest state.
-
-Retired orchestration templates are removed from bundled workflow and agent roots. Active
-bundled sync reads only top-level YAML and soft-deletes installed rows for definitions
-missing from disk, so `orchestrator.yaml`, `front-half-orchestrator.yaml`,
-`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, the conductor pipeline, and retired
-`conductor`, `developer`, and `pipeline-worker` agents must stay out of bundled install
-roots. Real PR creation and richer merge/conflict handling are tracked in task
-\#13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
-where they are already available.
+Stage-manifest dispatch: `task_stages_registry -> task_stage_states manifest ->
+ordered rule -> action`, gated by `allow_automation` and entered via
+`gobby build` (CLI, MCP `gobby-tasks-ops:build_task`, and `POST /api/build` all
+call the shared service in `src/gobby/build/service.py`). The full architecture —
+rule authoring, build-state semantics, mutex and audit rules, agent-slot cap,
+retired-template constraints — lives in `src/gobby/dispatch/CLAUDE.md` (loads
+when working under `src/gobby/dispatch/`); read it before touching dispatch,
+build, or stage-registry code.
 
 ## Code Conventions
-
-### Type Hints
-
-All functions require type hints:
-
-```python
-def process_task(task_id: str, config: TaskConfig) -> Task:
-    """Process a task with given configuration."""
-    ...
-```
-
-### Error Handling
-
-Use specific exceptions, not bare `except`:
-
-```python
-# Good
-try:
-    result = process_data()
-except ValueError as e:
-    logger.error(f"Invalid data: {e}")
-    raise
-
-# Bad
-try:
-    result = process_data()
-except:
-    pass
-```
-
-### Async/Await
-
-Use async for I/O-bound operations:
-
-```python
-async def fetch_data(url: str) -> dict[str, Any]:
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        return response.json()
-```
 
 ### Database Access
 
@@ -475,95 +178,6 @@ with self.db.transaction() as conn:
 
 Legacy SQLite access is limited to one-shot import tooling such as
 `gobby postgres migrate-from-sqlite`.
-
-### Logging
-
-Use structured logging with context:
-
-```python
-logger.info(f"Created task {task_id} in project {project_id}")
-logger.error(f"Failed to expand task {task_id}: {error}", exc_info=True)
-```
-
-## Testing Patterns
-
-### Test Structure
-
-```python
-def test_task_creation(task_manager: LocalTaskManager) -> None:
-    """Test creating a task with required fields."""
-    task = task_manager.create_task(
-        title="Test task",
-        task_type="task"
-    )
-
-    assert task.id is not None
-    assert task.title == "Test task"
-    assert task.status == "open"
-```
-
-### Fixtures
-
-Use pytest fixtures from `tests/conftest.py`:
-
-```python
-def test_with_database(db: LocalDatabase) -> None:
-    """Test using database fixture."""
-    ...
-
-def test_with_task_manager(task_manager: LocalTaskManager) -> None:
-    """Test using task manager fixture."""
-    ...
-```
-
-### Async Tests
-
-Mark async tests with `pytest.mark.asyncio`:
-
-```python
-@pytest.mark.asyncio
-async def test_async_operation() -> None:
-    """Test async operation."""
-    result = await async_function()
-    assert result is not None
-```
-
-### Test Markers
-
-Use markers to categorize tests:
-
-```python
-@pytest.mark.slow
-def test_expensive_operation() -> None:
-    """This test takes a long time."""
-    ...
-
-@pytest.mark.integration
-def test_integration() -> None:
-    """This test requires multiple components."""
-    ...
-```
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Solution |
-| --- | --- |
-| Import errors | Run `uv sync` |
-| Test failures | Check fixtures in `tests/conftest.py` |
-| Type errors | Run `uv run mypy src/` |
-| Lint errors | Run `uv run ruff check src/ --fix` |
-| Daemon not starting | Check logs in `~/.gobby/logs/` |
-| Postgres connection failures | Run `uv run gobby postgres status` and verify `database_url` in the owner-only (`0600`) `~/.gobby/bootstrap.yaml` |
-| Legacy SQLite hub import | Use `uv run gobby postgres migrate-from-sqlite` |
-| MCP connection issues | Verify daemon is running: `uv run gobby status` |
-
-### Debugging Tips
-
-- Enable verbose logging: `gobby start --verbose`
-- Check daemon logs: `tail -f ~/.gobby/logs/gobby.log`
-- Test MCP tools: Use `list_mcp_servers()` to verify connections
 
 ## See Also
 
