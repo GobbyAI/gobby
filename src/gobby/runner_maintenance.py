@@ -860,13 +860,6 @@ def write_shutdown_source(
         )
 
 
-def read_shutdown_source() -> str:
-    """Read and remove the shutdown source marker. Returns description string."""
-    from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
-
-    return format_shutdown_source(read_shutdown_intent(home=get_gobby_home()))
-
-
 def setup_signal_handlers(
     shutdown_callback: Callable[[], None],
     shutdown_intent_callback: Callable[[ShutdownIntent], None] | None = None,
