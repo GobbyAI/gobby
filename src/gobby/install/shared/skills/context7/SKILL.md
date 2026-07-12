@@ -1,7 +1,9 @@
 ---
 name: context7
 description: Instructions for using context7 MCP to look up library documentation before writing code. Loaded on demand on first code file write/edit.
+version: "1.0.0"
 category: core
+triggers: context7, library docs, documentation lookup, api reference
 metadata:
   gobby:
     audience: all

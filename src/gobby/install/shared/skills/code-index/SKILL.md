@@ -1,7 +1,9 @@
 ---
 name: code-index
 description: Instructions for using gcode CLI for code search and retrieval. Loaded on demand when project has a code index.
+version: "1.0.0"
 category: core
+triggers: gcode, code index, code search, symbol search, code graph
 metadata:
   gobby:
     audience: all

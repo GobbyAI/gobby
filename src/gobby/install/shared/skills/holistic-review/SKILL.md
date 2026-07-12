@@ -2,7 +2,7 @@
 name: holistic-review
 description: Review an implemented epic against its approved plan, aggregate diff, and child-task validation evidence before final PR or merge handoff.
 version: "1.0.0"
-category: core
+category: methodology
 internal: true
 triggers: holistic review, epic review, implementation audit, intent vs diff
 metadata:
