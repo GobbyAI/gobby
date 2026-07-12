@@ -33,5 +33,6 @@ def enrich_terminal_context_with_cwd(
 
 def _non_empty_str(value: Any) -> str | None:
     if isinstance(value, str):
-        return value if value else None
+        stripped = value.strip()
+        return stripped if stripped else None
     return None
