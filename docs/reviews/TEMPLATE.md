@@ -40,4 +40,4 @@
 
 <Issues that recur across files in this area — a repeated anti-pattern, a missing
 abstraction, a contract everyone violates the same way. These are the highest-value
-output: one systemic entry can subsume a dozen point findings. If none, say "none."> 
+output: one systemic entry can subsume a dozen point findings. If none, say "none.">
