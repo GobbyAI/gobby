@@ -878,7 +878,7 @@ class TestHookManagerBlockedObservability:
         observed: list[HookResponse] = []
         handler = MagicMock()
 
-        def blocking(_event: HookEvent) -> HookResponse:
+        def blocking(_event: HookEvent, _deadline: float) -> HookResponse:
             order.append("blocking")
             return blocked
 
@@ -914,7 +914,9 @@ class TestHookManagerBlockedObservability:
         assert len(observed) == 2
         assert all(item.decision == "block" for item in observed)
         assert all(item.metadata["enriched"] is True for item in observed)
-        blocking_webhooks.assert_called_once_with(event)
+        blocking_webhooks.assert_called_once()
+        assert blocking_webhooks.call_args.args[0] is event
+        assert isinstance(blocking_webhooks.call_args.args[1], float)
         handler.assert_not_called()
 
     def test_observer_failures_cannot_mutate_original_block(
