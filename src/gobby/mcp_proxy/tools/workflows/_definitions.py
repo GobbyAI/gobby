@@ -38,19 +38,19 @@ def _resolve_definition(
     raise ValueError("Either 'name' or 'definition_id' is required")
 
 
-def _validate_yaml(yaml_content: str) -> dict[str, Any]:
+def _validate_yaml(
+    yaml_content: str,
+    *,
+    expected_type: str | None = None,
+) -> dict[str, Any]:
     """Parse and validate YAML content. Returns parsed data dict."""
-    from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
+    from gobby.workflows.definitions import validate_workflow_definition_data
 
     data = yaml.safe_load(yaml_content)
     if not isinstance(data, dict) or "name" not in data:
         raise ValueError("Invalid YAML: must be a mapping with a 'name' field")
 
-    yaml_type = data.get("type", "step")
-    if yaml_type == "pipeline":
-        PipelineDefinition.model_validate(data)
-    else:
-        WorkflowDefinition.model_validate(data)
+    validate_workflow_definition_data(data, expected_type=expected_type)
 
     return data
 
@@ -179,23 +179,13 @@ def update_workflow_definition(
 
     if yaml_content is not None:
         try:
-            data = _validate_yaml(yaml_content)
+            data = _validate_yaml(yaml_content, expected_type=row.workflow_type)
         except Exception as e:
             return {"success": False, "error": f"YAML validation failed: {e}"}
         fields["definition_json"] = json.dumps(data)
         # Sync top-level metadata from YAML
         if "description" in data:
             fields["description"] = data["description"]
-        _VALID_WORKFLOW_TYPES = {"rule", "variable", "agent", "pipeline"}
-        yaml_type = data.get("type")
-        if yaml_type in _VALID_WORKFLOW_TYPES:
-            fields["workflow_type"] = yaml_type
-        elif yaml_type is not None:
-            return {
-                "success": False,
-                "error": f"Invalid type '{yaml_type}'. Valid types: {', '.join(sorted(_VALID_WORKFLOW_TYPES))}",
-            }
-        # If yaml_type is absent, preserve existing workflow_type
         if "version" in data:
             fields["version"] = str(data["version"])
         if "enabled" in data:

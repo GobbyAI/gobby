@@ -268,7 +268,10 @@ def create_workflows_registry(
 
     @registry.tool(
         name="create_workflow",
-        description="Create a workflow or pipeline definition from YAML content. Validates with Pydantic before inserting into the database.",
+        description=(
+            "Create a rule, variable, agent, or pipeline definition from YAML content. "
+            "The YAML must declare one of those four types and pass its type-specific validation."
+        ),
     )
     def _create_workflow(
         yaml_content: str,

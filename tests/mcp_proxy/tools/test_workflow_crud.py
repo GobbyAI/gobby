@@ -36,6 +36,28 @@ steps:
     exec: make build
 """
 
+VALID_RULE_YAML = """\
+name: test-rule
+type: rule
+event: before_tool
+effects:
+  - type: block
+    reason: Test rule
+"""
+
+VALID_VARIABLE_YAML = """\
+name: test-variable
+type: variable
+variable: test_value
+value: 42
+"""
+
+VALID_AGENT_YAML = """\
+name: test-agent
+type: agent
+role: Test agent
+"""
+
 INVALID_YAML_NO_NAME = """\
 description: Missing name field
 type: pipeline
@@ -76,6 +98,26 @@ def loader(tmp_path) -> WorkflowLoader:
 
 
 class TestCreateWorkflow:
+    @pytest.mark.parametrize(
+        ("yaml_content", "expected_type"),
+        [
+            (VALID_RULE_YAML, "rule"),
+            (VALID_VARIABLE_YAML, "variable"),
+            (VALID_AGENT_YAML, "agent"),
+        ],
+    )
+    def test_create_valid_non_pipeline_types(
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
+        loader: WorkflowLoader,
+        yaml_content: str,
+        expected_type: str,
+    ) -> None:
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is True
+        assert result["definition"]["workflow_type"] == expected_type
+
     def test_create_valid_workflow(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
@@ -147,6 +189,44 @@ class TestCreateWorkflow:
 
         assert result["success"] is False
         assert "Validation failed" in result["error"]
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            VALID_RULE_YAML + "junk: true\n",
+            VALID_VARIABLE_YAML + "junk: true\n",
+            VALID_AGENT_YAML + "junk: true\n",
+        ],
+    )
+    def test_create_rejects_junk_non_pipeline_bodies(
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
+        loader: WorkflowLoader,
+        yaml_content: str,
+    ) -> None:
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is False
+        assert "extra_forbidden" in result["error"]
+
+    @pytest.mark.parametrize(
+        "yaml_content",
+        [
+            "name: missing-type\nsteps: []\n",
+            "name: unsupported-type\ntype: workflow\nsteps: []\n",
+            "name: malformed-type\ntype: [rule]\n",
+        ],
+    )
+    def test_create_rejects_missing_or_unsupported_type(
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
+        loader: WorkflowLoader,
+        yaml_content: str,
+    ) -> None:
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is False
+        assert "agent, pipeline, rule, variable" in result["error"]
 
     def test_create_detects_name_conflict(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
@@ -289,6 +369,56 @@ steps:
         )
         assert result["success"] is False
         assert "Invalid type" in result["error"]
+
+    def test_update_rejects_type_change(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_RULE_YAML)
+
+        result = update_workflow_definition(
+            def_manager,
+            loader,
+            name="test-rule",
+            yaml_content=VALID_VARIABLE_YAML.replace("test-variable", "test-rule"),
+        )
+
+        assert result["success"] is False
+        assert "does not match existing workflow type 'rule'" in result["error"]
+        assert def_manager.get_by_name("test-rule").workflow_type == "rule"
+
+    def test_update_without_type_validates_using_existing_type(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_RULE_YAML)
+        replacement = """\
+name: test-rule
+event: after_tool
+effects:
+  - type: observe
+    category: test
+"""
+
+        result = update_workflow_definition(
+            def_manager, loader, name="test-rule", yaml_content=replacement
+        )
+
+        assert result["success"] is True
+        assert result["definition"]["workflow_type"] == "rule"
+
+    def test_update_without_type_rejects_junk_for_existing_type(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        create_workflow_definition(def_manager, loader, VALID_AGENT_YAML)
+
+        result = update_workflow_definition(
+            def_manager,
+            loader,
+            name="test-agent",
+            yaml_content="name: test-agent\nrole: replacement\njunk: true\n",
+        )
+
+        assert result["success"] is False
+        assert "extra_forbidden" in result["error"]
 
 
 # =============================================================================
@@ -441,6 +571,9 @@ class TestRegistryIntegration:
         assert "update_workflow" in tool_names
         assert "delete_workflow" in tool_names
         assert "export_workflow" in tool_names
+        create_tool = registry.get_tool_metadata("create_workflow")
+        assert create_tool is not None
+        assert "rule, variable, agent, or pipeline" in create_tool.description
 
     def test_pipelines_registry_has_crud_tools(self, db: HubDatabase) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry

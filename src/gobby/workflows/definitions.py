@@ -18,6 +18,8 @@ from gobby.agents.reasoning import normalize_reasoning_effort
 
 # --- Workflow Definition Models (YAML) ---
 
+SUPPORTED_WORKFLOW_DEFINITION_TYPES = frozenset({"agent", "pipeline", "rule", "variable"})
+
 
 class RuleDefinition(BaseModel):
     """Named rule definition for block_tools format.
@@ -668,6 +670,54 @@ class PipelineDefinition(BaseModel):
             if step.id == step_id:
                 return step
         return None
+
+
+def validate_workflow_definition_data(
+    data: dict[str, Any],
+    *,
+    expected_type: str | None = None,
+) -> str:
+    """Validate creatable workflow YAML and return its effective definition type.
+
+    Generic create/import operations require an explicit supported type. Updates may omit
+    ``type`` and are validated using the persisted row type, but may never change that type.
+    """
+    declared_type = data.get("type")
+    effective_type = expected_type if expected_type is not None else declared_type
+
+    if (
+        not isinstance(effective_type, str)
+        or effective_type not in SUPPORTED_WORKFLOW_DEFINITION_TYPES
+    ):
+        supported = ", ".join(sorted(SUPPORTED_WORKFLOW_DEFINITION_TYPES))
+        raise ValueError(
+            f"Invalid or missing 'type' in YAML: {effective_type!r}. Must be one of: {supported}."
+        )
+
+    if declared_type is not None and declared_type != effective_type:
+        raise ValueError(
+            f"Invalid type {declared_type!r}: does not match existing workflow type "
+            f"{effective_type!r}"
+        )
+
+    if effective_type == "pipeline":
+        PipelineDefinition.model_validate(data)
+        return effective_type
+
+    common_metadata = {"description", "enabled", "name", "priority", "sources", "type", "version"}
+    if effective_type == "rule":
+        body = {key: value for key, value in data.items() if key not in common_metadata}
+        RuleDefinitionBody.model_validate(body, extra="forbid")
+    elif effective_type == "variable":
+        variable_metadata = common_metadata - {"description"}
+        body = {key: value for key, value in data.items() if key not in variable_metadata}
+        VariableDefinitionBody.model_validate(body, extra="forbid")
+    else:
+        agent_metadata = {"priority", "type", "version"}
+        body = {key: value for key, value in data.items() if key not in agent_metadata}
+        AgentDefinitionBody.model_validate(body, extra="forbid")
+
+    return effective_type
 
 
 # --- Workflow State Models (Runtime) ---
