@@ -329,9 +329,13 @@ async def test_every_periodic_task_registers_failure_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     callback_tasks: list[asyncio.Task[None]] = []
+    callbacks_seen = asyncio.Event()
+    expected_count: int | None = None
 
     def record_callback(task: asyncio.Task[None]) -> None:
         callback_tasks.append(task)
+        if expected_count is not None and len(callback_tasks) >= expected_count:
+            callbacks_seen.set()
 
     monkeypatch.setattr(
         runner_lifecycle_periodic,
@@ -344,8 +348,9 @@ async def test_every_periodic_task_registers_failure_callback(
     periodic_tasks = [
         task for name, task in vars(runner).items() if name.endswith("_task") and task is not None
     ]
+    expected_count = len(periodic_tasks)
     await _cancel_periodic_tasks(runner)
-    await asyncio.sleep(0)
+    await asyncio.wait_for(callbacks_seen.wait(), timeout=1.0)
 
     assert len(callback_tasks) == len(periodic_tasks)
     assert set(callback_tasks) == set(periodic_tasks)
@@ -354,6 +359,7 @@ async def test_every_periodic_task_registers_failure_callback(
 @pytest.mark.asyncio
 async def test_periodic_loop_failure_is_logged_with_task_name(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def failing_metrics_cleanup(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("metrics cleanup exploded")
@@ -361,6 +367,18 @@ async def test_periodic_loop_failure_is_logged_with_task_name(
     runner = _runner(DaemonConfig())
     loops = _loops()
     loops["metrics_cleanup_loop"] = failing_metrics_cleanup
+    failure_logged = asyncio.Event()
+    original_failure_callback = runner_lifecycle_periodic._log_periodic_task_failure
+
+    def record_failure(task: asyncio.Task[None]) -> None:
+        original_failure_callback(task)
+        failure_logged.set()
+
+    monkeypatch.setattr(
+        runner_lifecycle_periodic,
+        "_log_periodic_task_failure",
+        record_failure,
+    )
 
     with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle_periodic"):
         start_periodic_tasks(runner, tracker=None, **loops)
@@ -369,7 +387,7 @@ async def test_periodic_loop_failure_is_logged_with_task_name(
                 await runner._metrics_cleanup_task
         finally:
             await _cancel_periodic_tasks(runner)
-        await asyncio.sleep(0)
+        await asyncio.wait_for(failure_logged.wait(), timeout=1.0)
 
     failures = [
         record
