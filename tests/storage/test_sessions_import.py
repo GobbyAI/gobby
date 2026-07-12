@@ -89,6 +89,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "persist_digest_state": "(self, session_id: 'str', *, last_turn_markdown: "
     "'str', digest_markdown: 'str', last_digest_input_hash: 'str', "
+    "last_digested_pair_index: 'int', "
     "title: 'str | None' = None, title_source: 'str | None' = None) -> "
     "'Session | None'",
     "persist_summary_state": "(self, session_id: 'str', *, summary_markdown: 'str', "

@@ -92,6 +92,8 @@ class Session:
     chat_mode: str = "plan"
     # Idempotency guard for digest pipeline
     last_digest_input_hash: str | None = None
+    # Explicit cursor into the active transcript's user/assistant pairs
+    last_digested_pair_index: int = 0
     # Stats fields
     message_count: int = 0
     turn_count: int = 0
@@ -181,6 +183,11 @@ class Session:
             last_digest_input_hash=row["last_digest_input_hash"]
             if "last_digest_input_hash" in row.keys()
             else None,
+            last_digested_pair_index=(
+                int(row["last_digested_pair_index"] or 0)
+                if "last_digested_pair_index" in row.keys()
+                else 0
+            ),
             message_count=row["message_count"] if "message_count" in row.keys() else 0,
             turn_count=row["turn_count"] if "turn_count" in row.keys() else 0,
             tool_call_count=row["tool_call_count"] if "tool_call_count" in row.keys() else 0,
@@ -311,6 +318,7 @@ class Session:
             "last_turn_markdown": self.last_turn_markdown,
             "chat_mode": self.chat_mode,
             "last_digest_input_hash": self.last_digest_input_hash,
+            "last_digested_pair_index": self.last_digested_pair_index,
             "message_count": self.message_count,
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,

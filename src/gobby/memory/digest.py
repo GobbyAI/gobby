@@ -47,6 +47,9 @@ class _DigestPersistenceError(RuntimeError):
     """Raised when digest persistence would leave partial session state."""
 
 
+_DIGEST_TURN_SENTINEL_RE = re.compile(r"(?m)^[ \t]*<!-- gobby:digest-turn:(\d+) -->[ \t]*$")
+
+
 async def _run_sync_io(func: Any, *args: Any, **kwargs: Any) -> Any:
     """Run synchronous digest/session I/O without blocking the event loop."""
     return await asyncio.to_thread(func, *args, **kwargs)
@@ -202,26 +205,29 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
 
 
 async def _read_undigested_turns(
-    transcript_path: str, source: str, digested_count: int, max_turns: int = 50, num_pairs: int = 50
-) -> list[tuple[str, str]]:
+    transcript_path: str,
+    source: str,
+    digested_pair_index: int,
+    num_pairs: int = 50,
+) -> tuple[list[tuple[str, str]], int]:
     """Read user/assistant pairs from transcript that haven't been digested yet.
 
     Uses extract_turns_since_clear() to respect /clear boundaries, then
     extract_last_messages() to get all pairs from the current segment.
-    Returns only pairs after digested_count.
+    Returns a bounded batch after the persisted pair index and its next index.
 
     Args:
         transcript_path: Path to the JSONL transcript file
     source: CLI source (claude, qwen, codex, etc.)
-        digested_count: Number of pairs already digested
+        digested_pair_index: Number of pairs already digested
+        num_pairs: Maximum pairs to consume in this digest pass
 
     Returns:
-        List of (prompt, response) tuples for undigested exchanges.
-        Empty list if nothing new to digest.
+        Tuple of the undigested pair batch and the next persisted pair index.
     """
     transcript_file = Path(transcript_path)
     if not transcript_file.exists():
-        return []
+        return [], digested_pair_index
 
     try:
         from gobby.sessions.transcripts import get_parser
@@ -240,24 +246,25 @@ async def _read_undigested_turns(
                 turns.append(json.loads(line))
 
         if not turns:
-            return []
+            return [], digested_pair_index
 
         # Get current conversation segment (respects /clear boundaries)
-        segment = parser.extract_turns_since_clear(turns, max_turns=max_turns)
+        segment = parser.extract_turns_since_clear(turns, max_turns=None)
         if not segment:
-            return []
+            return [], digested_pair_index
 
-        # Extract all user/assistant messages from the segment
-        messages = parser.extract_last_messages(segment, num_pairs=num_pairs)
+        # Apply the persisted cursor only after extracting the full current
+        # segment. A pre-slice makes cursors beyond the window look complete.
+        messages = parser.extract_last_messages(segment, num_pairs=max(1, len(segment)))
         if not messages:
-            return []
+            return [], digested_pair_index
         messages = [
             {**msg, "content": stripped}
             for msg in messages
             if (stripped := strip_injected_context(str(msg["content"]))).strip()
         ]
         if not messages:
-            return []
+            return [], digested_pair_index
 
         # Pair messages into (prompt, response) tuples
         pairs: list[tuple[str, str]] = []
@@ -286,42 +293,39 @@ async def _read_undigested_turns(
         ]
 
         if not pairs:
-            return []
+            return [], digested_pair_index
 
-        # Return undigested pairs
-        if digested_count < len(pairs):
-            return pairs[digested_count:]
+        start_index = digested_pair_index
+        if start_index > len(pairs):
+            # A /clear can replace the active transcript segment. Reset to the
+            # start of that segment instead of repeatedly digesting its tail.
+            logger.debug(
+                "Resetting digest pair index after transcript boundary: index=%s pairs=%s",
+                start_index,
+                len(pairs),
+            )
+            start_index = 0
 
-        # Transcript has fewer pairs than digested (e.g., /clear reset) —
-        # fall back to the last pair so we don't lose the current exchange
-        logger.debug(
-            f"Undigested turns fallback: digested_count={digested_count} >= len(pairs)={len(pairs)}. Returning last pair.",
-        )
-        return [pairs[-1]]
+        batch = pairs[start_index : start_index + num_pairs]
+        return batch, start_index + len(batch)
 
     except Exception as e:
         logger.warning(f"Failed to read undigested turns from {transcript_path}: {e}")
-        return []
+        return [], digested_pair_index
 
 
 def _get_next_turn_number(previous_digest: str | None) -> int:
-    """Parse existing digest to determine the next turn number.
-
-    Args:
-        previous_digest: The existing digest_markdown content
-
-    Returns:
-        Next turn number (1-based)
-    """
+    """Get the next display turn from sanitized internal sentinels."""
     if not previous_digest:
         return 1
 
-    # Find all "### Turn N" headers
-    turn_numbers = re.findall(r"^### Turn (\d+)", previous_digest, re.MULTILINE)
-    if not turn_numbers:
-        return 1
+    turn_numbers = _DIGEST_TURN_SENTINEL_RE.findall(previous_digest)
+    return max((int(number) for number in turn_numbers), default=0) + 1
 
-    return max(int(n) for n in turn_numbers) + 1
+
+def _sanitize_turn_markdown(turn_markdown: str) -> str:
+    """Remove reserved sentinels so model output cannot forge digest state."""
+    return _DIGEST_TURN_SENTINEL_RE.sub("", turn_markdown).strip()
 
 
 def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
@@ -455,24 +459,23 @@ async def _resolve_undigested_pairs(
     session: Any,
     prompt_text: str | None,
     session_id: str,
-    max_turns: int = 50,
     num_pairs: int = 50,
-) -> tuple[list[tuple[str, str]], str] | None:
+) -> tuple[list[tuple[str, str]], str, int] | None:
     """Resolve undigested turn pairs from transcript or prompt_text.
 
     Returns:
-        Tuple of (pairs, input_hash) or None if no content to digest.
+        Tuple of (pairs, input_hash, next_pair_index) or None if no content to digest.
     """
     undigested_pairs: list[tuple[str, str]] = []
+    raw_pair_index = getattr(session, "last_digested_pair_index", 0)
+    pair_index = raw_pair_index if isinstance(raw_pair_index, int) and raw_pair_index >= 0 else 0
+    next_pair_index = pair_index
 
     if session.transcript_path:
-        previous_digest = getattr(session, "digest_markdown", None) or ""
-        digested_count = _get_next_turn_number(previous_digest) - 1
-        undigested_pairs = await _read_undigested_turns(
+        undigested_pairs, next_pair_index = await _read_undigested_turns(
             session.transcript_path,
             session.source,
-            digested_count,
-            max_turns=max_turns,
+            pair_index,
             num_pairs=num_pairs,
         )
 
@@ -487,8 +490,10 @@ async def _resolve_undigested_pairs(
         ):
             return None
         undigested_pairs = [(user_prompt, "")]
+        next_pair_index = pair_index + 1
 
-    combined_content = "||".join(f"{p}||{r}" for p, r in undigested_pairs)
+    start_pair_index = next_pair_index - len(undigested_pairs)
+    combined_content = f"{start_pair_index}||" + "||".join(f"{p}||{r}" for p, r in undigested_pairs)
     input_hash = hashlib.sha256(combined_content.encode()).hexdigest()[:16]
     if session.last_digest_input_hash == input_hash:
         logger.debug(
@@ -496,7 +501,7 @@ async def _resolve_undigested_pairs(
         )
         return None
 
-    return undigested_pairs, input_hash
+    return undigested_pairs, input_hash, next_pair_index
 
 
 async def _build_turn_record(
@@ -749,11 +754,8 @@ async def build_turn_and_digest(
         existing_digest = getattr(session, "digest_markdown", None) or ""
 
         # 2. Resolve undigested pairs
-        max_turns = getattr(digest_config, "max_turns", 50) if digest_config else 50
         num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
-        resolved = await _resolve_undigested_pairs(
-            session, prompt_text, session_id, max_turns, num_pairs
-        )
+        resolved = await _resolve_undigested_pairs(session, prompt_text, session_id, num_pairs)
         if resolved is None and (not needs_title_recovery or not existing_digest):
             return None
 
@@ -786,16 +788,18 @@ async def build_turn_and_digest(
                 "digest_length": len(existing_digest),
             }
 
-        undigested_pairs, input_hash = resolved
+        undigested_pairs, input_hash, next_pair_index = resolved
 
         # 4. Build turn record via LLM
         turn_record = await _build_turn_record(llm_service, digest_config, undigested_pairs, db)
-        last_turn = turn_record.turn_markdown
+        last_turn = _sanitize_turn_markdown(turn_record.turn_markdown)
+        if not last_turn:
+            raise ValueError("turn_markdown contains only reserved digest sentinels")
 
         # 5. Prepare digest/title state after validating the LLM JSON contract.
         previous_digest = getattr(session, "digest_markdown", None) or ""
         turn_num = _get_next_turn_number(previous_digest)
-        entry = f"### Turn {turn_num}\n{last_turn}"
+        entry = f"<!-- gobby:digest-turn:{turn_num} -->\n### Turn {turn_num}\n{last_turn}"
         updated_digest = f"{previous_digest}\n\n{entry}" if previous_digest else entry
 
         digest_title: str | None = None
@@ -819,6 +823,7 @@ async def build_turn_and_digest(
                 last_turn_markdown=last_turn,
                 digest_markdown=updated_digest,
                 last_digest_input_hash=input_hash,
+                last_digested_pair_index=next_pair_index,
                 title=persist_title,
                 title_source=persist_title_source,
             )

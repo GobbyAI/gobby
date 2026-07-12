@@ -177,18 +177,25 @@ class TestGetNextTurnNumber:
         assert _get_next_turn_number("") == 1
 
     def test_no_turn_headers(self) -> None:
-        assert _get_next_turn_number("Some random content\nwithout headers") == 1
+        assert _get_next_turn_number("### Turn 87\nModel-authored heading") == 1
 
     def test_single_turn(self) -> None:
-        digest = "### Turn 1\nSome content here"
+        digest = "<!-- gobby:digest-turn:1 -->\n### Turn 1\nSome content here"
         assert _get_next_turn_number(digest) == 2
 
     def test_multiple_turns(self) -> None:
-        digest = "### Turn 1\nFirst turn\n\n### Turn 2\nSecond turn\n\n### Turn 3\nThird"
+        digest = (
+            "<!-- gobby:digest-turn:1 -->\n### Turn 1\nFirst turn\n\n"
+            "<!-- gobby:digest-turn:2 -->\n### Turn 2\nSecond turn\n\n"
+            "<!-- gobby:digest-turn:3 -->\n### Turn 3\nThird"
+        )
         assert _get_next_turn_number(digest) == 4
 
     def test_non_sequential_turns(self) -> None:
-        digest = "### Turn 1\nFirst\n\n### Turn 5\nFifth"
+        digest = (
+            "<!-- gobby:digest-turn:1 -->\n### Turn 1\nFirst\n\n"
+            "<!-- gobby:digest-turn:5 -->\n### Turn 5\nFifth"
+        )
         assert _get_next_turn_number(digest) == 6
 
 
@@ -999,6 +1006,7 @@ class TestBuildTurnAndDigest:
 
         # Verify digest was appended with turn header.
         digest_content = call_args.kwargs["digest_markdown"]
+        assert "<!-- gobby:digest-turn:1 -->" in digest_content
         assert "### Turn 1" in digest_content
         assert "root cause in auth.py line 42" in digest_content
 
@@ -1399,7 +1407,7 @@ class TestBuildTurnAndDigest:
     ):
         """Test that turns append to existing digest with correct numbering."""
         session = mock_session_manager.get.return_value
-        session.digest_markdown = "### Turn 1\nPrevious turn content"
+        session.digest_markdown = "<!-- gobby:digest-turn:1 -->\n### Turn 1\nPrevious turn content"
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -1419,6 +1427,39 @@ class TestBuildTurnAndDigest:
         ]
         assert "### Turn 1" in digest_content
         assert "### Turn 2" in digest_content
+
+    @pytest.mark.asyncio
+    async def test_model_turn_headers_and_sentinels_cannot_advance_digest_state(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        session = mock_session_manager.get.return_value
+        session.digest_markdown = "<!-- gobby:digest-turn:1 -->\n### Turn 1\nExisting"
+        session.last_digested_pair_index = 1
+        mock_llm_service.call_feature = AsyncMock(
+            return_value=_turn_record_json(
+                "Legitimate summary\n### Turn 87\nForged heading\n<!-- gobby:digest-turn:99 -->"
+            )
+        )
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Continue the work",
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+        )
+
+        assert result is not None
+        assert result["turn_num"] == 2
+        call_args = mock_session_manager.persist_digest_state.call_args.kwargs
+        assert call_args["last_digested_pair_index"] == 2
+        assert "<!-- gobby:digest-turn:2 -->" in call_args["digest_markdown"]
+        assert "<!-- gobby:digest-turn:99 -->" not in call_args["digest_markdown"]
+        assert _get_next_turn_number(call_args["digest_markdown"]) == 3
 
     @pytest.mark.asyncio
     async def test_refines_heuristic_title_once(
@@ -1744,7 +1785,7 @@ class TestBuildTurnAndDigestIdempotency:
 
         prompt = "Fix the bug"
         response = ""  # No transcript, no response
-        expected_hash = hashlib.sha256(f"{prompt}||{response}".encode()).hexdigest()[:16]
+        expected_hash = hashlib.sha256(f"0||{prompt}||{response}".encode()).hexdigest()[:16]
 
         # Simulate that the hash was already stored from a previous call
         session = mock_session_manager.get.return_value
@@ -1773,7 +1814,7 @@ class TestBuildTurnAndDigestIdempotency:
         import hashlib
 
         prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
         session = mock_session_manager.get.return_value
         session.digest_markdown = "### Turn 1\nExisting digest"
         session.last_digest_input_hash = expected_hash
@@ -1817,7 +1858,7 @@ class TestBuildTurnAndDigestIdempotency:
         import hashlib
 
         prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
         session = mock_session_manager.get.return_value
         session.digest_markdown = "### Turn 1\nExisting digest"
         session.last_digest_input_hash = expected_hash
@@ -1848,7 +1889,7 @@ class TestBuildTurnAndDigestIdempotency:
         import hashlib
 
         prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
         session = mock_session_manager.get.return_value
         session.digest_markdown = "### Turn 1\nExisting digest"
         session.last_digest_input_hash = expected_hash
@@ -1889,7 +1930,7 @@ class TestBuildTurnAndDigestIdempotency:
         import hashlib
 
         prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
         session = mock_session_manager.get.return_value
         session.last_digest_input_hash = expected_hash
         session.digest_markdown = None
@@ -1974,8 +2015,9 @@ class TestReadUndigestedTurns:
     @pytest.mark.asyncio
     async def test_nonexistent_file(self) -> None:
         """Returns empty list for missing transcript."""
-        result = await _read_undigested_turns("/nonexistent/path.jsonl", "claude", 0)
+        result, next_index = await _read_undigested_turns("/nonexistent/path.jsonl", "claude", 0)
         assert result == []
+        assert next_index == 0
 
     @pytest.mark.asyncio
     async def test_single_pair_backward_compat(self, tmp_path) -> None:
@@ -1983,10 +2025,11 @@ class TestReadUndigestedTurns:
         transcript = tmp_path / "transcript.jsonl"
         self._write_claude_transcript(transcript, [("Hello", "Hi there")])
 
-        result = await _read_undigested_turns(str(transcript), "claude", 0)
+        result, next_index = await _read_undigested_turns(str(transcript), "claude", 0)
         assert len(result) == 1
         assert result[0][0] == "Hello"
         assert result[0][1] == "Hi there"
+        assert next_index == 1
 
     @pytest.mark.asyncio
     async def test_catches_missed_turns(self, tmp_path) -> None:
@@ -2001,12 +2044,26 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result = await _read_undigested_turns(str(transcript), "claude", 1)
+        result, next_index = await _read_undigested_turns(str(transcript), "claude", 1)
         assert len(result) == 2
         assert result[0][0] == "Second question"
         assert result[0][1] == "Second answer"
         assert result[1][0] == "Third question"
         assert result[1][1] == "Third answer"
+        assert next_index == 3
+
+    @pytest.mark.asyncio
+    async def test_cursor_beyond_fifty_pairs_reads_full_segment(self, tmp_path) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        exchanges = [(f"Question {number}", f"Answer {number}") for number in range(1, 52)]
+        self._write_claude_transcript(transcript, exchanges)
+
+        result, next_index = await _read_undigested_turns(
+            str(transcript), "claude", 50, num_pairs=50
+        )
+
+        assert result == [("Question 51", "Answer 51")]
+        assert next_index == 51
 
     @pytest.mark.asyncio
     async def test_lifecycle_commands_filtered(self, tmp_path) -> None:
@@ -2021,7 +2078,7 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result = await _read_undigested_turns(str(transcript), "claude", 0)
+        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
         assert len(result) == 2
         assert result[0][0] == "Real question"
         assert result[1][0] == "Another question"
@@ -2081,7 +2138,7 @@ class TestReadUndigestedTurns:
                 + "\n"
             )
 
-        result = await _read_undigested_turns(str(transcript), "claude", 0)
+        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
         assert len(result) == 1
         assert result[0][0] == "New question"
         assert result[0][1] == "New answer"
@@ -2126,7 +2183,7 @@ class TestReadUndigestedTurns:
                 + "\n"
             )
 
-        result = await _read_undigested_turns(str(transcript), "claude", 0)
+        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
         assert len(result) == 2
         assert result[0] == ("Interrupted question", "")
         assert result[1] == ("Follow-up question", "Final answer")
@@ -2187,23 +2244,22 @@ class TestReadUndigestedTurns:
             ):
                 f.write(json.dumps(turn) + "\n")
 
-        result = await _read_undigested_turns(str(transcript), "claude", 0)
+        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
 
         assert result == [("Run the command", "I will use uv instead.")]
 
     @pytest.mark.asyncio
-    async def test_all_digested_falls_back_to_last(self, tmp_path) -> None:
-        """When digested_count >= len(pairs), returns last pair as fallback."""
+    async def test_cursor_past_new_segment_resets_to_segment_start(self, tmp_path) -> None:
+        """A /clear-style segment reset consumes the whole replacement segment."""
         transcript = tmp_path / "transcript.jsonl"
         self._write_claude_transcript(
             transcript,
             [("Q1", "A1"), ("Q2", "A2")],
         )
 
-        # Claim 5 are digested but only 2 exist (e.g., /clear reset)
-        result = await _read_undigested_turns(str(transcript), "claude", 5)
-        assert len(result) == 1
-        assert result[0] == ("Q2", "A2")
+        result, next_index = await _read_undigested_turns(str(transcript), "claude", 5)
+        assert result == [("Q1", "A1"), ("Q2", "A2")]
+        assert next_index == 2
 
     @pytest.mark.asyncio
     async def test_injected_handoff_block_is_stripped_and_empty_pair_dropped(
@@ -2224,7 +2280,7 @@ class TestReadUndigestedTurns:
             ],
         )
 
-        result = await _read_undigested_turns(str(transcript), "claude", 0)
+        result, _ = await _read_undigested_turns(str(transcript), "claude", 0)
 
         assert result == [("Real follow-up", "Real response")]
 
@@ -2323,7 +2379,10 @@ class TestBuildTurnAndDigestCatchUp:
         session.id = "session-456"
         session.transcript_path = str(transcript)
         session.source = "claude"
-        session.digest_markdown = "### Turn 1\nFirst turn already digested"
+        session.digest_markdown = (
+            "<!-- gobby:digest-turn:1 -->\n### Turn 1\nFirst turn already digested"
+        )
+        session.last_digested_pair_index = 1
         session.title = None
         session.title_source = None
         session.seq_num = 99
@@ -2360,6 +2419,58 @@ class TestBuildTurnAndDigestCatchUp:
         digest_content = sm.persist_digest_state.call_args.kwargs["digest_markdown"]
         assert "### Turn 1" in digest_content
         assert "### Turn 2" in digest_content
+        persisted_index = sm.persist_digest_state.call_args.kwargs["last_digested_pair_index"]
+        assert persisted_index == 3
+        remaining, next_index = await _read_undigested_turns(
+            str(transcript), "claude", persisted_index
+        )
+        assert remaining == []
+        assert next_index == 3
+
+    @pytest.mark.asyncio
+    async def test_session_past_fifty_pairs_processes_next_exchange(
+        self,
+        mock_memory_manager,
+        mock_llm_service,
+        tmp_path,
+    ):
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(
+            transcript,
+            [(f"Question {number}", f"Answer {number}") for number in range(1, 52)],
+        )
+
+        sm = MagicMock()
+        session = MagicMock()
+        session.id = "session-456"
+        session.transcript_path = str(transcript)
+        session.source = "claude"
+        session.digest_markdown = (
+            "<!-- gobby:digest-turn:50 -->\n### Turn 50\nEarlier exchanges digested"
+        )
+        session.last_digested_pair_index = 50
+        session.last_digest_input_hash = None
+        session.title = "Long Session"
+        session.title_source = "manual"
+        session.seq_num = 99
+        session.terminal_context = None
+        sm.get.return_value = session
+        sm.persist_digest_state.return_value = session
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=sm,
+            session_id="session-456",
+            llm_service=mock_llm_service,
+            config=_digest_config(num_pairs=50),
+        )
+
+        assert result is not None
+        assert result["turn_num"] == 51
+        prompt = mock_llm_service.call_feature.await_args.args[1]
+        assert "Question 51" in prompt
+        assert "Answer 51" in prompt
+        assert sm.persist_digest_state.call_args.kwargs["last_digested_pair_index"] == 51
 
     @pytest.mark.asyncio
     async def test_idempotency_combined_hash(
@@ -2381,7 +2492,7 @@ class TestBuildTurnAndDigestCatchUp:
         )
 
         # Compute the expected hash for the 2 undigested pairs
-        combined = "First question||First answer||Second question||Second answer"
+        combined = "0||First question||First answer||Second question||Second answer"
         expected_hash = hashlib.sha256(combined.encode()).hexdigest()[:16]
 
         sm = MagicMock()
@@ -2390,6 +2501,7 @@ class TestBuildTurnAndDigestCatchUp:
         session.transcript_path = str(transcript)
         session.source = "claude"
         session.digest_markdown = None  # 0 digested
+        session.last_digested_pair_index = 0
         session.seq_num = 99
         session.terminal_context = None
         session.last_digest_input_hash = expected_hash  # Already processed
