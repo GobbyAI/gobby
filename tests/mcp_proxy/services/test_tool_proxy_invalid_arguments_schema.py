@@ -69,7 +69,7 @@ async def test_first_invalid_call_includes_schema_and_records_latch(proxy_parts)
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
+    assert result["error_code"] == "INVALID_ARGUMENTS"
     assert result["schema"] == input_schema
     assert result["validation_errors"] == [
         "Unknown parameter 'wrong'. Valid parameters: ['name']",
@@ -178,7 +178,7 @@ async def test_malformed_string_arguments_return_schema_guidance(proxy_parts) ->
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
+    assert result["error_code"] == "INVALID_ARGUMENTS"
     assert "expected dict" in result["error"]
     assert result["validation_errors"] == [result["error"]]
     assert result["schema"] == input_schema

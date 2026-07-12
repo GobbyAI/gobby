@@ -83,7 +83,7 @@ async def test_bool_for_string_returns_invalid_arguments_with_schema_before_exte
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
+    assert result["error_code"] == "INVALID_ARGUMENTS"
     assert result["validation_errors"] == [
         "Invalid type for parameter 'supports': expected string, got boolean"
     ]
@@ -604,7 +604,7 @@ class TestCallToolInternalServer:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "invalid_arguments"
+        assert result["error_code"] == "INVALID_ARGUMENTS"
         assert result["validation_errors"] == [
             "Invalid type for parameter 'payload': expected object, got string"
         ]
@@ -1547,7 +1547,7 @@ class TestStripUnknownParameters:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "invalid_arguments"
+        assert result["error_code"] == "INVALID_ARGUMENTS"
         assert result["validation_errors"] == [
             "Invalid type for parameter 'limit': expected integer, got boolean"
         ]

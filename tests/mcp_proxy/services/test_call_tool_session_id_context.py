@@ -214,7 +214,7 @@ async def test_injected_session_id_does_not_mask_missing_required_parameters(
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
+    assert result["error_code"] == "INVALID_ARGUMENTS"
     assert "Missing required parameter 'name'" in result["error"]
     mcp_manager.call_tool.assert_not_awaited()
 
