@@ -478,3 +478,15 @@ class MemoryCrudMixin(MemoryStoreBase):
                 return False
         self._notify_listeners()
         return True
+
+    def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+        """Delete a memory only when it is visible in the requested project scope."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM memories WHERE id = %s AND (project_id = %s OR project_id IS NULL)",
+                (memory_id, project_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+        self._notify_listeners()
+        return True

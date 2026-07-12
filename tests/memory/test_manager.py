@@ -1024,6 +1024,35 @@ class TestDeleteMemoryExtended:
         assert mock_vs.delete.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_scoped_delete_preserves_other_project_indices(self, db, memory_config) -> None:
+        """An out-of-scope delete leaves the row, vector, and graph artifacts intact."""
+        mock_vs = MagicMock()
+        mock_vs.delete = AsyncMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        mock_kg = MagicMock()
+        mock_kg.remove_memory_from_graph = AsyncMock()
+        manager = MemoryManager(
+            db=db, config=memory_config, vector_store=mock_vs, embed_fn=mock_embed
+        )
+        manager._kg_service = mock_kg
+        project_b = "22222222-2222-4222-8222-222222222222"
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project A"))
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+        memory = await manager.create_memory(
+            content="Project B protected memory",
+            project_id=project_b,
+        )
+        mock_vs.delete.reset_mock()
+
+        result = await manager.delete_memory_scoped(memory.id, PROJECT_ID)
+
+        assert result is False
+        assert manager.get_memory(memory.id) is not None
+        mock_vs.delete.assert_not_awaited()
+        mock_kg.remove_memory_from_graph.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_delete_vectorstore_error_handled(self, db, memory_config) -> None:
         """delete_memory handles VectorStore delete failure gracefully."""
         from unittest.mock import AsyncMock

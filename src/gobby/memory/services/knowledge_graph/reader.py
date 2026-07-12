@@ -159,8 +159,14 @@ class KnowledgeGraphReader:
                 min_score=min_score,
                 project_id=project_id,
             )
-            if project_id is not None and not include_global:
-                entity_rows = [row for row in entity_rows if row.get("project_id") == project_id]
+            allowed_project_ids: set[str | None] = set()
+            if project_id is not None:
+                allowed_project_ids.add(project_id)
+            if include_global:
+                allowed_project_ids.add(None)
+            entity_rows = [
+                row for row in entity_rows if row.get("project_id") in allowed_project_ids
+            ]
 
             if not entity_rows:
                 return []
@@ -769,7 +775,13 @@ class KnowledgeGraphReader:
             backing[str(key)] = [str(mid) for mid in (row.get("memory_ids") or []) if mid]
         return backing
 
-    async def search_graph(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+    async def search_graph(
+        self,
+        query: str,
+        limit: int = 10,
+        project_id: str | None = None,
+        include_global: bool = True,
+    ) -> list[dict[str, Any]]:
         """Search the knowledge graph, using vector search before substring fallback."""
         if self._embed_fn is not None:
             try:
@@ -778,6 +790,8 @@ class KnowledgeGraphReader:
                     query_embedding=embedding,
                     limit=limit,
                     min_score=0.3,
+                    project_id=project_id,
+                    include_global=include_global,
                 )
                 if results:
                     return [
@@ -797,13 +811,25 @@ class KnowledgeGraphReader:
         try:
             rows = await self._falkor.query(
                 "MATCH (n:_Entity) WHERE toLower(n.name) CONTAINS toLower($query) "
+                "AND (n.project_id = $project_id "
+                "OR ($include_global AND n.project_id IS NULL)) "
                 "RETURN n.entity_key AS entity_key, n.name AS name, "
                 "n.entity_type AS entity_type, n.project_id AS project_id, "
                 "labels(n) AS labels, properties(n) AS props "
                 "LIMIT $limit",
-                {"query": query, "limit": limit},
+                {
+                    "query": query,
+                    "limit": limit,
+                    "project_id": project_id,
+                    "include_global": include_global,
+                },
             )
-            return rows
+            allowed_project_ids: set[str | None] = set()
+            if project_id is not None:
+                allowed_project_ids.add(project_id)
+            if include_global:
+                allowed_project_ids.add(None)
+            return [row for row in rows if row.get("project_id") in allowed_project_ids]
         except FalkorConnectionError as e:
             logger.warning(f"FalkorDB unreachable: {e}")
             return []

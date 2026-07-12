@@ -85,6 +85,17 @@ def test_delete_memory(memory_manager) -> None:
         memory_manager.get_memory(created.id)
 
 
+def test_delete_memory_scoped_rejects_other_project(memory_manager, db) -> None:
+    project_a = "11111111-1111-4111-8111-111111111111"
+    project_b = "22222222-2222-4222-8222-222222222222"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+    created = memory_manager.create_memory(content="Project B memory", project_id=project_b)
+
+    assert memory_manager.delete_memory_scoped(created.id, project_a) is False
+    assert memory_manager.get_memory(created.id).project_id == project_b
+
+
 def test_list_memories(memory_manager, db) -> None:
     # Seed projects for foreign keys
     db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))

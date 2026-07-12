@@ -228,6 +228,9 @@ class MemoryManagerFacadeMethods:
     async def delete_memory(self, memory_id: str) -> bool:
         return await self._lifecycle_service.delete_memory(memory_id)
 
+    async def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+        return await self._lifecycle_service.delete_memory_scoped(memory_id, project_id)
+
     async def adelete_memory(self, memory_id: str) -> bool:
         return await self._lifecycle_service.adelete_memory(memory_id)
 

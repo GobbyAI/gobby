@@ -384,7 +384,10 @@ def create_memory_registry(
             memory_id: The ID of the memory to delete
         """
         try:
-            success = await memory_manager.delete_memory(memory_id)
+            success = await memory_manager.delete_memory_scoped(
+                memory_id,
+                get_current_project_id(),
+            )
             if success:
                 return {"success": True}
             else:
@@ -643,7 +646,12 @@ def create_memory_registry(
             if not kg_service:
                 return {"success": True, "results": []}
 
-            results = await kg_service.search_graph(query, limit=limit)
+            results = await kg_service.search_graph(
+                query,
+                limit=limit,
+                project_id=get_current_project_id(),
+                include_global=True,
+            )
             return {"success": True, "results": results}
         except Exception as e:
             return {"success": False, "error": str(e)}

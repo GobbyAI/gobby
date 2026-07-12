@@ -223,6 +223,13 @@ class MemoryLifecycleService:
         await self._delete_secondary_indices(memory_id, existing_memory, result)
         return result
 
+    async def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+        """Delete a memory only when visible to a project, then reconcile its indices."""
+        existing_memory = self._get_memory(memory_id)
+        result = self.storage.delete_memory_scoped(memory_id, project_id)
+        await self._delete_secondary_indices(memory_id, existing_memory, result)
+        return result
+
     async def adelete_memory(self, memory_id: str) -> bool:
         """Delete a memory through the async backend and secondary indices."""
         existing_memory = self._get_memory(memory_id)
