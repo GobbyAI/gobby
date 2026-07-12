@@ -421,6 +421,7 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
 def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _postgres_module()
     calls: dict[str, int] = {"close": 0}
+    close_timeouts: list[float] = []
 
     class FakePool:
         def __init__(self, *args, **kwargs) -> None:
@@ -429,8 +430,9 @@ def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
         def open(self, *, wait: bool, timeout: float) -> None:
             raise AssertionError("open should not be called by close")
 
-        def close(self) -> None:
+        def close(self, *, timeout: float) -> None:
             calls["close"] += 1
+            close_timeouts.append(timeout)
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
 
@@ -439,6 +441,7 @@ def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     db.close()
 
     assert calls["close"] == 1
+    assert close_timeouts == [module._POOL_CLOSE_TIMEOUT_SECONDS]
 
 
 def test_postgres_open_after_close_raises_without_reopening(
@@ -446,6 +449,7 @@ def test_postgres_open_after_close_raises_without_reopening(
 ) -> None:
     module = _postgres_module()
     calls: dict[str, int] = {"open": 0, "close": 0}
+    close_timeouts: list[float] = []
 
     class FakePool:
         def __init__(self, *args, **kwargs) -> None:
@@ -454,8 +458,9 @@ def test_postgres_open_after_close_raises_without_reopening(
         def open(self, *, wait: bool, timeout: float) -> None:
             calls["open"] += 1
 
-        def close(self) -> None:
+        def close(self, *, timeout: float) -> None:
             calls["close"] += 1
+            close_timeouts.append(timeout)
 
     monkeypatch.setattr(module, "ConnectionPool", FakePool)
 
@@ -469,6 +474,7 @@ def test_postgres_open_after_close_raises_without_reopening(
             pass
 
     assert calls == {"open": 0, "close": 1}
+    assert close_timeouts == [module._POOL_CLOSE_TIMEOUT_SECONDS]
 
 
 def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(monkeypatch) -> None:
