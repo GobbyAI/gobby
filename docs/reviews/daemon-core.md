@@ -169,13 +169,13 @@
 - **Minimal fix:** Run one cleanup shortly after startup (small randomized delay), then sleep the interval — or persist a last-run timestamp and sleep the remainder.
 - **Confidence:** high on mechanism; med on real-world frequency.
 
-### [IMPORTANT] Interval tick bypasses per-project dispatch dedupe — concurrent heartbeats can overshoot the agent-slot cap
+### [IMPORTANT] Interval tick bypasses per-project dispatch dedupe — same-project work can overlap
 
-- **Where:** `src/gobby/system_automation.py:510-528` (`_dispatch_projects` calls `dispatch_project_once` directly), `:454-478` (scheduled path), `:390-413` (dedupe via `_project_tasks` covers only the scheduled path); `src/gobby/dispatch/dispatcher.py:177` (cap check) vs `:236` (`_execute_action` spawn)
-- **Failure mode:** The interval loop dispatches every enabled project without consulting `_project_tasks`; a triggered dispatch for the same project takes neither the tick lock nor a per-project lock. Two `run_heartbeat` calls then run concurrently for one project. The per-task `RuntimeDispatchMutex` prevents same-task double-fire, but the slot-cap check is non-atomic: both heartbeats read `count_active_agents(...) >= cap` before either spawn inserts its run row, so both pass at 9/10 and spawn → 11 active agents. The window is the full spawn path (worktree creation etc.), not microseconds.
-- **Why it matters:** `max_active_agents` is the only global backpressure on agent spawning; overshoot multiplies under burst triggers racing the interval tick.
+- **Where:** `src/gobby/system_automation.py:510-528` (`_dispatch_projects` calls `dispatch_project_once` directly), `:454-478` (scheduled path), `:390-413` (dedupe via `_project_tasks` covers only the scheduled path)
+- **Failure mode:** The interval loop dispatches every enabled project without consulting `_project_tasks`, so a triggered dispatch for the same project can overlap its recovery, candidate scanning, and tick bookkeeping. Heartbeat admission is serialized separately, but the project-level scheduling contract is still bypassed.
+- **Why it matters:** Duplicate same-project work wastes a tick, produces inconsistent summaries, and prevents triggered wakes from coalescing behind the active interval run.
 - **Minimal fix:** Route interval-tick dispatches through `_schedule_project_dispatch_on_loop` (so `_project_tasks` serializes all dispatch per project), or wrap `dispatch_project_once` in a per-project `asyncio.Lock`.
-- **Confidence:** high on the race; med on overshoot magnitude in practice.
+- **Confidence:** high.
 
 ### [IMPORTANT] The "global agent-slot cap" is actually per-project
 

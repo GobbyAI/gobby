@@ -67,12 +67,14 @@ class AutomationTickSummary:
 
 @dataclass(frozen=True)
 class _PendingProjectDispatch:
-    """Coalesced direct wake that arrived while a project dispatch was running."""
+    """Coalesced wake that arrived while a project dispatch was running."""
 
     reason: str
     max_ticks: int | None
     max_actions: int | None
     max_active_agents: int | None
+    waiters: tuple[asyncio.Future[DispatcherTickSummary], ...] = ()
+    run_without_waiter: bool = False
 
 
 class PipelineHeartbeatService(Protocol):
@@ -109,7 +111,11 @@ class SystemAutomationLoop:
         self._running = False
         self._loop_task: asyncio.Task[None] | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._project_tasks: dict[str, asyncio.Task[None]] = {}
+        self._project_tasks: dict[str, asyncio.Task[DispatcherTickSummary]] = {}
+        self._project_task_waiters: dict[
+            str, tuple[asyncio.Future[DispatcherTickSummary], ...]
+        ] = {}
+        self._project_task_runs_without_waiter: set[str] = set()
         self._pending_project_dispatches: dict[str, _PendingProjectDispatch] = {}
         self._tick_lock = asyncio.Lock()
         self._tick_count = 0
@@ -146,11 +152,16 @@ class SystemAutomationLoop:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         if self._project_tasks:
+            for pending in self._pending_project_dispatches.values():
+                for waiter in pending.waiters:
+                    waiter.cancel()
             self._pending_project_dispatches.clear()
-            for task in list(self._project_tasks.values()):
-                task.cancel()
+            for project_task in list(self._project_tasks.values()):
+                project_task.cancel()
             await asyncio.gather(*self._project_tasks.values(), return_exceptions=True)
             self._project_tasks.clear()
+            self._project_task_waiters.clear()
+            self._project_task_runs_without_waiter.clear()
         self._loop_task = None
         logger.info("System automation loop stopped")
 
@@ -399,13 +410,47 @@ class SystemAutomationLoop:
     ) -> None:
         if not self._running:
             return
+        self._enqueue_project_dispatch(
+            project_id=project_id,
+            reason=reason,
+            max_ticks=max_ticks,
+            max_actions=max_actions,
+            max_active_agents=max_active_agents,
+        )
+
+    def _enqueue_project_dispatch(
+        self,
+        *,
+        project_id: str,
+        reason: str,
+        max_ticks: int | None,
+        max_actions: int | None,
+        max_active_agents: int | None,
+        waiter: asyncio.Future[DispatcherTickSummary] | None = None,
+    ) -> None:
         existing = self._project_tasks.get(project_id)
+        if existing is not None and existing.done():
+            self._on_project_dispatch_done(
+                project_id,
+                existing,
+                self._project_task_waiters.get(project_id, ()),
+            )
+            existing = self._project_tasks.get(project_id)
         if existing is not None and not existing.done():
+            pending = self._pending_project_dispatches.get(project_id)
+            waiters = pending.waiters if pending is not None else ()
+            run_without_waiter = pending.run_without_waiter if pending is not None else False
+            if waiter is not None:
+                waiters = (*waiters, waiter)
+            else:
+                run_without_waiter = True
             self._pending_project_dispatches[project_id] = _PendingProjectDispatch(
                 reason=reason,
                 max_ticks=max_ticks,
                 max_actions=max_actions,
                 max_active_agents=max_active_agents,
+                waiters=waiters,
+                run_without_waiter=run_without_waiter,
             )
             return
         self._start_project_dispatch_task(
@@ -414,6 +459,8 @@ class SystemAutomationLoop:
             max_ticks=max_ticks,
             max_actions=max_actions,
             max_active_agents=max_active_agents,
+            waiters=(waiter,) if waiter is not None else (),
+            run_without_waiter=waiter is None,
         )
 
     def _start_project_dispatch_task(
@@ -424,6 +471,8 @@ class SystemAutomationLoop:
         max_ticks: int | None,
         max_actions: int | None,
         max_active_agents: int | None,
+        waiters: tuple[asyncio.Future[DispatcherTickSummary], ...] = (),
+        run_without_waiter: bool = False,
     ) -> None:
         task = asyncio.create_task(
             self._run_scheduled_project_dispatch(
@@ -436,23 +485,51 @@ class SystemAutomationLoop:
             name=f"system-automation-dispatch-{project_id}",
         )
         self._project_tasks[project_id] = task
+        self._project_task_waiters[project_id] = waiters
+        if run_without_waiter:
+            self._project_task_runs_without_waiter.add(project_id)
+        else:
+            self._project_task_runs_without_waiter.discard(project_id)
         task.add_done_callback(
-            lambda done_task: self._on_project_dispatch_done(project_id, done_task)
+            lambda done_task: self._on_project_dispatch_done(project_id, done_task, waiters)
         )
 
-    def _on_project_dispatch_done(self, project_id: str, task: asyncio.Task[None]) -> None:
+    def _on_project_dispatch_done(
+        self,
+        project_id: str,
+        task: asyncio.Task[DispatcherTickSummary],
+        waiters: tuple[asyncio.Future[DispatcherTickSummary], ...],
+    ) -> None:
         if self._project_tasks.get(project_id) is not task:
             return
         self._project_tasks.pop(project_id, None)
+        self._project_task_waiters.pop(project_id, None)
+        self._project_task_runs_without_waiter.discard(project_id)
+        if task.cancelled():
+            for waiter in waiters:
+                waiter.cancel()
+        else:
+            error = task.exception()
+            if error is None:
+                result = task.result()
+                for waiter in waiters:
+                    if not waiter.done():
+                        waiter.set_result(result)
+            else:
+                for waiter in waiters:
+                    if not waiter.done():
+                        waiter.set_exception(error)
         pending = self._pending_project_dispatches.pop(project_id, None)
         if pending is None:
             return
-        self._schedule_project_dispatch_on_loop(
-            project_id,
-            pending.reason,
-            pending.max_ticks,
-            pending.max_actions,
-            pending.max_active_agents,
+        self._start_project_dispatch_task(
+            project_id=project_id,
+            reason=pending.reason,
+            max_ticks=pending.max_ticks,
+            max_actions=pending.max_actions,
+            max_active_agents=pending.max_active_agents,
+            waiters=pending.waiters,
+            run_without_waiter=pending.run_without_waiter,
         )
 
     async def _run_scheduled_project_dispatch(
@@ -463,9 +540,9 @@ class SystemAutomationLoop:
         max_ticks: int | None,
         max_actions: int | None,
         max_active_agents: int | None,
-    ) -> None:
+    ) -> DispatcherTickSummary:
         try:
-            await self.dispatch_project_once(
+            return await self.dispatch_project_once(
                 project_id=project_id,
                 reason=reason,
                 max_ticks=max_ticks,
@@ -480,6 +557,60 @@ class SystemAutomationLoop:
                 extra={"project_id": project_id, "reason": reason},
                 exc_info=True,
             )
+            raise
+
+    async def _dispatch_project_serialized(
+        self,
+        *,
+        project_id: str,
+        reason: str,
+        max_ticks: int | None = None,
+    ) -> DispatcherTickSummary:
+        waiter: asyncio.Future[DispatcherTickSummary] = asyncio.get_running_loop().create_future()
+        self._enqueue_project_dispatch(
+            project_id=project_id,
+            reason=reason,
+            max_ticks=max_ticks,
+            max_actions=None,
+            max_active_agents=None,
+            waiter=waiter,
+        )
+        try:
+            return await waiter
+        except asyncio.CancelledError:
+            self._cancel_project_dispatch_waiter(project_id, waiter)
+            raise
+
+    def _cancel_project_dispatch_waiter(
+        self,
+        project_id: str,
+        waiter: asyncio.Future[DispatcherTickSummary],
+    ) -> None:
+        pending = self._pending_project_dispatches.get(project_id)
+        if pending is not None and waiter in pending.waiters:
+            remaining = tuple(item for item in pending.waiters if item is not waiter)
+            if remaining or pending.run_without_waiter:
+                self._pending_project_dispatches[project_id] = _PendingProjectDispatch(
+                    reason=pending.reason,
+                    max_ticks=pending.max_ticks,
+                    max_actions=pending.max_actions,
+                    max_active_agents=pending.max_active_agents,
+                    waiters=remaining,
+                    run_without_waiter=pending.run_without_waiter,
+                )
+            else:
+                self._pending_project_dispatches.pop(project_id, None)
+            return
+
+        active_waiters = self._project_task_waiters.get(project_id, ())
+        if waiter not in active_waiters:
+            return
+        if project_id in self._project_task_runs_without_waiter:
+            return
+        if all(item.done() for item in active_waiters):
+            task = self._project_tasks.get(project_id)
+            if task is not None:
+                task.cancel()
 
     async def _run_pre_dispatch_maintenance(self) -> AutomationMaintenanceSummary:
         safe_claims = await self._run_db_call(recover_safe_build_claims, self.db, None)
@@ -521,7 +652,7 @@ class SystemAutomationLoop:
             return {}
         results = await asyncio.gather(
             *[
-                self.dispatch_project_once(
+                self._dispatch_project_serialized(
                     project_id=project_id,
                     reason=reason,
                     max_ticks=1,
