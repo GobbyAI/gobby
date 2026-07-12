@@ -20,6 +20,7 @@ Task: gt-3c4cf0
 Parent: gt-30cebd (Decompose tasks.py)
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,6 +48,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _stage(task_id: str, state: str) -> StageState:
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     return StageState(
         task_id=task_id,
         stage_name="development",
@@ -54,7 +56,7 @@ def _stage(task_id: str, state: str) -> StageState:
         state=state,
         review_policy="required",
         reviewer_agent=None,
-        entered_at="now",
+        entered_at=timestamp,
         entered_by_session_id=None,
         completed_at=None,
         completed_by_session_id=None,
@@ -65,20 +67,24 @@ def _stage(task_id: str, state: str) -> StageState:
         max_review_rounds=None,
         artifact_refs=None,
         notes=None,
-        updated_at="now",
+        updated_at=timestamp,
     )
 
 
 def _task(**kwargs) -> Task:
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
     status = kwargs.pop("status", "open")
     task_id = kwargs["id"]
     if status == "closed":
-        kwargs.setdefault("closed_at", "now")
+        kwargs.setdefault("closed_at", timestamp)
     elif status == "escalated":
         kwargs.setdefault("is_escalated", True)
-        kwargs.setdefault("escalated_at", "now")
+        kwargs.setdefault("escalated_at", timestamp)
     elif status in {"ready", "in_progress", "needs_review", "review_approved"}:
         kwargs.setdefault("stages", (_stage(task_id, status),))
+    for field_name in ("created_at", "updated_at"):
+        if kwargs.get(field_name) == "now":
+            kwargs[field_name] = timestamp
     return Task(**kwargs)
 
 
