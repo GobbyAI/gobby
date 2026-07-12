@@ -527,6 +527,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
         "planning",
         by_session_id=worker.id,
     )
+    reviewer_run_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:autonomous-reviewer"))
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
         run = run_manager.create(
@@ -535,7 +536,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=str(kwargs["task_id"]),
-            run_id="run-autonomous-reviewer",
+            run_id=reviewer_run_id,
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
@@ -577,7 +578,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
 
     assert result["ok"] is True
     reviewer = await wait_for_async_condition(
-        lambda: run_manager.get("run-autonomous-reviewer"),
+        lambda: run_manager.get(reviewer_run_id),
         timeout=2.0,
         description="autonomous reviewer dispatch",
     )
@@ -587,7 +588,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     assert reviewer.agent_name == "plan-adversary"
     assert reviewer.task_id == task.id
     assert mutex is not None
-    assert mutex.run_id == "run-autonomous-reviewer"
+    assert mutex.run_id == reviewer_run_id
 
 
 @pytest.mark.asyncio
@@ -637,6 +638,8 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     task_manager.stage_states.submit_for_review(task.id, "planning", by_session_id=worker.id)
     task_manager.release_task_claim(task.id)
     task_manager.claim_task(task.id, reviewer_session.id)
+    stale_run_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:stale-reviewer"))
+    replacement_run_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:replacement-reviewer"))
 
     stale_run = run_manager.create(
         parent_session_id=worker.id,
@@ -646,7 +649,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
         prompt="review it",
         agent_name="plan-adversary",
         task_id=task.id,
-        run_id="run-stale-reviewer",
+        run_id=stale_run_id,
     )
     run_manager.start(stale_run.id)
     mutex_manager = TaskDispatchMutexManager(temp_db)
@@ -665,7 +668,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
             prompt=str(kwargs["prompt"]),
             agent_name=str(kwargs["agent_lookup_name"]),
             task_id=str(kwargs["task_id"]),
-            run_id="run-replacement-reviewer",
+            run_id=replacement_run_id,
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
@@ -701,7 +704,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     )
 
     replacement = await wait_for_async_condition(
-        lambda: run_manager.get("run-replacement-reviewer"),
+        lambda: run_manager.get(replacement_run_id),
         timeout=2.0,
         description="replacement reviewer dispatch",
     )
@@ -716,7 +719,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     assert replacement.agent_name == "plan-adversary"
     assert replacement.task_id == task.id
     assert mutex is not None
-    assert mutex.run_id == "run-replacement-reviewer"
+    assert mutex.run_id == replacement_run_id
 
 
 @pytest.mark.asyncio
@@ -762,6 +765,7 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
         by_session_id=None,
     )
     task_manager.stage_states.start_stage(task.id, "planning", by_session_id=child.id)
+    idle_run_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:idle-planner"))
     run = run_manager.create(
         parent_session_id=parent.id,
         child_session_id=child.id,
@@ -770,16 +774,17 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
         prompt="Revise the plan",
         agent_name="planner",
         task_id=task.id,
-        run_id="run-idle-planner",
+        run_id=idle_run_id,
     )
     run_manager.start(run.id)
     run_manager.update_runtime(run.id, tmux_session_name="gobby-idle-planner", pid=12345)
     stored_run = run_manager.get(run.id)
     assert stored_run is not None
+    workflow_instance_id = str(uuid5(NAMESPACE_URL, "gobby-e2e:idle-planner-workflow"))
 
     WorkflowInstanceManager(temp_db).save_instance(
         WorkflowInstance(
-            id="wf-idle-planner",
+            id=workflow_instance_id,
             session_id=child.id,
             workflow_name=workflow_name,
             current_step="plan",
