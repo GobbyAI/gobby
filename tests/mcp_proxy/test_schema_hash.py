@@ -64,6 +64,15 @@ def test_compute_schema_hash_different_schemas() -> None:
     assert h1 != h2
 
 
+def test_compute_schema_hash_includes_description() -> None:
+    schema = {"type": "object", "properties": {}}
+
+    old_hash = compute_schema_hash(schema, description="Old description")
+    new_hash = compute_schema_hash(schema, description="New description")
+
+    assert old_hash != new_hash
+
+
 # --- SchemaHashRecord ---
 
 
@@ -168,6 +177,36 @@ def test_needs_reindexing_hash_same(manager: SchemaHashManager, mock_db: MagicMo
     assert manager.needs_reindexing("srv", "tool", "proj", schema) is False
 
 
+def test_needs_reindexing_includes_description(
+    manager: SchemaHashManager, mock_db: MagicMock
+) -> None:
+    schema: dict[str, Any] = {"type": "object"}
+    mock_db.fetchone.return_value = _hash_row(
+        schema_hash=compute_schema_hash(schema, description="Old description")
+    )
+
+    assert (
+        manager.needs_reindexing(
+            "srv",
+            "tool",
+            "proj",
+            schema,
+            current_description="Old description",
+        )
+        is False
+    )
+    assert (
+        manager.needs_reindexing(
+            "srv",
+            "tool",
+            "proj",
+            schema,
+            current_description="New description",
+        )
+        is True
+    )
+
+
 def test_check_tools_for_changes(manager: SchemaHashManager, mock_db: MagicMock) -> None:
     mock_db.fetchall.return_value = [
         _hash_row(
@@ -195,6 +234,34 @@ def test_check_tools_input_schema_key(manager: SchemaHashManager, mock_db: Magic
     tools = [{"name": "t1", "input_schema": {"type": "object"}}]
     result = manager.check_tools_for_changes("srv", "proj", tools)
     assert "t1" in result["new"]
+
+
+def test_check_tools_hashes_internal_and_external_shapes_consistently(
+    manager: SchemaHashManager, mock_db: MagicMock
+) -> None:
+    schema = {"type": "object", "properties": {}}
+    definition_hash = compute_schema_hash(schema, description="Same description")
+    mock_db.fetchall.return_value = [
+        _hash_row(id=1, tool_name="internal", schema_hash=definition_hash),
+        _hash_row(id=2, tool_name="external", schema_hash=definition_hash),
+    ]
+    tools = [
+        {
+            "name": "internal",
+            "description": "Same description",
+            "inputSchema": schema,
+        },
+        {
+            "name": "external",
+            "description": "Same description",
+            "input_schema": schema,
+        },
+    ]
+
+    result = manager.check_tools_for_changes("srv", "proj", tools)
+
+    assert result["unchanged"] == ["internal", "external"]
+    assert result["changed"] == []
 
 
 def test_update_verification_time(manager: SchemaHashManager, mock_db: MagicMock) -> None:
