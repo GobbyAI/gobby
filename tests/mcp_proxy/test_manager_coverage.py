@@ -1414,8 +1414,8 @@ class TestMCPClientManagerListTools:
         assert result["test-server"] == []
 
     @pytest.mark.asyncio
-    async def test_list_tools_handles_error(self):
-        """Test list_tools handles errors gracefully."""
+    async def test_list_tools_single_server_propagates_connection_error(self):
+        """A dead single server must not be reported as an empty inventory."""
         config = MCPServerConfig(
             name="test-server",
             project_id="test-project",
@@ -1426,18 +1426,25 @@ class TestMCPClientManagerListTools:
         manager = MCPClientManager(server_configs=[config])
         manager._connections["test-server"] = MagicMock()
 
-        mock_session = AsyncMock()
-        mock_session.list_tools.side_effect = Exception("List failed")
-
         manager.health["test-server"] = MCPConnectionHealth(
             name="test-server",
             state=ConnectionState.CONNECTED,
         )
 
-        with patch.object(manager, "get_client_session", return_value=mock_session):
-            result = await manager.list_tools("test-server")
-
-        assert result["test-server"] == []
+        with (
+            patch.object(
+                manager,
+                "get_client_session",
+                side_effect=ConnectionError("initial connection lost"),
+            ),
+            patch.object(
+                manager,
+                "ensure_connected",
+                side_effect=ConnectionError("reconnect refused"),
+            ),
+            pytest.raises(MCPError, match="reconnect retry failed: reconnect refused"),
+        ):
+            await manager.list_tools("test-server")
 
 
 class TestMCPClientManagerGetToolInputSchema:

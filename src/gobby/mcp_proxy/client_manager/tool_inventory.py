@@ -51,11 +51,7 @@ async def list_tools(
     """List tools from one server or all active connections."""
     results: dict[str, list[dict[str, Any]]] = {}
     if server_name:
-        try:
-            return {server_name: await manager._list_tools_for_server(server_name)}
-        except Exception as exc:
-            logger.warning("Failed to list tools for %s: %s", server_name, exc)
-            return {server_name: []}
+        return {server_name: await manager._list_tools_for_server(server_name)}
 
     for name in list(manager._connections.keys()):
         try:
