@@ -244,6 +244,9 @@ async def remove_server(
         raise ValueError(f"Internal MCP server '{name}' cannot be removed")
     effective_project_id = project_id or config.project_id
 
+    if manager.mcp_db_manager and effective_project_id:
+        await asyncio.to_thread(manager.mcp_db_manager.remove_server, name, effective_project_id)
+
     if name in manager._connections:
         await manager._connections[name].disconnect()
         del manager._connections[name]
@@ -252,9 +255,6 @@ async def remove_server(
     del manager._configs[name]
     manager.health.pop(name, None)
     manager._lazy_connector.unregister_server(name)
-
-    if manager.mcp_db_manager and effective_project_id:
-        await asyncio.to_thread(manager.mcp_db_manager.remove_server, name, effective_project_id)
 
     return {"success": True, "name": name}
 
@@ -286,17 +286,6 @@ async def update_server(
 
     config.validate()
 
-    if name in manager._connections:
-        await manager._connections[name].disconnect()
-        del manager._connections[name]
-    manager._tool_schema_cache.pop(name, None)
-    manager.health.pop(name, None)
-    manager._lazy_connector.unregister_server(name)
-
-    manager._configs[name] = config
-    if config.enabled:
-        manager._lazy_connector.register_server(name)
-
     if manager.mcp_db_manager and effective_project_id:
         await asyncio.to_thread(
             manager.mcp_db_manager.update_server,
@@ -314,6 +303,17 @@ async def update_server(
             oauth_provider=config.oauth_provider,
             connect_timeout=config.connect_timeout,
         )
+
+    if name in manager._connections:
+        await manager._connections[name].disconnect()
+        del manager._connections[name]
+    manager._tool_schema_cache.pop(name, None)
+    manager.health.pop(name, None)
+    manager._lazy_connector.unregister_server(name)
+
+    manager._configs[name] = config
+    if config.enabled:
+        manager._lazy_connector.register_server(name)
 
     return {"success": True, "name": name}
 
