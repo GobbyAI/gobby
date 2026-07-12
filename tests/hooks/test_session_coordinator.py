@@ -375,7 +375,6 @@ class TestAgentRunCompletion:
         async def flush_session(session_id: str) -> None:
             nonlocal flush_completed
             assert session_id == "sess-short"
-            await asyncio.sleep(0)
             flush_completed = True
 
         message_processor.flush_session = AsyncMock(side_effect=flush_session)
@@ -439,6 +438,54 @@ class TestAgentRunCompletion:
         call_kwargs = mock_agent_run_manager.complete.call_args[1]
         assert call_kwargs["run_id"] == "run-123"
         assert call_kwargs["result"] == "Summary"
+
+    def test_complete_agent_run_notifies_stored_status_when_complete_loses_race(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        running_run = MagicMock(status="running", tmux_session_name=None)
+        terminal_run = MagicMock(status="cancelled")
+        mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
+        mock_agent_run_manager.complete.return_value = None
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        coordinator._notify_agent_completion = MagicMock()
+        session = MagicMock(
+            id="session-123",
+            agent_run_id="run-123",
+            summary_markdown="Summary",
+            tool_call_count=1,
+            turn_count=1,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        coordinator._notify_agent_completion.assert_called_once_with("run-123", "cancelled")
+        assert mock_agent_run_manager.get.call_count == 2
+        assert mock_agent_run_manager.complete.call_count == 1
+        assert mock_agent_run_manager.fail.call_count == 0
+        assert coordinator._notify_agent_completion.call_count == 1
+
+    def test_complete_agent_run_notifies_stored_status_when_fail_loses_race(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        running_run = MagicMock(status="running", tmux_session_name=None)
+        terminal_run = MagicMock(status="success")
+        mock_agent_run_manager.get.side_effect = [running_run, terminal_run]
+        mock_agent_run_manager.fail.return_value = None
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        coordinator._notify_agent_completion = MagicMock()
+        session = MagicMock(
+            id="session-123",
+            agent_run_id="run-123",
+            summary_markdown="Summary",
+            tool_call_count=0,
+            turn_count=0,
+        )
+
+        coordinator.complete_agent_run(session)
+
+        coordinator._notify_agent_completion.assert_called_once_with("run-123", "success")
+        assert mock_agent_run_manager.get.call_count == 2
+        assert mock_agent_run_manager.fail.call_count == 1
+        assert mock_agent_run_manager.complete.call_count == 0
+        assert coordinator._notify_agent_completion.call_count == 1
 
     def test_complete_agent_run_skips_without_run_id(self) -> None:
         """Test complete_agent_run skips sessions without agent_run_id."""
