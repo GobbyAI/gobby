@@ -54,7 +54,13 @@ class LinearGraphQLClient:
         """Build a client from the stored Linear API key without blocking the event loop."""
         return await asyncio.to_thread(cls.from_database, db)
 
-    async def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def execute(
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        idempotent: bool = True,
+    ) -> dict[str, Any]:
         headers = {
             "Authorization": self.api_key,
             "Content-Type": "application/json",
@@ -66,19 +72,23 @@ class LinearGraphQLClient:
                 try:
                     response = await client.post(self.endpoint, headers=headers, json=payload)
                 except (httpx.TransportError, httpx.TimeoutException) as exc:
-                    if _is_final_attempt(attempt):
+                    can_retry = idempotent or _is_connection_establishment_failure(exc)
+                    if not can_retry or _is_final_attempt(attempt):
+                        attempts = attempt + 1
                         raise LinearGraphQLError(
                             "Linear GraphQL request failed after "
-                            f"{_MAX_ATTEMPTS} attempts due to a network error."
+                            f"{attempts} {_attempt_word(attempts)} due to a network error."
                         ) from exc
                     await asyncio.sleep(_retry_delay(attempt))
                     continue
 
                 if _is_retryable_status(response.status_code):
-                    if _is_final_attempt(attempt):
+                    if not idempotent or _is_final_attempt(attempt):
+                        attempts = attempt + 1
                         raise LinearGraphQLError(
                             "Linear GraphQL request failed after "
-                            f"{_MAX_ATTEMPTS} attempts with HTTP {response.status_code}."
+                            f"{attempts} {_attempt_word(attempts)} "
+                            f"with HTTP {response.status_code}."
                         ) from _status_error(response)
                     await asyncio.sleep(_retry_delay(attempt, response))
                     continue
@@ -111,60 +121,108 @@ class LinearGraphQLClient:
                 raise LinearGraphQLError("Linear GraphQL response did not include data.")
             return cast(dict[str, Any], data)
 
+    async def _paginate_connection(
+        self,
+        query: str,
+        variables: dict[str, Any],
+        connection_path: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        after: str | None = None
+        seen_cursors: set[str] = set()
+
+        while True:
+            data = await self.execute(query, {**variables, "after": after})
+            connection = _connection_at_path(data, connection_path)
+            records.extend(_connection_nodes(connection))
+            page_info = connection.get("pageInfo")
+            if not isinstance(page_info, dict) or not isinstance(
+                page_info.get("hasNextPage"), bool
+            ):
+                raise LinearGraphQLError(
+                    "Linear GraphQL connection did not include valid pageInfo."
+                )
+            if page_info["hasNextPage"] is False:
+                return records
+
+            end_cursor = page_info.get("endCursor")
+            if not isinstance(end_cursor, str) or not end_cursor or end_cursor in seen_cursors:
+                raise LinearGraphQLError(
+                    "Linear GraphQL pagination reported another page without a new endCursor."
+                )
+            seen_cursors.add(end_cursor)
+            after = end_cursor
+
     async def list_teams(self) -> list[dict[str, Any]]:
-        data = await self.execute(
+        return await self._paginate_connection(
             """
-            query Teams {
-              teams(first: 100) {
+            query Teams($after: String) {
+              teams(first: 100, after: $after) {
                 nodes {
                   id
                   name
                   key
                 }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
               }
             }
-            """
+            """,
+            {},
+            ("teams",),
         )
-        return _connection_nodes(data.get("teams"))
 
     async def list_projects(self, team_id: str) -> list[dict[str, Any]]:
         try:
-            data = await self.execute(
+            return await self._paginate_connection(
                 """
-                query TeamProjects($teamId: String!) {
+                query TeamProjects($teamId: String!, $after: String) {
                   team(id: $teamId) {
-                    projects(first: 100) {
+                    projects(first: 100, after: $after) {
                       nodes {
                         id
                         name
+                      }
+                      pageInfo {
+                        hasNextPage
+                        endCursor
                       }
                     }
                   }
                 }
                 """,
                 {"teamId": team_id},
+                ("team", "projects"),
             )
-            team = data.get("team") if isinstance(data.get("team"), dict) else {}
-            return _connection_nodes(cast(dict[str, Any], team).get("projects"))
-        except LinearGraphQLError:
-            data = await self.execute(
-                """
-                query Projects {
-                  projects(first: 100) {
-                    nodes {
-                      id
-                      name
-                      teams {
+        except LinearGraphQLError as primary_error:
+            try:
+                projects = await self._paginate_connection(
+                    """
+                    query Projects($after: String) {
+                      projects(first: 100, after: $after) {
                         nodes {
                           id
+                          name
+                          teams {
+                            nodes {
+                              id
+                            }
+                          }
+                        }
+                        pageInfo {
+                          hasNextPage
+                          endCursor
                         }
                       }
                     }
-                  }
-                }
-                """
-            )
-            projects = _connection_nodes(data.get("projects"))
+                    """,
+                    {},
+                    ("projects",),
+                )
+            except LinearGraphQLError as fallback_error:
+                raise fallback_error from primary_error
             return [
                 project
                 for project in projects
@@ -174,24 +232,27 @@ class LinearGraphQLClient:
             ]
 
     async def list_team_states(self, team_id: str) -> list[dict[str, Any]]:
-        data = await self.execute(
+        return await self._paginate_connection(
             """
-            query TeamStates($teamId: String!) {
+            query TeamStates($teamId: String!, $after: String) {
               team(id: $teamId) {
-                states(first: 100) {
+                states(first: 100, after: $after) {
                   nodes {
                     id
                     name
                     type
+                  }
+                  pageInfo {
+                    hasNextPage
+                    endCursor
                   }
                 }
               }
             }
             """,
             {"teamId": team_id},
+            ("team", "states"),
         )
-        team = data.get("team") if isinstance(data.get("team"), dict) else {}
-        return _connection_nodes(cast(dict[str, Any], team).get("states"))
 
     async def create_project(self, team_id: str, name: str) -> dict[str, Any]:
         data = await self.execute(
@@ -207,6 +268,7 @@ class LinearGraphQLClient:
             }
             """,
             {"input": {"name": name, "teamIds": [team_id]}},
+            idempotent=False,
         )
         payload = _payload(data, "projectCreate")
         project = payload.get("project")
@@ -230,10 +292,10 @@ class LinearGraphQLClient:
         if labels:
             issue_filter["labels"] = {"name": {"in": labels}}
 
-        data = await self.execute(
+        return await self._paginate_connection(
             """
-            query Issues($filter: IssueFilter) {
-              issues(first: 100, filter: $filter) {
+            query Issues($filter: IssueFilter, $after: String) {
+              issues(first: 100, after: $after, filter: $filter) {
                 nodes {
                   id
                   identifier
@@ -250,12 +312,16 @@ class LinearGraphQLClient:
                     name
                   }
                 }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
               }
             }
             """,
             {"filter": issue_filter},
+            ("issues",),
         )
-        return _connection_nodes(data.get("issues"))
 
     async def create_issue(
         self,
@@ -290,6 +356,7 @@ class LinearGraphQLClient:
             }
             """,
             {"input": issue_input},
+            idempotent=False,
         )
         payload = _payload(data, "issueCreate")
         issue = payload.get("issue")
@@ -365,6 +432,29 @@ def _connection_nodes(value: Any) -> list[dict[str, Any]]:
     if not isinstance(nodes, list):
         return []
     return [node for node in nodes if isinstance(node, dict)]
+
+
+def _connection_at_path(data: dict[str, Any], connection_path: tuple[str, ...]) -> dict[str, Any]:
+    value: Any = data
+    for key in connection_path:
+        if not isinstance(value, dict) or key not in value:
+            joined_path = ".".join(connection_path)
+            raise LinearGraphQLError(
+                f"Linear GraphQL response did not include connection {joined_path}."
+            )
+        value = value[key]
+    if not isinstance(value, dict):
+        joined_path = ".".join(connection_path)
+        raise LinearGraphQLError(f"Linear GraphQL connection {joined_path} was not an object.")
+    return cast(dict[str, Any], value)
+
+
+def _is_connection_establishment_failure(exc: BaseException) -> bool:
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+def _attempt_word(attempts: int) -> str:
+    return "attempt" if attempts == 1 else "attempts"
 
 
 def _is_final_attempt(attempt: int) -> bool:

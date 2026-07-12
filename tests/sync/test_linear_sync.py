@@ -751,6 +751,37 @@ class TestLinearSyncServiceSync:
         sync_service._update_synced_at.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_sync_all_preserves_cursor_after_incomplete_paginated_fetch(
+        self,
+        sync_service: LinearSyncService,
+        mock_task_manager,
+    ) -> None:
+        """A failed later page cannot advance the project sync watermark."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": f"task-{index}", "linear_issue_id": f"issue-{index}"} for index in range(125)
+        ]
+        _configure_graphql_pull_result(
+            sync_service,
+            LinearGraphQLError("Linear pagination page 2 was incomplete."),
+        )
+        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
+        sync_service._update_synced_at = MagicMock()
+        sync_service.push_dirty_tasks = AsyncMock()
+
+        result = await sync_service.sync_all(team_id="team-123")
+
+        assert result["pull"] == {
+            "updated": 0,
+            "skipped": 0,
+            "errors": 125,
+            "deferred": 0,
+        }
+        assert result["cursor_updated"] is False
+        assert result["synced_at"] == "old-cursor"
+        sync_service.push_dirty_tasks.assert_not_awaited()
+        sync_service._update_synced_at.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_sync_all_does_not_update_cursor_or_push_when_pull_is_deferred(
         self, sync_service: LinearSyncService
     ) -> None:

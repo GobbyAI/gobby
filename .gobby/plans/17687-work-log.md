@@ -213,3 +213,31 @@ Entry format:
   codex --yolo session (uv run gobby restart, pid 91960 ← codex pid 15045,
   now exited) — 5th uncoordinated restart; urgent P2P sent with evidence.
   Staged degraded 9→19 in that window; heal attempt=6 will converge.
+
+## 2026-07-12 — #18005 CLOSED: ownership page dangling module links (gcode bug #3 found live)
+
+- Arm S heal attempt=6 PUBLISHED (exit=0 at 07:36:36Z, 9h46m; files=2597,
+  modules=270, symbols=33302, skipped=1552; degraded=11 from the restart
+  saga + a machine-sleep gap). Aggregates verified: repo.md,
+  _architecture.md, concepts/ x12, narrative 01..09 canonical short slugs
+  (+10/11 deep-dives) — #17823 and #17848 fixes both held.
+- Attempt=7 convergence rerun failed at publish (13:35:36Z exit=1):
+  "generated link in code/_ownership.md has no staged target
+  code/modules/crates/gwiki/src/source_file.md". Root cause: write_modules
+  linked raw file_modules cluster names; clustering divergence vs the
+  emitted module-page set (synthetic cluster crates/gwiki/src/source_file —
+  never a git path — emitted by an earlier run's clustering, dropped by
+  this run's) dangles and publish fails closed.
+- Fix (#18005, commit e7ee1049d): build_ownership_doc takes the emitted
+  module set from module_docs; absent clusters remap to nearest emitted
+  ancestor, else repo overview. Tests: 2 new in ownership/tests.rs; 1001
+  gobby-code lib tests green; clippy/fmt clean; test-quality audit 0 new.
+- Binary transition: gcode rebuilt (release) + reinstalled to
+  ~/.gobby/bin/gcode after this commit (4th transition; disclose in
+  evidence doc). Heal attempt=8 launched on the fixed binary.
+- Daemon restarts this window (all logged for disclosure): 2026-07-12
+  00:59:39Z sender_pid=63145 unattributed; 02:11:13Z session #8155
+  (claude --dangerously-skip-permissions, caught by ancestry trap, P2P
+  sent); 03:27:40Z #8155 again but COORDINATED (gobby-#17908 fix
+  activation, single restart, agreed via P2P — I gave go-ahead since a
+  converging rerun was already required). Trap b0y4a3sxt stays armed.

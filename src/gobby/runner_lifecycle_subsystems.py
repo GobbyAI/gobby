@@ -49,13 +49,11 @@ async def _run_db(
 
 def _discover_wiki_cron_project_scopes(
     database: Any,
-    config: Any,
-) -> tuple[list[tuple[str, list[str]]], list[tuple[str, str]]]:
+) -> tuple[list[tuple[str, list[str] | None]], list[tuple[str, str]]]:
     from gobby.storage.projects import LocalProjectManager
-    from gobby.wiki.scheduled_jobs import configured_wiki_cron_scopes
 
     project_manager = LocalProjectManager(database)
-    scopes: list[tuple[str, list[str]]] = []
+    scopes: list[tuple[str, list[str] | None]] = []
     errors: list[tuple[str, str]] = []
     offset = 0
     while True:
@@ -79,7 +77,7 @@ def _discover_wiki_cron_project_scopes(
                     )
                 )
                 continue
-            scopes.append((project.id, configured_wiki_cron_scopes(config, project.id)))
+            scopes.append((project.id, None))
         offset += len(projects)
         if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
             break
@@ -383,7 +381,6 @@ async def _register_wiki_cron_handlers(
             runner,
             _discover_wiki_cron_project_scopes,
             runner.database,
-            runner.config,
         )
         if not project_scopes and not project_errors:
             if tracker:
@@ -411,7 +408,7 @@ async def _register_wiki_cron_handlers(
         elif tracker:
             tracker.complete("Wiki cron handlers")
     except Exception as e:
-        logger.error("Failed to register wiki cron handlers: %s", e)
+        logger.error("Failed to register wiki cron handlers: %s", e, exc_info=True)
         if tracker:
             tracker.error("Wiki cron handlers", str(e))
 

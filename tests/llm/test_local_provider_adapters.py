@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from openai import BadRequestError
+from openai import APIConnectionError, AuthenticationError, BadRequestError
 
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm import local_provider_adapters as adapters
+from gobby.llm.base import (
+    LLMProviderError,
+    VisionInputError,
+    VisionProviderError,
+    VisionProviderUnavailableError,
+)
 from gobby.llm.local_provider_adapters import (
     LMStudioLocalProviderAdapter,
     OllamaLocalProviderAdapter,
@@ -102,7 +109,15 @@ def test_openai_compatible_adapter_uses_openai_sdk() -> None:
     mock_cls.assert_called_once_with(
         base_url="http://localhost:8000/v1",
         api_key="test-key",
+        timeout=adapters._LOCAL_OPENAI_TIMEOUT,
+        max_retries=0,
     )
+    timeout = mock_cls.call_args.kwargs["timeout"]
+    assert timeout.connect == 5.0
+    assert timeout.read == 120.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 5.0
+    assert adapters._LOCAL_OPENAI_OVERALL_TIMEOUT_SECONDS == 120.0
 
 
 @pytest.mark.asyncio
@@ -142,7 +157,80 @@ async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_json_retries_without_unsupported_reasoning_effort() -> None:
+@pytest.mark.parametrize("content", [None, "", " \t\n"])
+async def test_openai_compatible_adapter_rejects_blank_text_content(
+    content: str | None,
+) -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    completions = AsyncMock()
+    completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=None,
+    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    with pytest.raises(
+        LLMProviderError,
+        match=r"OpenAI-compatible provider .*local-model.* returned blank content",
+    ):
+        await adapter.generate_text_result(
+            "hello",
+            system_prompt=None,
+            model="local-model",
+            max_tokens=None,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "json_mode_error",
+    [
+        pytest.param(
+            BadRequestError(
+                message="response_format json_object not supported",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body=None,
+            ),
+            id="message",
+        ),
+        pytest.param(
+            BadRequestError(
+                message="Invalid request parameter",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "unsupported_value", "param": "response_format"},
+            ),
+            id="code-and-param",
+        ),
+        pytest.param(
+            BadRequestError(
+                message="Invalid request parameter",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "unsupported_response_format"},
+            ),
+            id="specific-code",
+        ),
+    ],
+)
+async def test_openai_compatible_json_retries_once_without_json_mode(
+    json_mode_error: BadRequestError,
+) -> None:
     endpoint = LocalGenerationEndpointConfig(
         provider="openai-compatible",
         api_base="http://localhost:8000/v1",
@@ -151,25 +239,20 @@ async def test_openai_compatible_json_retries_without_unsupported_reasoning_effo
     )
 
     class RejectingCompletions:
-        def __init__(self) -> None:
+        def __init__(self, error: BadRequestError) -> None:
             self.calls: list[dict[str, Any]] = []
+            self.error = error
 
         async def create(self, **kwargs: Any) -> Any:
             self.calls.append(kwargs)
             if len(self.calls) == 1:
-                raise BadRequestError(
-                    message="response_format json_object not supported",
-                    response=httpx.Response(400, request=httpx.Request("POST", "http://test")),
-                    body=None,
-                )
-            if "reasoning_effort" in kwargs:
-                raise RuntimeError("reasoning_effort unsupported")
+                raise self.error
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
                 usage=None,
             )
 
-    completions = RejectingCompletions()
+    completions = RejectingCompletions(json_mode_error)
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     with patch("openai.AsyncOpenAI", return_value=fake_client):
@@ -179,15 +262,134 @@ async def test_openai_compatible_json_retries_without_unsupported_reasoning_effo
         "json",
         system_prompt="custom system",
         model="local-model",
+        max_tokens=321,
         reasoning_effort="low",
     )
 
     assert result == {"ok": True}
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 2
+    assert [call["max_tokens"] for call in completions.calls] == [321, 321]
     assert "response_format" not in completions.calls[1]
-    assert "reasoning_effort" not in completions.calls[2]
+    assert completions.calls[1]["reasoning_effort"] == "low"
     assert completions.calls[1]["messages"][0]["content"] == "custom system"
-    assert completions.calls[2]["messages"][0]["content"] == "custom system"
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_json_defaults_to_8000_tokens() -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+    )
+    completions = _FakeOpenAICompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    assert await adapter.generate_json(
+        "json",
+        system_prompt=None,
+        model="local-model",
+    ) == {"ok": True}
+    assert completions.calls[0]["max_tokens"] == 8000
+
+
+async def test_openai_compatible_json_does_not_retry_failed_fallback() -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    error = BadRequestError(
+        message="response_format json_object not supported",
+        response=httpx.Response(400, request=httpx.Request("POST", "http://test")),
+        body=None,
+    )
+    completions = AsyncMock()
+    completions.create.side_effect = [error, error]
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    with pytest.raises(BadRequestError):
+        await adapter.generate_json(
+            "json",
+            system_prompt=None,
+            model="local-model",
+        )
+
+    assert completions.create.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "request_error",
+    [
+        pytest.param(
+            BadRequestError(
+                message="model does not exist",
+                response=httpx.Response(
+                    400,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "model_not_found", "param": "model"},
+            ),
+            id="unrelated-bad-request",
+        ),
+        pytest.param(
+            BadRequestError(
+                message="response_format json_object not supported",
+                response=httpx.Response(
+                    422,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body=None,
+            ),
+            id="wrong-response-status",
+        ),
+        pytest.param(
+            APIConnectionError(request=httpx.Request("POST", "http://test")),
+            id="transport",
+        ),
+        pytest.param(
+            AuthenticationError(
+                message="invalid token",
+                response=httpx.Response(
+                    401,
+                    request=httpx.Request("POST", "http://test"),
+                ),
+                body={"code": "invalid_api_key"},
+            ),
+            id="auth",
+        ),
+    ],
+)
+async def test_openai_compatible_json_unrelated_errors_do_not_retry(
+    request_error: Exception,
+) -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    completions = AsyncMock()
+    completions.create.side_effect = request_error
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    with pytest.raises(type(request_error)):
+        await adapter.generate_json(
+            "json",
+            system_prompt=None,
+            model="local-model",
+        )
+
+    assert completions.create.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -338,7 +540,162 @@ async def test_ollama_adapter_requests_json_format(
         "json",
         system_prompt=None,
         model="qwen3",
+        max_tokens=42,
     )
 
     assert result == {"ok": True}
     assert fake_client.calls[0][2]["json"]["format"] == "json"
+    assert fake_client.calls[0][2]["json"]["options"] == {"num_predict": 42}
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_json_forwards_max_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_client = _FakeAsyncClient(
+        {
+            ("POST", "http://localhost:1234/api/v1/chat"): [
+                _FakeResponse(
+                    "POST",
+                    "http://localhost:1234/api/v1/chat",
+                    json_data={"output": [{"type": "message", "content": '{"ok": true}'}]},
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda: fake_client)
+    endpoint = LocalGenerationEndpointConfig(
+        provider="lmstudio",
+        api_base="http://localhost:1234/v1",
+        model="google/gemma",
+    )
+
+    result = await LMStudioLocalProviderAdapter(endpoint).generate_json(
+        "json",
+        system_prompt=None,
+        model="google/gemma",
+        max_tokens=73,
+    )
+
+    assert result == {"ok": True}
+    assert fake_client.calls[0][2]["json"]["max_output_tokens"] == 73
+
+
+def _vision_adapter(provider: str) -> Any:
+    endpoint = LocalGenerationEndpointConfig(
+        provider=provider,
+        api_base={
+            "openai-compatible": "http://localhost:8000/v1",
+            "lmstudio": "http://localhost:1234/v1",
+            "ollama": "http://localhost:11434/v1",
+        }[provider],
+        model="vision-model",
+        api_key="test-key",
+    )
+    if provider == "openai-compatible":
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+        adapter._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=_FakeOpenAICompletions())
+        )
+        return adapter
+    if provider == "lmstudio":
+        return LMStudioLocalProviderAdapter(endpoint)
+    return OllamaLocalProviderAdapter(endpoint)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_missing_file_raises_input_error(provider: str) -> None:
+    adapter = _vision_adapter(provider)
+
+    with pytest.raises(VisionInputError, match="Image not found"):
+        await adapter.describe_image(
+            "/missing/image.png",
+            context=None,
+            model="vision-model",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_unreadable_file_raises_input_error(
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter(provider)
+
+    with patch.object(Path, "open", side_effect=PermissionError("denied")):
+        with pytest.raises(VisionInputError, match="Failed to read") as exc_info:
+            await adapter.describe_image(
+                str(image_path),
+                context=None,
+                model="vision-model",
+            )
+
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+
+
+@pytest.mark.asyncio
+async def test_local_vision_uninitialised_client_raises_provider_error(tmp_path: Path) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter("openai-compatible")
+    adapter._client = None
+
+    with pytest.raises(VisionProviderUnavailableError, match="not initialised"):
+        await adapter.describe_image(
+            str(image_path),
+            context=None,
+            model="vision-model",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_provider_failure_raises_structured_error(
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter(provider)
+    if provider == "openai-compatible":
+        completions = AsyncMock()
+        completions.create.side_effect = RuntimeError("provider failed")
+        adapter._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    else:
+        adapter._post_chat = AsyncMock(side_effect=RuntimeError("provider failed"))
+
+    with pytest.raises(VisionProviderError, match="provider failed") as exc_info:
+        await adapter.describe_image(
+            str(image_path),
+            context=None,
+            model="vision-model",
+        )
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+async def test_local_vision_preserves_successful_output(provider: str, tmp_path: Path) -> None:
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    adapter = _vision_adapter(provider)
+    expected = "local reply"
+    if provider == "lmstudio":
+        adapter._post_chat = AsyncMock(
+            return_value={"output": [{"type": "message", "content": expected}]}
+        )
+    elif provider == "ollama":
+        adapter._post_chat = AsyncMock(
+            return_value={"message": {"role": "assistant", "content": expected}}
+        )
+
+    result = await adapter.describe_image(
+        str(image_path),
+        context=None,
+        model="vision-model",
+    )
+
+    assert result == expected
