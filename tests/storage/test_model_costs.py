@@ -63,6 +63,19 @@ def test_provider_prefixed_lookup_is_provider_scoped() -> None:
     assert params == ("claude", "shared-model")
 
 
+def test_provider_prefixed_prefix_lookup_is_provider_scoped() -> None:
+    db = MagicMock()
+    db.fetchone.side_effect = [None, {"context_length": 200_000}]
+
+    result = ModelCostStore(db).get_context_window("claude/shared-model-versioned")
+
+    assert result == 200_000
+    query, params = db.fetchone.call_args.args
+    assert "provider = %s" in query
+    assert "LEFT(%s, LENGTH(model)) = model" in query
+    assert params == ("claude", "shared-model-versioned")
+
+
 @pytest.mark.parametrize(
     "invalid_value",
     [

@@ -130,13 +130,21 @@ class ModelCostStore:
             return exact_context_window
 
         # Prefix match — find longest matching model key via SQL
-        provider_clause = "provider = %s AND " if provider is not None else ""
-        prefix_params = (provider, model) if provider is not None else (model,)
-        row = self.db.fetchone(
-            "SELECT context_length FROM model_costs "
-            f"WHERE {provider_clause}LEFT(%s, LENGTH(model)) = model "
-            "AND context_length > 0 "
-            "ORDER BY LENGTH(model) DESC, provider LIMIT 1",
-            prefix_params,
-        )
+        prefix_params: tuple[str, ...]
+        if provider is None:
+            prefix_query = (
+                "SELECT context_length FROM model_costs "
+                "WHERE LEFT(%s, LENGTH(model)) = model AND context_length > 0 "
+                "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
+            )
+            prefix_params = (model,)
+        else:
+            prefix_query = (
+                "SELECT context_length FROM model_costs "
+                "WHERE provider = %s AND LEFT(%s, LENGTH(model)) = model "
+                "AND context_length > 0 "
+                "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
+            )
+            prefix_params = (provider, model)
+        row = self.db.fetchone(prefix_query, prefix_params)
         return positive_context_window(row["context_length"] if row else None)
