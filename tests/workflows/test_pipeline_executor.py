@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -109,8 +110,8 @@ class TestStartDetached:
             task = next(iter(executor._detached_tasks))
             with pytest.raises(RuntimeError, match="boom"):
                 await task
-            # Done-callbacks run via call_soon; yield once so they fire.
-            await asyncio.sleep(0)
+            # Done-callbacks run via call_soon; drain scheduled callbacks.
+            await drain_asyncio_tasks()
 
         assert executor._detached_tasks == set()
         assert executor._detached_execution_ids == set()
@@ -146,7 +147,7 @@ class TestStartDetached:
             task = next(iter(executor._detached_tasks))
             with pytest.raises(ApprovalRequired):
                 await task
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
         assert executor._detached_tasks == set()
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -193,6 +194,7 @@ class TestStartupSweep:
             project_id="proj-123",
         )
 
+        assert execution.id in executor._detached_execution_ids
         executor.startup_sweep()
         mock_execution_manager.fail_stale_running_executions.assert_called_once_with(
             exclude_ids={execution.id}
@@ -200,3 +202,4 @@ class TestStartupSweep:
 
         release.set()
         await next(iter(executor._detached_tasks))
+        assert executor._detached_execution_ids == set()
