@@ -77,6 +77,78 @@ class TestSessionIntegrationTools:
             assert result == {}
 
     @pytest.mark.asyncio
+    async def test_link_task_to_explicit_session(
+        self, mock_task_manager: Any, mock_sync_manager: Any
+    ) -> None:
+        """An explicit session reference is resolved and used instead of context."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "explicit-session-uuid"
+            MockSessionManager.return_value = mock_session_manager
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            result = await registry.call(
+                "link_task_to_session",
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "session_id": "#42",
+                    "action": "discovered",
+                },
+            )
+
+            mock_session_manager.resolve_session_reference.assert_called_once()
+            assert mock_session_manager.resolve_session_reference.call_args.args[0] == "#42"
+            mock_st_instance.link_task.assert_called_once_with(
+                "explicit-session-uuid",
+                "550e8400-e29b-41d4-a716-446655440000",
+                "discovered",
+            )
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_link_task_invalid_explicit_session_does_not_fall_back(
+        self, mock_task_manager: Any, mock_sync_manager: Any
+    ) -> None:
+        """An invalid explicit session is rejected without linking to context."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.side_effect = ValueError(
+                "Session not found"
+            )
+            MockSessionManager.return_value = mock_session_manager
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            result = await registry.call(
+                "link_task_to_session",
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "session_id": "missing-session",
+                },
+            )
+
+            assert result == {"error": "Invalid session_id 'missing-session': Session not found"}
+            mock_session_manager.resolve_session_reference.assert_called_once()
+            assert (
+                mock_session_manager.resolve_session_reference.call_args.args[0]
+                == "missing-session"
+            )
+            mock_st_instance.link_task.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_link_task_to_session_missing_session_id(
         self, mock_task_manager: Any, mock_sync_manager: Any
     ) -> None:
