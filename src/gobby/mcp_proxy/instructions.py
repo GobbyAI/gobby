@@ -49,7 +49,8 @@ RIGHT — Just-in-time discovery:
 `set_variable` and `get_variable` are top-level tools — no progressive discovery needed.
 Call directly: set_variable(name="flag", value=true, session_id="#123")
 session_id is required for variable tools. Omit name in get_variable to return all variables.
-Pass workflow param to scope reads/writes to a specific workflow instance.
+Both set_variable and get_variable accept an optional workflow parameter to scope reads and
+writes to a specific workflow instance.
 </variables>
 
 <rules>
