@@ -9,6 +9,7 @@ Tests cover:
 """
 
 import inspect
+import logging
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -806,9 +807,9 @@ class TestVectorStoreIntegration:
         await manager._embed_and_upsert("id-1", "content")
         await manager._embed_and_upsert("id-2", "content")
 
-        assert manager._embeddings_available is True
         assert mock_embed.call_count == 2
         assert mock_vs.upsert.call_count == 2
+        assert not hasattr(manager, "_embeddings_available")
 
     @pytest.mark.asyncio
     async def test_create_memory_with_vectorstore(self, db, memory_config) -> None:
@@ -825,6 +826,52 @@ class TestVectorStoreIntegration:
         mock_vs.upsert.assert_called_once()
         assert mock_vs.upsert.call_count == 1
         assert mock_vs.upsert.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_create_and_update_retry_embedding_until_provider_recovers(
+        self,
+        db,
+        memory_config,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Transient embed failures never suppress later create/update attempts."""
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_embed = AsyncMock(
+            side_effect=[
+                RuntimeError("provider down"),
+                RuntimeError("provider still down"),
+                [0.1, 0.2],
+            ]
+        )
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        manager._dedup_service = None
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.memory.services.lifecycle"):
+            memory = await manager.create_memory(content="Initial content")
+            await manager.update_memory(memory.id, content="Still unavailable")
+            recovered = await manager.update_memory(memory.id, content="Recovered content")
+
+        assert recovered.content == "Recovered content"
+        assert mock_embed.await_count == 3
+        mock_vs.upsert.assert_awaited_once_with(
+            memory.id,
+            [0.1, 0.2],
+            {"project_id": None},
+        )
+        embedding_records = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.memory.services.lifecycle"
+            and record.message.startswith("Embedding failed for")
+        ]
+        assert [record.levelno for record in embedding_records] == [logging.WARNING, logging.DEBUG]
+        assert not hasattr(manager, "_embeddings_available")
 
 
 class TestLifecycleService:

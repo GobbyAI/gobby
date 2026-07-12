@@ -340,14 +340,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
         """Shared FalkorDB client for graph-backed subsystems, when configured."""
         return self._falkor_client
 
-    @property
-    def _embeddings_available(self) -> bool | None:
-        return self._lifecycle_service.embeddings_available
-
-    @_embeddings_available.setter
-    def _embeddings_available(self, value: bool | None) -> None:
-        self._lifecycle_service.embeddings_available = value
-
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""
         self._last_vector_store_warning_at = log_rate_limited_warning(

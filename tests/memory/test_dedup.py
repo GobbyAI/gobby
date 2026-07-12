@@ -1,5 +1,6 @@
 """Tests for DedupService (vector similarity dedup)."""
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -287,6 +288,45 @@ class TestProcess:
 
         assert len(result.added) == 1
         mock_storage.create_memory.assert_called_once()
+        assert mock_embed_fn.await_count == 2
+        mock_vector_store.upsert.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_process_retries_embedding_until_provider_recovers(
+        self,
+        dedup_service: DedupService,
+        mock_embed_fn: Any,
+        mock_storage: Any,
+        mock_vector_store: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Failed embeds are retried on later dedup calls while warnings stay rate-limited."""
+        mock_embed_fn.side_effect = [
+            RuntimeError("provider down"),
+            RuntimeError("provider still down"),
+            [0.1] * 1536,
+        ]
+        mock_memory = MagicMock()
+        mock_memory.id = "mem-fallback"
+        mock_storage.create_memory.return_value = mock_memory
+        mock_vector_store.search.return_value = []
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.memory.services.dedup"):
+            first = await dedup_service.process(content="first", project_id="proj-1")
+            second = await dedup_service.process(content="second", project_id="proj-1")
+
+        assert first.added == [mock_memory]
+        assert second.added == []
+        assert mock_embed_fn.await_count == 3
+        mock_vector_store.search.assert_awaited_once()
+        embedding_records = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.memory.services.dedup"
+            and record.message.startswith("Embedding failed")
+        ]
+        assert [record.levelno for record in embedding_records] == [logging.WARNING, logging.DEBUG]
+        assert not hasattr(dedup_service, "_embeddings_available")
 
     @pytest.mark.asyncio
     async def test_process_fallback_on_search_failure(
@@ -320,9 +360,9 @@ class TestProcess:
         await dedup_service._embed_and_upsert("mem-1", "content", "proj-1")
         await dedup_service._embed_and_upsert("mem-2", "content", "proj-1")
 
-        assert dedup_service._embeddings_available is True
         assert mock_embed_fn.call_count == 2
         assert mock_vector_store.upsert.call_count == 2
+        assert not hasattr(dedup_service, "_embeddings_available")
 
     @pytest.mark.asyncio
     async def test_process_uses_project_filter(

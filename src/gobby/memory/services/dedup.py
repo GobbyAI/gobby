@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 NEAR_EXACT_THRESHOLD = 0.95  # Score above this → duplicate, skip
 SIMILAR_THRESHOLD = 0.85  # Score above this → update if new content is richer
 VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
+EMBEDDING_WARNING_INTERVAL_SECONDS = 60.0
 _DETAIL_MARKER_RE = re.compile(
     r"`[^`]+`|https?://\S+|[/~][\w./-]+|#[0-9]+|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?\b"
 )
@@ -86,7 +87,7 @@ class DedupService:
         self.vector_store = vector_store
         self.storage = storage
         self.embed_fn = embed_fn
-        self._embeddings_available: bool | None = None
+        self._last_embedding_warning_at = -EMBEDDING_WARNING_INTERVAL_SECONDS
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
 
     async def process(
@@ -118,17 +119,10 @@ class DedupService:
         result = DedupResult()
 
         # Embed the new memory content
-        if self._embeddings_available is False:
-            return await self._fallback_store(
-                content, project_id, memory_type, tags, source_type, source_session_id
-            )
         try:
             embedding = await self.embed_fn(content)
-            self._embeddings_available = True
         except Exception as e:
-            if self._embeddings_available is None:
-                logger.warning(f"Embedding failed, falling back to simple store: {e}")
-                self._embeddings_available = False
+            self._log_embedding_failure("Embedding failed, falling back to simple store", e)
             return await self._fallback_store(
                 content, project_id, memory_type, tags, source_type, source_session_id
             )
@@ -186,15 +180,10 @@ class DedupService:
         project_id: str | None = None,
     ) -> None:
         """Embed content and upsert to VectorStore."""
-        if self._embeddings_available is False:
-            return  # Known-unavailable, skip silently
         try:
             embedding = await self.embed_fn(content)
-            self._embeddings_available = True
         except Exception as e:
-            if self._embeddings_available is None:
-                logger.warning(f"Embedding failed for {memory_id}: {e}")
-                self._embeddings_available = False
+            self._log_embedding_failure(f"Embedding failed for {memory_id}", e)
             return
 
         try:
@@ -211,6 +200,15 @@ class DedupService:
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
                 logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
+
+    def _log_embedding_failure(self, message: str, error: BaseException) -> None:
+        """Rate-limit warnings without suppressing future embedding attempts."""
+        now = time.monotonic()
+        if now - self._last_embedding_warning_at >= EMBEDDING_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_embedding_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""

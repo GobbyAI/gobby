@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
+EMBEDDING_WARNING_INTERVAL_SECONDS = 60.0
 
 
 class MemoryLifecycleService:
@@ -54,7 +56,7 @@ class MemoryLifecycleService:
         self._get_memory = get_memory
         self._embed_and_upsert = embed_and_upsert
         self._log_vector_store_failure = vector_store_failure_logger
-        self.embeddings_available: bool | None = None
+        self._last_embedding_warning_at = -EMBEDDING_WARNING_INTERVAL_SECONDS
 
     @property
     def storage(self) -> LocalMemoryManager:
@@ -73,20 +75,10 @@ class MemoryLifecycleService:
         """Embed content and upsert to VectorStore when available."""
         if not self._vector_store or not self._embed_fn:
             return
-        if self.embeddings_available is False:
-            return
         try:
             embedding = await self._embed_fn(content)
-            self.embeddings_available = True
         except Exception as e:
-            if self.embeddings_available is None:
-                logger.warning(
-                    f"Embedding failed for {memory_id}: {e}; "
-                    "suppressing further embedding warnings until provider recovers"
-                )
-                self.embeddings_available = False
-            else:
-                logger.debug(f"Embedding failed for {memory_id}: {e}")
+            self._log_embedding_failure(memory_id, e)
             return
 
         try:
@@ -96,6 +88,16 @@ class MemoryLifecycleService:
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
                 logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
+
+    def _log_embedding_failure(self, memory_id: str, error: BaseException) -> None:
+        """Rate-limit warnings without suppressing future embedding attempts."""
+        now = time.monotonic()
+        message = f"Embedding failed for {memory_id}"
+        if now - self._last_embedding_warning_at >= EMBEDDING_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_embedding_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     def fire_background_dedup(
         self,
