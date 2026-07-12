@@ -20,7 +20,12 @@ from gobby.integrations.github import GitHubIntegration
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
 
-__all__ = ["GitHubMCPHelper", "GitHubMCPToolError", "parse_github_repo"]
+__all__ = [
+    "GitHubMCPHelper",
+    "GitHubMCPResponseError",
+    "GitHubMCPToolError",
+    "parse_github_repo",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,10 @@ class GitHubMCPToolError(RuntimeError):
         self.tool_name = tool_name
         self.detail = detail
         super().__init__(f"GitHub MCP tool {tool_name!r} failed: {detail}")
+
+
+class GitHubMCPResponseError(RuntimeError):
+    """The GitHub MCP server returned an unexpected successful result shape."""
 
 
 def parse_github_repo(github_repo: str) -> tuple[str, str]:
@@ -61,6 +70,19 @@ def _github_page_limit(limit: int) -> int:
     if limit > 100:
         raise ValueError("GitHub API pagination limit cannot exceed 100")
     return limit
+
+
+def _github_result_limit(limit: int) -> int:
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    return limit
+
+
+def _validate_git_ref(ref: str, field_name: str) -> str:
+    forbidden = (" ", "..", "~", "^", ":", "\\", "\x00", "?", "*", "[")
+    if not ref or ref.startswith("-") or any(value in ref for value in forbidden):
+        raise ValueError(f"{field_name} must be a valid Git ref")
+    return ref
 
 
 class GitHubMCPHelper:
@@ -125,6 +147,33 @@ class GitHubMCPHelper:
                         return item.text
         return result
 
+    async def _paginate_github_mcp(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        total_limit = _github_result_limit(limit)
+        records: list[dict[str, Any]] = []
+        page = 1
+
+        while len(records) < total_limit:
+            page_size = _github_page_limit(min(100, total_limit - len(records)))
+            result = await self._call_github_mcp(
+                tool_name,
+                {**arguments, "page": page, "per_page": page_size},
+            )
+            if not isinstance(result, list) or not all(isinstance(item, dict) for item in result):
+                raise GitHubMCPResponseError(
+                    f"GitHub MCP tool {tool_name!r} returned an unexpected response shape."
+                )
+            records.extend(result)
+            if len(result) < page_size:
+                break
+            page += 1
+
+        return records[:total_limit]
+
     def _run_git(
         self,
         args: list[str],
@@ -164,74 +213,79 @@ class GitHubMCPHelper:
         Returns:
             List of commit dicts with sha, short_sha, message, author, date.
         """
+        _validate_git_ref(branch, "branch")
+        mcp_error: Exception | None = None
         if self.github.is_available():
             try:
-                data = await self._call_github_mcp(
+                data = await self._paginate_github_mcp(
                     "list_commits",
                     {
                         "owner": self.owner,
                         "repo": self.repo,
                         "sha": branch,
-                        "per_page": _github_page_limit(limit),
                     },
+                    limit,
                 )
                 commits = []
-                if isinstance(data, list):
-                    for item in data:
-                        commit_data = item.get("commit", {})
-                        commits.append(
-                            {
-                                "sha": item.get("sha", ""),
-                                "short_sha": item.get("sha", "")[:7],
-                                "message": commit_data.get("message", "").split("\n")[0],
-                                "author": (item.get("author") or {}).get(
-                                    "login",
-                                    commit_data.get("author", {}).get("name", ""),
-                                ),
-                                "date": commit_data.get("author", {}).get("date", ""),
-                                "html_url": item.get("html_url", ""),
-                                "author_avatar": (item.get("author") or {}).get("avatar_url", ""),
-                            }
-                        )
+                for item in data:
+                    commit_data = item.get("commit", {})
+                    commits.append(
+                        {
+                            "sha": item.get("sha", ""),
+                            "short_sha": item.get("sha", "")[:7],
+                            "message": commit_data.get("message", "").split("\n")[0],
+                            "author": (item.get("author") or {}).get(
+                                "login",
+                                commit_data.get("author", {}).get("name", ""),
+                            ),
+                            "date": commit_data.get("author", {}).get("date", ""),
+                            "html_url": item.get("html_url", ""),
+                            "author_avatar": (item.get("author") or {}).get("avatar_url", ""),
+                        }
+                    )
                 return commits
-            except Exception:
+            except Exception as exc:
+                mcp_error = exc
                 logger.debug("GitHub MCP list_commits failed, falling back to git", exc_info=True)
 
         # Fallback: git log
-        return await asyncio.to_thread(self._list_commits_git, branch, limit)
+        try:
+            return await asyncio.to_thread(self._list_commits_git, branch, limit)
+        except Exception as fallback_error:
+            if mcp_error is not None:
+                raise fallback_error from mcp_error
+            raise
 
     def _list_commits_git(self, branch: str, limit: int) -> list[dict[str, Any]]:
         """List commits using git log as fallback."""
-        try:
-            r = self._run_git(
-                [
-                    "log",
-                    branch,
-                    f"--max-count={_github_page_limit(limit)}",
-                    "--format=%H\t%h\t%s\t%an\t%aI",
-                ],
-                timeout=15,
-            )
-            commits = []
-            if r.returncode == 0:
-                for line in r.stdout.strip().split("\n"):
-                    if not line.strip():
-                        continue
-                    parts = line.split("\t", 4)
-                    if len(parts) >= 5:
-                        commits.append(
-                            {
-                                "sha": parts[0],
-                                "short_sha": parts[1],
-                                "message": parts[2],
-                                "author": parts[3],
-                                "date": parts[4],
-                            }
-                        )
-            return commits
-        except Exception as e:
-            logger.warning(f"git log fallback failed: {e}")
-            return []
+        _validate_git_ref(branch, "branch")
+        r = self._run_git(
+            [
+                "log",
+                branch,
+                f"--max-count={_github_result_limit(limit)}",
+                "--format=%H\t%h\t%s\t%an\t%aI",
+            ],
+            timeout=15,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"git log failed for {branch!r}: {r.stderr.strip()}")
+        commits = []
+        for line in r.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t", 4)
+            if len(parts) >= 5:
+                commits.append(
+                    {
+                        "sha": parts[0],
+                        "short_sha": parts[1],
+                        "message": parts[2],
+                        "author": parts[3],
+                        "date": parts[4],
+                    }
+                )
+        return commits
 
     async def get_file_contents(
         self,
@@ -249,6 +303,8 @@ class GitHubMCPHelper:
         Returns:
             File contents as string.
         """
+        if branch is not None:
+            _validate_git_ref(branch, "branch")
         if self.github.is_available():
             try:
                 data = await self._call_github_mcp(
@@ -296,6 +352,9 @@ class GitHubMCPHelper:
         Returns:
             True if branch was created successfully.
         """
+        _validate_git_ref(name, "name")
+        if from_branch is not None:
+            _validate_git_ref(from_branch, "from_branch")
         if self.github.is_available():
             try:
                 args: dict[str, Any] = {
@@ -313,9 +372,6 @@ class GitHubMCPHelper:
 
         # Fallback: git push
         try:
-            if not name or any(c in name for c in [" ", "..", "~", "^", ":", "\\", "\x00"]):
-                logger.warning(f"Invalid branch name: {name!r}")
-                return False
             base = from_branch or "HEAD"
             r = await self._run_git_async(
                 ["push", "origin", f"{base}:refs/heads/{name}"], timeout=60
@@ -348,6 +404,7 @@ class GitHubMCPHelper:
         Raises:
             RuntimeError: If GitHub MCP is not available.
         """
+        _validate_git_ref(branch, "branch")
         self.github.require_available()
 
         result = await self._call_github_mcp(
@@ -389,10 +446,8 @@ class GitHubMCPHelper:
             "owner": self.owner,
             "repo": self.repo,
             "state": state,
-            "per_page": _github_page_limit(limit),
         }
         if labels:
             args["labels"] = ",".join(labels)
 
-        result = await self._call_github_mcp("list_issues", args)
-        return result if isinstance(result, list) else []
+        return await self._paginate_github_mcp("list_issues", args, limit)
