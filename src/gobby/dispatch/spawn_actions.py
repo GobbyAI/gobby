@@ -238,8 +238,8 @@ async def quarantine_unterminated_spawned_run(
     if mutex.run_id is None:
         try:
             await run_db(mutex.attach, run_id)
-        except RuntimeDispatchMutexError as exc:
-            attach_error = str(exc)
+        except Exception as exc:
+            attach_error = str(exc) or type(exc).__name__
             logger.error(
                 "Could not attach unterminated spawned run %s to task mutex %s",
                 run_id,
@@ -249,13 +249,20 @@ async def quarantine_unterminated_spawned_run(
     detail = f"{error}; spawned run {run_id} could not be confirmed terminated"
     if attach_error:
         detail = f"{detail}; mutex attach failed: {attach_error}"
-    await append_audit_marker(db, action.task_id, "Dispatch spawn quarantined", detail)
     await run_db(
         escalate_task,
         db=db,
         task_id=action.task_id,
         reason=f"dispatch_spawn_cleanup_unconfirmed:{run_id}",
     )
+    try:
+        await append_audit_marker(db, action.task_id, "Dispatch spawn quarantined", detail)
+    except Exception:
+        logger.error(
+            "Failed to append quarantine audit marker for spawned run %s",
+            run_id,
+            exc_info=True,
+        )
 
 
 async def handle_spawn_failure(

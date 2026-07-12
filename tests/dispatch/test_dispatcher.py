@@ -2978,6 +2978,128 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
 
 
 @pytest.mark.asyncio
+async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Quarantine remains durable when mutex reattach and audit both fail."""
+    from gobby.agents import kill as agent_kill
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher, spawn_artifacts
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+
+    sync_bundled_agents(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    task = _task(temp_db, sample_project, stage_state="in_progress")
+    storage = _mutex_storage(temp_db)
+    action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
+    run_storage = LocalAgentRunManager(temp_db)
+    run_ids = [
+        "84ed7787-0c89-575c-b6bc-3719c653a29a",
+        "44ef42c0-f4fa-5abe-b08c-bc66bc671e29",
+    ]
+    spawned: list[str] = []
+    artifact_read_failed = False
+    original_get_artifacts = spawn_artifacts.TaskArtifactManager.get_artifacts
+
+    async def fake_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
+        run_id = run_ids[len(spawned)]
+        run = run_storage.create(
+            parent_session_id=SYSTEM_SESSION_ID,
+            provider="codex",
+            prompt="go",
+            agent_name="backend-developer",
+            task_id=task.id,
+            run_id=run_id,
+        )
+        run_storage.start(run.id)
+        spawned.append(run.id)
+        return {
+            "success": True,
+            "run_id": run.id,
+            "worktree_id": "9d131c8e-63f5-5f4b-8a67-8a87324d03fb",
+            "worktree_path": "/tmp/quarantined-dispatch-worktree",
+            "base_commit_sha": "base-sha",
+        }
+
+    def fail_first_post_spawn_artifact_read(
+        manager: spawn_artifacts.TaskArtifactManager,
+        task_id: str,
+    ) -> Any:
+        nonlocal artifact_read_failed
+        if spawned and not artifact_read_failed:
+            artifact_read_failed = True
+            raise RuntimeError("injected artifact read failure")
+        return original_get_artifacts(manager, task_id)
+
+    async def unconfirmed_kill(
+        _run: Any,
+        _db: HubDatabase,
+        *,
+        close_terminal: bool,
+    ) -> dict[str, object]:
+        assert close_terminal is True
+        return {"success": False, "error": "injected unconfirmed termination"}
+
+    def fail_mutex_reattach(*_args: object, **_kwargs: object) -> bool:
+        raise psycopg.errors.SerializationFailure("injected quarantine reattach failure")
+
+    async def fail_audit(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("injected quarantine audit failure")
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(
+        spawn_artifacts.TaskArtifactManager,
+        "get_artifacts",
+        fail_first_post_spawn_artifact_read,
+    )
+    monkeypatch.setattr(agent_kill, "kill_agent", unconfirmed_kill)
+    monkeypatch.setattr(TaskDispatchMutexManager, "attach_run_id", fail_mutex_reattach)
+    monkeypatch.setattr(dispatcher, "append_audit_marker", fail_audit)
+    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    services = SimpleNamespace(
+        database=temp_db,
+        task_manager=task_manager,
+        session_manager=SessionManager(temp_db),
+        agent_runner=SimpleNamespace(),
+    )
+
+    first_result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+        max_actions=1,
+    )
+
+    first_run = run_storage.get(run_ids[0])
+    quarantined_task = task_manager.get_task(task.id)
+    assert first_result.executed == 1
+    assert first_run is not None
+    assert first_run.status == "running"
+    assert storage.get_mutex(task.id) is None
+    assert quarantined_task.is_escalated is True
+    assert quarantined_task.escalation_reason == (
+        f"dispatch_spawn_cleanup_unconfirmed:{run_ids[0]}"
+    )
+
+    second_result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+        max_actions=1,
+    )
+
+    assert second_result.executed == 0
+    assert spawned == [run_ids[0]]
+    assert run_storage.get(run_ids[1]) is None
+
+
+@pytest.mark.asyncio
 async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
