@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
+import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +67,14 @@ def coerce_shutdown_intent(value: str | ShutdownIntent | None) -> ShutdownIntent
 def get_shutdown_marker_path(home: Path | None = None) -> Path:
     """Return the shutdown marker path."""
     if home is None:
-        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
+        home = get_gobby_home()
     return home / "shutdown_intent_active.json"
 
 
 def get_shutdown_source_path(home: Path | None = None) -> Path:
     """Return the persistent last-shutdown source path."""
     if home is None:
-        home = Path(os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby")))
+        home = get_gobby_home()
     return home / "shutdown_source.json"
 
 
@@ -90,36 +95,74 @@ def write_shutdown_intent(
         "sender_pid": sender_pid or os.getpid(),
         "timestamp": time.time(),
     }
-    written: list[Path] = []
-    current_marker: Path | None = None
     for marker in (get_shutdown_source_path(home), get_shutdown_marker_path(home)):
         try:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            current_marker = marker
-            marker.write_text(json.dumps(data), encoding="utf-8")
-            written.append(marker)
-            current_marker = None
+            _write_marker_atomically(marker, data)
         except OSError:
-            cleanup_targets = [*written]
-            if current_marker is not None:
-                cleanup_targets.append(current_marker)
-            for target in cleanup_targets:
-                try:
-                    target.unlink(missing_ok=True)
-                except Exception:
-                    logger.exception("Failed to clean up partial shutdown marker: %s", target)
             logger.exception("Failed to write shutdown intent markers")
             raise
 
 
-def write_stop_intent(source: str, sender_pid: int | None = None) -> None:
-    """Write a stop marker."""
-    write_shutdown_intent(source, ShutdownIntent.STOP, sender_pid)
+def _write_marker_atomically(marker: Path, data: Mapping[str, object]) -> None:
+    """Durably replace a shutdown marker with complete owner-only JSON."""
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{marker.name}.",
+        suffix=".tmp",
+        dir=marker.parent,
+        text=True,
+    )
+    temp_path = Path(temp_name)
+    file_object_created = False
+    try:
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        file_object_created = True
+        with handle:
+            json.dump(data, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.chmod(0o600)
+        os.replace(temp_path, marker)
+        _fsync_parent_directory(marker.parent)
+    except BaseException:
+        if not file_object_created:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Failed to clean up shutdown marker temp file: %s", temp_path)
+        raise
 
 
-def write_restart_intent(source: str, sender_pid: int | None = None) -> None:
-    """Write a restart marker."""
-    write_shutdown_intent(source, ShutdownIntent.RESTART, sender_pid)
+def _fsync_parent_directory(directory: Path) -> None:
+    """Persist a same-directory replacement where directory fsync is supported."""
+    if os.name == "nt":
+        return
+    unsupported_errors = {
+        errno.EACCES,
+        errno.EBADF,
+        errno.EINVAL,
+        errno.ENOTSUP,
+        errno.EPERM,
+    }
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        directory_fd = os.open(directory, flags)
+    except OSError as exc:
+        if exc.errno in unsupported_errors:
+            return
+        raise
+    try:
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            if exc.errno not in unsupported_errors:
+                raise
+    finally:
+        os.close(directory_fd)
 
 
 def read_shutdown_intent(
@@ -183,6 +226,25 @@ def read_shutdown_intent(
             logger.warning("Failed to consume shutdown marker %s: %s", marker, exc)
 
     return _record_from_marker_data(data, max_age_seconds=max_age_seconds)
+
+
+def recover_stale_restart_intent(
+    record: ShutdownIntentRecord,
+    *,
+    max_age_seconds: float,
+) -> ShutdownIntentRecord:
+    """Re-evaluate a consumed stale restart marker with a longer age window."""
+    if (
+        not record.stale
+        or record.raw is None
+        or record.raw.get("intent") != ShutdownIntent.RESTART.value
+    ):
+        return record
+
+    recovered = _record_from_marker_data(record.raw, max_age_seconds=max_age_seconds)
+    if recovered.stale or recovered.intent is not ShutdownIntent.RESTART:
+        return record
+    return recovered
 
 
 def read_active_shutdown_intent(

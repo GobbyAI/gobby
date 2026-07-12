@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.paths import get_global_workflows_dir
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -66,7 +67,8 @@ class TestWorkflowLoader:
         """Test default workflow directory initialization."""
         loader = WorkflowLoader()
         assert len(loader.global_dirs) == 1
-        assert loader.global_dirs[0] == Path.home() / ".gobby" / "workflows"
+
+        assert loader.global_dirs[0] == get_global_workflows_dir()
 
     def test_init_accepts_db_param(self, db: HubDatabase) -> None:
         """Test that WorkflowLoader accepts a db parameter."""

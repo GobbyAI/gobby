@@ -10,29 +10,51 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from random import SystemRandom
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.runner_maintenance_recurring import (
+    _wait_for_first_maintenance_cycle,
+)
+from gobby.runner_maintenance_recurring import (
+    memory_reconcile_loop as memory_reconcile_loop,
+)
+from gobby.runner_maintenance_recurring import (
+    metrics_archive_loop as metrics_archive_loop,
+)
+from gobby.runner_maintenance_recurring import (
+    metrics_cleanup_loop as metrics_cleanup_loop,
+)
+from gobby.runner_tmux_repair import (
+    TmuxRepairSessionManager,
+)
+from gobby.runner_tmux_repair import (
+    _select_tmux_repair_sessions as _select_tmux_repair_sessions,
+)
+from gobby.runner_tmux_repair import (
+    _tmux_repair_candidate_score as _tmux_repair_candidate_score,
+)
+from gobby.runner_tmux_repair import (
+    _tmux_repair_pane_key as _tmux_repair_pane_key,
+)
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.shutdown_intent import (
     ShutdownIntent,
     ShutdownIntentRecord,
     format_shutdown_source,
-    read_active_shutdown_intent,
     read_shutdown_intent,
+    recover_stale_restart_intent,
 )
-from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.workflows.summary_actions import (
     enforce_window_name_if_unmanaged,
     repair_missing_session_title,
 )
 
 if TYPE_CHECKING:
-    from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.memory.vectorstore import VectorStore
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -40,10 +62,9 @@ logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
-
-
-class _TmuxRepairSessionManager(Protocol):
-    def list(self, *, statuses: list[str], limit: int) -> Sequence[Any]: ...
+_COMMS_CLEANUP_BATCH_LIMIT = 500
+_APPROVAL_EXPIRY_BATCH_LIMIT = 100
+_METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT = 1000
 
 
 def _positive_int_or_default(value: Any, default: int) -> int:
@@ -61,62 +82,6 @@ async def _run_db(
     if runner is None:
         return await asyncio.to_thread(func, *args, **kwargs)
     return await runner(func, *args, **kwargs)
-
-
-def _tmux_repair_pane_key(session: Any) -> tuple[str, str] | None:
-    tc = getattr(session, "terminal_context", None)
-    if not isinstance(tc, dict):
-        return None
-
-    pane = tc.get("tmux_pane")
-    if not isinstance(pane, str) or not pane:
-        return None
-
-    socket = ""
-    for key in ("tmux_socket_path", "tmux_socket_name", "tmux_socket"):
-        value = tc.get(key)
-        if isinstance(value, str) and value:
-            socket = value
-            break
-    else:
-        agent_depth = getattr(session, "agent_depth", 0)
-        if isinstance(agent_depth, int) and agent_depth > 0:
-            socket = "gobby"
-        else:
-            session_id = getattr(session, "id", None)
-            socket = (
-                f"session:{session_id}" if isinstance(session_id, str) else f"object:{id(session)}"
-            )
-
-    return socket, pane
-
-
-def _tmux_repair_candidate_score(session: Any) -> tuple[int, int]:
-    external_id = str(getattr(session, "external_id", "") or "").strip()
-    has_identity = int(bool(external_id))
-    has_activity = int(
-        bool(str(getattr(session, "transcript_path", "") or "").strip())
-        or bool(getattr(session, "message_count", 0))
-        or bool(getattr(session, "turn_count", 0))
-        or bool(getattr(session, "tool_call_count", 0))
-    )
-    return has_identity, has_activity
-
-
-def _select_tmux_repair_sessions(sessions: Sequence[Any]) -> list[Any]:
-    selected: dict[tuple[str, str], tuple[tuple[int, int], Any]] = {}
-
-    for session in sessions:
-        key = _tmux_repair_pane_key(session)
-        if key is None:
-            continue
-
-        score = _tmux_repair_candidate_score(session)
-        current = selected.get(key)
-        if current is None or score > current[0]:
-            selected[key] = (score, session)
-
-    return [session for _, session in selected.values()]
 
 
 async def _sleep_until_next_bin_freshness_cycle(
@@ -191,48 +156,6 @@ async def drain_hook_inbox_loop(
         is_shutdown_requested,
         interval_seconds=interval_seconds,
     )
-
-
-async def metrics_cleanup_loop(
-    metrics_manager: ToolMetricsManager,
-    is_shutdown_requested: Callable[[], bool],
-    *,
-    interval_seconds: int = 24 * 60 * 60,
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-) -> None:
-    """Background loop for periodic metrics cleanup (every 24 hours)."""
-    while not is_shutdown_requested():
-        try:
-            await sleep(interval_seconds)
-            deleted = metrics_manager.cleanup_old_metrics()
-            if deleted > 0:
-                logger.info(f"Periodic metrics cleanup: removed {deleted} old entries")
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Error in metrics cleanup loop: {e}")
-
-
-async def metrics_archive_loop(
-    event_store: Any,
-    is_shutdown_requested: Callable[[], bool],
-    retention_days: int = 30,
-) -> None:
-    """Background loop for archiving old metrics events (every 24 hours)."""
-    interval_seconds = 24 * 60 * 60  # 24 hours
-
-    while not is_shutdown_requested():
-        try:
-            await asyncio.sleep(interval_seconds)
-            archived = event_store.archive_old_events(retention_days=retention_days)
-            if archived > 0:
-                logger.info(
-                    f"Metrics archive: rolled up {archived} events older than {retention_days} days"
-                )
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Error in metrics archive loop: {e}")
 
 
 async def span_cleanup_loop(
@@ -312,31 +235,6 @@ async def rebuild_vector_store(
         logger.error(f"VectorStore rebuild failed: {e}")
 
 
-async def memory_reconcile_loop(
-    memory_manager: Any,
-    is_shutdown_requested: Callable[[], bool],
-    interval_seconds: int = 24 * 60 * 60,
-) -> None:
-    """Background loop for periodic Qdrant/FalkorDB orphan reconciliation."""
-    while not is_shutdown_requested():
-        try:
-            await asyncio.sleep(interval_seconds)
-            report = await memory_manager.reconcile_stores(dry_run=False)
-            qdrant_orphans = report.get("qdrant", {}).get("orphans_deleted", 0)
-            falkordb_orphans = report.get("falkordb", {}).get("orphan_memories_deleted", 0)
-            falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
-            if qdrant_orphans or falkordb_orphans or falkordb_entities:
-                logger.info(
-                    f"Memory reconciliation: {qdrant_orphans} Qdrant orphans, "
-                    f"{falkordb_orphans} FalkorDB memory orphans, "
-                    f"{falkordb_entities} FalkorDB entity orphans cleaned"
-                )
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Error in memory reconcile loop: {e}")
-
-
 async def cleanup_zombie_messages_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
@@ -353,14 +251,14 @@ async def cleanup_zombie_messages_loop(
     interval_seconds = interval_hours * 3600
 
     def _expire_zombies() -> None:
-        updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
-        created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
         expired = db.execute(
             "UPDATE inter_session_messages SET delivered_at = CURRENT_TIMESTAMP "
             "WHERE delivered_at IS NULL AND to_session IN ("
             "  SELECT id FROM sessions WHERE status IN ('closed', 'expired') "
-            f"  AND ({updated_stale_sql}"
-            f"       OR (updated_at IS NULL AND {created_stale_sql}))"
+            "  AND (updated_at < NOW() - (%s::double precision * INTERVAL '1 hour') "
+            "       OR (updated_at IS NULL "
+            "           AND created_at < NOW() "
+            "               - (%s::double precision * INTERVAL '1 hour')))"
             ")",
             (ttl_hours, ttl_hours),
         )
@@ -384,7 +282,7 @@ async def cleanup_zombie_messages_loop(
 
 
 async def tmux_window_name_repair_loop(
-    session_manager: _TmuxRepairSessionManager | None,
+    session_manager: TmuxRepairSessionManager | None,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 120,
     session_list_limit: int = 200,
@@ -455,22 +353,42 @@ async def cleanup_comms_messages_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
     retention_days: int = 30,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+    interval_seconds: int = 24 * 60 * 60,
+    startup_delay_seconds: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
     from gobby.communications.attachments import AttachmentManager
     from gobby.storage.communications import LocalCommunicationsStore
 
-    interval_seconds = 24 * 60 * 60
-
     store = LocalCommunicationsStore(db)
     attachment_manager = AttachmentManager()
+    sleep_fn = sleep or asyncio.sleep
 
-    while not is_shutdown_requested():
+    if not await _wait_for_first_maintenance_cycle(
+        "comms-message-cleanup",
+        is_shutdown_requested,
+        startup_delay_seconds=startup_delay_seconds,
+        sleep=sleep_fn,
+    ):
+        return
+
+    while True:
         try:
-            await asyncio.sleep(interval_seconds)
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
-            deleted_messages = store.delete_messages_before(cutoff)
-            deleted_attachments = attachment_manager.cleanup_old(days=retention_days)
+            deleted_messages = await _run_db(
+                run_db,
+                store.delete_messages_before,
+                cutoff,
+                limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
+            deleted_attachments = await asyncio.to_thread(
+                attachment_manager.cleanup_old,
+                days=retention_days,
+                limit=_COMMS_CLEANUP_BATCH_LIMIT,
+            )
 
             if deleted_messages > 0:
                 logger.info(f"Comms message cleanup: removed {deleted_messages} old messages")
@@ -479,11 +397,16 @@ async def cleanup_comms_messages_loop(
                     "Comms attachment cleanup: removed %s old local files",
                     deleted_attachments,
                 )
-
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Error in comms message cleanup loop: {e}")
+        try:
+            await sleep_fn(interval_seconds)
+        except asyncio.CancelledError:
+            break
+        if is_shutdown_requested():
+            break
 
 
 def _remove_stale_chat_attachment_file(local_path: str) -> bool:
@@ -564,28 +487,29 @@ async def expire_approval_timeouts_loop(
     pipeline_execution_manager: Any,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 60,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Expire pipeline steps that have exceeded their approval timeout.
 
     Runs every ``interval_seconds``, finds steps in waiting_approval whose
     timeout has elapsed, marks them FAILED and their parent execution CANCELLED.
     """
-    from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
-
     while not is_shutdown_requested():
         try:
             await asyncio.sleep(interval_seconds)
-            expired_steps = pipeline_execution_manager.get_expired_approval_steps()
+            expired_steps = await _run_db(
+                run_db,
+                pipeline_execution_manager.get_expired_approval_steps,
+                limit=_APPROVAL_EXPIRY_BATCH_LIMIT,
+            )
             for step in expired_steps:
                 try:
-                    pipeline_execution_manager.update_step_execution(
+                    await _run_db(
+                        run_db,
+                        pipeline_execution_manager.expire_approval_timeout,
                         step_execution_id=step.id,
-                        status=StepStatus.FAILED,
-                        error="Approval timed out",
-                    )
-                    pipeline_execution_manager.update_execution_status(
                         execution_id=step.execution_id,
-                        status=ExecutionStatus.CANCELLED,
                     )
                     logger.info(
                         f"Approval timed out for step {step.step_id} "
@@ -607,6 +531,8 @@ async def metric_snapshot_loop(
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 60,
     retention_hours: int = 24,
+    *,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Background loop that snapshots OTel metrics every interval.
 
@@ -622,8 +548,13 @@ async def metric_snapshot_loop(
         try:
             update_daemon_metrics()
             metrics = get_all_metrics()
-            storage.save_snapshot(metrics)
-            deleted = storage.delete_old_snapshots(retention_hours=retention_hours)
+            await _run_db(run_db, storage.save_snapshot, metrics)
+            deleted = await _run_db(
+                run_db,
+                storage.delete_old_snapshots,
+                retention_hours=retention_hours,
+                limit=_METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT,
+            )
             if deleted > 0:
                 logger.debug(f"Metric snapshot cleanup: removed {deleted} old snapshots")
         except asyncio.CancelledError:
@@ -686,10 +617,12 @@ async def cleanup_expired_isolation_loop(
     import shutil
 
     from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
     worktree_storage = LocalWorktreeManager(db)
     clone_storage = LocalCloneManager(db)
+    project_storage = LocalProjectManager(db)
     interval_seconds = interval_hours * 3600
 
     while not is_shutdown_requested():
@@ -701,26 +634,55 @@ async def cleanup_expired_isolation_loop(
             for wt in expired_worktrees:
                 try:
                     path = wt.worktree_path
+                    project = await _run_db(run_db, project_storage.get, wt.project_id)
+                    if project is None or not project.repo_path:
+                        raise ValueError(
+                            f"Project {wt.project_id} has no repository path for worktree {wt.id}"
+                        )
+                    repo_path = project.repo_path
                     # Try git worktree remove first, fall back to shutil
                     removed = False
                     try:
                         result = await asyncio.to_thread(
                             _run_git_command,
-                            ["git", "worktree", "remove", "--force", path],
+                            ["git", "-C", repo_path, "worktree", "remove", "--force", path],
                         )
                         removed = result == 0
+                        if not removed:
+                            logger.warning(
+                                "git worktree remove failed for %s in %s (exit code %d)",
+                                path,
+                                repo_path,
+                                result,
+                            )
                     except Exception as e:
                         logger.debug("git worktree remove failed for %s: %s", path, e)
                     if not removed and await asyncio.to_thread(os.path.exists, path):
                         await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
                     # Prune stale worktree references
-                    await asyncio.to_thread(_run_git_command, ["git", "worktree", "prune"])
+                    prune_result = await asyncio.to_thread(
+                        _run_git_command,
+                        ["git", "-C", repo_path, "worktree", "prune"],
+                    )
+                    if prune_result != 0:
+                        logger.warning(
+                            "git worktree prune failed in %s (exit code %d)",
+                            repo_path,
+                            prune_result,
+                        )
                     # Delete the branch
                     if wt.branch_name:
-                        await asyncio.to_thread(
+                        branch_result = await asyncio.to_thread(
                             _run_git_command,
-                            ["git", "branch", "-D", wt.branch_name],
+                            ["git", "-C", repo_path, "branch", "-D", wt.branch_name],
                         )
+                        if branch_result != 0:
+                            logger.warning(
+                                "git branch deletion failed for %s in %s (exit code %d)",
+                                wt.branch_name,
+                                repo_path,
+                                branch_result,
+                            )
                     # Remove DB record
                     await _run_db(run_db, worktree_storage.delete, wt.id)
                     logger.info(
@@ -868,9 +830,10 @@ def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
 
 def _run_git_command(args: list[str]) -> int:
     """Run a git command and return the exit code."""
-    import subprocess
+    # This helper receives shell-free argv assembled by the isolation reaper.
+    import subprocess  # nosec B404
 
-    result = subprocess.run(args, capture_output=True, timeout=30)
+    result = subprocess.run(args, capture_output=True, timeout=30)  # nosec B603
     return result.returncode
 
 
@@ -897,13 +860,6 @@ def write_shutdown_source(
         )
 
 
-def read_shutdown_source() -> str:
-    """Read and remove the shutdown source marker. Returns description string."""
-    from gobby.shutdown_intent import format_shutdown_source, read_shutdown_intent
-
-    return format_shutdown_source(read_shutdown_intent(home=get_gobby_home()))
-
-
 def setup_signal_handlers(
     shutdown_callback: Callable[[], None],
     shutdown_intent_callback: Callable[[ShutdownIntent], None] | None = None,
@@ -915,20 +871,11 @@ def setup_signal_handlers(
     def _read_signal_shutdown_record() -> ShutdownIntentRecord:
         home = get_gobby_home()
         shutdown_record = read_shutdown_intent(home=home)
-        if (
-            shutdown_record.intent is ShutdownIntent.STOP
-            and shutdown_record.source == "external_sigterm"
-            and shutdown_record.sender_pid is None
-            and shutdown_record.timestamp is None
-            and shutdown_record.error is None
-        ):
-            active_record = read_active_shutdown_intent(home=home, max_age_seconds=120)
-            if (
-                active_record is not None
-                and not active_record.stale
-                and active_record.error is None
-            ):
-                return active_record
+        if shutdown_record.stale:
+            return recover_stale_restart_intent(
+                shutdown_record,
+                max_age_seconds=120,
+            )
         return shutdown_record
 
     def _make_handler(sig: signal.Signals) -> Callable[[], None]:

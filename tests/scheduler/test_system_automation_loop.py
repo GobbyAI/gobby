@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.config.app import DaemonConfig, load_config
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
@@ -241,6 +244,167 @@ async def test_multiple_projects_fan_out_independently(
 
 
 @pytest.mark.asyncio
+async def test_dispatch_projects_isolates_project_failure(
+    caplog: pytest.LogCaptureFixture,
+    temp_db: HubDatabase,
+) -> None:
+    failed_project = "11111111-1111-4111-8111-111111110001"
+    successful_project = "11111111-1111-4111-8111-111111110002"
+    completed: list[str] = []
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
+        project_id = str(kwargs["project_id"])
+        if project_id == failed_project:
+            raise RuntimeError("project dispatch failed")
+        completed.append(project_id)
+        return DispatcherTickSummary(reason=str(kwargs["reason"]))
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+
+    results = await loop._dispatch_projects(
+        [failed_project, successful_project],
+        reason="interval",
+    )
+
+    assert results == {successful_project: DispatcherTickSummary(reason="interval")}
+    assert completed == [successful_project]
+    assert f"System automation dispatch failed for project {failed_project}" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_projects_propagates_project_cancellation(temp_db: HubDatabase) -> None:
+    project_id = "11111111-1111-4111-8111-111111110001"
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**_kwargs: Any) -> DispatcherTickSummary:
+        raise asyncio.CancelledError
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await loop._dispatch_projects([project_id], reason="interval")
+
+
+@pytest.mark.asyncio
+async def test_overlapping_interval_dispatches_serialize_and_run_followup(
+    temp_db: HubDatabase,
+) -> None:
+    project_id = "11111111-1111-4111-8111-111111110001"
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    active = 0
+    max_active = 0
+    reasons: list[str] = []
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
+        nonlocal active, max_active
+        reason = str(kwargs["reason"])
+        reasons.append(reason)
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            if reason == "interval-one":
+                first_started.set()
+                await release_first.wait()
+            return DispatcherTickSummary(reason=reason)
+        finally:
+            active -= 1
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+
+    first = asyncio.create_task(loop._dispatch_projects([project_id], reason="interval-one"))
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    second = asyncio.create_task(loop._dispatch_projects([project_id], reason="interval-two"))
+    await wait_for_async_condition(
+        lambda: project_id in loop._pending_project_dispatches,
+        description="coalesced interval follow-up",
+    )
+
+    assert reasons == ["interval-one"]
+    release_first.set()
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert reasons == ["interval-one", "interval-two"]
+    assert max_active == 1
+    assert first_result[project_id].reason == "interval-one"
+    assert second_result[project_id].reason == "interval-two"
+
+
+@pytest.mark.asyncio
+async def test_interval_dispatches_for_different_projects_run_concurrently(
+    temp_db: HubDatabase,
+) -> None:
+    project_ids = [
+        "11111111-1111-4111-8111-111111110001",
+        "11111111-1111-4111-8111-111111110002",
+    ]
+    started = {project_id: asyncio.Event() for project_id in project_ids}
+    release = asyncio.Event()
+    active = 0
+    max_active = 0
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
+        nonlocal active, max_active
+        project_id = str(kwargs["project_id"])
+        active += 1
+        max_active = max(max_active, active)
+        started[project_id].set()
+        try:
+            await release.wait()
+            return DispatcherTickSummary(reason=str(kwargs["reason"]))
+        finally:
+            active -= 1
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    dispatch = asyncio.create_task(loop._dispatch_projects(project_ids, reason="interval"))
+
+    await asyncio.wait_for(
+        asyncio.gather(*(event.wait() for event in started.values())),
+        timeout=1,
+    )
+    assert max_active == 2
+    release.set()
+
+    results = await dispatch
+    assert set(results) == set(project_ids)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_interval_dispatch_cancels_owned_project_task(
+    temp_db: HubDatabase,
+) -> None:
+    project_id = "11111111-1111-4111-8111-111111110001"
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+
+    async def dispatch_project_once(**_kwargs: Any) -> DispatcherTickSummary:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        raise AssertionError("unreachable")
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    dispatch = asyncio.create_task(loop._dispatch_projects([project_id], reason="interval"))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    dispatch.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dispatch
+
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    await wait_for_async_condition(
+        lambda: project_id not in loop._project_tasks,
+        description="cancelled interval project task cleanup",
+    )
+
+
+@pytest.mark.asyncio
 async def test_direct_wake_after_agent_cleanup_runs_project_heartbeat_without_cron_rows(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
@@ -315,6 +479,7 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
         return object()
 
     loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    loop._running = True
 
     assert (
         loop.schedule_project_dispatch(
@@ -336,6 +501,64 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
         lambda: calls == ["first", "second"],
         description="follow-up dispatch",
     )
+
+
+async def test_project_dispatch_entrypoints_ignore_requests_after_stop(
+    temp_db: HubDatabase,
+) -> None:
+    event_loop = MagicMock(spec=asyncio.AbstractEventLoop)
+    event_loop.is_closed.return_value = False
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+    loop._event_loop = event_loop
+    loop._running = True
+
+    await loop.stop()
+
+    assert loop.schedule_project_dispatch(project_id="project", reason="stopped") is False
+    loop._schedule_project_dispatch_on_loop("project", "stopped", None, None, None)
+
+    event_loop.call_soon_threadsafe.assert_not_called()
+    assert loop._project_tasks == {}
+
+
+async def test_queued_project_dispatch_callback_does_no_work_after_stop(
+    temp_db: HubDatabase,
+) -> None:
+    queued: tuple[Callable[..., None], tuple[object, ...]] | None = None
+
+    def capture_callback(callback: Callable[..., None], *args: object) -> None:
+        nonlocal queued
+        queued = (callback, args)
+
+    event_loop = MagicMock(spec=asyncio.AbstractEventLoop)
+    event_loop.is_closed.return_value = False
+    event_loop.call_soon_threadsafe.side_effect = capture_callback
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+    dispatch_project_once = AsyncMock()
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    loop._event_loop = event_loop
+    loop._running = True
+
+    assert loop.schedule_project_dispatch(project_id="project", reason="race") is True
+    assert queued is not None
+
+    await loop.stop()
+    callback, args = queued
+    callback(*args)
+
+    assert loop._project_tasks == {}
+    assert loop._pending_project_dispatches == {}
+    dispatch_project_once.assert_not_awaited()
 
 
 @pytest.mark.asyncio

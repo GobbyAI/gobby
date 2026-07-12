@@ -107,6 +107,73 @@ class TestPipelinesRunEndpoint:
         assert data["status"] == "completed"
         assert data["execution_id"] == "pe-abc123"
 
+    def test_run_pipeline_records_execution_for_requested_project(self, temp_db) -> None:
+        """A project B request must not use project A's startup execution manager."""
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        project_a = "00000000-0000-0000-0000-00000000000a"
+        project_b = "00000000-0000-0000-0000-00000000000b"
+        for project_id, name in ((project_a, "Project A"), (project_b, "Project B")):
+            temp_db.execute(
+                """
+                INSERT INTO projects (id, name, created_at, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (project_id, name),
+            )
+
+        loader = AsyncMock()
+        loader.load_pipeline.return_value = PipelineDefinition(
+            name="cross-project",
+            steps=[
+                PipelineStep(
+                    id="skip",
+                    exec="must-not-run",
+                    condition="${{ inputs.get('run') }}",
+                )
+            ],
+        )
+        startup_manager = LocalPipelineExecutionManager(temp_db, project_id=project_a)
+        startup_executor = PipelineExecutor(
+            db=temp_db,
+            execution_manager=startup_manager,
+            llm_service=None,
+            loader=loader,
+        )
+        services = ServiceContainer(
+            config=None,
+            database=temp_db,
+            session_manager=None,
+            task_manager=MagicMock(),
+            pipeline_executor=startup_executor,
+            workflow_loader=loader,
+            pipeline_execution_manager=startup_manager,
+            project_id=project_a,
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+            auth_mode="disabled",
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/pipelines/run",
+                json={"name": "cross-project", "inputs": {}, "project_id": project_b},
+            )
+
+        assert response.status_code == 200
+        execution_id = response.json()["execution_id"]
+        row = temp_db.fetchone(
+            "SELECT project_id FROM pipeline_executions WHERE id = %s",
+            (execution_id,),
+        )
+        assert row is not None
+        assert str(row["project_id"]) == project_b
+
     def test_run_pipeline_not_found(self, client, http_server) -> None:
         """Verify POST /api/pipelines/run returns 404 for unknown pipeline."""
         http_server.services.workflow_loader.load_pipeline.return_value = None

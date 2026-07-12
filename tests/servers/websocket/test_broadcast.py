@@ -5,6 +5,7 @@ Tests broadcast edge cases, subscription filtering, and event methods.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from websockets.exceptions import ConnectionClosed
 
+from gobby.servers.websocket import broadcast as broadcast_module
 from gobby.servers.websocket.broadcast import BroadcastMixin
 
 pytestmark = pytest.mark.unit
@@ -33,15 +35,35 @@ class FakeWebSocket:
         subscriptions: set[str] | None = None,
         *,
         send_error: Exception | None = None,
+        send_started: asyncio.Event | None = None,
+        send_release: asyncio.Event | None = None,
+        close_started: asyncio.Event | None = None,
+        close_release: asyncio.Event | None = None,
     ) -> None:
         self.subscriptions = subscriptions
         self.send_error = send_error
+        self.send_started = send_started
+        self.send_release = send_release
+        self.close_started = close_started
+        self.close_release = close_release
         self.sent: list[str] = []
+        self.closed: tuple[int, str] | None = None
 
     async def send(self, message: str) -> None:
+        if self.send_started is not None:
+            self.send_started.set()
+        if self.send_release is not None:
+            await self.send_release.wait()
         if self.send_error is not None:
             raise self.send_error
         self.sent.append(message)
+
+    async def close(self, *, code: int, reason: str) -> None:
+        if self.close_started is not None:
+            self.close_started.set()
+        if self.close_release is not None:
+            await self.close_release.wait()
+        self.closed = (code, reason)
 
 
 def _make_ws(subscriptions: set[str] | None = None) -> FakeWebSocket:
@@ -210,6 +232,64 @@ class TestBroadcast:
         assert _sent_message(ws1) == {"type": "test"}
         assert _sent_message(ws2) == {"type": "test"}
         assert ws3.sent == []
+
+    async def test_stalled_client_does_not_delay_healthy_recipient(self) -> None:
+        b = FakeBroadcaster()
+        stalled_send_started = asyncio.Event()
+        stalled_send_release = asyncio.Event()
+        stalled = FakeWebSocket(
+            subscriptions={"*"},
+            send_started=stalled_send_started,
+            send_release=stalled_send_release,
+        )
+        healthy_send_started = asyncio.Event()
+        healthy = FakeWebSocket(subscriptions={"*"}, send_started=healthy_send_started)
+        b.clients[stalled] = {}
+        b.clients[healthy] = {}
+
+        broadcast_task = asyncio.create_task(b.broadcast({"type": "test"}))
+        await asyncio.wait_for(stalled_send_started.wait(), timeout=0.1)
+        await asyncio.wait_for(healthy_send_started.wait(), timeout=0.1)
+
+        assert _sent_message(healthy) == {"type": "test"}
+        assert not broadcast_task.done()
+
+        stalled_send_release.set()
+        await broadcast_task
+
+    async def test_timed_out_client_is_removed_and_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(broadcast_module, "BROADCAST_SEND_TIMEOUT_SECONDS", 0.01)
+        b = FakeBroadcaster()
+        stalled = FakeWebSocket(subscriptions={"*"}, send_release=asyncio.Event())
+        b.clients[stalled] = {}
+
+        await b.broadcast({"type": "test"})
+
+        assert stalled not in b.clients
+        assert stalled.closed == (1011, "Broadcast send timed out")
+
+    async def test_timed_out_client_close_is_also_bounded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(broadcast_module, "BROADCAST_SEND_TIMEOUT_SECONDS", 0.01)
+        monkeypatch.setattr(broadcast_module, "BROADCAST_CLOSE_TIMEOUT_SECONDS", 0.01)
+        close_started = asyncio.Event()
+        stalled = FakeWebSocket(
+            subscriptions={"*"},
+            send_release=asyncio.Event(),
+            close_started=close_started,
+            close_release=asyncio.Event(),
+        )
+        b = FakeBroadcaster()
+        b.clients[stalled] = {}
+
+        await b.broadcast({"type": "test"})
+
+        assert close_started.is_set()
+        assert stalled not in b.clients
+        assert stalled.closed is None
 
 
 # ═══════════════════════════════════════════════════════════════════════

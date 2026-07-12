@@ -10,13 +10,11 @@ from typing import Any
 
 import yaml
 
-
-def default_gobby_home() -> Path:
-    return Path(os.environ.get("GOBBY_HOME", "~/.gobby")).expanduser()
+from gobby.paths import get_gobby_home
 
 
 def bootstrap_path(gobby_home: Path | None = None) -> Path:
-    return (gobby_home or default_gobby_home()) / "bootstrap.yaml"
+    return (gobby_home or get_gobby_home()) / "bootstrap.yaml"
 
 
 def read_bootstrap_yaml(path: Path) -> dict[str, Any]:

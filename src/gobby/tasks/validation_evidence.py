@@ -112,13 +112,13 @@ def build_diff_validation_evidence(
     ordered_files = tuple(sorted(files, key=lambda file: _priority_key(file.path, priority_files)))
     header = _render_manifest(ordered_files)
     full_diff_text = f"{header}\nFull Raw Diff:\n{diff.rstrip()}\n"
-    full_text, agent_summary_included = _append_agent_summary(
-        full_diff_text,
-        agent_summary,
-        max_chars=max_chars,
-        max_summary_chars=agent_summary_max_chars,
-    )
-    if len(full_text) <= max_chars:
+    if len(full_diff_text) <= max_chars:
+        full_text, agent_summary_included = _append_agent_summary(
+            full_diff_text,
+            agent_summary,
+            max_chars=max_chars,
+            max_summary_chars=agent_summary_max_chars,
+        )
         return ValidationEvidence(
             text=full_text,
             manifest=ordered_files,
@@ -289,7 +289,9 @@ def _render_excerpted_diff(
         current = "".join(parts)
         remaining_budget = max_chars - len(current)
         omission_reserve = 160 * len(remaining_files)
-        available = remaining_budget - omission_reserve
+        section_prefix = f"\n### {file.path}\n"
+        section_overhead = len(section_prefix) + 1
+        available = remaining_budget - omission_reserve - section_overhead
         if available < 240:
             omissions.append(
                 EvidenceOmission(file.path, "diff details omitted; evidence budget exhausted")
@@ -309,10 +311,19 @@ def _render_excerpted_diff(
             max_hunk_lines=max_hunk_lines,
         )
         omissions.extend(file_omissions)
-        parts.append(f"\n### {file.path}\n{excerpt.rstrip()}\n")
+        parts.append(f"{section_prefix}{excerpt.rstrip()}\n")
 
     if omissions:
-        parts.append(_render_omissions(omissions))
+        omission_text = _render_omissions(omissions)
+        omission_budget = max_chars - len("".join(parts))
+        if omission_budget > 0:
+            parts.append(
+                _shorten_text(
+                    omission_text,
+                    omission_budget,
+                    label="omission details",
+                )
+            )
     return "".join(parts), omissions
 
 
@@ -452,6 +463,9 @@ def _append_agent_summary(
     )
     available = max_chars - len(text) - len(notice)
     if available < 240:
+        # Supplemental prose must never displace authoritative diff evidence.
+        if len(text) <= max_chars:
+            return text, False
         if len(notice) >= max_chars:
             return _shorten_text(notice, max_chars, label="agent changes summary notice"), False
         return (

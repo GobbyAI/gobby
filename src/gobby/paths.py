@@ -73,7 +73,10 @@ def get_install_dir() -> Path:
 
 def get_gobby_home() -> Path:
     """Get the gobby home directory (~/.gobby or $GOBBY_HOME)."""
-    return Path(os.environ.get("GOBBY_HOME", Path.home() / ".gobby"))
+    configured_home = os.environ.get("GOBBY_HOME")
+    if configured_home is None or not configured_home.strip():
+        return Path.home() / ".gobby"
+    return Path(configured_home).expanduser()
 
 
 def get_global_workflows_dir() -> Path:

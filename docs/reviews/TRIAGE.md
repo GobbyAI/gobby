@@ -537,7 +537,7 @@
 - #16466 (U352, `docs/reviews/daemon-core.md`) — Route lifecycle/maintenance/dispatch sync DB work through the executor; bound retention deletes
 - #16471 (U353, `docs/reviews/daemon-core.md`) — Run 24h sleep-first maintenance loops work-first so short-uptime daemons clean up
 - #16475 (U354, `docs/reviews/daemon-core.md`) — Run pipeline recovery and wiki cron for all projects, not just the startup-CWD project
-- #16481 (U355, `docs/reviews/daemon-core.md`) — Serialize interval-tick dispatch per project to prevent agent-slot cap overshoot
+- #16481 (U355, `docs/reviews/daemon-core.md`) — Serialize interval-tick dispatch through the per-project scheduling path
 - #16486 (U356, `docs/reviews/daemon-core.md`) — Treat empty GOBBY_HOME as unset instead of redirecting gobby home to the CWD
 - #16488 (U357, `docs/reviews/daemon-core.md`) — Write shutdown-intent markers atomically via temp file + os.replace
 

@@ -36,6 +36,7 @@ def _make_execution(
     status: ExecutionStatus = ExecutionStatus.RUNNING,
     inputs_json: str | None = None,
     session_id: str | None = None,
+    project_id: str = "test-project",
 ) -> MagicMock:
     """Create a mock PipelineExecution."""
     execution = MagicMock()
@@ -44,6 +45,7 @@ def _make_execution(
     execution.status = status
     execution.inputs_json = inputs_json
     execution.session_id = session_id
+    execution.project_id = project_id
     return execution
 
 
@@ -183,7 +185,8 @@ async def test_resume_returns_only_resumable_ids() -> None:
 
     loader = AsyncMock()
 
-    async def _load(name: str):
+    async def _load(name: str, project_path: str | None = None):
+        assert project_path == "test-project"
         if name == "resumable-pipeline":
             return resumable_pipeline
         return non_resumable_pipeline

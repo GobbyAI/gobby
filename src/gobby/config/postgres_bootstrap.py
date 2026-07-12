@@ -8,7 +8,6 @@ from typing import Any, Literal
 from .bootstrap import BootstrapConfigError, load_bootstrap
 from .bootstrap_io import (
     bootstrap_path,
-    default_gobby_home,
     read_bootstrap_yaml,
     update_bootstrap_yaml,
     write_bootstrap_yaml,
@@ -21,7 +20,6 @@ __all__ = [
     "active_install_mode",
     "bootstrap_path",
     "clear_postgres_fields",
-    "default_gobby_home",
     "read_bootstrap_database_url",
     "read_bootstrap_yaml",
     "set_bootstrap_field",

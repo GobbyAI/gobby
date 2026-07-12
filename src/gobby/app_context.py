@@ -167,15 +167,17 @@ class ServiceContainer:
     def get_pipeline_executor(self, project_id: str | None = None) -> Any | None:
         """Get or lazily create a PipelineExecutor with event broadcasting and tool proxy wired.
 
-        If ``self.pipeline_executor`` is already set (startup path), returns it directly.
-        Otherwise creates a new executor for *project_id*, wires ``event_callback`` and
-        ``tool_proxy_getter``, and caches it for subsequent calls.
+        Reuses startup infrastructure only for the startup project. Otherwise creates a
+        new executor for *project_id*, wires ``event_callback`` and ``tool_proxy_getter``,
+        and caches it for subsequent calls.
 
         Returns:
             PipelineExecutor instance or None if required services are unavailable.
         """
-        # Fast path: executor already created at startup
-        if self.pipeline_executor is not None:
+        uses_startup_project = project_id in (None, "", self.project_id)
+
+        # Fast path: executor already created for the startup project
+        if uses_startup_project and self.pipeline_executor is not None:
             return self.pipeline_executor
 
         pid = project_id or self.project_id or ""
@@ -196,7 +198,7 @@ class ServiceContainer:
             from gobby.workflows.pipeline_executor import PipelineExecutor
             from gobby.workflows.templates import TemplateEngine
 
-            execution_manager = self.pipeline_execution_manager
+            execution_manager = self.pipeline_execution_manager if uses_startup_project else None
             if execution_manager is None and pid:
                 execution_manager = LocalPipelineExecutionManager(
                     db=self.database,

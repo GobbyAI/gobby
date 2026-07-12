@@ -123,6 +123,35 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
     assert read_bootstrap_database_url(temp_dir) == database_url
 
 
+def test_postgres_defaults_follow_runtime_gobby_home_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.postgres_bootstrap import bootstrap_path, write_postgres_defaults
+
+    first_home = tmp_path / "first-home"
+    second_home = tmp_path / "second-home"
+    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+
+    for gobby_home in (first_home, second_home):
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        resolved_home = bootstrap_path().parent
+        write_postgres_defaults(
+            gobby_home=resolved_home,
+            mode="docker",
+            database_url=database_url,
+        )
+
+        persisted = yaml.safe_load((gobby_home / "bootstrap.yaml").read_text())
+        assert persisted["hub_backend"] == "postgres"
+        assert persisted["postgres_pool"] == {
+            "min_size": 2,
+            "max_size": 20,
+            "acquire_timeout_seconds": 5.0,
+            "open_timeout_seconds": 30.0,
+        }
+
+
 def test_load_bootstrap_without_resolution_reads_plain_database_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import load_bootstrap
 

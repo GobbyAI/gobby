@@ -56,23 +56,23 @@ DB-backed loop event tracker. Survives daemon restarts.
 ```python
 class LoopTracker:
     def __init__(self, db: HubDatabase): ...
-    
+
     def record_loop_prompt(self, run_id: str, session_id: str, task_id: str | None) -> int:
         """Record loop prompt dismissal. Returns count for this run."""
-    
+
     def record_agent_failure(self, run_id: str, task_id: str, error: str) -> None:
         """Record agent failure for cross-agent tracking."""
-    
+
     def record_dispatch(self, task_id: str, run_id: str) -> None:
         """Record task dispatch."""
-    
+
     def check_loop_prompt_escalation(self, run_id: str, threshold: int = 3) -> bool:
         """True if loop prompts exceed threshold — agent should be killed."""
-    
+
     def should_block_dispatch(self, task_id: str, failure_threshold: int = 3) -> tuple[bool, str | None]:
         """Check if task has failed too many times across different agents.
         Returns (should_block, reason)."""
-    
+
     def clear_task(self, task_id: str) -> None:
         """Clear loop data for a task (manual intervention reset)."""
 ```
@@ -110,7 +110,7 @@ if pane_output and self._prompt_detector.detect_loop_prompt(pane_output):
     count = self._prompt_detector.record_loop_dismiss(run.id)
     if self._loop_tracker:
         self._loop_tracker.record_loop_prompt(run.id, session_id, run.task_id)
-    
+
     if count >= 3:
         # Escalate: checkpoint then kill
         if self._checkpoint_manager and run.task_id:
@@ -171,7 +171,7 @@ Uses `git commit-tree` + `git update-ref` to create commits on hidden refs (`ref
 ```python
 class CheckpointManager:
     def __init__(self, checkpoint_storage: LocalCheckpointManager): ...
-    
+
     async def auto_checkpoint(self, cwd: str | Path, task_id: str, session_id: str) -> Checkpoint | None:
         """Create checkpoint if there are uncommitted changes.
         1. Check `git diff --stat` for changes
@@ -182,17 +182,17 @@ class CheckpointManager:
         6. `git reset HEAD` (unstage, leave working tree untouched)
         7. Record in DB
         Returns None if no changes."""
-    
+
     async def list_checkpoints(self, task_id: str) -> list[Checkpoint]:
         """List all checkpoints for a task."""
-    
+
     async def diff_from_checkpoint(self, cwd: str | Path, checkpoint_id: str) -> str:
         """Diff between checkpoint and current working tree."""
-    
+
     async def restore_checkpoint(self, cwd: str | Path, checkpoint_id: str) -> bool:
         """Restore working tree to checkpoint state. DEFERRED to v0.4."""
         raise NotImplementedError("Checkpoint restore coming in v0.4")
-    
+
     async def cleanup_checkpoints(self, task_id: str, keep_latest: int = 1) -> int:
         """Delete old checkpoint refs, keeping N most recent."""
 ```

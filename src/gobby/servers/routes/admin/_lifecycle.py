@@ -7,11 +7,11 @@ import signal
 import subprocess  # nosec B404 # subprocess needed for daemon restart
 import sys
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+from gobby.paths import get_gobby_home
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.telemetry.instruments import inc_counter
 
@@ -53,7 +53,7 @@ def _wait_for_process_exit(pid: int, *, timeout: float, interval: float = 0.1) -
 def _append_restart_helper_log(message: str) -> None:
     """Best-effort log for detached restart helpers."""
     try:
-        log_dir = Path(os.environ.get("GOBBY_HOME", os.path.expanduser("~/.gobby"))) / "logs"
+        log_dir = get_gobby_home() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         with (log_dir / "admin-restart.log").open("a", encoding="utf-8") as handle:
@@ -117,7 +117,7 @@ def _run_direct_restart_helper(current_pid: int) -> None:
         # the replacement process starts, or restart races can fail the handoff.
         time.sleep(2.0)
 
-        gobby_home = Path(os.environ.get("GOBBY_HOME", os.path.expanduser("~/.gobby")))
+        gobby_home = get_gobby_home()
         pid_file = gobby_home / "gobby.pid"
         try:
             pid_file.unlink()
@@ -186,11 +186,10 @@ def _request_runner_shutdown(server: "HTTPServer", intent: ShutdownIntent) -> bo
         runner = get_runner() if callable(get_runner) else None
     if runner is None:
         return False
-    if callable(getattr(type(runner), "request_shutdown", None)):
-        runner.request_shutdown(intent)
-        return True
-    runner._shutdown_intent = intent
-    runner._shutdown_requested = True
+    request_shutdown = getattr(type(runner), "request_shutdown", None)
+    if not callable(request_shutdown):
+        return False
+    runner.request_shutdown(intent)
     return True
 
 

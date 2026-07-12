@@ -324,4 +324,3 @@ See `RUN_LOG_patched.txt` for the full console, LM-Studio-log diagnostics, wall-
 and LLM-call counts. Same `generate -o /out --verbose` invocation as the default run,
 plus the read-only patched-file mount; container name `codewiki-bakeoff-patched`,
 `--restart=no`.
-
