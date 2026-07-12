@@ -30,6 +30,7 @@ from gobby.config.feature_base import (
     FeatureProfile,
 )
 from gobby.llm.base import validate_vision_description
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:
@@ -289,7 +290,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
 
-        image_bytes = await file.read()
+        image_bytes = await _read_bounded_image_upload(file)
         try:
             image_path = _write_temp_image(image_bytes, file.filename)
         except RuntimeError as e:
@@ -335,6 +336,17 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     logger.warning("Failed to remove vision temp file %s", image_path)
 
     return router
+
+
+async def _read_bounded_image_upload(file: UploadFile) -> bytes:
+    """Read at most one byte past the provider image limit."""
+    image_bytes = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image exceeds {MAX_IMAGE_BYTES} byte limit",
+        )
+    return image_bytes
 
 
 def _capability_error_detail(error: CapabilityUnavailableError) -> dict[str, Any]:

@@ -4,7 +4,7 @@ import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -29,6 +29,7 @@ from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
 from gobby.llm.base import LLMTextResult, VisionInputError, VisionProviderError
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES
 from gobby.servers.routes.llm import create_llm_router
 
 pytestmark = pytest.mark.unit
@@ -952,6 +953,35 @@ def test_vision_extract_upload_preserves_missing_ocr_text(
     assert data["description"] == "Screen text"
     assert data["ocr_text"] is None
     assert data["ocr_text"] != data["description"]
+
+
+@pytest.mark.asyncio
+async def test_bounded_vision_upload_read_accepts_exact_limit() -> None:
+    upload = MagicMock()
+    upload.read = AsyncMock(return_value=b"x" * MAX_IMAGE_BYTES)
+
+    image_bytes = await llm_module._read_bounded_image_upload(upload)
+
+    assert len(image_bytes) == MAX_IMAGE_BYTES
+    upload.read.assert_awaited_once_with(MAX_IMAGE_BYTES + 1)
+
+
+def test_vision_extract_rejects_oversize_before_temp_write(client: TestClient) -> None:
+    with patch.object(llm_module, "_write_temp_image") as write_temp_image:
+        response = client.post(
+            "/api/llm/vision/extract",
+            files={
+                "file": (
+                    "oversize.png",
+                    b"x" * (MAX_IMAGE_BYTES + 1),
+                    "image/png",
+                )
+            },
+        )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": f"Image exceeds {MAX_IMAGE_BYTES} byte limit"}
+    write_temp_image.assert_not_called()
 
 
 @pytest.mark.parametrize(
