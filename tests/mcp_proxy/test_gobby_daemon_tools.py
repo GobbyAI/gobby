@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -177,10 +177,14 @@ class TestGobbyDaemonToolsListMcpServers:
         health1 = MagicMock()
         health1.state.value = "connected"
         health2 = MagicMock()
-        health2.state.value = "pending"
+        health2.state.value = "failed"
 
         mock_mcp_manager.server_configs = [config1, config2]
-        mock_mcp_manager.connections = {"server1": MagicMock()}
+        mock_mcp_manager.connections = {
+            "server1": MagicMock(),
+            "server2": MagicMock(),
+        }
+        mock_mcp_manager.is_connected.side_effect = lambda name: name == "server1"
         mock_mcp_manager.health = {"server1": health1, "server2": health2}
 
         handler = GobbyDaemonTools(
@@ -197,7 +201,8 @@ class TestGobbyDaemonToolsListMcpServers:
         assert result["connected"] == 1
 
         assert result["servers"] == ["server1", "server2"]
-        assert result["issues"] == [{"name": "server2", "state": "pending", "transport": "stdio"}]
+        assert result["issues"] == [{"name": "server2", "state": "failed", "transport": "stdio"}]
+        assert mock_mcp_manager.is_connected.call_args_list == [call("server1"), call("server2")]
 
     @pytest.mark.asyncio
     async def test_list_mcp_servers_does_not_emit_proxy_after_tool(self, tools_handler):

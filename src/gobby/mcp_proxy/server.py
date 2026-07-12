@@ -169,7 +169,7 @@ class GobbyDaemonTools:
         for config in mgr.server_configs:
             health = mgr.health.get(config.name)
             state = health.state.value if health else "unknown"
-            is_connected = config.name in mgr.connections
+            is_connected = mgr.is_connected(config.name)
             if is_connected:
                 connected_count += 1
             entry: dict[str, Any] = {
