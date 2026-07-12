@@ -105,6 +105,7 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (307, "cron_run_scheduler_owner"),
         (308, "recall_signal_hub"),
         (309, "github_triage_delivery_leases"),
+        (310, "github_triage_build_dispatches"),
     ]
 
 

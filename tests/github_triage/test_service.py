@@ -1194,3 +1194,51 @@ async def test_build_failure_prevents_accepted_comment_and_label(
 
     assert github.called("add_issue_comment") == []
     assert github.called("add_labels_to_issue") == []
+
+
+async def test_failed_build_dispatch_is_retried_after_service_restart(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    issue = json.loads(_payload().decode())["issue"]
+    github = FakeGitHubMCP()
+    build_func = AsyncMock(side_effect=[RuntimeError("dispatch unavailable"), None])
+    judge = AsyncMock(return_value=TriageOutcome("implement", "Approved"))
+    first_service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=judge,
+        build_func=build_func,
+    )
+
+    with pytest.raises(RuntimeError, match="build dispatch failed"):
+        await first_service.triage_issue(
+            sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+        )
+
+    store = GitHubTriageStore(temp_db)
+    task = temp_db.fetchone(
+        "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
+        "AND github_issue_number = %s",
+        (sample_project["id"], "owner/repo", 42),
+    )
+    assert task is not None
+    assert store.has_build_dispatch(sample_project["id"], "owner/repo", 42) is False
+    assert store.get_issue_record(sample_project["id"], "owner/repo", 42) is None
+    assert github.called("add_issue_comment") == []
+
+    restarted_service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        judge=judge,
+        build_func=build_func,
+    )
+    result = await restarted_service.triage_issue(
+        sample_project["id"], "owner/repo", 42, "webhook", issue_data=issue
+    )
+
+    assert build_func.await_count == 2
+    assert store.has_build_dispatch(sample_project["id"], "owner/repo", 42) is True
+    assert len(github.called("add_issue_comment")) == 1
+    assert result["verdict"] == "implement"

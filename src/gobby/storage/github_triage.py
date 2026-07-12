@@ -544,6 +544,29 @@ class GitHubTriageStore:
         )
         return GitHubIssueTriageRecord.from_row(row) if row else None
 
+    def has_build_dispatch(self, project_id: str, repo: str, issue_number: int) -> bool:
+        row = self.db.fetchone(
+            "SELECT 1 FROM gh_triage_build_dispatches "
+            "WHERE project_id = %s AND repo = %s AND issue_number = %s",
+            (project_id, repo, issue_number),
+        )
+        return row is not None
+
+    def record_build_dispatch(
+        self, project_id: str, repo: str, issue_number: int, task_id: str
+    ) -> None:
+        self.db.execute(
+            """
+            INSERT INTO gh_triage_build_dispatches (
+                project_id, repo, issue_number, task_id, dispatched_at
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT(project_id, repo, issue_number) DO UPDATE SET
+                task_id = excluded.task_id,
+                dispatched_at = excluded.dispatched_at
+            """,
+            (project_id, repo, issue_number, task_id, _now()),
+        )
+
     def rollback_issue_record(
         self,
         project_id: str,

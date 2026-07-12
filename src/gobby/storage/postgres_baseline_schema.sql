@@ -1179,6 +1179,15 @@ CREATE INDEX idx_gh_issues_triaged_project_hash
 CREATE INDEX idx_gh_issues_triaged_task
     ON gh_issues_triaged(task_id);
 
+CREATE TABLE gh_triage_build_dispatches (
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    dispatched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, repo, issue_number)
+);
+
 CREATE TABLE pipeline_executions (
     id UUID PRIMARY KEY,
     pipeline_name TEXT NOT NULL,

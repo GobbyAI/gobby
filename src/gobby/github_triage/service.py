@@ -394,7 +394,6 @@ class GitHubIssueTriageService:
         config = self.store.get_config(project_id, fallback_repo=project.github_repo)
         if not config.enabled:
             raise TriageDisabledError("GitHub issue triage is disabled")
-
         issue_data = issue_data or await self._fetch_issue(repo, issue_number)
         if issue_data.get("pull_request"):
             outcome = TriageOutcome("skip", "GitHub pull requests are not triaged as issues")
@@ -412,7 +411,6 @@ class GitHubIssueTriageService:
                 (project_id, issue.repo, issue.issue_number),
             )
             existing_task_id = str(linked_task["id"]) if linked_task else None
-
         indexer = self._indexer()
         duplicates = await indexer.find_duplicates(issue)
         judgment = await self._judge(issue, duplicates)
@@ -432,13 +430,18 @@ class GitHubIssueTriageService:
                 "content_hash": current_hash,
                 "vector_point_id": existing.vector_point_id,
             }
+        build_dispatched = self.store.has_build_dispatch(project_id, repo, issue_number)
+        if outcome.verdict == "implement" and judgment.build_approved and not build_dispatched:
+            task = self._create_or_update_task(project_id, issue)
+            await self._run_build(task)
+            self.store.record_build_dispatch(project_id, repo, issue_number, task.id)
         result = await self.apply_triage_outcome(
             project_id,
             issue,
             outcome,
             source,
             build_approved=judgment.build_approved,
-            dispatch_build=existing_task_id is None,
+            dispatch_build=False,
             defer_comment=True,
         )
         deferred_comment = result.pop("_deferred_comment", None)
@@ -446,7 +449,6 @@ class GitHubIssueTriageService:
             result.get("task_id") if isinstance(result.get("task_id"), str) else existing_task_id
         )
         point_id = await indexer.upsert(issue, task_id=task_id)
-
         self.store.upsert_issue_record(
             project_id=project_id,
             repo=repo,
@@ -687,7 +689,6 @@ class GitHubIssueTriageService:
             if required:
                 raise RuntimeError("GitHub MCP manager is not configured")
             return None
-
         for attempt in range(2):
             try:
                 if hasattr(self.mcp_manager, "call_tool"):
