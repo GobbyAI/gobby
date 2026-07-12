@@ -321,6 +321,7 @@ class TestStartDaemonProcess:
         mock_proc = MagicMock()
         mock_proc.returncode = None
         mock_proc.pid = 12345
+        mock_proc.wait = AsyncMock(return_value=0)
 
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
             with patch(
@@ -341,6 +342,38 @@ class TestStartDaemonProcess:
 
                             assert result["success"] is False
                             assert "unhealthy" in result["message"]
+                            mock_proc.terminate.assert_called_once_with()
+                            mock_proc.wait.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_child_is_killed_if_termination_times_out(self) -> None:
+        """A stubborn startup child is killed and reaped before failure returns."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_proc.pid = 12345
+        mock_proc.wait = AsyncMock(side_effect=[TimeoutError, 0])
+
+        with (
+            patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
+            patch(
+                "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch(
+                "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=None),
+            patch("gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await start_daemon_process(60887, 60888)
+
+        assert result["success"] is False
+        mock_proc.terminate.assert_called_once_with()
+        mock_proc.kill.assert_called_once_with()
+        assert mock_proc.wait.await_count == 2
 
     @pytest.mark.asyncio
     async def test_handles_exception(self) -> None:

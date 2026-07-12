@@ -81,6 +81,24 @@ def is_daemon_running() -> bool:
     return get_daemon_pid() is not None
 
 
+async def _terminate_start_process(proc: asyncio.subprocess.Process) -> None:
+    """Terminate and reap a failed daemon-start child."""
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+
+
 async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]:
     """Start daemon in a new process."""
     if is_daemon_running():
@@ -143,6 +161,7 @@ async def start_daemon_process(port: int, websocket_port: int) -> dict[str, Any]
                 "output": "Daemon started (health check pending)",
             }
 
+        await _terminate_start_process(proc)
         return {
             "success": False,
             "message": "Start failed - process running but unhealthy",
