@@ -427,6 +427,63 @@ async def test_merge_apply_commits_active_merge_with_legacy_inverted_resolution(
 
 
 @pytest.mark.asyncio
+async def test_merge_apply_never_commits_manual_resolution_with_markers(
+    temp_db,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    branch = "feature/manual-markers"
+    _init_repo(repo)
+    (repo / "shared.py").write_text("value = 'base'\n", encoding="utf-8")
+    _git(repo, "add", "shared.py")
+    _git(repo, "commit", "-m", "add shared")
+    worktree_path, _feature_sha = _create_feature_worktree(repo, tmp_path, branch)
+    (worktree_path / "shared.py").write_text("value = 'feature'\n", encoding="utf-8")
+    _git(worktree_path, "add", "shared.py")
+    _git(worktree_path, "commit", "-m", "feature shared")
+    _commit_on_main(repo, "shared.py", "value = 'main'\n", update_origin=False)
+    merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "main"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert merge.returncode != 0
+    head_before = _git(worktree_path, "rev-parse", "HEAD")
+
+    registry, merge_storage, worktree = _create_registry(temp_db, repo, worktree_path, branch)
+    resolution = merge_storage.create_resolution(
+        worktree_id=worktree.id,
+        source_branch="main",
+        target_branch=branch,
+        status="pending",
+    )
+    conflict = merge_storage.create_conflict(
+        resolution_id=resolution.id,
+        file_path="shared.py",
+        ours_content="value = 'feature'",
+        theirs_content="value = 'main'",
+    )
+    merge_storage.update_conflict(
+        conflict.id,
+        status="resolved",
+        resolved_content=(
+            "<<<<<<< HEAD\nvalue = 'feature'\n=======\nvalue = 'main'\n>>>>>>> main\n"
+        ),
+    )
+
+    result = await registry.call("merge_apply", {"resolution_id": resolution.id})
+
+    assert result["success"] is False
+    assert "conflict markers" in result["error"]
+    assert _git(worktree_path, "rev-parse", "HEAD") == head_before
+    assert _git_succeeds(worktree_path, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+    assert merge_storage.get_resolution(resolution.id).status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_merge_apply_reports_dirty_worktree_after_commit(
     temp_db,
     tmp_path: Path,

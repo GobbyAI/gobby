@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.merge_conflict_hydration import conflict_hunks_for_ai
 from gobby.mcp_proxy.tools.merge_resolve_locks import try_acquire_resolve_lock
 from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
 from gobby.worktrees.merge import MergeResolver
+from gobby.worktrees.merge.resolver import assert_marker_free
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,10 @@ def register_merge_resolve_tool(
         resolve_lock: asyncio.Lock | None = None
         try:
             if resolved_content is not None:
+                try:
+                    assert_marker_free(resolved_content)
+                except ValueError as exc:
+                    return {"success": False, "error": str(exc)}
                 updated = merge_storage.update_conflict(
                     conflict_id=conflict_id,
                     status=ConflictStatus.RESOLVED.value,

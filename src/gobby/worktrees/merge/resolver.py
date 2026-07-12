@@ -117,6 +117,14 @@ _FENCED_SOURCE_RESPONSE_RE = re.compile(
     re.DOTALL,
 )
 _CONFLICT_MARKER_LINE_RE = re.compile(r"(?m)^\s*(<<<<<<<|=======[ \t]*$|>>>>>>>).*")
+
+
+def assert_marker_free(content: str) -> None:
+    """Reject source content that still contains a Git conflict-marker line."""
+    if _CONFLICT_MARKER_LINE_RE.search(content):
+        raise ValueError("Resolved content contains Git conflict markers")
+
+
 _AI_PROSE_LINE_RE = re.compile(
     r"(?im)^\s*(?:\*\*)?(?:here (?:is|are)|the resolved|resolved hunks|"
     r"i resolved|rationale|explanation)\b"
@@ -169,7 +177,9 @@ def clean_ai_source_response(response: str) -> str | None:
 
     if "```" in candidate:
         return None
-    if _CONFLICT_MARKER_LINE_RE.search(candidate):
+    try:
+        assert_marker_free(candidate)
+    except ValueError:
         return None
     if _AI_PROSE_LINE_RE.search(candidate):
         return None
