@@ -92,6 +92,15 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if session_id:
             self.logger.debug(f"BEFORE_AGENT: session {session_id}, prompt_len={len(prompt)}")
 
+            try:
+                from gobby.hooks.event_handlers._session_start.transcripts import (
+                    ensure_qwen_transcript_tracking,
+                )
+
+                ensure_qwen_transcript_tracking(self, event, session_id)
+            except Exception as e:
+                self.logger.warning("Failed to register deferred Qwen transcript: %s", e)
+
             # Update status to active (unless /clear or /exit)
             prompt_lower = stripped_prompt.lower()
             if prompt_lower not in ("/clear", "/exit") and self._session_manager:
