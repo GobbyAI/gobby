@@ -34,6 +34,15 @@ def get_checkout_mutation_lock(checkout_path: str | Path) -> asyncio.Lock:
     return loop_locks.setdefault(key, asyncio.Lock())
 
 
+def stash_ref_for_oid(stash_list: str, stash_oid: str) -> str | None:
+    """Resolve the current reflog selector for an exact stash object."""
+    for line in stash_list.splitlines():
+        stash_ref, separator, candidate_oid = line.partition("\0")
+        if separator and candidate_oid == stash_oid:
+            return stash_ref
+    return None
+
+
 async def run_to_completion[T](awaitable: Awaitable[T]) -> T:
     """Keep work alive through caller cancellation, then propagate cancellation."""
     worker = asyncio.ensure_future(awaitable)

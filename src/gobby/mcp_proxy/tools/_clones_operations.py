@@ -10,7 +10,11 @@ from typing import Any, Literal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
-from gobby.utils.git import get_checkout_mutation_lock, run_thread_to_completion
+from gobby.utils.git import (
+    get_checkout_mutation_lock,
+    run_thread_to_completion,
+    stash_ref_for_oid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +29,6 @@ def _git_exception_result(
     else:
         message = f"{step.capitalize()} failed: {error}"
     return {"success": False, "error": message, "step": step}
-
-
-def _stash_ref_for_oid(stash_list: str, stash_oid: str) -> str | None:
-    """Resolve the current reflog selector for an exact stash object."""
-    for line in stash_list.splitlines():
-        stash_ref, separator, candidate_oid = line.partition("\0")
-        if separator and candidate_oid == stash_oid:
-            return stash_ref
-    return None
 
 
 def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolRegistry:
@@ -414,7 +409,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                                 output=stash_list_result.stdout,
                                 stderr=detail,
                             )
-                        stash_ref = _stash_ref_for_oid(stash_list_result.stdout, stash_oid)
+                        stash_ref = stash_ref_for_oid(stash_list_result.stdout, stash_oid)
                         if stash_ref is None:
                             raise RuntimeError(f"exact stash {stash_oid} is no longer present")
                         pop_result = await run_thread_to_completion(

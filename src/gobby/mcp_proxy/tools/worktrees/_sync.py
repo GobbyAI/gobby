@@ -13,6 +13,7 @@ from gobby.utils.git import (
     get_checkout_mutation_lock,
     run_thread_to_completion,
     run_to_completion,
+    stash_ref_for_oid,
 )
 
 logger = logging.getLogger(__name__)
@@ -289,18 +290,35 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
         checked_out_target = original_branch == merge_target
 
-        stash_created = False
+        stash_oid: str | None = None
 
         async def _restore_stash() -> None:
             """Restore stashed .gobby/ files if any were stashed."""
-            if stash_created:
+            if stash_oid:
+                stash_list = await run_thread_to_completion(
+                    resolved_git_mgr.run_git_command,
+                    ["stash", "list", "--format=%gd%x00%H"],
+                    cwd=merge_cwd,
+                    timeout=10,
+                )
+                if stash_list.returncode != 0:
+                    detail = stash_list.stderr or stash_list.stdout or "git stash list failed"
+                    raise RuntimeError(f"Failed to locate merge_worktree stash: {detail}")
+                stash_ref = stash_ref_for_oid(stash_list.stdout, stash_oid)
+                if stash_ref is None:
+                    raise RuntimeError(
+                        f"Failed to locate exact merge_worktree stash {stash_oid}"
+                    )
                 pop_result = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command, ["stash", "pop"], cwd=merge_cwd, timeout=10
+                    resolved_git_mgr.run_git_command,
+                    ["stash", "pop", stash_ref],
+                    cwd=merge_cwd,
+                    timeout=10,
                 )
                 if pop_result.returncode != 0:
-                    logger.warning(
-                        f"Failed to restore stashed .gobby/ files: "
-                        f"{pop_result.stderr or pop_result.stdout}"
+                    detail = pop_result.stderr or pop_result.stdout or "git stash pop failed"
+                    raise RuntimeError(
+                        f"Failed to restore stashed .gobby/ files from {stash_ref}: {detail}"
                     )
 
         async def _source_is_merged_into_target() -> bool:
@@ -439,11 +457,12 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "target_branch": merge_target,
                     }
 
-            # Stash dirty .gobby/ sync files to prevent merge blocking.
-            # Compare stash list before/after to reliably detect if a stash was created
-            # (same pattern as merge_clone).
-            stash_list_before = await run_thread_to_completion(
-                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=merge_cwd, timeout=10
+            # Stash dirty .gobby/ sync files and retain the exact object identity.
+            stash_head_before = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["rev-parse", "--verify", "-q", "refs/stash"],
+                cwd=merge_cwd,
+                timeout=10,
             )
             stash_push = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
@@ -451,14 +470,43 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 cwd=merge_cwd,
                 timeout=10,
             )
-            if stash_push.returncode == 0:
-                stash_list_after = await run_thread_to_completion(
-                    resolved_git_mgr.run_git_command,
-                    ["stash", "list"],
-                    cwd=merge_cwd,
-                    timeout=10,
-                )
-                stash_created = stash_list_after.stdout != stash_list_before.stdout
+            if stash_push.returncode != 0:
+                detail = stash_push.stderr or stash_push.stdout or "git stash push failed"
+                return {
+                    "success": False,
+                    "error": f"Failed to stash target checkout .gobby files: {detail}",
+                    "step": "stash",
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+            stash_head_after = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["rev-parse", "--verify", "-q", "refs/stash"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            before_oid = (
+                stash_head_before.stdout.strip() if stash_head_before.returncode == 0 else None
+            )
+            after_oid = (
+                stash_head_after.stdout.strip() if stash_head_after.returncode == 0 else None
+            )
+            if after_oid != before_oid:
+                if after_oid is None:
+                    return {
+                        "success": False,
+                        "error": "Stash changed but its exact object could not be identified",
+                        "step": "stash",
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "source_branch": effective_source,
+                        "target_branch": merge_target,
+                    }
+                stash_oid = after_oid
 
             merge_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,

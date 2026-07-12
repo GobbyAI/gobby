@@ -610,12 +610,28 @@ async def test_merge_worktree_rejects_overlapping_target_dirt():
 
 @pytest.mark.asyncio
 async def test_merge_worktree_stash_restores_on_success():
-    """Stash pop is called after successful merge."""
+    """The operation restores its exact stash after an interleaved stash."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    stash_head_calls = 0
 
-    ctx.git_manager._run_git.side_effect = _local_merge_side_effect()
+    def interleaved_stash(args, cwd=None, timeout=30, check=False):
+        nonlocal stash_head_calls
+        if args == ["rev-parse", "--verify", "-q", "refs/stash"]:
+            stash_head_calls += 1
+            if stash_head_calls == 1:
+                return _make_git_result(1)
+            return _make_git_result(0, stdout="stash-ours\n")
+        if args == ["stash", "list", "--format=%gd%x00%H"]:
+            return _make_git_result(
+                0,
+                stdout="stash@{0}\x00stash-other\nstash@{1}\x00stash-ours\n",
+            )
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = interleaved_stash
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
@@ -626,6 +642,58 @@ async def test_merge_worktree_stash_restores_on_success():
     ):
         await merge_tool("wt-123")
 
-    # Last call should be stash pop
+    # The later interleaved stash remains newest; restore our exact older entry.
     last_call_args = ctx.git_manager._run_git.call_args_list[-1]
-    assert last_call_args[0][0] == ["stash", "pop"]
+    assert last_call_args[0][0] == ["stash", "pop", "stash@{1}"]
+
+
+async def test_merge_worktree_stash_push_failure_aborts_before_merge():
+    """A failed required stash prevents checkout merge mutation."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+
+    def failing_stash(args, cwd=None, timeout=30, check=False):
+        if args[:2] == ["stash", "push"]:
+            return _make_git_result(1, stderr="cannot write index")
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = failing_stash
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+
+    result = await merge_tool("wt-123")
+
+    assert result["success"] is False
+    assert result["step"] == "stash"
+    assert "cannot write index" in result["error"]
+    assert not any(call.args[0][0] == "merge" for call in ctx.git_manager._run_git.call_args_list)
+
+
+async def test_merge_worktree_stash_restore_failure_is_surfaced():
+    """An exact-stash restore failure cannot be logged as merge success."""
+    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
+
+    ctx = _make_registry_context()
+    regular_git = _local_merge_side_effect()
+    stash_head_calls = 0
+
+    def failing_restore(args, cwd=None, timeout=30, check=False):
+        nonlocal stash_head_calls
+        if args == ["rev-parse", "--verify", "-q", "refs/stash"]:
+            stash_head_calls += 1
+            return _make_git_result(
+                1 if stash_head_calls == 1 else 0,
+                stdout="" if stash_head_calls == 1 else "stash-ours\n",
+            )
+        if args == ["stash", "list", "--format=%gd%x00%H"]:
+            return _make_git_result(0, stdout="stash@{0}\x00stash-ours\n")
+        if args == ["stash", "pop", "stash@{0}"]:
+            return _make_git_result(1, stderr="restore conflict")
+        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    ctx.git_manager._run_git.side_effect = failing_restore
+    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
+
+    with pytest.raises(RuntimeError, match="restore conflict"):
+        await merge_tool("wt-123")
