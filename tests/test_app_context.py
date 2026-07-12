@@ -190,6 +190,8 @@ class TestGetPipelineExecutor:
             executor = container.get_pipeline_executor(project_id="proj-1")
 
         assert executor is not None
+        assert executor.execution_manager is project_execution_manager
+        assert container.get_pipeline_executor(project_id="proj-1") is executor
         project_execution_manager.fail_stale_running_executions.assert_called_once_with(
             exclude_ids=set()
         )

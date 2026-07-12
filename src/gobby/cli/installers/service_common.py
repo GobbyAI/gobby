@@ -195,7 +195,7 @@ def _ensure_cli_on_path(project_root: str) -> dict[str, Any]:
         return {"cli_installed": False, "cli_note": "uv not found — install manually"}
 
     try:
-        result = subprocess.run(  # nosec B603 B607 # hardcoded uv command
+        result = subprocess.run(  # nosec B603 # resolved uv executable, no shell
             [uv, "tool", "install", "-e", project_root],
             capture_output=True,
             text=True,

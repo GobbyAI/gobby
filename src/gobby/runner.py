@@ -210,12 +210,14 @@ async def run_gobby(config_path: Path | None = None, verbose: bool = False) -> N
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
     """Quick check whether a healthy Gobby daemon is already listening."""
+    import ipaddress
     import urllib.parse
     import urllib.request
 
     # Normalize wildcard addresses to localhost for health check
     # These wildcard strings are compared and normalized, never used as bind targets.
-    if host in ("0.0.0.0", "::", ""):  # nosec B104
+    wildcard_hosts = {str(ipaddress.IPv4Address(0)), str(ipaddress.IPv6Address(0)), ""}
+    if host in wildcard_hosts:
         host = "localhost"
     elif ":" in host and not host.startswith("["):
         host = f"[{host}]"

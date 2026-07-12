@@ -7,7 +7,6 @@ import subprocess
 import sys
 import textwrap
 import weakref
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,12 +30,18 @@ def test_close_caps_pool_worker_wait_within_daemon_shutdown_margin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
-    close_pool = MagicMock()
+    close_timeouts: list[float] = []
+
+    def close_pool(*, timeout: float) -> None:
+        close_timeouts.append(timeout)
+
     monkeypatch.setattr(db._pool, "close", close_pool)
 
     db.close()
 
-    close_pool.assert_called_once_with(timeout=postgres._POOL_CLOSE_TIMEOUT_SECONDS)
+    assert close_timeouts == [postgres._POOL_CLOSE_TIMEOUT_SECONDS]
+    assert db._pool_closed is True
+    assert db._pool_opened is False
 
 
 @pytest.mark.unit

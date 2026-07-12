@@ -42,7 +42,7 @@ def _run_schtasks(args: list[str], *, timeout: int = 30) -> subprocess.Completed
         CompletedProcess with stdout/stderr.
     """
     cmd = ["schtasks", *args]
-    return subprocess.run(  # nosec B603 B607 # hardcoded schtasks command
+    return subprocess.run(  # nosec B603 # fixed schtasks command, no shell
         cmd,
         capture_output=True,
         text=True,

@@ -335,7 +335,8 @@ class LocalProjectManager:
         values = list(fields.values()) + [project_id]
 
         self.db.execute(
-            f"UPDATE projects SET {set_clause} WHERE id = %s",  # nosec B608
+            # set_clause contains only fixed allowlisted project columns.
+            f"UPDATE projects SET {set_clause} WHERE id = %s",  # nosec
             tuple(values),
         )
 

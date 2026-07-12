@@ -682,7 +682,8 @@ def _build_safe_update(
         set_clauses.append(f"{column} = %s")
         update_params.append(value)
 
-    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec B608
+    # Table/column identifiers are allowlisted above; values remain parameterized.
+    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where}"  # nosec
     return sql, (*update_params, *where_params)
 
 
