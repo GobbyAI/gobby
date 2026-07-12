@@ -74,14 +74,18 @@ def _best_effort_sync[T](operation: Callable[[], T], name: str) -> T | None:
         return None
 
 
-def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
+async def _preserved_agent_terminal_pids(runner: GobbyRunner) -> set[int]:
     """Return pane PIDs for active tmux-backed agents that survive restart."""
     agent_runner = getattr(runner, "agent_runner", None)
     run_storage = getattr(agent_runner, "run_storage", None)
     if run_storage is None:
         return set()
     try:
-        runs = _list_active_agent_runs_once(runner)
+        db_executor = getattr(runner, "db_executor", None)
+        if db_executor is not None:
+            runs = await db_executor.run(_list_active_agent_runs_once, runner)
+        else:
+            runs = await asyncio.to_thread(_list_active_agent_runs_once, runner)
     except Exception as e:
         logger.warning("Failed to list active agent runs for restart preservation: %s", e)
         return set()
@@ -672,12 +676,7 @@ async def _run_async_shutdown_cleanup(
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
     preserved_agent_pids = (
-        _best_effort_sync(
-            lambda: _preserved_agent_terminal_pids(runner),
-            "Preserved agent process discovery",
-        )
-        if shutdown_intent.preserve_agents
-        else set()
+        await _preserved_agent_terminal_pids(runner) if shutdown_intent.preserve_agents else set()
     )
     await _best_effort(
         lambda: reap_remaining_child_processes(

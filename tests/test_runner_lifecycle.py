@@ -1800,7 +1800,7 @@ class TestShutdownDaemonServices:
         assert unrelated_tmux.terminated is True
         assert worker.terminated is True
 
-    def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
+    async def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
         run_count = 1_005
         runs = [
             SimpleNamespace(
@@ -1813,15 +1813,26 @@ class TestShutdownDaemonServices:
         list_active = MagicMock(
             side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
         )
+        db_calls: list[tuple[object, tuple[object, ...]]] = []
+
+        async def run_db(func: object, *args: object) -> object:
+            db_calls.append((func, args))
+            assert callable(func)
+            return func(*args)
+
         runner = SimpleNamespace(
             agent_runner=SimpleNamespace(
                 run_storage=SimpleNamespace(list_active=list_active),
-            )
+            ),
+            db_executor=SimpleNamespace(run=run_db),
         )
 
-        preserved_pids = runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
+        preserved_pids = await runner_lifecycle_shutdown._preserved_agent_terminal_pids(runner)
 
         assert preserved_pids == {10_000 + index for index in range(run_count)}
+        assert db_calls == [
+            (runner_lifecycle_shutdown._list_active_agent_runs_once, (runner,)),
+        ]
         assert [invocation.kwargs for invocation in list_active.call_args_list] == [
             {"limit": runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE, "offset": offset}
             for offset in range(
