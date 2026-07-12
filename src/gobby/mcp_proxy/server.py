@@ -532,6 +532,7 @@ class GobbyDaemonTools:
                 description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
             ),
         ],
+        workflow: str | None = None,
     ) -> dict[str, Any]:
         """Set a variable. Session-scoped by default. Pass workflow param to scope to a specific workflow instance."""
         if not self._session_manager or not self._session_manager.db:
@@ -546,7 +547,7 @@ class GobbyDaemonTools:
             name,
             value,
             session_id,
-            workflow=None,
+            workflow=workflow,
         )
 
     async def get_variable(
@@ -559,6 +560,7 @@ class GobbyDaemonTools:
                 description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
             ),
         ],
+        workflow: str | None = None,
     ) -> dict[str, Any]:
         """Get a variable (or all variables). Session-scoped by default. Pass workflow param to read from a specific workflow instance."""
         if not self._session_manager or not self._session_manager.db:
@@ -572,7 +574,7 @@ class GobbyDaemonTools:
             self._session_manager.db,
             name,
             session_id,
-            workflow=None,
+            workflow=workflow,
         )
 
     # Hook Extension tools migrated to gobby-plugins internal registry
