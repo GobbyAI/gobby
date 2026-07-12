@@ -21,6 +21,7 @@ from gobby.hooks.session_activation import (
     _ACTIVE_RULE_NAMES_CACHE,
     _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES,
     _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS,
+    _AGENT_KEYS,
     MARKER_COMPLETED,
     MARKER_HASH,
     MARKER_VERSION,
@@ -113,6 +114,9 @@ def _create_worker_agent(db: HubDatabase) -> None:
             {
                 "name": "worker",
                 "role": "Worker",
+                "blocked_tools": ["Bash"],
+                "blocked_mcp_tools": ["gobby-tasks.close_task"],
+                "workflows": {"rule_selectors": {"include": ["tag:worker"], "exclude": []}},
                 "steps": [{"name": "claim"}, {"name": "implement"}],
                 "step_variables": {"ticket": "14475"},
             }
@@ -231,6 +235,70 @@ def test_missing_agent_type_restored_before_rules(
     assert "_agent_type" in result.missing
     assert variables["_agent_type"] == "default"
     assert "is_spawned_agent" in variables
+
+
+@pytest.mark.parametrize("failure_mode", ["exception", "missing_definition"])
+def test_spawned_agent_activation_failure_retries_without_default_markers(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    failure_mode: str,
+) -> None:
+    _create_worker_agent(db)
+    LocalWorkflowDefinitionManager(db).create(
+        name="worker-only-rule",
+        workflow_type="rule",
+        source="custom",
+        tags=["worker"],
+        definition_json=json.dumps(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "set_variable", "variable": "worker_rule", "value": True}],
+            }
+        ),
+    )
+    _, child_id = _create_parent_and_child(db, session_manager, project_id, tmp_path)
+    event = _event(HookEventType.BEFORE_AGENT, child_id, tmp_path)
+    real_activate = handlers._activate_default_agent
+    attempts = 0
+
+    def flaky_activate(*args: Any, **kwargs: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            if failure_mode == "exception":
+                raise RuntimeError("temporary activation failure")
+            return None
+        return real_activate(*args, **kwargs)
+
+    with (
+        patch.object(handlers, "_activate_default_agent", side_effect=flaky_activate),
+        caplog.at_level("WARNING"),
+    ):
+        first = reconcile_session_activation(event, handlers)
+        failed_variables = _variables(db, child_id)
+
+        assert first.changed is True
+        assert attempts == 1
+        assert not set(_AGENT_KEYS).intersection(failed_variables)
+        assert MARKER_COMPLETED not in failed_variables
+        assert MARKER_VERSION not in failed_variables
+        assert MARKER_HASH not in failed_variables
+        assert "worker" in caplog.text
+
+        second = reconcile_session_activation(event, handlers)
+
+    variables = _variables(db, child_id)
+    assert second.changed is True
+    assert attempts == 2
+    assert variables["_agent_type"] == "worker"
+    assert variables["_active_rule_names"] == ["worker-only-rule"]
+    assert variables["_agent_blocked_tools"] == ["Bash"]
+    assert variables["_agent_blocked_mcp_tools"] == ["gobby-tasks.close_task"]
+    assert variables[MARKER_COMPLETED] is True
 
 
 def test_reconciliation_refreshes_stale_active_rule_names(

@@ -171,10 +171,17 @@ def _reconcile_session_activation(
 
     if activation_missing or step_missing:
         override = _activation_agent_name(variables, agent_run, step_missing)
-        if _activate_agent(handler, session_id, session, override, log):
+        activation_succeeded = _activate_agent(handler, session_id, session, override, log)
+        if activation_succeeded:
             variables = sv_mgr.get_variables(session_id)
             step_missing = _missing_step_workflow(db, session_id, variables, session, agent_run)
             missing.extend(step_missing)
+        elif activation_missing and override is not None:
+            return ActivationReconciliationResult(
+                changed=bool(missing),
+                missing=tuple(dict.fromkeys(missing)),
+                reason="activation_failed",
+            )
 
     updates = _fallback_agent_updates(variables, session)
     active_rule_updates = _active_rule_name_updates(db, variables, session)
@@ -522,18 +529,39 @@ def _activate_agent(
 ) -> bool:
     activate = getattr(handler, "_activate_default_agent", None)
     if not callable(activate):
+        if agent_name_override is not None:
+            log.warning(
+                "Could not repair session agent activation for %s using agent %s: "
+                "activation unavailable",
+                session_id,
+                agent_name_override,
+            )
         return False
     try:
-        activate(
+        result = activate(
             session_id,
             getattr(session, "source", None) or "claude",
             getattr(session, "project_id", None),
             agent_name_override=agent_name_override,
         )
-        return True
     except Exception as exc:
-        log.warning("Could not repair session agent activation for %s: %s", session_id, exc)
+        log.warning(
+            "Could not repair session agent activation for %s using agent %s: %s",
+            session_id,
+            agent_name_override or "default",
+            exc,
+        )
         return False
+    if result is None:
+        if agent_name_override is not None:
+            log.warning(
+                "Could not repair session agent activation for %s using agent %s: "
+                "activation returned no result",
+                session_id,
+                agent_name_override,
+            )
+        return False
+    return True
 
 
 def _missing_step_workflow(
