@@ -86,6 +86,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         prompt = input_data.get("prompt", "")
         stripped_prompt = prompt.strip()
         session_id = event.metadata.get("_platform_session_id")
+        project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
         context_parts = []
 
@@ -141,12 +142,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
             # ``stripped_prompt`` is truthy here, so split() always has a first token.
             skill_identifier = stripped_prompt.split(None, 1)[0]
             try:
-                skill_context = self._intercept_skill_command(stripped_prompt, session_id)
+                skill_context = self._intercept_skill_command(
+                    stripped_prompt,
+                    session_id,
+                    project_id,
+                )
                 if skill_context:
                     context_parts.append(skill_context)
                 else:
                     # Try trigger-based suggestion for non-command prompts
-                    suggestion = self._suggest_skills(stripped_prompt)
+                    suggestion = self._suggest_skills(stripped_prompt, project_id)
                     if suggestion:
                         context_parts.append(suggestion)
             except Exception as e:
@@ -247,7 +252,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
             },
         )
 
-    def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
+    def _intercept_skill_command(
+        self,
+        prompt: str,
+        session_id: str | None = None,
+        project_id: str | None = None,
+    ) -> str | None:
         """Intercept /gobby or $gobby skill commands.
 
         Returns context string to add, or None if not a Gobby router command.
@@ -259,6 +269,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return None
 
         command_prefix = "$gobby" if prompt.startswith("$") else "/gobby"
+        project_kwargs = {"project_id": project_id} if project_id is not None else {}
         skill_name = match.group(1)  # None for bare /gobby or space syntax
         args = (match.group(2) or "").strip()
 
@@ -274,29 +285,41 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     sub_parts = parts[1].split(None, 1)
                     skill_name = sub_parts[0]
                     args = sub_parts[1] if len(sub_parts) > 1 else ""
-                    resolved = self._skill_manager.resolve_skill_name(skill_name)
+                    resolved = self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
                 # Bare Gobby skills → fall through to help.
             elif first_word.lower() != "help":
                 skill_name = first_word
-                resolved = self._skill_manager.resolve_skill_name(first_word)
+                resolved = self._skill_manager.resolve_skill_name(first_word, **project_kwargs)
                 if resolved:
                     args = parts[1] if len(parts) > 1 else ""
 
         # Bare Gobby or Gobby help → generate help.
         if not skill_name or skill_name.lower() == "help":
-            return self._generate_help_content(session_id, command_prefix=command_prefix)
+            return self._generate_help_content(
+                session_id,
+                command_prefix=command_prefix,
+                **project_kwargs,
+            )
 
         # Gobby skillname → resolve and direct the agent to fetch it on demand.
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skill = resolved if resolved else self._skill_manager.resolve_skill_name(skill_name)
+        skill = (
+            resolved
+            if resolved
+            else self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
+        )
 
         if not skill:
-            return self._skill_not_found_context(skill_name, command_prefix=command_prefix)
+            return self._skill_not_found_context(
+                skill_name,
+                command_prefix=command_prefix,
+                **project_kwargs,
+            )
 
         return skill_fetch_directive(skill.name)
 
-    def _suggest_skills(self, prompt: str) -> str | None:
+    def _suggest_skills(self, prompt: str, project_id: str | None = None) -> str | None:
         """Suggest skills based on trigger keyword matching.
 
         Only runs for non-command prompts. Returns a lightweight hint
@@ -308,7 +331,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        matches = self._skill_manager.match_triggers(prompt, threshold=0.7)
+        matches = self._skill_manager.match_triggers(
+            prompt,
+            threshold=0.7,
+            project_id=project_id,
+        )
 
         if not matches:
             return None
@@ -321,11 +348,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         self,
         session_id: str | None = None,
         command_prefix: str = "/gobby",
+        project_id: str | None = None,
     ) -> str:
         """Generate help content listing all available skills."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skills = self._skill_manager.discover_core_skills()
+        skills = self._skill_manager.discover_core_skills(project_id)
 
         if session_id and self._session_manager:
             try:
@@ -382,11 +410,16 @@ class AgentEventHandlerMixin(EventHandlersBase):
             fallback,
         )
 
-    def _skill_not_found_context(self, name: str, command_prefix: str = "/gobby") -> str:
+    def _skill_not_found_context(
+        self,
+        name: str,
+        command_prefix: str = "/gobby",
+        project_id: str | None = None,
+    ) -> str:
         """Generate context for an unrecognized skill name."""
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
-        skills = self._skill_manager.discover_core_skills()
+        skills = self._skill_manager.discover_core_skills(project_id)
 
         # Find close matches (name contains or starts with input)
         name_lower = name.lower()

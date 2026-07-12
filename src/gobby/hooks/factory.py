@@ -220,7 +220,6 @@ class HookManagerFactory:
             agent_runner,
             completion_registry,
             tool_proxy_getter,
-            resolve_project_id,
             broadcaster,
         )
 
@@ -481,7 +480,6 @@ class HookManagerFactory:
         agent_runner: Any | None,
         completion_registry: Any | None,
         tool_proxy_getter: Any | None,
-        resolve_project_id: Callable[[str | None, str | None], str],
         broadcaster: Any | None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
@@ -491,11 +489,9 @@ class HookManagerFactory:
         loader = WorkflowLoader(db=database)
         template_engine = TemplateEngine()
         metrics_event_store = MetricsEventStore(database)
-        project_id = resolve_project_id(None, None)
         skill_manager = HookSkillManager(
             db=database,
             metrics_event_store=metrics_event_store,
-            project_id=project_id,
         )
         # Build inline mcp_call dispatcher for inject_result atomicity.
         # Dispatches mcp_calls within the rule engine's effect loop so
@@ -526,7 +522,7 @@ class HookManagerFactory:
             from gobby.storage.pipelines import LocalPipelineExecutionManager
             from gobby.workflows.pipeline_executor import PipelineExecutor
 
-            pipeline_mgr = LocalPipelineExecutionManager(database, project_id)
+            pipeline_mgr = LocalPipelineExecutionManager(database, None)
             pipeline_executor = PipelineExecutor(
                 db=database,
                 execution_manager=pipeline_mgr,

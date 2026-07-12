@@ -83,6 +83,22 @@ class TestHandleBeforeAgent:
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
 
+    def test_skill_resolution_uses_event_project(self) -> None:
+        handler = _TestHandler()
+        skill = MagicMock(name="project-only")
+        skill.name = "project-only"
+        handler._skill_manager.resolve_skill_name.return_value = skill
+        event = _make_event(data={"prompt": "/gobby project-only"})
+        event.project_id = "project-a"
+
+        response = handler.handle_before_agent(event)
+
+        assert response.context is not None
+        handler._skill_manager.resolve_skill_name.assert_called_with(
+            "project-only",
+            project_id="project-a",
+        )
+
     def test_updates_status_to_active(self) -> None:
         handler = _TestHandler()
         handler._skill_manager = None

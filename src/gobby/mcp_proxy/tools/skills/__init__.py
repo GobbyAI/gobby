@@ -30,7 +30,7 @@ from gobby.skills.loader import SkillLoader
 from gobby.skills.search import SkillSearch
 from gobby.skills.updater import SkillUpdater
 from gobby.storage.sessions import SessionManager
-from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
+from gobby.storage.skills import LocalSkillManager, get_skill_change_notifier
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -78,7 +78,7 @@ def create_skills_registry(
     )
 
     # Initialize shared dependencies (single instances, matching original wiring)
-    notifier = SkillChangeNotifier()
+    notifier = get_skill_change_notifier(db)
     storage = LocalSkillManager(db, notifier=notifier)
 
     ctx = SkillsContext(

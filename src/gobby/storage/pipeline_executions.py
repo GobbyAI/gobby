@@ -45,6 +45,7 @@ class PipelineExecutionStorageMixin:
         parent_execution_id: str | None = None,
         continuation_prompt: str | None = None,
         definition_json: str | None = None,
+        project_id: str | None = None,
     ) -> PipelineExecution:
         """Create a new pipeline execution.
 
@@ -55,11 +56,12 @@ class PipelineExecutionStorageMixin:
             parent_execution_id: Parent execution for nested pipelines
             continuation_prompt: Instructions for wake notification on completion
             definition_json: Snapshot of the pipeline definition at execution time
+            project_id: Per-execution project override
 
         Returns:
             Created PipelineExecution instance
         """
-        project_id = self._require_project_id()
+        resolved_project_id = project_id or self._require_project_id()
         execution_id = str(uuid.uuid4())
         now = utc_now()
 
@@ -76,7 +78,7 @@ class PipelineExecutionStorageMixin:
                 (
                     execution_id,
                     pipeline_name,
-                    project_id,
+                    resolved_project_id,
                     ExecutionStatus.PENDING.value,
                     inputs_json,
                     session_id,
@@ -91,7 +93,7 @@ class PipelineExecutionStorageMixin:
         return PipelineExecution(
             id=execution_id,
             pipeline_name=pipeline_name,
-            project_id=project_id,
+            project_id=resolved_project_id,
             status=ExecutionStatus.PENDING,
             inputs_json=inputs_json,
             session_id=session_id,

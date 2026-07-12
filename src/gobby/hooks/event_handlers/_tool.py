@@ -44,6 +44,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
         session_id = event.metadata.get("_platform_session_id")
+        project_id = event.project_id or self._resolve_project_id(event.project_id, event.cwd)
 
         if session_id:
             self.logger.debug(f"BEFORE_TOOL: {tool_name}, session {session_id}")
@@ -53,7 +54,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         # Intercept Skill tool calls to resolve gobby skills
         if tool_name == "Skill" and (self._skill_manager or self._call_tool):
             try:
-                skill_response = self._resolve_skill_tool_call(input_data)
+                skill_response = self._resolve_skill_tool_call(input_data, project_id)
                 if skill_response is not None:
                     return skill_response
             except SkillResolutionError:
@@ -65,7 +66,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(decision="allow")
 
-    def _resolve_skill_tool_call(self, input_data: dict[str, Any]) -> HookResponse | None:
+    def _resolve_skill_tool_call(
+        self,
+        input_data: dict[str, Any],
+        project_id: str | None = None,
+    ) -> HookResponse | None:
         """Resolve a Gobby-owned Skill tool call.
 
         Tier 1: Local DB via HookSkillManager
@@ -91,7 +96,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
         # --- Tier 1: Local DB resolve ---
         if self._skill_manager:
             try:
-                skill = self._skill_manager.resolve_skill_name(skill_name)
+                project_kwargs = {"project_id": project_id} if project_id is not None else {}
+                skill = self._skill_manager.resolve_skill_name(skill_name, **project_kwargs)
             except _EXPECTED_SKILL_RESOLUTION_ERRORS as exc:
                 raise SkillResolutionError(
                     f"Local skill resolution failed for {skill_name!r}"
