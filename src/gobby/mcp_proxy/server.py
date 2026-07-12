@@ -391,11 +391,7 @@ class GobbyDaemonTools:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(
-            server_name,
-            tool_name,
-            session_id=session_id,
-        )
+        return await self.tool_proxy.get_tool_schema(server_name, tool_name)
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""

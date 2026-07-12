@@ -534,7 +534,6 @@ class TestGobbyDaemonToolsGetToolSchema:
         tools_handler.tool_proxy.get_tool_schema.assert_called_once_with(
             "my-server",
             "my-tool",
-            session_id=None,
         )
         assert tools_handler.tool_proxy.get_tool_schema.call_count == 1
         assert tools_handler.tool_proxy.get_tool_schema.call_args is not None
@@ -551,6 +550,10 @@ class TestGobbyDaemonToolsGetToolSchema:
         )
 
         assert result == {"name": "tool"}
+        tools_handler.tool_proxy.get_tool_schema.assert_awaited_once_with(
+            "my-server",
+            "my-tool",
+        )
         assert not hasattr(tools_handler.tool_proxy, "emit_synthetic_proxy_after_tool")
 
 

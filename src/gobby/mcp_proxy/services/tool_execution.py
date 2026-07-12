@@ -460,11 +460,8 @@ async def get_tool_schema(
     service: Any,
     server_name: str,
     tool_name: str,
-    session_id: str | None = None,
-    record_discovery: bool = True,
 ) -> dict[str, Any]:
     """Get full schema for a specific tool."""
-    del session_id, record_discovery
     server_name = service._resolve_server_name(server_name)
     if service._is_proxy_namespace(server_name):
         resolved = service._resolve_server_for_tool(tool_name)

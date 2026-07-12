@@ -3,12 +3,14 @@
 Targets uncovered lines: 97-104, 125, 133, 183, 188-220, 250-278, 280-309
 """
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
+from gobby.mcp_proxy.services.tool_execution import get_tool_schema as get_tool_schema_impl
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService, safe_truncate
 
 pytestmark = pytest.mark.unit
@@ -705,6 +707,16 @@ class TestReadResource:
 
 class TestGetToolSchema:
     """Tests for get_tool_schema method (lines 229-248)."""
+
+    def test_schema_service_has_no_obsolete_discovery_parameters(self) -> None:
+        """Discovery state is owned by the public AFTER_TOOL rule path."""
+        service_parameters = inspect.signature(ToolProxyService.get_tool_schema).parameters
+        implementation_parameters = inspect.signature(get_tool_schema_impl).parameters
+
+        assert "session_id" not in service_parameters
+        assert "record_discovery" not in service_parameters
+        assert "session_id" not in implementation_parameters
+        assert "record_discovery" not in implementation_parameters
 
     @pytest.fixture
     def mock_mcp_manager(self):
