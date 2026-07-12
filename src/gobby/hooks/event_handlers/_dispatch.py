@@ -297,14 +297,9 @@ def _fail_stage(
 
 
 def _release_run_mutex(run_id: str, *, storage: TaskDispatchMutexManager | None) -> int:
-    if storage is not None:
-        return RuntimeDispatchMutex.force_release_for_run(storage, run_id)
-
-    try:
-        release_for_run = cast(Any, RuntimeDispatchMutex.force_release_for_run)
-        return int(release_for_run(run_id))
-    except TypeError:
+    if storage is None:
         return 0
+    return RuntimeDispatchMutex.force_release_for_run(storage, run_id)
 
 
 def _event_value(event: object, key: str) -> object | None:
