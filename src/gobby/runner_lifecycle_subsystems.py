@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,6 +45,45 @@ async def _run_db(
     if db_executor is not None:
         return await db_executor.run(operation, *args, **kwargs)
     return await asyncio.to_thread(operation, *args, **kwargs)
+
+
+def _discover_wiki_cron_project_scopes(
+    database: Any,
+    config: Any,
+) -> tuple[list[tuple[str, list[str]]], list[tuple[str, str]]]:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.wiki.scheduled_jobs import configured_wiki_cron_scopes
+
+    project_manager = LocalProjectManager(database)
+    scopes: list[tuple[str, list[str]]] = []
+    errors: list[tuple[str, str]] = []
+    offset = 0
+    while True:
+        projects = project_manager.list_page(
+            limit=_PROJECT_ENUMERATION_PAGE_SIZE,
+            offset=offset,
+        )
+        if not projects:
+            break
+        for project in projects:
+            if project_manager.is_protected(project):
+                continue
+            if not project.repo_path:
+                errors.append((project.id, "skipped: project has no repo path"))
+                continue
+            if not Path(project.repo_path).exists():
+                errors.append(
+                    (
+                        project.id,
+                        f"skipped: project repo path does not exist: {project.repo_path}",
+                    )
+                )
+                continue
+            scopes.append((project.id, configured_wiki_cron_scopes(config, project.id)))
+        offset += len(projects)
+        if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
+            break
+    return scopes, errors
 
 
 def _schedule_provider_model_refresh(
@@ -336,64 +375,38 @@ async def _register_wiki_cron_handlers(
             tracker.error("Wiki cron handlers", "skipped: cron executor unavailable")
         return
     try:
-        from gobby.storage.projects import LocalProjectManager
         from gobby.wiki.scheduled_jobs import (
-            configured_wiki_cron_scopes,
             register_wiki_cron_jobs_for_projects,
         )
 
-        project_manager = LocalProjectManager(runner.database)
-        first_page = project_manager.list_page(limit=_PROJECT_ENUMERATION_PAGE_SIZE)
-        if not first_page:
+        project_scopes, project_errors = await _run_db(
+            runner,
+            _discover_wiki_cron_project_scopes,
+            runner.database,
+            runner.config,
+        )
+        if not project_scopes and not project_errors:
             if tracker:
                 tracker.error("Wiki cron handlers", "skipped: no registered projects")
             return
-
-        eligible_projects = 0
-
-        def iter_project_scopes() -> Iterator[tuple[str, list[str]]]:
-            nonlocal eligible_projects
-            projects = first_page
-            offset = 0
-            while projects:
-                for project in projects:
-                    if project_manager.is_protected(project):
-                        continue
-                    if not project.repo_path:
-                        if tracker:
-                            tracker.error(
-                                f"Wiki cron handlers ({project.id})",
-                                "skipped: project has no repo path",
-                            )
-                        continue
-                    if not Path(project.repo_path).exists():
-                        if tracker:
-                            tracker.error(
-                                f"Wiki cron handlers ({project.id})",
-                                f"skipped: project repo path does not exist: {project.repo_path}",
-                            )
-                        continue
-                    eligible_projects += 1
-                    yield (
-                        project.id,
-                        configured_wiki_cron_scopes(runner.config, project.id),
-                    )
-                offset += len(projects)
-                if len(projects) < _PROJECT_ENUMERATION_PAGE_SIZE:
-                    break
-                projects = project_manager.list_page(
-                    limit=_PROJECT_ENUMERATION_PAGE_SIZE,
-                    offset=offset,
-                )
+        if tracker:
+            for project_id, error in project_errors:
+                tracker.error(f"Wiki cron handlers ({project_id})", error)
 
         registered = await register_wiki_cron_jobs_for_projects(
             cron_storage=cron_storage,
             cron_executor=executor,
             db=runner.database,
-            project_scopes=iter_project_scopes(),
+            project_scopes=project_scopes,
+            run_sync=lambda operation, *args, **kwargs: _run_db(
+                runner,
+                operation,
+                *args,
+                **kwargs,
+            ),
         )
         logger.debug("Wiki cron handlers registered: %s", registered)
-        if eligible_projects == 0 and registered == 0 and tracker:
+        if not project_scopes and registered == 0 and tracker:
             tracker.error("Wiki cron handlers", "skipped: no wiki-capable projects")
         elif tracker:
             tracker.complete("Wiki cron handlers")

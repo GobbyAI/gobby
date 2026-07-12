@@ -110,12 +110,14 @@ async def test_wiki_cron_registers_each_project_outside_startup_project(
     projects = _create_projects(temp_db, tmp_path)
     cron_storage = CronJobStorage(temp_db)
     executor = RecordingCronExecutor()
+    db_run = AsyncMock(side_effect=lambda operation, *args, **kwargs: operation(*args, **kwargs))
     runner = SimpleNamespace(
         database=temp_db,
         project_id=None,
         config=SimpleNamespace(wiki=SimpleNamespace(scheduled_scopes=[])),
         cron_storage=cron_storage,
         cron_scheduler=SimpleNamespace(executor=executor),
+        db_executor=SimpleNamespace(run=db_run),
     )
     tracker = StartupTracker()
     monkeypatch.setattr(
@@ -129,6 +131,14 @@ async def test_wiki_cron_registers_each_project_outside_startup_project(
     assert all(len(cron_storage.list_jobs(project_id=project.id)) == 7 for project in projects)
     assert "Wiki cron handlers" in tracker.steps_completed
     assert tracker.errors == []
+    offloaded_operations = {call.args[0].__name__ for call in db_run.await_args_list}
+    assert {
+        "_discover_wiki_cron_project_scopes",
+        "reconcile_stale_wiki_cron_scopes",
+        "purge_legacy_wiki_research_jobs",
+        "_ensure_wiki_cron_job",
+        "list_system_jobs_by_name_prefix",
+    } <= offloaded_operations
 
 
 @pytest.mark.asyncio
