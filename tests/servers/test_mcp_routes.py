@@ -3155,6 +3155,73 @@ class TestHooksEndpoints:
         )
         assert hook_response.system_message is None
 
+    @pytest.mark.parametrize("handler_layer", ["value_error", "exception", "outer"])
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "critical", "should_block"),
+        [
+            ("codex", "Stop", False, True),
+            ("claude", "session-start", True, True),
+            ("droid", "PreToolUse", False, False),
+        ],
+    )
+    def test_execute_hook_exception_posture_matches_fail_safe_contract(
+        self,
+        session_storage: SessionManager,
+        handler_layer: str,
+        source: str,
+        hook_type: str,
+        critical: bool,
+        should_block: bool,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+        error: Exception = (
+            ValueError("invalid hook state")
+            if handler_layer == "value_error"
+            else RuntimeError("hook pipeline unavailable")
+        )
+        if handler_layer == "outer":
+            failure_patch = patch(
+                "gobby.servers.routes.mcp.hooks.claim_envelope_processing",
+                side_effect=error,
+            )
+            headers = {"X-Gobby-Envelope-Id": "outer-handler-error"}
+        else:
+            failure_patch = patch(
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new=AsyncMock(side_effect=error),
+            )
+            headers = {}
+
+        with (
+            TestClient(server.app) as client,
+            failure_patch,
+            patch("gobby.servers.routes.mcp.hooks.mark_envelope_processed"),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                headers=headers,
+                json=_hook_envelope(
+                    hook_type=hook_type,
+                    source=source,
+                    critical=critical,
+                    input_data={"session_id": "error-posture"},
+                ),
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is not should_block
+        if should_block:
+            reason = data.get("reason") or data.get("stopReason")
+            assert "blocking this critical hook for safety" in reason
+        else:
+            assert "non-fatal" in data["systemMessage"]
+
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),
         [
