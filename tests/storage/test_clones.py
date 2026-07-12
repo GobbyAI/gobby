@@ -349,6 +349,14 @@ class TestLocalCloneManagerGet:
 
         assert clone is None
 
+    def test_get_hides_terminal_cleanup_record(self, manager, mock_db) -> None:
+        """Terminal cleanup rows behave as removed from normal lookups."""
+        mock_db.fetchone.return_value = _clone_row(status=CloneStatus.CLEANUP.value)
+
+        clone = manager.get("clone-123456")
+
+        assert clone is None
+
 
 class TestLocalCloneManagerGetByTask:
     """Tests for LocalCloneManager.get_by_task method."""
@@ -460,6 +468,16 @@ class TestLocalCloneManagerList:
         query = call_args[0][0]
         assert "project_id = %s" in query
         assert "status = %s" in query
+
+    def test_list_excludes_terminal_cleanup_records(self, manager, mock_db) -> None:
+        """Normal clone listings never expose terminal cleanup rows."""
+        mock_db.fetchall.return_value = []
+
+        manager.list_clones()
+
+        query, params = mock_db.fetchall.call_args.args
+        assert "status != %s" in query
+        assert params[0] == CloneStatus.CLEANUP.value
 
 
 class TestLocalCloneManagerUpdate:
@@ -640,7 +658,11 @@ class TestLocalCloneManagerStatusMethods:
         assert "agent_session_id = %s" in query
         assert "agent_session_id IS NULL OR agent_session_id = %s" in query
         assert call_args[0][1][0] == "sess-1"
-        assert call_args[0][1][2:] == ("clone-123", "sess-1")
+        assert call_args[0][1][2:] == (
+            "clone-123",
+            "sess-1",
+            CloneStatus.CLEANUP.value,
+        )
 
     def test_claim_returns_none_when_owned_by_another_session(self, manager, mock_db) -> None:
         """claim reports a conditional update that matched no rows."""

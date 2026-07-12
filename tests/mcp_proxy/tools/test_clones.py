@@ -1601,6 +1601,8 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["marked_stale"] is True
         assert result["cleaned"][0]["files_deleted"] is True
         assert result["cleaned"][0]["record_deleted"] is True
+        assert result["cleaned"][0]["record_terminal"] is True
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")
         mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/old", force=True)
         mock_clone_storage.delete.assert_called_once_with("clone-1")
 
@@ -1698,10 +1700,16 @@ class TestCleanupStaleClones:
             {"hours": 24, "dry_run": False, "delete_files": True},
         )
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert result["cleaned"][0]["files_deleted"] is False
         assert result["cleaned"][0]["record_deleted"] is False
         assert result["cleaned"][0]["delete_error"] == "Permission denied"
+        assert result["cleaned"][0]["record_terminal"] is False
+        assert result["cleaned"][0]["record_restored"] is True
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-1",
+            status=CloneStatus.STALE.value,
+        )
         mock_clone_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1734,7 +1742,9 @@ class TestCleanupStaleClones:
             {"hours": 24, "dry_run": False, "delete_files": True},
         )
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert result["cleaned"][0]["files_deleted"] is True
         assert result["cleaned"][0]["record_deleted"] is False
+        assert result["cleaned"][0]["record_terminal"] is True
         assert result["cleaned"][0]["record_delete_error"] == "database unavailable"
+        mock_clone_storage.mark_cleanup.assert_called_once_with("clone-1")

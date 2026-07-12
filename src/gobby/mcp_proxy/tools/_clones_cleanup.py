@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.clones import CloneStatus
 
 
 def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegistry:
@@ -107,6 +108,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
         )
 
         results = []
+        cleanup_succeeded = True
         for c in stale:
             result_item: dict[str, Any] = {
                 "id": c.id,
@@ -118,6 +120,21 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
             }
 
             if delete_files and not dry_run and ctx.git_manager:
+                try:
+                    terminal = ctx.clone_storage.mark_cleanup(c.id)
+                except Exception as error:
+                    terminal = None
+                    result_item["record_terminal_error"] = str(error)
+                if terminal is None:
+                    cleanup_succeeded = False
+                    result_item.setdefault(
+                        "record_terminal_error",
+                        "Clone record disappeared before cleanup could mark it terminal",
+                    )
+                    results.append(result_item)
+                    continue
+
+                result_item["record_terminal"] = True
                 git_result = await asyncio.to_thread(
                     ctx.git_manager.delete_clone,
                     c.clone_path,
@@ -129,6 +146,7 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                         deleted = ctx.clone_storage.delete(c.id)
                     except Exception as error:
                         result_item["record_delete_error"] = str(error)
+                        cleanup_succeeded = False
                     else:
                         # False means the row was already absent, which is also a
                         # consistent terminal state after file removal.
@@ -137,11 +155,22 @@ def create_clone_cleanup_registry(ctx: CloneRegistryContext) -> InternalToolRegi
                             result_item["record_already_missing"] = True
                 else:
                     result_item["delete_error"] = git_result.error or "Unknown error"
+                    cleanup_succeeded = False
+                    try:
+                        restored = ctx.clone_storage.update(
+                            c.id,
+                            status=CloneStatus.STALE.value,
+                        )
+                    except Exception as error:
+                        result_item["record_restore_error"] = str(error)
+                    else:
+                        result_item["record_terminal"] = False
+                        result_item["record_restored"] = restored is not None
 
             results.append(result_item)
 
         return {
-            "success": True,
+            "success": cleanup_succeeded,
             "dry_run": dry_run,
             "cleaned": results,
             "count": len(results),
