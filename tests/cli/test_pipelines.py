@@ -5,7 +5,7 @@ TDD tests for the pipelines CLI group.
 
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -107,11 +107,14 @@ class TestPipelinesList:
         mock_loader = MagicMock()
         mock_loader.discover_pipeline_workflows_sync.return_value = mock_discovered_pipelines
 
-        with patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader):
+        with (
+            patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
+            patch("gobby.cli.pipelines._get_project_id", return_value="project-uuid"),
+        ):
             result = runner.invoke(cli, ["pipelines", "list"])
 
             assert result.exit_code == 0
-            mock_loader.discover_pipeline_workflows_sync.assert_called_once()
+            mock_loader.discover_pipeline_workflows_sync.assert_called_once_with("project-uuid")
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_list_outputs_pipeline_names(self, runner, mock_discovered_pipelines) -> None:
@@ -188,11 +191,14 @@ class TestPipelinesShow:
         mock_loader = MagicMock()
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
-        with patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader):
+        with (
+            patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
+            patch("gobby.cli.pipelines._get_project_id", return_value="project-uuid"),
+        ):
             result = runner.invoke(cli, ["pipelines", "show", "deploy"])
 
             assert result.exit_code == 0
-            mock_loader.load_pipeline_sync.assert_called_once_with("deploy", project_path=ANY)
+            mock_loader.load_pipeline_sync.assert_called_once_with("deploy", "project-uuid")
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
     def test_show_outputs_pipeline_details(self, runner, mock_pipeline) -> None:
@@ -291,11 +297,12 @@ class TestPipelinesRun:
         with (
             patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
             patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
+            patch("gobby.cli.pipelines._get_project_id", return_value="project-uuid"),
         ):
             result = runner.invoke(cli, ["pipelines", "run", "deploy"])
 
             assert result.exit_code == 0
-            mock_loader.load_pipeline_sync.assert_called_once_with("deploy", project_path=ANY)
+            mock_loader.load_pipeline_sync.assert_called_once_with("deploy", "project-uuid")
             assert mock_loader.load_pipeline_sync.call_count == 1
             assert mock_loader.load_pipeline_sync.call_args is not None
             mock_executor.execute.assert_called_once()

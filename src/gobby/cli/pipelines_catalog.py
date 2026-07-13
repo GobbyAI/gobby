@@ -27,11 +27,9 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
     """List available pipeline definitions."""
     facade = _facade()
     loader = facade.get_workflow_loader()
-    project_path = facade.get_project_path()
+    project_id = facade._get_project_id()
 
-    discovered = loader.discover_pipeline_workflows_sync(
-        project_path=str(project_path) if project_path else None
-    )
+    discovered = loader.discover_pipeline_workflows_sync(project_id or None)
 
     if json_format:
         pipeline_list = []
@@ -69,9 +67,9 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
     """Show pipeline definition details."""
     facade = _facade()
     loader = facade.get_workflow_loader()
-    project_path = facade.get_project_path()
+    project_id = facade._get_project_id()
 
-    pipeline = loader.load_pipeline_sync(name, project_path=project_path)
+    pipeline = loader.load_pipeline_sync(name, project_id or None)
     if not pipeline:
         click.echo(f"Pipeline '{name}' not found.", err=True)
         raise SystemExit(1)
@@ -161,8 +159,8 @@ def run_pipeline(
 
     facade = _facade()
     loader = facade.get_workflow_loader()
-    project_path = facade.get_project_path()
-    pipeline = loader.load_pipeline_sync(name, project_path=project_path)
+    project_id = facade._get_project_id()
+    pipeline = loader.load_pipeline_sync(name, project_id or None)
     if not pipeline:
         click.echo(f"Pipeline '{name}' not found.", err=True)
         raise SystemExit(1)
@@ -180,7 +178,6 @@ def run_pipeline(
             click.echo(str(e), err=True)
             raise SystemExit(1) from None
 
-    project_id = facade._get_project_id()
     display_name = name or (pipeline.name if pipeline else None) or "pipeline"
 
     # Try daemon first (has MCP tool access and LLM service)
