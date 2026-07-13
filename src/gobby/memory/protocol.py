@@ -402,7 +402,7 @@ class MemoryBackendProtocol(Protocol):
 
         Args:
             content: The content to check for
-            project_id: Optional project filter (may be ignored for global dedup)
+            project_id: Project scope plus visible globals. ``None`` checks globals only.
 
         Returns:
             True if a memory with identical content exists
@@ -416,7 +416,7 @@ class MemoryBackendProtocol(Protocol):
 
         Args:
             content: The exact content to look up
-            project_id: Optional project filter (may be ignored for global dedup)
+            project_id: Project scope plus visible globals. ``None`` checks globals only.
 
         Returns:
             The MemoryRecord if found, None otherwise

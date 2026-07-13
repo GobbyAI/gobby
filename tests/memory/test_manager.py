@@ -184,6 +184,52 @@ class TestCreateMemory:
         assert memory.source_type == "agent"
         assert memory.tags == []
 
+    @pytest.mark.asyncio
+    async def test_create_memory_uses_project_plus_global_dedup_scope(
+        self,
+        memory_manager,
+        db,
+    ) -> None:
+        """Facade creation sees globals, isolates projects, and keeps global creation global."""
+        other_project_id = "22222222-2222-4222-8222-222222222222"
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_ID, "Project 1"))
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (other_project_id, "Project 2"),
+        )
+
+        global_memory = await memory_manager.create_memory(
+            content="Facade visible global",
+            project_id=None,
+        )
+        visible_result = await memory_manager.create_memory(
+            content="Facade visible global",
+            project_id=PROJECT_ID,
+        )
+        first_project = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=PROJECT_ID,
+        )
+        same_project = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=PROJECT_ID,
+        )
+        second_project = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=other_project_id,
+        )
+        new_global = await memory_manager.create_memory(
+            content="Facade project isolated",
+            project_id=None,
+        )
+
+        assert visible_result.id == global_memory.id
+        assert visible_result.project_id is None
+        assert same_project.id == first_project.id
+        assert first_project.id != second_project.id
+        assert new_global.id not in {first_project.id, second_project.id}
+        assert new_global.project_id is None
+
     def test_create_memory_with_sync_metadata_uses_lww(self, memory_manager) -> None:
         memory_id = str(uuid.uuid4())
         created_at = datetime(2023, 1, 1, tzinfo=UTC)

@@ -294,6 +294,28 @@ def test_create_memory_dedup_scopes_to_project(memory_manager, db) -> None:
     assert memory1.project_id == PROJECT_1
     assert memory2.project_id == PROJECT_2
     assert memory3.project_id is None
+    assert memory_manager.get_memory_by_content("Scoped dedup test", PROJECT_1).id == memory1.id
+    assert memory_manager.get_memory_by_content("Scoped dedup test", PROJECT_2).id == memory2.id
+
+
+def test_create_project_memory_dedups_against_visible_global(memory_manager, db) -> None:
+    """A visible global memory wins over creating a project-local duplicate."""
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    global_memory = memory_manager.create_memory(
+        content="Visible global duplicate",
+        project_id=None,
+    )
+
+    project_result = memory_manager.create_memory(
+        content="Visible global duplicate",
+        project_id=PROJECT_1,
+    )
+
+    assert project_result.id == global_memory.id
+    assert project_result.project_id is None
+    row = db.fetchone("SELECT COUNT(*) AS cnt FROM memories WHERE project_id = %s", (PROJECT_1,))
+    assert row is not None
+    assert row["cnt"] == 0
 
 
 def test_source_session_proximity_dedup_scopes_to_project(memory_manager, db) -> None:
@@ -496,6 +518,40 @@ def test_content_exists_with_project(memory_manager, db) -> None:
 
     # Different content should not exist
     assert memory_manager.content_exists("Other content", project_id=PROJECT_1) is False
+
+
+def test_content_lookup_uses_project_plus_global_visibility(memory_manager, db) -> None:
+    """Existence and retrieval use identical project-plus-global precedence."""
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_2, "Project 2"))
+    global_memory = memory_manager.create_memory(content="Shared visible", project_id=None)
+    project_memory = memory_manager.create_memory(content="Project only", project_id=PROJECT_1)
+
+    assert memory_manager.content_exists("Shared visible", project_id=PROJECT_2) is True
+    assert (
+        memory_manager.get_memory_by_content("Shared visible", project_id=PROJECT_2).id
+        == global_memory.id
+    )
+    assert memory_manager.content_exists("Project only", project_id=PROJECT_2) is False
+    assert memory_manager.get_memory_by_content("Project only", project_id=PROJECT_2) is None
+    assert memory_manager.content_exists("Project only", project_id=PROJECT_1) is True
+    assert (
+        memory_manager.get_memory_by_content("Project only", project_id=PROJECT_1).id
+        == project_memory.id
+    )
+
+
+def test_global_content_lookup_does_not_match_project_memory(memory_manager, db) -> None:
+    """Creating or querying global scope does not absorb a project-local memory."""
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (PROJECT_1, "Project 1"))
+    project_memory = memory_manager.create_memory(content="Scope direction", project_id=PROJECT_1)
+
+    assert memory_manager.content_exists("Scope direction", project_id=None) is False
+    assert memory_manager.get_memory_by_content("Scope direction", project_id=None) is None
+
+    global_memory = memory_manager.create_memory(content="Scope direction", project_id=None)
+    assert global_memory.id != project_memory.id
+    assert global_memory.project_id is None
 
 
 def test_content_exists_without_project(memory_manager) -> None:
