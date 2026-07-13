@@ -17,7 +17,11 @@ from gobby.storage.workflow_definitions import (
     WorkflowDefinitionRow,
 )
 from gobby.utils.project_context import get_workflow_project_path
-from gobby.workflows.definitions import WorkflowDefinition, validate_workflow_definition_data
+from gobby.workflows.definitions import (
+    WorkflowDefinition,
+    normalize_workflow_definition_enabled,
+    validate_workflow_definition_data,
+)
 from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
@@ -53,7 +57,7 @@ def _sync_imported_definition(
         "definition_json": json.dumps(data),
         "description": data.get("description", ""),
         "version": str(data.get("version", "1.0")),
-        "enabled": bool(data.get("enabled", True)),
+        "enabled": normalize_workflow_definition_enabled(data),
         "priority": data.get("priority", 100),
         "sources": data.get("sources"),
         "source": "installed",

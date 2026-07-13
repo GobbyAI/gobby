@@ -437,10 +437,12 @@ def test_import_from_yaml_defaults_enabled_to_true(
     assert row.enabled is True
 
 
+@pytest.mark.parametrize("enabled_yaml", ["enabled: false", 'enabled: "false"'])
 def test_import_from_yaml_preserves_explicit_disabled(
     manager: LocalWorkflowDefinitionManager,
+    enabled_yaml: str,
 ) -> None:
-    row = manager.import_from_yaml(SAMPLE_YAML.replace("enabled: true", "enabled: false"))
+    row = manager.import_from_yaml(SAMPLE_YAML.replace("enabled: true", enabled_yaml))
 
     assert row.enabled is False
 

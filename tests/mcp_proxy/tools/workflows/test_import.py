@@ -112,19 +112,25 @@ steps:
 
 
 @pytest.mark.asyncio
-async def test_imported_pipeline_is_immediately_gettable_and_runnable(
+@pytest.mark.parametrize(
+    ("enabled_yaml", "expected_enabled"),
+    [("", True), ('enabled: "false"\n', False)],
+)
+async def test_imported_pipeline_is_immediately_gettable_and_honors_enabled(
     temp_db: HubDatabase,
     tmp_path: Path,
+    enabled_yaml: str,
+    expected_enabled: bool,
 ) -> None:
     project_path = tmp_path / "project"
     project_path.mkdir()
     _create_project(temp_db, project_path)
     source = tmp_path / "source-pipeline.yaml"
     source.write_text(
-        """name: imported-pipeline
+        f"""name: imported-pipeline
 type: pipeline
 version: 1.0
-steps:
+{enabled_yaml}steps:
   - id: work
     exec: echo imported
 """,
@@ -150,13 +156,18 @@ steps:
 
     assert imported["success"] is True
     assert fetched["success"] is True
-    assert started["success"] is True
-    execution = execution_manager.get_execution(started["execution_id"])
-    assert execution is not None
-    assert execution.project_id == PROJECT_ID
     row = LocalWorkflowDefinitionManager(temp_db).get(imported["definition_id"])
-    assert row.enabled is True
-    execute.assert_awaited_once()
+    assert row.enabled is expected_enabled
+    if expected_enabled:
+        assert started["success"] is True
+        execution = execution_manager.get_execution(started["execution_id"])
+        assert execution is not None
+        assert execution.project_id == PROJECT_ID
+        execute.assert_awaited_once()
+    else:
+        assert started["success"] is False
+        assert "disabled" in started["error"]
+        execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictStr,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -19,6 +20,16 @@ from gobby.agents.reasoning import normalize_reasoning_effort
 # --- Workflow Definition Models (YAML) ---
 
 SUPPORTED_WORKFLOW_DEFINITION_TYPES = frozenset({"agent", "pipeline", "rule", "variable"})
+_WORKFLOW_ENABLED_ADAPTER = TypeAdapter(bool)
+
+
+def normalize_workflow_definition_enabled(
+    data: dict[str, Any],
+    *,
+    default: bool = True,
+) -> bool:
+    """Return the Pydantic-normalized enabled value for definition metadata."""
+    return _WORKFLOW_ENABLED_ADAPTER.validate_python(data.get("enabled", default))
 
 
 class RuleDefinition(BaseModel):

@@ -145,6 +145,22 @@ class TestCreateWorkflow:
         assert defn["name"] == "test-pipeline"
         assert defn["workflow_type"] == "pipeline"
 
+    def test_create_pipeline_normalizes_disabled_string(
+        self, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        loader = WorkflowLoader(def_manager.db)
+        yaml_content = VALID_PIPELINE_YAML.replace(
+            "type: pipeline", 'type: pipeline\nenabled: "false"'
+        )
+
+        result = create_workflow_definition(def_manager, loader, yaml_content)
+
+        assert result["success"] is True
+        assert result["definition"]["enabled"] is False
+        pipeline = loader.load_pipeline_sync("test-pipeline")
+        assert pipeline is not None
+        assert pipeline.enabled is False
+
     def test_create_with_project_id(
         self,
         db: HubDatabase,

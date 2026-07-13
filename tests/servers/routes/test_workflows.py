@@ -261,18 +261,24 @@ class TestExportWorkflow:
 
 
 class TestImportWorkflow:
-    def test_import_defaults_enabled_to_true(
+    @pytest.mark.parametrize(
+        ("enabled_yaml", "expected_enabled"),
+        [("", True), ('enabled: "false"\n', False)],
+    )
+    def test_import_normalizes_enabled(
         self,
         client: TestClient,
         wf_manager: LocalWorkflowDefinitionManager,
+        enabled_yaml: str,
+        expected_enabled: bool,
     ) -> None:
         resp = client.post(
             "/api/workflows/import",
             json={
-                "yaml_content": """\
+                "yaml_content": f"""\
 name: imported-pipeline
 type: pipeline
-steps:
+{enabled_yaml}steps:
   - id: run
     exec: echo ok
 """,
@@ -280,10 +286,10 @@ steps:
         )
 
         assert resp.status_code == 200
-        assert resp.json()["definition"]["enabled"] is True
+        assert resp.json()["definition"]["enabled"] is expected_enabled
         pipeline = WorkflowLoader(wf_manager.db).load_pipeline_sync("imported-pipeline")
         assert pipeline is not None
-        assert pipeline.enabled is True
+        assert pipeline.enabled is expected_enabled
 
     def test_import_invalid_yaml(self, client: TestClient) -> None:
         resp = client.post(

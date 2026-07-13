@@ -14,7 +14,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_text_expr, older_than_now_expr
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 from gobby.utils.uuid_validation import parse_uuid_reference
-from gobby.workflows.definitions import validate_workflow_definition_data
+from gobby.workflows.definitions import (
+    normalize_workflow_definition_enabled,
+    validate_workflow_definition_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +405,7 @@ class LocalWorkflowDefinitionManager:
         description = data.get("description", "")
         workflow_type = validate_workflow_definition_data(data)
         version = str(data.get("version", "1.0"))
-        enabled = bool(data.get("enabled", True))
+        enabled = normalize_workflow_definition_enabled(data)
         priority = data.get("priority", 100)
         sources_list = data.get("sources")
 
