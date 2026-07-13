@@ -107,6 +107,48 @@ async def test_execute_shell_failure(cron_storage: CronJobStorage, executor: Cro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action_type", "method_name"),
+    [
+        ("agent_spawn", "_execute_agent_spawn"),
+        ("pipeline", "_execute_pipeline"),
+        ("handler", "_execute_handler"),
+    ],
+)
+async def test_execute_bounds_long_running_actions(
+    cron_storage: CronJobStorage,
+    executor: CronExecutor,
+    monkeypatch: pytest.MonkeyPatch,
+    action_type: str,
+    method_name: str,
+) -> None:
+    """Agent, pipeline, and handler actions are cancelled at the run timeout."""
+    cancelled = asyncio.Event()
+
+    async def hang(*args: object) -> object:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(executor.config, "running_timeout_seconds", 0.01)
+    monkeypatch.setattr(executor, method_name, hang)
+    action_config = {
+        "agent_spawn": {"prompt": "hang"},
+        "pipeline": {"pipeline_name": "hang"},
+        "handler": {"handler": "hang"},
+    }[action_type]
+    job = _make_job(cron_storage, action_type, action_config)
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert cancelled.is_set()
+    assert result.status == "failed"
+    assert result.error == f"{action_type} cron action timed out after 0.01s"
+
+
+@pytest.mark.asyncio
 async def test_execute_agent_spawn_no_runner(
     cron_storage: CronJobStorage, executor: CronExecutor
 ) -> None:
@@ -285,6 +327,122 @@ async def test_execute_pipeline_recreates_missing_system_session(
     pipeline_executor.loader.load_pipeline.assert_awaited_once_with(
         "cron-test-pipeline", job.project_id
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_background_success_completes_cron_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    pipeline = MagicMock()
+    pipeline.name = "cron-success"
+    pipeline.model_dump_json.return_value = '{"name":"cron-success"}'
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = None
+    execution = MagicMock()
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0205"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execute = AsyncMock(return_value=None)
+
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-success"})
+    run = cron_storage.create_run(job.id)
+
+    dispatched = await executor.execute(job, run)
+    await asyncio.gather(*list(executor._background_tasks))
+
+    persisted = cron_storage.get_run(run.id)
+    assert dispatched.status == "dispatched"
+    assert persisted is not None
+    assert persisted.status == "completed"
+    assert persisted.error is None
+    assert persisted.completed_at is not None
+    assert persisted.pipeline_execution_id == execution.id
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_background_failure_fails_cron_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    pipeline = MagicMock()
+    pipeline.name = "cron-failure"
+    pipeline.model_dump_json.return_value = '{"name":"cron-failure"}'
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = None
+    execution = MagicMock()
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0206"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execution_manager.get_steps_for_execution.return_value = []
+    pipeline_executor.execute = AsyncMock(side_effect=RuntimeError("pipeline exploded"))
+
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-failure"})
+    run = cron_storage.create_run(job.id)
+
+    dispatched = await executor.execute(job, run)
+    await asyncio.gather(*list(executor._background_tasks))
+
+    persisted = cron_storage.get_run(run.id)
+    assert dispatched.status == "dispatched"
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.error == "pipeline exploded"
+    assert persisted.completed_at is not None
+    assert persisted.pipeline_execution_id == execution.id
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_background_timeout_fails_cron_run(
+    cron_storage: CronJobStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung background pipeline is cancelled and terminalizes its cron run."""
+    pipeline = MagicMock()
+    pipeline.name = "cron-timeout"
+    pipeline.model_dump_json.return_value = '{"name":"cron-timeout"}'
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = None
+    execution = MagicMock()
+    execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0207"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execution_manager.get_steps_for_execution.return_value = []
+
+    cancelled = asyncio.Event()
+
+    async def hang(**kwargs: object) -> object:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    pipeline_executor.execute = AsyncMock(side_effect=hang)
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    monkeypatch.setattr(executor.config, "running_timeout_seconds", 0.01)
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-timeout"})
+    run = cron_storage.create_run(job.id)
+
+    dispatched = await executor.execute(job, run)
+    await asyncio.gather(*list(executor._background_tasks))
+
+    persisted = cron_storage.get_run(run.id)
+    assert cancelled.is_set()
+    assert dispatched.status == "dispatched"
+    assert persisted is not None
+    assert persisted.status == "failed"
+    assert persisted.error == "pipeline cron action timed out after 0.01s"
+    assert persisted.completed_at is not None
+    assert persisted.pipeline_execution_id == execution.id
 
 
 @pytest.mark.asyncio
