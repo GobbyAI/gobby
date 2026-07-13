@@ -341,3 +341,16 @@ Entry format:
   run-arm-o.zsh in-session fallback (01:40 CDT, Josh asleep): copies
   healed arm-sonnet → arm-opus, reruns with opus@xhigh aggregates;
   leaves/modules reuse byte-identical.
+
+## 2026-07-13 ~15:55Z — overnight machine event killed arm O; relaunched
+
+- DAEMON RESTART (disclose): 2026-07-13 01:45:40 local, "Shutdown
+  source: unknown (no shutdown_intent_active.json - external SIGTERM)" —
+  a machine-level event (not a gobby CLI restart) that also killed the
+  Claude Code process and the arm-O gcode ~6min into its first run
+  (ARM_O_START 06:39:55Z, no END). Zero files were written to arm-opus
+  by the killed run; the arm-sonnet→arm-opus copy is intact and no
+  commits landed overnight, so byte-identity with arm S is unaffected.
+- Arm O relaunched ~15:55Z 07-13 via run-arm-o.zsh (copy skipped, exists;
+  opus@xhigh aggregate candidate; gcode pid 77734). Caffeinate + restart
+  trap re-armed after the event.
