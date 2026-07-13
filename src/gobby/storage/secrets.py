@@ -693,28 +693,21 @@ class SecretStore:
         fernet = self._get_fernet()
         encrypted = fernet.encrypt(plaintext_value.encode("utf-8")).decode("utf-8")
         now = utc_now()
-
-        existing = self.db.fetchone("SELECT id FROM secrets WHERE name = %s", (name,))
-
-        if existing:
-            self.db.execute(
-                """UPDATE secrets
-                   SET encrypted_value = %s, category = %s, description = %s, updated_at = %s
-                   WHERE name = %s""",
-                (encrypted, category, description, now, name),
-            )
-            secret_id = existing["id"]
-        else:
-            secret_id = str(uuid.uuid4())
-            self.db.execute(
-                """INSERT INTO secrets (id, name, encrypted_value, category, description, created_at, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (secret_id, name, encrypted, category, description, now, now),
-            )
-
-        row = self.db.fetchone("SELECT * FROM secrets WHERE id = %s", (secret_id,))
+        row = self.db.fetchone(
+            """INSERT INTO secrets (
+                   id, name, encrypted_value, category, description, created_at, updated_at
+               )
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (name) DO UPDATE SET
+                   encrypted_value = EXCLUDED.encrypted_value,
+                   category = EXCLUDED.category,
+                   description = EXCLUDED.description,
+                   updated_at = EXCLUDED.updated_at
+               RETURNING id, name, category, description, created_at, updated_at""",
+            (str(uuid.uuid4()), name, encrypted, category, description, now, now),
+        )
         if row is None:
-            raise ValueError(f"Secret '{name}' not found after upsert (id={secret_id})")
+            raise RuntimeError("Secret upsert did not return a row")
         return SecretInfo(
             id=row["id"],
             name=row["name"],

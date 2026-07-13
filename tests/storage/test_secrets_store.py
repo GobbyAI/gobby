@@ -524,27 +524,6 @@ class TestSecretStoreSet:
         info = store.set("KEY", "value", description=None)
         assert info.description is None
 
-    def test_set_raises_if_row_vanishes_after_upsert(
-        self, store: SecretStore, temp_db: HubDatabase
-    ) -> None:
-        """Defensive guard: if the row is missing after upsert, raise ValueError."""
-        original_fetchone = temp_db.fetchone
-        call_count = 0
-
-        def patched_fetchone(sql: str, params: tuple = ()) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if "SELECT * FROM secrets WHERE id" in sql:
-                return None  # Simulate row vanishing
-            return original_fetchone(sql, params)
-
-        setattr(temp_db, "fetchone", patched_fetchone)  # noqa: B010 - monkeypatches instance method
-        try:
-            with pytest.raises(ValueError, match="not found after upsert"):
-                store.set("VANISH", "value")
-        finally:
-            setattr(temp_db, "fetchone", original_fetchone)  # noqa: B010
-
     def test_set_encrypts_value(self, store: SecretStore, temp_db: HubDatabase) -> None:
         """The stored value in the DB should NOT be the plaintext."""
         store.set("SENSITIVE", "super-secret-value")
