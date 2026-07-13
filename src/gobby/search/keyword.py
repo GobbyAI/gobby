@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -31,6 +31,7 @@ class KeywordSearchBackend(Protocol):
         limit: int,
         *,
         filters: Mapping[str, Any] | None = None,
+        allowed_ids: Collection[str] | None = None,
     ) -> list[SearchHit]:
         """Return keyword hits ranked best first."""
         ...
@@ -84,6 +85,7 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         table="skills",
         aliases=("skills_fts",),
         postgres_columns=("name", "description", "content"),
+        filters={"project_id": "project_id", "enabled": "enabled"},
     ),
     "code_symbols": _TableConfig(
         table="code_symbols",
@@ -139,9 +141,12 @@ class BM25SearchBackend:
         limit: int,
         *,
         filters: Mapping[str, Any] | None = None,
+        allowed_ids: Collection[str] | None = None,
     ) -> list[SearchHit]:
         bm25_query = sanitize_pg_search_query(query)
         if not bm25_query:
+            return []
+        if allowed_ids is not None and not allowed_ids:
             return []
 
         params: list[Any] = []
@@ -155,6 +160,9 @@ class BM25SearchBackend:
             where.extend(
                 _filter_clauses(self._hub, params, self._config.table, self._config, filters)
             )
+        if allowed_ids is not None:
+            id_placeholders = [_add_param(self._hub, params, item_id) for item_id in allowed_ids]
+            where.append(f"{self._config.table}.id IN ({', '.join(id_placeholders)})")
         if self._config.active_clause:
             where.append(self._config.active_clause)
 
@@ -210,15 +218,15 @@ class KeywordAsyncSearchBackend:
         self._table = table
         self._backend = pick_search_backend(hub, table)
         self._fitted_items: list[tuple[str, str]] | None = None
+        self._fitted_ids: tuple[str, ...] | None = None
         self._needs_refit = False
 
     async def fit_async(self, items: list[tuple[str, str]]) -> None:
         fit = getattr(self._backend, "fit", None)
         if callable(fit):
             fit(items)
-            self._fitted_items = None
-        else:
-            self._fitted_items = items.copy()
+        self._fitted_items = items.copy()
+        self._fitted_ids = tuple(item_id for item_id, _content in items)
         self._needs_refit = False
         return None
 
@@ -226,14 +234,25 @@ class KeywordAsyncSearchBackend:
         return self.search(query, top_k)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        if self._fitted_items is None or self._fitted_ids is None:
+            return []
+        if not self._fitted_ids:
+            return []
+        fitted_ids = set(self._fitted_ids)
         try:
-            hits = [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+            hits = [
+                (hit.id, hit.score)
+                for hit in self._backend.search(
+                    query,
+                    top_k,
+                    allowed_ids=self._fitted_ids,
+                )
+                if hit.id in fitted_ids
+            ]
         except Exception:
-            if self._fitted_items is None:
-                raise
             logger.debug("Keyword backend search failed; using fitted item fallback", exc_info=True)
             hits = []
-        if hits or self._fitted_items is None:
+        if hits:
             return hits
         return _search_fitted_items(query, self._fitted_items, top_k)
 
@@ -254,6 +273,7 @@ class KeywordAsyncSearchBackend:
         if callable(clear):
             clear()
         self._fitted_items = None
+        self._fitted_ids = None
         self._needs_refit = False
 
 
@@ -329,7 +349,11 @@ def _filter_clauses(
     for filter_name, value in filters.items():
         if config.table == "memories" and filter_name == "include_global":
             continue
-        if value is None or filter_name not in columns:
+        if filter_name not in columns:
+            raise ValueError(
+                f"unsupported filter {filter_name!r} for keyword search table {config.table!r}"
+            )
+        if value is None:
             continue
         placeholder_token = _add_param(hub, params, value)
         column = columns[filter_name]

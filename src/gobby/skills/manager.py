@@ -372,6 +372,7 @@ class SkillManager:
         while True:
             batch = self._storage.list_skills(
                 project_id=self._project_id,
+                enabled=True,
                 include_global=True,
                 limit=batch_size,
                 offset=offset,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,7 +16,7 @@ from gobby.search import (
     SearchMode,
     UnifiedSearcher,
 )
-from gobby.search.keyword import KeywordAsyncSearchBackend
+from gobby.search.keyword import BM25SearchBackend, KeywordAsyncSearchBackend, SearchHit
 
 pytestmark = pytest.mark.unit
 
@@ -499,6 +499,69 @@ class TestDeprecatedSqliteKeywordSearch:
 
 
 class TestKeywordAsyncSearchBackend:
+    @pytest.mark.asyncio
+    async def test_search_restricts_database_hits_to_fitted_ids(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        native_search = MagicMock(
+            return_value=[
+                SearchHit(id="outside", score=1.0),
+                SearchHit(id="inside", score=0.5),
+            ]
+        )
+        backend._backend.search = native_search
+        await backend.fit_async([("inside", "shared query")])
+
+        results = await backend.search_async("shared query", top_k=10)
+
+        assert results == [("inside", 0.5)]
+        native_search.assert_called_once_with(
+            "shared query",
+            10,
+            allowed_ids=("inside",),
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_fit_returns_no_results_without_querying_database(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        native_search = MagicMock(return_value=[SearchHit(id="outside", score=1.0)])
+        backend._backend.search = native_search
+        await backend.fit_async([])
+
+        assert await backend.search_async("shared query", top_k=10) == []
+        native_search.assert_not_called()
+
+    def test_skills_table_supports_project_and_enabled_filters(self) -> None:
+        class RecordingHub:
+            def __init__(self) -> None:
+                self.sql = ""
+                self.params: tuple[object, ...] = ()
+
+            def fetchall(self, sql: str, params: tuple[object, ...]) -> list[object]:
+                self.sql = sql
+                self.params = params
+                return []
+
+        hub = RecordingHub()
+        backend = BM25SearchBackend(hub, "skills")
+
+        assert (
+            backend.search(
+                "shared query",
+                10,
+                filters={"project_id": "project-a", "enabled": True},
+            )
+            == []
+        )
+        assert "skills.project_id = %s" in hub.sql
+        assert "skills.enabled = %s" in hub.sql
+        assert hub.params == ("shared query", "shared query", "shared query", "project-a", True, 10)
+
+    def test_unknown_table_filter_raises(self) -> None:
+        backend = BM25SearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+
+        with pytest.raises(ValueError, match="unsupported filter 'tenant_id'.*'skills'"):
+            backend.search("shared query", 10, filters={"tenant_id": "other"})
+
     @pytest.mark.parametrize(
         "updated_items",
         [
