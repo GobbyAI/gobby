@@ -180,6 +180,24 @@ def test_multiple_targets_entries_parse(tmp_path: Path) -> None:
     assert errors == []
 
 
+def test_target_header_rest_keeps_following_bullets_in_same_inventory(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Targets: `src/app.py`
+        - `docs/app.md`
+
+        Update `src/app.py` and `docs/app.md` together.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        - 1.1.2 - Docs are updated. file: `docs/app.md`.
+        """,
+    )
+
+    assert errors == []
+
+
 def test_work_table_with_too_few_acceptance_items_fails(tmp_path: Path) -> None:
     errors = _lint(
         tmp_path,

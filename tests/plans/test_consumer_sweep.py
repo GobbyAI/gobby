@@ -448,6 +448,33 @@ def test_destructive_file_intent_excludes_test_consumers(tmp_path: Path) -> None
     assert all("tests/test_service.py" not in error for error in result.errors)
 
 
+def test_pathless_target_bullet_does_not_hide_later_file_deletion(tmp_path: Path) -> None:
+    storage = _Storage()
+    storage.file_consumers = {"src/b.py": ("src/api.py",)}
+    plan = parse_plan(
+        _write_file_plan(
+            tmp_path,
+            "Remove the obsolete service file.",
+            target_line=(
+                "Targets:\n"
+                "- Coordinate the rollout with downstream owners.\n"
+                "- `src/b.py` (DELETE FILE)"
+            ),
+        ),
+        parse_mode="draft",
+    )
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert result.valid is False
+    assert len(result.issues) == 1
+    assert result.issues[0].missing_consumers == ("src/api.py",)
+
+
 def test_missing_index_skips_without_failing(tmp_path: Path) -> None:
     plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
 

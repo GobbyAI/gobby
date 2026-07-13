@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -146,10 +147,10 @@ def lint_plan_document(plan_doc: PlanDocument) -> SemanticLintResult:
     return SemanticLintResult(tuple(issues))
 
 
-def collect_target_inventory(plan_doc: PlanDocument, section: PlanSection) -> frozenset[str]:
-    """Return normalized file paths listed in a section's Target/Targets inventory."""
+def iter_target_block_lines(plan_doc: PlanDocument, section: PlanSection) -> Iterator[str]:
+    """Yield header content and continuation lines from each Target/Targets block."""
+
     body_lines = section_body_lines(plan_doc, section, before_acceptance=True)
-    targets: set[str] = set()
     index = 0
     while index < len(body_lines):
         line = body_lines[index]
@@ -160,9 +161,7 @@ def collect_target_inventory(plan_doc: PlanDocument, section: PlanSection) -> fr
 
         rest = match.group("rest").strip()
         if rest:
-            targets.update(find_file_paths_in_text(rest))
-            index += 1
-            continue
+            yield rest
 
         index += 1
         while index < len(body_lines):
@@ -175,10 +174,18 @@ def collect_target_inventory(plan_doc: PlanDocument, section: PlanSection) -> fr
             if stripped.startswith("#") or stripped.startswith("`kind:"):
                 break
             if _BULLET_RE.match(candidate) or "`" in candidate or "/" in candidate:
-                targets.update(find_file_paths_in_text(candidate))
+                yield candidate
                 index += 1
                 continue
             break
+
+
+def collect_target_inventory(plan_doc: PlanDocument, section: PlanSection) -> frozenset[str]:
+    """Return normalized file paths listed in a section's Target/Targets inventory."""
+
+    targets: set[str] = set()
+    for line in iter_target_block_lines(plan_doc, section):
+        targets.update(find_file_paths_in_text(line))
     return frozenset(targets)
 
 
