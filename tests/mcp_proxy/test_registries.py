@@ -572,9 +572,7 @@ class TestHubApiKeyResolution:
             }
         )
 
-    def _run_setup_with_captured_hub_manager(
-        self, db: Any, skills_config: Any
-    ) -> dict[str, Any]:
+    def _run_setup_with_captured_hub_manager(self, db: Any, skills_config: Any) -> dict[str, Any]:
         """Invoke setup_internal_registries with a sentinel HubManager to capture kwargs."""
         from unittest.mock import patch as patch_fn
 

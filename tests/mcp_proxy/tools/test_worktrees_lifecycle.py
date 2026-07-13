@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -303,8 +305,8 @@ async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
         task_id=None,
         merged_at=None,
     )
-    mock_worktree_storage.get.return_value = wt
-    mock_worktree_storage.claim.return_value = True
+    claimed = replace(wt, agent_session_id="sess-1")
+    mock_worktree_storage.claim_if_available.return_value = claimed
     with patch(
         "gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event",
         return_value={
@@ -318,7 +320,12 @@ async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
         )
     assert result["success"] is True
     assert result["event"]["event_type"] == "worktree_claimed"
-    mock_worktree_storage.claim.assert_called_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01", "sess-1")
+    mock_worktree_storage.claim_if_available.assert_called_once_with(
+        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        "sess-1",
+        allowed_existing_session_ids=(None, "sess-1"),
+    )
+    mock_worktree_storage.claim.assert_not_called()
     emit_event.assert_called_once_with(
         "worktree_claimed",
         worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
@@ -343,6 +350,7 @@ async def test_claim_worktree_already_claimed(registry, mock_worktree_storage) -
         task_id=None,
         merged_at=None,
     )
+    mock_worktree_storage.claim_if_available.return_value = None
     mock_worktree_storage.get.return_value = wt
     result = await registry.call(
         "claim_worktree",
@@ -355,12 +363,96 @@ async def test_claim_worktree_already_claimed(registry, mock_worktree_storage) -
 @pytest.mark.asyncio
 async def test_claim_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Test claim_worktree when worktree not found."""
+    mock_worktree_storage.claim_if_available.return_value = None
     mock_worktree_storage.get.return_value = None
     result = await registry.call(
         "claim_worktree", {"worktree_id": "nonexistent", "session_id": "sess-1"}
     )
     assert result["success"] is False
     assert "not found" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_claim_worktree_same_session_is_idempotent(registry, mock_worktree_storage) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        agent_session_id="sess-1",
+        task_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.claim_if_available.return_value = wt
+
+    result = await registry.call(
+        "claim_worktree",
+        {"worktree_id": wt.id, "session_id": "sess-1"},
+    )
+
+    assert result["success"] is True
+    mock_worktree_storage.claim_if_available.assert_called_once_with(
+        wt.id,
+        "sess-1",
+        allowed_existing_session_ids=(None, "sess-1"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_claim_worktree_has_exactly_one_winner(
+    registry, mock_worktree_storage
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        agent_session_id=None,
+        task_id=None,
+        merged_at=None,
+    )
+    owner: str | None = None
+
+    def claim_if_available(
+        worktree_id: str,
+        session_id: str,
+        *,
+        allowed_existing_session_ids: tuple[str | None, ...],
+    ) -> Worktree | None:
+        nonlocal owner
+        assert worktree_id == wt.id
+        if owner not in allowed_existing_session_ids:
+            return None
+        owner = session_id
+        return replace(wt, agent_session_id=session_id)
+
+    def get_worktree(worktree_id: str) -> Worktree:
+        assert worktree_id == wt.id
+        return replace(wt, agent_session_id=owner)
+
+    mock_worktree_storage.claim_if_available.side_effect = claim_if_available
+    mock_worktree_storage.get.side_effect = get_worktree
+
+    results = await asyncio.gather(
+        registry.call("claim_worktree", {"worktree_id": wt.id, "session_id": "sess-1"}),
+        registry.call("claim_worktree", {"worktree_id": wt.id, "session_id": "sess-2"}),
+    )
+
+    assert sum(result["success"] is True for result in results) == 1
+    assert sum(result["success"] is False for result in results) == 1
+    assert owner in {"sess-1", "sess-2"}
+    assert "already claimed" in next(
+        result["error"] for result in results if result["success"] is False
+    )
+    mock_worktree_storage.claim.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -584,7 +676,11 @@ async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git
         assert result["success"] is True
         assert result["event"]["event_type"] == "worktree_deleted"
         mock_git_manager.delete_worktree.assert_called_with(
-            "/tmp/p1", force=False, delete_branch=True, branch_name="b1"
+            "/tmp/p1",
+            force=False,
+            delete_branch=True,
+            force_delete_branch=False,
+            branch_name="b1",
         )
         mock_worktree_storage.delete.assert_called_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
         emit_event.assert_called_once_with(
@@ -631,7 +727,11 @@ async def test_delete_worktree_uncommitted_changes(
         )
         assert result_force["success"] is True
         mock_git_manager.delete_worktree.assert_called_with(
-            "/tmp/p1", force=True, delete_branch=True, branch_name="b1"
+            "/tmp/p1",
+            force=True,
+            delete_branch=True,
+            force_delete_branch=False,
+            branch_name="b1",
         )
 
 
@@ -664,13 +764,116 @@ async def test_delete_worktree_path_not_exists(
     )
     mock_worktree_storage.get.return_value = wt
     mock_worktree_storage.delete.return_value = True
+    mock_git_manager.delete_worktree.return_value.success = True
     with patch("pathlib.Path.exists", return_value=False):
         result = await registry.call(
             "delete_worktree", {"worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01"}
         )
         assert result["success"] is True
-        mock_git_manager.delete_worktree.assert_not_called()
+        mock_git_manager.delete_worktree.assert_called_once_with(
+            wt.worktree_path,
+            force=False,
+            delete_branch=True,
+            force_delete_branch=False,
+            branch_name=wt.branch_name,
+        )
         mock_worktree_storage.delete.assert_called_once_with("eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01")
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_missing_path_prune_failure_preserves_record(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/nonexistent",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager.delete_worktree.return_value.success = False
+    mock_git_manager.delete_worktree.return_value.error = "Git delete failed"
+    mock_git_manager.prune_worktrees.return_value.success = False
+    mock_git_manager.prune_worktrees.return_value.error = "Prune failed"
+
+    with patch("pathlib.Path.exists", return_value=False):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is False
+    assert result["error"] == "Prune failed"
+    mock_git_manager.prune_worktrees.assert_called_once_with()
+    mock_worktree_storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_existing_path_without_git_manager_preserves_record(
+    mock_worktree_storage,
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/tmp/p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    registry = create_worktrees_registry(
+        worktree_storage=mock_worktree_storage,
+        git_manager=None,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+
+    with patch("pathlib.Path.exists", return_value=True):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is False
+    assert "without a resolved git manager" in result["error"]
+    mock_worktree_storage.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_worktree_missing_path_without_git_manager_removes_stale_record(
+    mock_worktree_storage,
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/nonexistent",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_worktree_storage.delete.return_value = True
+    registry = create_worktrees_registry(
+        worktree_storage=mock_worktree_storage,
+        git_manager=None,
+        project_id="11111111-1111-4111-8111-111111110001",
+    )
+
+    with patch("pathlib.Path.exists", return_value=False):
+        result = await registry.call("delete_worktree", {"worktree_id": wt.id})
+
+    assert result["success"] is True
+    mock_worktree_storage.delete.assert_called_once_with(wt.id)
 
 
 @pytest.mark.asyncio
@@ -873,6 +1076,8 @@ async def test_sync_worktree(registry, mock_worktree_storage, mock_git_manager) 
     mock_git_manager.sync_from_main.assert_called_with(
         "/tmp/p1", base_branch="main", strategy="merge", source_branch=None
     )
+    mock_worktree_storage.touch.assert_called_once_with(wt.id)
+    mock_worktree_storage.update.assert_not_called()
 
 
 async def test_sync_worktree_explicit_source_branch(
@@ -945,6 +1150,7 @@ async def test_sync_worktree_failure(registry, mock_worktree_storage, mock_git_m
     )
     assert result["success"] is False
     assert "Sync failed" in result["error"]
+    mock_worktree_storage.touch.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -987,6 +1193,7 @@ async def test_cleanup_stale_worktrees(registry, mock_worktree_storage, mock_git
         merged_at=None,
     )
     mock_worktree_storage.cleanup_stale.return_value = [wt]
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = False
     mock_git_manager.delete_worktree.return_value.success = True
 
     result = await registry.call("cleanup_stale_worktrees", {"hours": 24, "dry_run": True})
@@ -1004,8 +1211,82 @@ async def test_cleanup_stale_worktrees(registry, mock_worktree_storage, mock_git
     assert result["cleaned"][0]["marked_abandoned"] is True
     assert result["cleaned"][0]["git_deleted"] is True
     mock_git_manager.delete_worktree.assert_called_with(
-        "/tmp/p1", force=True, delete_branch=True, branch_name="b1"
+        "/tmp/p1",
+        force=False,
+        delete_branch=True,
+        force_delete_branch=False,
+        branch_name="b1",
     )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_worktrees_skips_dirty_git_worktree(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/tmp/p1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.cleanup_stale.return_value = [wt]
+    mock_git_manager.get_worktree_status.return_value.has_uncommitted_changes = True
+
+    result = await registry.call(
+        "cleanup_stale_worktrees",
+        {"hours": 24, "dry_run": False, "delete_git": True},
+    )
+
+    assert result["success"] is True
+    assert result["cleaned"][0]["git_deleted"] is False
+    assert result["cleaned"][0]["git_skipped"] is True
+    assert result["cleaned"][0]["git_skip_reason"] == "Worktree has uncommitted changes"
+    mock_git_manager.delete_worktree.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_worktree_rechecks_git_merge_state(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02",
+        project_id="p1",
+        branch_name="b2",
+        worktree_path="/tmp/p2",
+        base_branch="main",
+        status="merged",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=_VALID_TIMESTAMP,
+        cleanup_after=_VALID_TIMESTAMP,
+    )
+    mock_worktree_storage.cleanup_stale.return_value = []
+    mock_worktree_storage.find_expired.return_value = [wt]
+
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._cleanup.is_worktree_git_merged",
+        return_value=False,
+    ):
+        result = await registry.call(
+            "cleanup_stale_worktrees",
+            {"hours": 24, "dry_run": False, "delete_git": True},
+        )
+
+    assert result["success"] is True
+    assert result["cleaned"][0]["git_deleted"] is False
+    assert result["cleaned"][0]["git_skipped"] is True
+    assert "no longer reports" in result["cleaned"][0]["git_skip_reason"]
+    mock_git_manager.delete_worktree.assert_not_called()
+    mock_worktree_storage.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1074,6 +1355,8 @@ async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
     mock_worktree_storage.get.return_value = wt
 
     def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return MagicMock(returncode=0, stdout="main", stderr="")
         if args[:2] == ["merge-base", "--is-ancestor"]:
             return MagicMock(returncode=1, stdout="", stderr="")
         return MagicMock(returncode=0, stdout="", stderr="")
@@ -1087,6 +1370,54 @@ async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
 
     assert result["success"] is True
     assert result["merged"] is False
+    mock_worktree_storage.mark_merged.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_merge_worktree_custom_refs_do_not_mark_unmerged_worktree_branch(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
+        project_id="11111111-1111-4111-8111-111111110001",
+        branch_name="feature/worktree",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    custom_merge = _local_merge_git_side_effect(source="release/source", target="release/target")
+
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == [
+            "merge-base",
+            "--is-ancestor",
+            "refs/heads/feature/worktree",
+            "refs/heads/main",
+        ]:
+            return MagicMock(returncode=1, stdout="", stderr="")
+        return custom_merge(args, cwd=cwd, timeout=timeout, check=check)
+
+    mock_git_manager._run_git.side_effect = _run_git_side_effect
+
+    result = await registry.call(
+        "merge_worktree",
+        {
+            "worktree_id": wt.id,
+            "source_branch": "release/source",
+            "target_branch": "release/target",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["merged"] is True
+    assert result["source_branch"] == "release/source"
+    assert result["target_branch"] == "release/target"
     mock_worktree_storage.mark_merged.assert_not_called()
 
 
@@ -1233,6 +1564,8 @@ async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git
     mock_worktree_storage.get.return_value = wt
 
     def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
             return MagicMock(returncode=0, stdout="", stderr="")
         if args[0] == "merge" and "--no-edit" in args:
@@ -1284,6 +1617,8 @@ async def test_merge_worktree_non_conflict_failure(
     mock_worktree_storage.get.return_value = wt
 
     def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+            return MagicMock(returncode=0, stdout="main", stderr="")
         if args[0] == "fetch":
             return MagicMock(returncode=0, stdout="", stderr="")
         if args[0] == "merge" and "--no-edit" in args:
@@ -1341,6 +1676,7 @@ async def test_merge_worktree_explicit_source_branch(
     assert result["source_branch"] == "my-branch"
     push_calls = [c for c in mock_git_manager._run_git.call_args_list if c[0][0][:1] == ["push"]]
     assert len(push_calls) == 0
+    mock_worktree_storage.mark_merged.assert_called_once_with(wt.id)
 
 
 @pytest.mark.asyncio

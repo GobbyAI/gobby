@@ -7,6 +7,16 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    IsEmptyCondition,
+    IsNullCondition,
+    MatchValue,
+    PayloadField,
+)
+
+from gobby.memory.vectorstore import memory_project_scope_filter
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
@@ -16,6 +26,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_LIMIT = 10
+
+
+def _crossref_scope_filter(project_id: str | None) -> Filter:
+    """Limit candidate edges to memories visible from the source scope."""
+    if project_id:
+        scope_filter = memory_project_scope_filter(project_id)
+        if scope_filter is None:
+            raise RuntimeError("project-scoped crossref filter was not created")
+        return scope_filter
+
+    field = PayloadField(key="project_id")
+    return Filter(
+        should=[
+            FieldCondition(key="project_id", match=MatchValue(value="")),
+            IsNullCondition(is_null=field),
+            IsEmptyCondition(is_empty=field),
+        ]
+    )
 
 
 class CrossrefRebuildError(RuntimeError):
@@ -71,7 +99,11 @@ class CrossrefService:
         max_links = max_links or getattr(self._config, "crossref_max_links", None) or 5
 
         embedding = await self._embed_fn(memory.content)
-        results = await self._vector_store.search(embedding, limit=max_links + 1)
+        results = await self._vector_store.search(
+            embedding,
+            limit=max_links + 1,
+            filters=_crossref_scope_filter(memory.project_id),
+        )
 
         count = 0
         for other_id, score in results:

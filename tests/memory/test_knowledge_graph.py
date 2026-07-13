@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,7 @@ from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
     Entity,
+    KnowledgeGraphResult,
     KnowledgeGraphService,
     KnowledgeGraphStatus,
     Relationship,
@@ -506,6 +507,126 @@ class TestAddToGraph:
             == "memory.kg.select_outdated_relations"
         )
 
+    async def test_add_to_graph_ignores_noncanonical_relation_deletions(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Only exact existing triples are accepted from the LLM delete selector."""
+        mock_falkor.query = AsyncMock(
+            return_value=[
+                {"source": "Josh", "rel_type": "uses", "target": "Python 3.12"},
+            ]
+        )
+        valid = {"source": "Josh", "relationship": "uses", "destination": "Python 3.12"}
+        mock_llm.call_json_feature = AsyncMock(
+            side_effect=[
+                {
+                    "entities": [
+                        {"entity": "Josh", "entity_type": "person"},
+                        {"entity": "Python 3.13", "entity_type": "tool"},
+                    ]
+                },
+                {
+                    "relations": [
+                        {"source": "Josh", "relationship": "uses", "destination": "Python 3.13"},
+                    ]
+                },
+                {
+                    "relations_to_delete": [
+                        valid,
+                        dict(valid),
+                        {"source": "Joshua", "relationship": "uses", "destination": "Python 3.12"},
+                        {"source": "Josh", "relationship": "uses", "destination": "Python 2.7"},
+                        {"source": "Josh", "relationship": "uses"},
+                        "not-an-object",
+                    ]
+                },
+            ]
+        )
+
+        await service.add_to_graph("Josh uses Python 3.13")
+
+        delete_calls = [
+            call for call in mock_falkor.query.call_args_list if "DELETE" in call.args[0]
+        ]
+        assert len(delete_calls) == 1
+        assert delete_calls[0].args[1]["source_key"].endswith(":josh")
+        assert delete_calls[0].args[1]["target_key"].endswith(":python 3.12")
+        assert "Ignored 4 noncanonical relationship deletion selection(s)" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_supersede_selection_compares_normalized_new_and_stored_relation_types(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        mock_prompt_loader: MagicMock,
+    ) -> None:
+        """The delete selector sees the exact relation type Falkor stores and deletes."""
+        mock_falkor.query = AsyncMock(
+            return_value=[
+                {"source": "Josh", "rel_type": "works_with", "target": "Python 3.12"},
+            ]
+        )
+        delete_context: dict[str, str] = {}
+
+        def render(template: str, context: dict[str, str]) -> str:
+            if template == "memory/delete_relations":
+                delete_context.update(context)
+            return "rendered prompt"
+
+        async def call_json_feature(
+            _config: object,
+            _prompt: str,
+            *,
+            system_prompt: str | None = None,
+            caller: str,
+        ) -> dict[str, object]:
+            del system_prompt
+            if caller == "memory.kg.extract_entities":
+                return {
+                    "entities": [
+                        {"entity": "Josh", "entity_type": "person"},
+                        {"entity": "Python 3.13", "entity_type": "tool"},
+                    ]
+                }
+            if caller == "memory.kg.extract_relationships":
+                return {
+                    "relations": [
+                        {
+                            "source": "Josh",
+                            "relationship": "works-with",
+                            "destination": "Python 3.13",
+                        }
+                    ]
+                }
+            if caller == "memory.kg.select_outdated_relations":
+                new_relations = json.loads(delete_context["new_relations"])
+                existing_relations = json.loads(delete_context["existing_relations"])
+                if new_relations[0]["relationship"] == existing_relations[0]["relationship"]:
+                    return {"relations_to_delete": [existing_relations[0]]}
+                return {"relations_to_delete": []}
+            raise AssertionError(f"Unexpected caller: {caller}")
+
+        mock_prompt_loader.render.side_effect = render
+        mock_llm.call_json_feature.side_effect = call_json_feature
+
+        await service.add_to_graph("Josh works with Python 3.13")
+
+        new_relations = json.loads(delete_context["new_relations"])
+        existing_relations = json.loads(delete_context["existing_relations"])
+        assert new_relations[0]["relationship"] == "works_with"
+        assert existing_relations[0]["relationship"] == "works_with"
+        delete_calls = [
+            call for call in mock_falkor.query.call_args_list if "DELETE" in call.args[0]
+        ]
+        assert len(delete_calls) == 1
+        assert delete_calls[0].args[1]["rel_type"] == "works_with"
+        assert mock_falkor.merge_relationship.await_args.kwargs["rel_type"] == "works_with"
+
     @pytest.mark.asyncio
     async def test_add_to_graph_no_entities_returns_early(
         self,
@@ -513,16 +634,51 @@ class TestAddToGraph:
         mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
-        """add_to_graph returns early when no entities are extracted."""
+        """Whitespace-only extracted names produce a typed no-op result."""
         mock_llm.call_json_feature = AsyncMock(
-            return_value={"entities": []},
+            return_value={"entities": [{"entity": "  \t ", "entity_type": "concept"}]},
         )
 
-        await service.add_to_graph("nothing useful")
+        result = await service.add_to_graph("nothing useful")
 
+        assert isinstance(result, KnowledgeGraphResult)
+        assert result.status is KnowledgeGraphStatus.NOOP_NO_ENTITIES
         mock_falkor.merge_node.assert_not_called()
         assert mock_falkor.merge_node.call_count == 0
         assert not mock_falkor.merge_node.called
+
+    async def test_extract_entities_filters_empty_names_before_normalization(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+    ) -> None:
+        mock_llm.call_json_feature = AsyncMock(
+            return_value={
+                "entities": [
+                    {"entity": "   ", "entity_type": "concept"},
+                    {"entity": "Gobby", "entity_type": "project"},
+                ]
+            }
+        )
+
+        entities = await service._extract_entities("content")
+
+        assert entities == [Entity(name="Gobby", entity_type="project")]
+
+    def test_normalize_entities_skips_whitespace_before_identity_normalization(
+        self,
+        service: KnowledgeGraphService,
+    ) -> None:
+        with patch(
+            "gobby.memory.services.knowledge_graph.normalization.normalize_entity_name"
+        ) as normalize_name:
+            entities = service._normalize_entities(
+                [Entity(name=" \t ", entity_type="concept")],
+                project_id="proj-1",
+            )
+
+        assert entities == []
+        normalize_name.assert_not_called()
 
 
 # ===========================================================================
@@ -1094,7 +1250,12 @@ class TestMemoryNodeProjectIdScoping:
         await service.search_entities_by_vector(
             query_embedding=[0.1, 0.2],
             project_id="proj-A",
+            include_global=False,
         )
+
+        vector_kwargs = mock_falkor.vector_search.await_args.kwargs
+        assert vector_kwargs["project_id"] == "proj-A"
+        assert vector_kwargs["include_global"] is False
 
         # Find the MENTIONED_IN query
         mem_queries = [c for c in mock_falkor.query.call_args_list if "MENTIONED_IN" in str(c)]
@@ -1105,7 +1266,7 @@ class TestMemoryNodeProjectIdScoping:
         assert "OR ($include_global AND m.project_id IS NULL)" in cypher
         assert "OR ($include_global AND e.project_id IS NULL)" in cypher
         assert params["project_id"] == "proj-A"
-        assert params["include_global"] is True
+        assert params["include_global"] is False
 
     @pytest.mark.asyncio
     async def test_find_related_memory_ids_filters_by_project_id(
@@ -1193,6 +1354,39 @@ class TestRemoveMemoryFromGraph:
         mock_falkor.query.side_effect = FalkorConnectionError("connection refused")
         await service.remove_memory_from_graph("mem-1")
         assert mock_falkor.query.await_count == 1
+
+
+class TestRemoveOrphanedEntities:
+    @pytest.mark.asyncio
+    async def test_code_linked_entity_survives_without_memory_edges(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        async def query(cypher: str, _params: dict[str, object]) -> list[dict[str, int]]:
+            if "RETURN count(e) AS total" in cypher:
+                return [{"total": 0 if "RELATES_TO_CODE" in cypher else 1}]
+            raise AssertionError("Code-linked entity must not reach DETACH DELETE")
+
+        mock_falkor.query.side_effect = query
+
+        assert await service.remove_orphaned_entities(scope="all") == 0
+        assert all("DETACH DELETE" not in call.args[0] for call in mock_falkor.query.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_entity_without_memory_or_code_edges_is_deleted(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        mock_falkor.query.side_effect = [[{"total": 1}], []]
+
+        assert await service.remove_orphaned_entities(scope="all") == 1
+        assert len(mock_falkor.query.await_args_list) == 2
+        for call in mock_falkor.query.await_args_list:
+            cypher = call.args[0]
+            assert "NOT (e)-[:MENTIONED_IN]->(:Memory)" in cypher
+            assert "NOT (e)-[:RELATES_TO_CODE]->(:CodeSymbol)" in cypher
 
 
 class _FakeFalkorGraph:

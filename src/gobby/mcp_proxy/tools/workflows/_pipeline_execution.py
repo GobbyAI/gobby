@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Track background pipeline tasks so they can be awaited on shutdown
 _background_tasks: set[asyncio.Task[None]] = set()
+_background_tasks_by_execution: dict[str, asyncio.Task[None]] = {}
 
 RunDb = Callable[..., Awaitable[Any]]
 
@@ -42,6 +43,7 @@ async def cleanup_background_tasks() -> None:
     are left dangling.
     """
     if not _background_tasks:
+        _background_tasks_by_execution.clear()
         return
 
     tasks = list(_background_tasks)
@@ -56,6 +58,7 @@ async def cleanup_background_tasks() -> None:
             logger.warning(f"Pipeline task {task.get_name()} raised during shutdown: {result}")
 
     _background_tasks.clear()
+    _background_tasks_by_execution.clear()
 
 
 class PipelineLoader(Protocol):
@@ -76,6 +79,8 @@ class PipelineExecutionManager(Protocol):
         resume_token: str | None = None,
         outputs_json: str | None = None,
     ) -> PipelineExecution | None: ...
+
+    def claim_failed_execution_for_resume(self, execution_id: str) -> PipelineExecution | None: ...
     def update_step_execution(
         self,
         step_execution_id: int,
@@ -117,11 +122,14 @@ class PipelineExecutor(Protocol):
     async def reject(self, token: str, rejected_by: str | None = None) -> PipelineExecution: ...
 
 
-def _register_background_task(task: asyncio.Task[None]) -> None:
+def _register_background_task(execution_id: str, task: asyncio.Task[None]) -> None:
     _background_tasks.add(task)
+    _background_tasks_by_execution[execution_id] = task
 
     def _on_done(t: asyncio.Task[None]) -> None:
         _background_tasks.discard(t)
+        if _background_tasks_by_execution.get(execution_id) is t:
+            _background_tasks_by_execution.pop(execution_id, None)
         if not t.cancelled() and t.exception():
             logger.error(f"Pipeline background task failed: {t.exception()}")
 
@@ -212,27 +220,16 @@ async def cancel_pipeline(
             "error": f"Pipeline already in a terminal state (current status: {execution.status.value})",
         }
 
-    # 1. Kill spawned agents (via DB)
-    try:
-        from gobby.agents.kill import kill_agent
-        from gobby.storage.agents import LocalAgentRunManager
+    # Stop the exact fire-and-forget task before yielding to agent termination.
+    background_task = _background_tasks_by_execution.get(execution_id)
+    if (
+        background_task
+        and background_task is not asyncio.current_task()
+        and not background_task.done()
+    ):
+        background_task.cancel()
 
-        _db: HubDatabase | None = getattr(execution_manager, "db", None)
-        if _db is None:
-            raise RuntimeError("execution manager has no database")
-        arm = LocalAgentRunManager(_db)
-        active_runs = arm.list_by_parent(execution.session_id) if execution.session_id else []
-        killed_count = 0
-        for run in active_runs:
-            await kill_agent(run, _db, signal_name="KILL")
-            killed_count += 1
-
-        if killed_count > 0:
-            logger.info(f"Killed {killed_count} agents associated with pipeline {execution_id[:8]}")
-    except Exception as e:
-        logger.warning(f"Failed to kill agents for pipeline {execution_id}: {e}")
-
-    # 2. Mark running steps as cancelled
+    # Mark running steps as cancelled.
     try:
         steps = execution_manager.get_steps_for_execution(execution_id)
         for step in steps:
@@ -244,7 +241,8 @@ async def cancel_pipeline(
     except Exception as e:
         logger.warning(f"Failed to cancel steps for pipeline {execution_id}: {e}")
 
-    # 3. Mark execution as cancelled
+    # Mark the execution as cancelled before the next await so the executor
+    # cannot race cancellation and write COMPLETED.
     try:
         execution_manager.update_execution_status(
             execution_id=execution_id,
@@ -252,6 +250,38 @@ async def cancel_pipeline(
         )
     except Exception as e:
         return {"success": False, "error": f"Failed to update execution status: {e}"}
+
+    if background_task and background_task is not asyncio.current_task():
+        await asyncio.gather(background_task, return_exceptions=True)
+
+    # Kill only agents owned by the deterministic pipeline child session.
+    # Never fall back to execution.session_id because an early cancellation
+    # may still contain the unrelated caller session there.
+    try:
+        from gobby.agents.kill import kill_agent
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.sessions import SessionManager
+
+        _db: HubDatabase | None = getattr(execution_manager, "db", None)
+        if _db is None:
+            raise RuntimeError("execution manager has no database")
+        pipeline_session = SessionManager(_db).find_by_external_id_any_project(
+            external_id=f"pipeline-{execution_id}",
+            machine_id="pipeline",
+            source="pipeline",
+        )
+        pipeline_session_id = pipeline_session.id if pipeline_session else None
+        arm = LocalAgentRunManager(_db)
+        active_runs = arm.list_by_parent(pipeline_session_id) if pipeline_session_id else []
+        killed_count = 0
+        for run in active_runs:
+            await kill_agent(run, _db, signal_name="KILL")
+            killed_count += 1
+
+        if killed_count > 0:
+            logger.info(f"Killed {killed_count} agents associated with pipeline {execution_id[:8]}")
+    except Exception as e:
+        logger.warning(f"Failed to kill agents for pipeline {execution_id}: {e}")
 
     return {
         "success": True,
@@ -299,12 +329,15 @@ async def run_pipeline(
 
     # Load the pipeline definition
     try:
-        pipeline = await loader.load_pipeline(name)
+        pipeline = await loader.load_pipeline(name, project_id)
     except ValueError as e:
         return {"success": False, "error": f"Invalid pipeline '{name}': {e}"}
 
     if not pipeline:
         return {"success": False, "error": f"Pipeline '{name}' not found"}
+
+    if not pipeline.enabled:
+        return {"success": False, "error": f"Pipeline '{name}' is disabled"}
 
     # Pre-create execution record so we can return the ID immediately
     try:
@@ -330,7 +363,7 @@ async def run_pipeline(
         ),
         name=f"pipeline-{name}-{execution_id[:8]}",
     )
-    _register_background_task(task)
+    _register_background_task(execution_id, task)
 
     return {
         "success": True,
@@ -390,7 +423,7 @@ async def resume_pipeline(
 
     # Load the pipeline definition
     try:
-        pipeline = await loader.load_pipeline(execution.pipeline_name)
+        pipeline = await loader.load_pipeline(execution.pipeline_name, execution.project_id)
     except ValueError as e:
         return {"success": False, "error": f"Invalid pipeline '{execution.pipeline_name}': {e}"}
 
@@ -398,6 +431,12 @@ async def resume_pipeline(
         return {
             "success": False,
             "error": f"Pipeline '{execution.pipeline_name}' not found",
+        }
+
+    if not pipeline.enabled:
+        return {
+            "success": False,
+            "error": f"Pipeline '{execution.pipeline_name}' is disabled",
         }
 
     # Determine resume point and reset steps
@@ -430,10 +469,8 @@ async def resume_pipeline(
                 "error": "No failed or errored step found to resume from",
             }
 
-    # Reset the resume point and all subsequent steps to PENDING
     if not resume_step_id:
         raise ValueError("resume_step_id resolved to None despite early-return guard")
-    reset_count = execution_manager.reset_steps_from(execution_id, resume_step_id)
 
     # Parse stored inputs
     inputs: dict[str, Any] = {}
@@ -446,11 +483,23 @@ async def resume_pipeline(
                 "error": f"Malformed inputs_json for execution {execution_id}: {e}",
             }
 
-    # Mark as running before spawning background task
-    execution_manager.update_execution_status(
-        execution_id=execution_id,
-        status=ExecutionStatus.RUNNING,
-    )
+    # Atomically claim the failed execution. Both callers may have observed FAILED
+    # above, but only one may transition it to RUNNING and mutate its steps.
+    claimed = execution_manager.claim_failed_execution_for_resume(execution_id)
+    if claimed is None:
+        return {
+            "success": False,
+            "error": (
+                f"Execution '{execution_id}' is already being resumed or is no longer failed"
+            ),
+        }
+
+    # Reset the resume point and all subsequent steps to PENDING only after the claim.
+    try:
+        reset_count = execution_manager.reset_steps_from(execution_id, resume_step_id)
+    except Exception:
+        execution_manager.update_execution_status(execution_id, ExecutionStatus.FAILED)
+        raise
 
     task = asyncio.create_task(
         _execute_pipeline_background(
@@ -464,7 +513,7 @@ async def resume_pipeline(
         ),
         name=f"pipeline-resume-{execution.pipeline_name}-{execution_id[:8]}",
     )
-    _register_background_task(task)
+    _register_background_task(execution_id, task)
 
     return {
         "success": True,
@@ -616,6 +665,9 @@ async def resume_interrupted_pipelines(
         if not pipeline:
             continue
 
+        if not pipeline.enabled:
+            continue
+
         if not getattr(pipeline, "resume_on_restart", False):
             continue
 
@@ -642,7 +694,7 @@ async def resume_interrupted_pipelines(
             ),
             name=f"pipeline-resume-{execution.pipeline_name}-{execution.id[:8]}",
         )
-        _register_background_task(task)
+        _register_background_task(execution.id, task)
         resumed.append(execution.id)
         logger.info(f"Resumed pipeline '{execution.pipeline_name}' execution {execution.id}")
 
@@ -709,7 +761,6 @@ def get_pipeline_status(
             "created_at": execution.created_at,
             "updated_at": execution.updated_at,
             "completed_at": execution.completed_at,
-            "resume_token": execution.resume_token,
             "session_id": execution.session_id,
             "review": review,
         }
@@ -733,7 +784,6 @@ def get_pipeline_status(
                     "completed_at": step.completed_at,
                     "output": step_output,
                     "error": step.error,
-                    "approval_token": step.approval_token,
                     "approved_by": step.approved_by,
                     "approved_at": step.approved_at,
                 }

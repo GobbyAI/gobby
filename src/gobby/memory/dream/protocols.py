@@ -63,6 +63,13 @@ class MemoryDreamManagerProtocol(Protocol):
         project_id: str | None,
     ) -> list[dict[str, str]]: ...
 
+    async def restore_memory_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None: ...
+
     async def delete_memory(self, memory_id: str) -> bool: ...
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]: ...

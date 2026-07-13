@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefService
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
+EMBEDDING_WARNING_INTERVAL_SECONDS = 60.0
 
 
 class MemoryLifecycleService:
@@ -38,8 +40,9 @@ class MemoryLifecycleService:
         background_tasks: set[asyncio.Task[Any]],
         record_to_memory: Callable[[MemoryRecord], Memory],
         get_memory: Callable[[str], Memory | None],
-        embed_and_upsert: Callable[..., Awaitable[None]],
+        embed_and_upsert: Callable[..., Awaitable[bool]],
         vector_store_failure_logger: Callable[[str, BaseException], None],
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._config = config
         self._storage_provider = storage_provider
@@ -54,7 +57,13 @@ class MemoryLifecycleService:
         self._get_memory = get_memory
         self._embed_and_upsert = embed_and_upsert
         self._log_vector_store_failure = vector_store_failure_logger
-        self.embeddings_available: bool | None = None
+        self._run_db = run_db
+        self._last_embedding_warning_at = -EMBEDDING_WARNING_INTERVAL_SECONDS
+
+    async def _run_storage[T](self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return cast(T, await self._run_db(func, *args, **kwargs))
 
     @property
     def storage(self) -> LocalMemoryManager:
@@ -69,33 +78,35 @@ class MemoryLifecycleService:
         memory_id: str,
         content: str,
         payload: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> bool:
         """Embed content and upsert to VectorStore when available."""
         if not self._vector_store or not self._embed_fn:
-            return
-        if self.embeddings_available is False:
-            return
+            return False
         try:
             embedding = await self._embed_fn(content)
-            self.embeddings_available = True
         except Exception as e:
-            if self.embeddings_available is None:
-                logger.warning(
-                    f"Embedding failed for {memory_id}: {e}; "
-                    "suppressing further embedding warnings until provider recovers"
-                )
-                self.embeddings_available = False
-            else:
-                logger.debug(f"Embedding failed for {memory_id}: {e}")
-            return
+            self._log_embedding_failure(memory_id, e)
+            return False
 
         try:
             await self._vector_store.upsert(memory_id, embedding, payload or {})
+            return True
         except Exception as e:
             if is_recoverable_vector_store_error(e):
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
                 logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
+            return False
+
+    def _log_embedding_failure(self, memory_id: str, error: BaseException) -> None:
+        """Rate-limit warnings without suppressing future embedding attempts."""
+        now = time.monotonic()
+        message = f"Embedding failed for {memory_id}"
+        if now - self._last_embedding_warning_at >= EMBEDDING_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_embedding_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     def fire_background_dedup(
         self,
@@ -105,6 +116,7 @@ class MemoryLifecycleService:
         tags: list[str] | None,
         source_type: str,
         source_session_id: str | None,
+        exclude_memory_id: str | None = None,
     ) -> None:
         """Fire a background dedup task."""
 
@@ -120,6 +132,7 @@ class MemoryLifecycleService:
                     tags=tags,
                     source_type=source_type,
                     source_session_id=source_session_id,
+                    exclude_memory_id=exclude_memory_id,
                 )
             except Exception as e:
                 logger.warning(f"Background dedup failed: {e}")
@@ -128,7 +141,7 @@ class MemoryLifecycleService:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    def enqueue_for_graph(
+    async def enqueue_for_graph(
         self,
         memory_id: str,
         project_id: str | None = None,
@@ -136,7 +149,7 @@ class MemoryLifecycleService:
         """Queue memory for background KG processing."""
         _ = project_id
         try:
-            self.storage.mark_pending_graph(memory_id)
+            await self._run_storage(self.storage.mark_pending_graph, memory_id)
             logger.debug(f"Queued memory {memory_id} for graph processing")
         except Exception as e:
             logger.warning(f"Failed to queue memory {memory_id} for graph: {e}")
@@ -148,6 +161,20 @@ class MemoryLifecycleService:
     def mark_graph_processed(self, memory_id: str) -> None:
         """Mark a memory as having been processed by the KG pipeline."""
         self.storage.mark_graph_processed(memory_id)
+
+    def record_graph_failure(
+        self,
+        memory_id: str,
+        *,
+        deterministic: bool,
+        max_attempts: int,
+    ) -> str:
+        """Persist a graph failure and return the resulting queue status."""
+        return self.storage.record_graph_failure(
+            memory_id,
+            deterministic=deterministic,
+            max_attempts=max_attempts,
+        )
 
     async def create_memory(
         self,
@@ -204,23 +231,31 @@ class MemoryLifecycleService:
                 tags=tags,
                 source_type=source_type,
                 source_session_id=source_session_id,
+                exclude_memory_id=memory.id,
             )
 
         if self._kg_service_provider():
-            self.enqueue_for_graph(memory_id=memory.id, project_id=project_id)
+            await self.enqueue_for_graph(memory_id=memory.id, project_id=project_id)
 
         return memory
 
     async def delete_memory(self, memory_id: str) -> bool:
         """Delete a memory from storage, VectorStore, and FalkorDB."""
-        existing_memory = self._get_memory(memory_id)
-        result = self.storage.delete_memory(memory_id)
+        existing_memory = await self._run_storage(self._get_memory, memory_id)
+        result = await self._run_storage(self.storage.delete_memory, memory_id)
+        await self._delete_secondary_indices(memory_id, existing_memory, result)
+        return result
+
+    async def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+        """Delete a memory only when visible to a project, then reconcile its indices."""
+        existing_memory = await self._run_storage(self._get_memory, memory_id)
+        result = await self._run_storage(self.storage.delete_memory_scoped, memory_id, project_id)
         await self._delete_secondary_indices(memory_id, existing_memory, result)
         return result
 
     async def adelete_memory(self, memory_id: str) -> bool:
         """Delete a memory through the async backend and secondary indices."""
-        existing_memory = self._get_memory(memory_id)
+        existing_memory = await self._run_storage(self._get_memory, memory_id)
         result = await self.backend.delete(memory_id)
         await self._delete_secondary_indices(memory_id, existing_memory, result)
         return result
@@ -270,7 +305,7 @@ class MemoryLifecycleService:
         """Best-effort secondary sync after a primary-store scope change."""
         failures: list[dict[str, str]] = []
         try:
-            self.storage.mark_pending_graph(memory_id)
+            await self._run_storage(self.storage.mark_pending_graph, memory_id)
         except Exception as exc:
             logger.warning("Graph scope sync failed for %s: %s", memory_id, exc)
             failures.append({"memory_id": memory_id, "index": "knowledge_graph", "error": str(exc)})
@@ -282,9 +317,26 @@ class MemoryLifecycleService:
                 failures.append({"memory_id": memory_id, "index": "embedding", "error": str(exc)})
         return failures
 
+    async def restore_memory_indices(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str | None,
+    ) -> None:
+        """Recreate vector and graph-index state for a restored memory row."""
+        await self._embed_and_upsert(
+            memory_id,
+            content,
+            payload={"project_id": project_id},
+        )
+        try:
+            await self._run_storage(self.storage.mark_pending_graph, memory_id)
+        except Exception as exc:
+            logger.warning("Graph restore sync failed for %s: %s", memory_id, exc)
+
     async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
         """Update a memory's scope, then best-effort sync secondary stores."""
-        result = self.storage.rescope_memory(memory_id, new_project_id)
+        result = await self._run_storage(self.storage.rescope_memory, memory_id, new_project_id)
         failures = await self.sync_memory_scope_indices(memory_id, result.project_id)
         if failures:
             logger.warning(
@@ -301,11 +353,18 @@ class MemoryLifecycleService:
         memory: Memory,
     ) -> None:
         """Best-effort secondary sync after a memory content revision."""
-        await self._embed_and_upsert(
+        indexed = await self._embed_and_upsert(
             memory.id,
             memory.content,
             payload={"project_id": memory.project_id},
         )
+        if indexed:
+            cleared = await self._run_storage(
+                self.storage.mark_vectors_reindexed,
+                {memory.id: memory.content},
+            )
+            if cleared:
+                memory.vector_needs_reindex = False
 
         kg_service = self._kg_service_provider()
         if kg_service:
@@ -318,12 +377,12 @@ class MemoryLifecycleService:
                 logger.warning("Graph content refresh failed for %s: %s", memory.id, exc)
 
         try:
-            self.storage.mark_pending_graph(memory.id)
+            await self._run_storage(self.storage.mark_pending_graph, memory.id)
         except Exception as exc:
             logger.warning("Graph requeue failed for %s: %s", memory.id, exc)
 
         try:
-            self.storage.delete_crossrefs(memory.id)
+            await self._run_storage(self.storage.delete_crossrefs, memory.id)
         except Exception as exc:
             logger.warning("Crossref cleanup failed for %s: %s", memory.id, exc)
 
@@ -341,9 +400,12 @@ class MemoryLifecycleService:
     ) -> Memory:
         """Update a memory and refresh secondary indices after content revisions."""
         old_memory = (
-            self.storage.get_memory(memory_id, visibility="all") if content is not None else None
+            await self._run_storage(self.storage.get_memory, memory_id, visibility="all")
+            if content is not None
+            else None
         )
-        result = self.storage.update_memory(
+        result = await self._run_storage(
+            self.storage.update_memory,
             memory_id=memory_id,
             content=content,
             tags=tags,

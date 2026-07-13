@@ -253,6 +253,7 @@ def create_commit_registry(
             "linked_tasks": result.linked_tasks,
             "total_linked": result.total_linked,
             "skipped": result.skipped,
+            "skipped_refs": result.skipped_refs,
         }
 
     registry.register(

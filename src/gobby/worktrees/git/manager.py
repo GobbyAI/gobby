@@ -40,6 +40,7 @@ class WorktreeGitManager(GitRunner):
         worktree_path: str | Path,
         force: bool = False,
         delete_branch: bool = False,
+        force_delete_branch: bool = False,
         branch_name: str | None = None,
     ) -> GitOperationResult:
         return _lifecycle.delete_worktree(
@@ -47,6 +48,7 @@ class WorktreeGitManager(GitRunner):
             worktree_path,
             force=force,
             delete_branch=delete_branch,
+            force_delete_branch=force_delete_branch,
             branch_name=branch_name,
         )
 

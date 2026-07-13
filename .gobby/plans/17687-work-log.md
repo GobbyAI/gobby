@@ -305,3 +305,21 @@ Entry format:
   (crates/gcode/src/cli.rs, fresh generation ~4min) completed, reuse
   continuing, file 10 generating. 2608 files total; today's commits +
   the 11 degraded pages + aggregates are the regen scope.
+
+## 2026-07-13 ~00:45Z — #18109 CLOSED: mid-run source deletion no longer aborts runs
+
+- attempt=11 (verbose) died at 00:10:36Z exit=1 at file 985/2608: commit
+  ec30cf432 (another session, #18071) deleted src/gobby/hooks/git.py
+  mid-run; persist re-hashes sources from disk and aborted on NotFound.
+  Progress to that point was healthy (984 files, ~250 fresh gens; stage
+  vault holds 2908 files for reuse).
+- Fix (#18109, commit 005651dff): skip-with-warning on
+  io::ErrorKind::NotFound in source_hashes_for_doc (persist) and
+  hash_snapshot_file/build_codewiki_index_snapshot (startup), mirroring
+  neighbor_hashes_for_doc; outside-root bail and non-NotFound errors
+  preserved. 2 new tests; 1003 gobby-code lib tests green; clippy/fmt
+  clean; audit 0 new.
+- Binary transition #6 (disclose in evidence doc): gcode rebuilt
+  (release) + reinstalled ~00:45Z 07-13 via cp-to-.new + rename. Carries
+  #17823+#17848+#18005+#18109.
+- attempt=12 next on the fixed binary (same command, --verbose kept).

@@ -17,6 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.utils.session_context import session_context_for_test
 from tests.storage.tasks._stage_test_helpers import (
     create_task,
@@ -228,6 +229,39 @@ def test_success_writes_artifacts_and_completes_merge(
     assert kwargs["commit_sha"] == "abc123"
     ctx.task_manager.close_task.assert_not_called()
     assert cleanup_calls == [(ctx.task_manager.db, "task-1")]
+
+
+def test_success_transition_failure_does_not_write_merged_campaign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stage_view(monkeypatch)
+    ctx = _context()
+    ctx.task_manager.stage_states.complete_stage.side_effect = IllegalStageTransitionError(
+        "merge",
+        "needs_review",
+        "complete_stage",
+        "required",
+    )
+    delivery = Mock()
+    delivery.get_state.return_value = {"campaign": {}}
+    monkeypatch.setattr(stage_ops, "TaskDeliveryStateManager", Mock(return_value=delivery))
+    release = Mock()
+    monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
+
+    with pytest.raises(IllegalStageTransitionError):
+        _record_merge_result(ctx)(
+            task_id="task-1",
+            merge_sha="merge-sha",
+        )
+
+    assert delivery.record_campaign.call_count == 0
+    assert release.call_count == 0
+    assert ctx.task_manager.stage_states.complete_stage.call_count == 1
+    assert ctx.task_manager.stage_states.complete_stage.call_args.args == ("task-1", "merge")
+    assert ctx.task_manager.stage_states.complete_stage.call_args.kwargs == {
+        "by_session_id": None,
+        "commit_sha": "merge-sha",
+    }
 
 
 def test_success_closes_task_via_terminal_close(

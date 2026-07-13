@@ -9,6 +9,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
         hours: int | str = 24,
         dry_run: bool | str = True,
         delete_git: bool | str = False,
+        force_delete_branch: bool | str = False,
     ) -> dict[str, Any]:
         """Cleanup stale worktrees.
 
@@ -102,6 +104,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             hours: Hours of inactivity threshold (default: 24).
             dry_run: If True, only report what would be cleaned (default: True).
             delete_git: If True, also delete git worktrees (default: False).
+            force_delete_branch: Force-delete unmerged branches (default: False).
 
         Returns:
             Dict with cleanup results.
@@ -115,6 +118,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
         hours = int(hours) if isinstance(hours, str) else hours
         dry_run = _parse_bool(dry_run)
         delete_git = _parse_bool(delete_git)
+        force_delete_branch = _parse_bool(force_delete_branch)
 
         resolved_git_manager, resolved_project_id, error = resolve_project_context(
             project_path, ctx.git_manager, ctx.project_id
@@ -145,11 +149,25 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
 
             if delete_git and not dry_run and resolved_git_manager:
+                status = await asyncio.to_thread(
+                    resolved_git_manager.get_worktree_status, wt.worktree_path
+                )
+                if status is None:
+                    result["git_skipped"] = True
+                    result["git_skip_reason"] = "Could not verify worktree status"
+                    results.append(result)
+                    continue
+                if status.has_uncommitted_changes:
+                    result["git_skipped"] = True
+                    result["git_skip_reason"] = "Worktree has uncommitted changes"
+                    results.append(result)
+                    continue
                 git_result = await asyncio.to_thread(
                     resolved_git_manager.delete_worktree,
                     wt.worktree_path,
-                    force=True,
+                    force=False,
                     delete_branch=True,
+                    force_delete_branch=force_delete_branch,
                     branch_name=wt.branch_name,
                 )
                 result["git_deleted"] = git_result.success
@@ -171,11 +189,28 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             }
 
             if not dry_run and resolved_git_manager:
+                git_merged = await asyncio.to_thread(
+                    is_worktree_git_merged, wt, resolved_git_manager
+                )
+                if git_merged is not True and not force_delete_branch:
+                    result["git_skipped"] = True
+                    result["git_skip_reason"] = "Git no longer reports the branch as merged"
+                    results.append(result)
+                    continue
+                status = await asyncio.to_thread(
+                    resolved_git_manager.get_worktree_status, wt.worktree_path
+                )
+                if status is not None and status.has_uncommitted_changes:
+                    result["git_skipped"] = True
+                    result["git_skip_reason"] = "Worktree has uncommitted changes"
+                    results.append(result)
+                    continue
                 git_result = await asyncio.to_thread(
                     resolved_git_manager.delete_worktree,
                     wt.worktree_path,
-                    force=True,
+                    force=False,
                     delete_branch=True,
+                    force_delete_branch=force_delete_branch,
                     branch_name=wt.branch_name,
                 )
                 result["git_deleted"] = git_result.success

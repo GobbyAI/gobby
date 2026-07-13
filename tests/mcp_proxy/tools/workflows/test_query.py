@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -174,10 +175,12 @@ class TestGetWorkflowStatusMultiWorkflow:
 def _make_db_row(
     name: str = "test-wf",
     workflow_type: str = "workflow",
+    definition_type: str = "step",
     description: str = "A test workflow",
     source: str = "installed",
     enabled: bool = True,
     priority: int = 100,
+    project_id: str | None = None,
 ) -> WorkflowDefinitionRow:
     """Create a mock WorkflowDefinitionRow."""
     return WorkflowDefinitionRow(
@@ -186,8 +189,9 @@ def _make_db_row(
         workflow_type=workflow_type,
         enabled=enabled,
         priority=priority,
-        definition_json="{}",
+        definition_json=json.dumps({"type": definition_type}),
         source=source,
+        project_id=project_id,
         created_at="2026-01-01T00:00:00",
         updated_at="2026-01-01T00:00:00",
         description=description,
@@ -206,19 +210,28 @@ class TestListWorkflowsDBIntegration:
         loader.global_dirs = []
 
         rows = [
-            _make_db_row("my-workflow", "workflow", "Workflow from DB"),
-            _make_db_row("my-pipeline", "pipeline", "Pipeline from DB"),
+            _make_db_row("my-workflow", description="Workflow from DB"),
+            _make_db_row(
+                "my-pipeline",
+                workflow_type="pipeline",
+                definition_type="pipeline",
+                description="Pipeline from DB",
+            ),
         ]
 
         with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockMgr:
             MockMgr.return_value.list_all.return_value = rows
             result = list_workflows(loader, project_path="/fake/path", db=db)
+            MockMgr.return_value.list_all.assert_called_once_with(
+                project_id=None,
+                workflow_type="workflow",
+            )
 
         assert result["success"] is True
-        assert result["count"] == 2
+        assert result["count"] == 1
         names = [w["name"] for w in result["workflows"]]
         assert "my-workflow" in names
-        assert "my-pipeline" in names
+        assert "my-pipeline" not in names
         # DB entries include enabled and priority
         wf = next(w for w in result["workflows"] if w["name"] == "my-workflow")
         assert wf["enabled"] is True
@@ -234,13 +247,14 @@ class TestListWorkflowsDBIntegration:
         loader.global_dirs = []
 
         # DB has one workflow
-        db_rows = [_make_db_row("shared-name", "workflow", "DB version")]
+        db_rows = [_make_db_row("shared-name", description="DB version")]
 
         # Filesystem has a different workflow + same name
         wf_dir = tmp_path / ".gobby" / "workflows"
         wf_dir.mkdir(parents=True)
         (wf_dir / "shared-name.yaml").write_text("name: shared-name\ndescription: FS version\n")
         (wf_dir / "fs-only.yaml").write_text("name: fs-only\ndescription: Filesystem only\n")
+        (wf_dir / "not-a-workflow.yaml").write_text("name: not-a-workflow\ntype: pipeline\n")
 
         with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockMgr:
             MockMgr.return_value.list_all.return_value = db_rows
@@ -251,6 +265,7 @@ class TestListWorkflowsDBIntegration:
         # DB version of shared-name wins, fs-only also included
         assert "shared-name" in names
         assert "fs-only" in names
+        assert "not-a-workflow" not in names
         assert result["count"] == 2
         # The shared-name entry should be from DB (has source=custom)
         shared = next(w for w in result["workflows"] if w["name"] == "shared-name")

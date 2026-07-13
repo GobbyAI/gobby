@@ -874,16 +874,16 @@ class TestValidateWorkflowForAgent:
         assert "Circular inheritance" in error
 
     @pytest.mark.asyncio
-    async def test_validate_with_project_path(self, loader: WorkflowLoader) -> None:
-        """Test that project_path is passed through to load_workflow."""
+    async def test_validate_with_project_id(self, loader: WorkflowLoader) -> None:
+        """Test that project_id is passed through to load_workflow."""
         step_workflow = MagicMock(spec=WorkflowDefinition)
         step_workflow.type = "step"
         step_workflow.enabled = False
 
         with patch.object(loader, "load_workflow", return_value=step_workflow) as mock_load:
-            await loader.validate_workflow_for_agent("test_wf", project_path="/my/project")
+            await loader.validate_workflow_for_agent("test_wf", project_id="project-uuid")
 
-        mock_load.assert_called_once_with("test_wf", project_path="/my/project")
+        mock_load.assert_called_once_with("test_wf", "project-uuid")
         assert mock_load.call_count == 1
         assert mock_load.call_args is not None
 

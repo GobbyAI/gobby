@@ -42,6 +42,7 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "recall_review_context",
         "rebuild_knowledge_graph",
         "merge_worktree",
+        "sync_worktree",
         "wiki_ask",
         "wiki_compile",
     )
@@ -1068,6 +1069,53 @@ class TestDaemonProxy:
             "POST",
             "http://127.0.0.1:60887/api/mcp/gobby-worktrees/tools/merge_worktree",
             json={"worktree_id": "wt-123"},
+            headers=mock_client.request.await_args.kwargs["headers"],
+            timeout=MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS,
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_sync_worktree(self) -> None:
+        """A sync may exceed the ordinary 30-second HTTP request boundary."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+        from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
+
+        proxy = DaemonProxy(60887)
+
+        async def request_after_boundary(*args: Any, **kwargs: Any) -> httpx.Response:
+            if kwargs["timeout"] <= 30.0:
+                raise httpx.ReadTimeout("simulated sync still running after 30 seconds")
+            return httpx.Response(200, json={"success": True, "synced": True})
+
+        with (
+            patch("gobby.mcp_proxy.stdio.load_config") as mock_config,
+            patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request.side_effect = request_after_boundary
+            mock_client_cls.return_value = mock_client
+
+            result = await proxy.call_tool(
+                "gobby-worktrees",
+                "sync_worktree",
+                {"worktree_id": "wt-123", "source_branch": "0.5.0"},
+                preflight_enabled=False,
+            )
+
+        assert result == {"success": True, "synced": True}
+        assert mock_client.request.await_count == 1
+        assert mock_client.request.await_args.args[0] == "POST"
+        assert "sync_worktree" in mock_client.request.await_args.args[1]
+        assert (
+            mock_client.request.await_args.kwargs["timeout"]
+            == MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
+        )
+        mock_client.request.assert_awaited_once_with(
+            "POST",
+            "http://127.0.0.1:60887/api/mcp/gobby-worktrees/tools/sync_worktree",
+            json={"worktree_id": "wt-123", "source_branch": "0.5.0"},
             headers=mock_client.request.await_args.kwargs["headers"],
             timeout=MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS,
         )

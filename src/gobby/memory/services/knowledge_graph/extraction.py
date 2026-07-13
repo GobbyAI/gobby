@@ -132,7 +132,10 @@ class KnowledgeGraphExtractor:
         entities = [
             Entity(name=e["entity"], entity_type=e["entity_type"])
             for e in raw_entities
-            if isinstance(e, dict) and "entity" in e and "entity_type" in e
+            if isinstance(e, dict)
+            and isinstance(e.get("entity"), str)
+            and bool(e["entity"].strip())
+            and "entity_type" in e
         ]
         dropped = len(raw_entities) - len(entities)
         if dropped:
@@ -230,4 +233,46 @@ class KnowledgeGraphExtractor:
         )
         response = await self._generate_json(prompt, caller="memory.kg.select_outdated_relations")
         to_delete = response.get("relations_to_delete", [])
-        return [rel for rel in to_delete if isinstance(rel, dict)]
+        if not isinstance(to_delete, list):
+            logger.warning(
+                "Relationship deletion selection ignored non-list payload: %s",
+                type(to_delete).__name__,
+            )
+            return []
+
+        existing_by_triple = {
+            (rel["source"], rel["relationship"], rel["destination"]): rel
+            for rel in existing_relations
+        }
+        selected: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        ignored = 0
+        for rel in to_delete:
+            if not isinstance(rel, dict):
+                ignored += 1
+                continue
+            source = rel.get("source")
+            relationship = rel.get("relationship")
+            destination = rel.get("destination")
+            if not (
+                isinstance(source, str)
+                and isinstance(relationship, str)
+                and isinstance(destination, str)
+            ):
+                ignored += 1
+                continue
+            triple = (source, relationship, destination)
+            canonical = existing_by_triple.get(triple)
+            if canonical is None:
+                ignored += 1
+                continue
+            if triple not in seen:
+                selected.append(canonical)
+                seen.add(triple)
+
+        if ignored:
+            logger.warning(
+                "Ignored %d noncanonical relationship deletion selection(s)",
+                ignored,
+            )
+        return selected

@@ -71,6 +71,28 @@ provenance:
 }
 
 #[test]
+fn source_hashes_skip_frontmatter_sources_deleted_from_disk() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project_root = tempdir.path().join("project");
+    std::fs::create_dir_all(project_root.join("src")).expect("source dir");
+    std::fs::write(project_root.join("src/kept.rs"), "fn kept() {}").expect("kept file");
+    // src/deleted.rs is referenced by provenance but never written: it stands
+    // in for a source removed by an external commit mid-run (#18109).
+    let content = r#"---
+provenance:
+  - file: src/kept.rs
+  - file: src/deleted.rs
+---
+"#;
+
+    let hashes = source_hashes_for_doc(&project_root, content).expect("hashes tolerate deletion");
+
+    assert!(hashes.contains_key("src/kept.rs"));
+    assert!(!hashes.contains_key("src/deleted.rs"));
+    assert_eq!(hashes.len(), 1);
+}
+
+#[test]
 fn yaml_unquote_translates_common_escapes_and_rejects_incomplete_escape() {
     assert_eq!(
         unquote_yaml_string(r#""line\nquote\"tab\tbackslash\\""#),

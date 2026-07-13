@@ -10,7 +10,7 @@ from typing import Any, cast
 from opentelemetry.trace import Status, StatusCode
 
 from gobby.telemetry.tracing import create_span
-from gobby.workflows.pipeline_state import ApprovalRequired, PipelineExecution
+from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, PipelineExecution
 
 logger = logging.getLogger("gobby.workflows.pipeline_executor")
 _FACADE_MODULE = "gobby.workflows.pipeline_executor"
@@ -169,9 +169,19 @@ class PipelineExecutorStepMixin:
 
         # Resume execution
         if self.loader:
+            pipeline = None
             try:
-                pipeline = await self.loader.load_pipeline(execution.pipeline_name)
+                pipeline = await self.loader.load_pipeline(
+                    execution.pipeline_name, execution.project_id
+                )
                 if pipeline:
+                    if not pipeline.enabled:
+                        self.execution_manager.update_execution_status(
+                            execution_id=execution.id,
+                            status=ExecutionStatus.CANCELLED,
+                        )
+                        raise ValueError(f"Pipeline '{pipeline.name}' is disabled")
+
                     inputs = {}
                     if execution.inputs_json:
                         try:
@@ -198,6 +208,8 @@ class PipelineExecutorStepMixin:
                     raise ValueError(f"Execution {exec_id} not found after resume") from None
                 execution = refreshed
             except Exception as e:
+                if pipeline is not None and not pipeline.enabled:
+                    raise
                 logger.error(f"Failed to resume execution after approval: {e}", exc_info=True)
                 refreshed = self.execution_manager.get_execution(execution.id)
                 if refreshed:
@@ -250,7 +262,7 @@ class PipelineExecutorStepMixin:
 
         try:
             # Load the nested pipeline
-            nested_pipeline = await self.loader.load_pipeline(pipeline_name)
+            nested_pipeline = await self.loader.load_pipeline(pipeline_name, project_id)
 
             if not nested_pipeline:
                 raise RuntimeError(f"Pipeline '{pipeline_name}' not found")

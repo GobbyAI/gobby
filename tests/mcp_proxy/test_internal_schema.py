@@ -156,6 +156,20 @@ async def test_call_coerces_string_args_to_declared_types() -> None:
     assert isinstance(result["threshold"], float)
 
 
+@pytest.mark.asyncio
+async def test_call_offloads_sync_tool_from_event_loop_thread() -> None:
+    registry = InternalToolRegistry(name="test-registry")
+    event_loop_thread = threading.get_ident()
+
+    @registry.tool(name="thread_id", description="Return the current thread ID")
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    worker_thread = await registry.call("thread_id", {})
+
+    assert worker_thread != event_loop_thread
+
+
 def test_decorator_required_vs_optional() -> None:
     """Parameters without defaults should be required."""
     registry = InternalToolRegistry(name="test-registry")

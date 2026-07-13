@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from gobby.storage.sessions import SessionManager
@@ -51,3 +53,83 @@ def test_claim_task_raises_task_already_claimed_error(temp_db, sample_project) -
 
     assert error.value.task_id == task.id
     assert error.value.claimed_by == owner.id
+
+
+def test_concurrent_claim_has_exactly_one_winner(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        title="Contended task",
+    )
+    session_manager = SessionManager(temp_db)
+    claimants = [
+        session_manager.register(
+            external_id=f"claimant-{index}",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        for index in range(4)
+    ]
+    barrier = threading.Barrier(len(claimants))
+    winners: list[str] = []
+    conflicts: list[TaskAlreadyClaimedError] = []
+    unexpected: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _claim(session_id: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            claimed = claim_task(temp_db, task.id, session_id)
+            with lock:
+                winners.append(claimed.claimed_by_session_id or "")
+        except TaskAlreadyClaimedError as exc:
+            with lock:
+                conflicts.append(exc)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with lock:
+                unexpected.append(exc)
+
+    threads = [threading.Thread(target=_claim, args=(claimant.id,)) for claimant in claimants]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert unexpected == []
+    assert len(winners) == 1
+    assert len(conflicts) == len(claimants) - 1
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == winners[0]
+
+
+def test_expected_owner_does_not_stomp_replacement_owner(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        title="Delegated task",
+    )
+    session_manager = SessionManager(temp_db)
+    owner = session_manager.register(
+        external_id="delegating-owner",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    replacement = session_manager.register(
+        external_id="replacement-owner",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    child = session_manager.register(
+        external_id="delegated-child",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    claim_task(temp_db, task.id, owner.id)
+    claim_task(temp_db, task.id, replacement.id, force=True)
+
+    with pytest.raises(TaskAlreadyClaimedError) as error:
+        claim_task(temp_db, task.id, child.id, expected_owner=owner.id)
+
+    assert error.value.claimed_by == replacement.id
+    assert LocalTaskManager(temp_db).get_task(task.id).claimed_by_session_id == replacement.id

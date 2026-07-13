@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal, cast
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -46,22 +46,48 @@ class RuntimeDispatchMutex:
     expected_stage_state: RuntimeStageSnapshotState | None = None
     expected_stage_updated_at: datetime | None = None
     candidate_loader: CandidateLoader | None = None
+    borrowed_run_id: str | None = None
     _acquired: bool = field(default=False, init=False)
     _released: bool = field(default=False, init=False)
     _run_id: str | None = field(default=None, init=False)
 
     def __enter__(self) -> RuntimeDispatchMutex:
-        acquired = self.storage.acquire_mutex(
-            self.task_id,
-            holder=self.holder,
-            kind=self.action_kind,
-            ttl_seconds=self.ttl_seconds,
-            run_id=None,
-            now=self.now,
-        )
-        if not acquired:
-            msg = f"dispatch mutex for task {self.task_id!r} is held by another dispatcher"
-            raise DispatchMutexUnavailableError(msg)
+        if self.borrowed_run_id is not None:
+            mutex = self.storage.get_mutex(self.task_id)
+            now = parse_stored_datetime(self.now) or datetime.now(UTC)
+            lease_until = parse_stored_datetime(mutex.lease_until) if mutex is not None else None
+            if (
+                mutex is None
+                or mutex.run_id != self.borrowed_run_id
+                or not isinstance(mutex.lease_holder, str)
+                or lease_until is None
+                or lease_until < now
+                or not self.storage.refresh_mutex_for_run(
+                    self.task_id,
+                    self.borrowed_run_id,
+                    mutex.lease_holder,
+                    self.ttl_seconds,
+                    now=self.now,
+                )
+            ):
+                msg = (
+                    f"dispatch mutex for task {self.task_id!r} is not held by "
+                    f"run {self.borrowed_run_id!r}"
+                )
+                raise DispatchMutexUnavailableError(msg)
+            self._run_id = self.borrowed_run_id
+        else:
+            acquired = self.storage.acquire_mutex(
+                self.task_id,
+                holder=self.holder,
+                kind=self.action_kind,
+                ttl_seconds=self.ttl_seconds,
+                run_id=None,
+                now=self.now,
+            )
+            if not acquired:
+                msg = f"dispatch mutex for task {self.task_id!r} is held by another dispatcher"
+                raise DispatchMutexUnavailableError(msg)
 
         self._acquired = True
         if not self._candidate_stage_snapshot_still_matches():
@@ -72,7 +98,8 @@ class RuntimeDispatchMutex:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        self.release()
+        if self.borrowed_run_id is None:
+            self.release()
 
     @property
     def acquired(self) -> bool:
@@ -101,6 +128,8 @@ class RuntimeDispatchMutex:
 
     def release(self) -> bool:
         """Release this context's lease if it is still held by this holder."""
+        if self.borrowed_run_id is not None:
+            return False
         if not self._acquired or self._released:
             return False
         released = self.storage.release_mutex(self.task_id, self.holder)

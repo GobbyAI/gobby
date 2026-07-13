@@ -35,6 +35,9 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
+from gobby.memory.vectorstore_status import VectorStoreStatus
+
 logger = logging.getLogger(__name__)
 
 _UNINITIALIZED_MESSAGE = "VectorStore not initialized. Call initialize() first."
@@ -75,9 +78,6 @@ def is_recoverable_vector_store_error(error: BaseException) -> bool:
     return isinstance(error, httpx.TransportError)
 
 
-VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
-
-
 def memory_project_scope_filter(
     project_id: str | None,
     *,
@@ -103,27 +103,6 @@ def memory_project_scope_filter(
             IsEmptyCondition(is_empty=field),
         ]
     )
-
-
-def log_rate_limited_warning(
-    target_logger: logging.Logger,
-    last_warned_at: float,
-    message: str,
-    error: BaseException,
-) -> float:
-    """Emit a rate-limited warning for transient VectorStore failures.
-
-    Returns the timestamp the caller should persist as the new
-    ``last_warned_at`` value. Callers that share a rate-limit window
-    (e.g., distinct services on the same VectorStore) can route their
-    warnings through this helper so the cadence is uniform.
-    """
-    now = time.monotonic()
-    if now - last_warned_at >= VECTORSTORE_WARNING_INTERVAL_SECONDS:
-        target_logger.warning("%s: %s", message, error)
-        return now
-    target_logger.debug("%s: %s", message, error)
-    return last_warned_at
 
 
 class VectorStore:
@@ -160,11 +139,16 @@ class VectorStore:
         self._collection_lifecycle_lock = asyncio.Lock()
         self._retry_backoff_seconds = _INITIAL_RETRY_BACKOFF_SECONDS
         self._next_retry_at = 0.0
+        self._status = VectorStoreStatus(self._collection_name, self._embedding_dim)
 
     @property
     def collection_name(self) -> str:
         """Return the default collection name configured for this store."""
         return self._collection_name
+
+    def status_snapshot(self) -> dict[str, Any]:
+        """Return structured collection lifecycle and recovery state."""
+        return self._status.snapshot()
 
     async def initialize(self) -> None:
         """Create the Qdrant client and ensure the collection exists."""
@@ -204,6 +188,7 @@ class VectorStore:
                         self._collection_name,
                         self._embedding_dim,
                     )
+                self._status.mark_ready()
             else:
                 # Check for dimension mismatch between config and existing collection.
                 try:
@@ -212,12 +197,9 @@ class VectorStore:
                         self._collection_name,
                     )
                     if existing_dim is not None and existing_dim != self._embedding_dim:
-                        raise VectorStoreCollectionDimensionError(
-                            f"Embedding dimension mismatch for collection '{self._collection_name}': "
-                            f"configured={self._embedding_dim}, existing={existing_dim}. "
-                            f"Either change embedding_dim in config to {existing_dim}, "
-                            f"or run 'gobby memory rebuild' to re-embed with the new model."
-                        )
+                        self._status.mark_dimension_mismatch(existing_dim)
+                    else:
+                        self._status.mark_ready()
                 except VectorStoreCollectionDimensionError:
                     raise
                 except Exception as e:
@@ -570,9 +552,14 @@ class VectorStore:
         client: QdrantClient,
         *,
         recreate_on_mismatch: bool = True,
-    ) -> bool:
-        """Ensure rebuild collection exists; return true when it is known empty."""
+    ) -> RebuildCollectionPlan:
+        """Choose a rebuild target without modifying the active collection."""
         try:
+            aliases_response = await asyncio.to_thread(client.get_aliases)
+            alias_targets = {
+                alias.alias_name: alias.collection_name for alias in aliases_response.aliases
+            }
+            active_alias_target = alias_targets.get(self._collection_name)
             exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
             if not exists:
                 created = await self._create_collection(
@@ -586,7 +573,10 @@ class VectorStore:
                         self._collection_name,
                         self._embedding_dim,
                     )
-                return created
+                return RebuildCollectionPlan(
+                    target_name=self._collection_name,
+                    target_is_empty=created,
+                )
 
             existing_dim = await self._read_collection_dimension(client, self._collection_name)
             if existing_dim is not None and existing_dim != self._embedding_dim:
@@ -595,27 +585,75 @@ class VectorStore:
                         f"Qdrant collection '{self._collection_name}' dimension mismatch "
                         f"(expected_dim={self._embedding_dim}, observed_dim={existing_dim})"
                     )
-                await asyncio.to_thread(
-                    client.delete_collection,
-                    collection_name=self._collection_name,
-                )
+                target_name = f"{self._collection_name}@rebuild-{time.time_ns()}"
                 created = await self._create_collection(
                     client,
-                    self._collection_name,
+                    target_name,
                     self._embedding_dim,
                 )
-                if created:
-                    logger.info(
-                        "Recreated Qdrant collection '%s' (dim changed %s->%s)",
-                        self._collection_name,
-                        existing_dim,
-                        self._embedding_dim,
-                    )
-                return created
+                if not created:
+                    raise RuntimeError(f"Could not create rebuild collection '{target_name}'")
+                logger.info(
+                    "Created temporary Qdrant collection '%s' for dimension change %s->%s",
+                    target_name,
+                    existing_dim,
+                    self._embedding_dim,
+                )
+                return RebuildCollectionPlan(
+                    target_name=target_name,
+                    target_is_empty=True,
+                    active_target=active_alias_target or self._collection_name,
+                    active_is_alias=active_alias_target is not None,
+                )
         except Exception as exc:
             self._raise_if_recoverable(exc)
             raise
-        return False
+        return RebuildCollectionPlan(
+            target_name=self._collection_name,
+            target_is_empty=False,
+        )
+
+    async def _activate_rebuild_collection(
+        self,
+        client: QdrantClient,
+        plan: RebuildCollectionPlan,
+    ) -> None:
+        """Activate a fully populated rebuild target."""
+        operations: list[DeleteAliasOperation | CreateAliasOperation] = []
+        if plan.active_is_alias:
+            operations.append(
+                DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=self._collection_name))
+            )
+        else:
+            await asyncio.to_thread(
+                client.delete_collection,
+                collection_name=self._collection_name,
+            )
+        operations.append(
+            CreateAliasOperation(
+                create_alias=CreateAlias(
+                    collection_name=plan.target_name,
+                    alias_name=self._collection_name,
+                )
+            )
+        )
+        await asyncio.to_thread(
+            client.update_collection_aliases,
+            change_aliases_operations=operations,
+        )
+
+    async def _delete_collection_best_effort(
+        self,
+        client: QdrantClient,
+        collection_name: str,
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                client.delete_collection,
+                collection_name=collection_name,
+            )
+        except Exception as exc:
+            logger.warning("Could not delete obsolete collection '%s': %s", collection_name, exc)
 
     async def ensure_collection(
         self,
@@ -768,13 +806,13 @@ class VectorStore:
         """
         client = self._client
         if client is None:
-            return 0
+            raise VectorStoreUnavailableError("Vector store is not initialized")
         try:
             result = client.count(collection_name=self._collection_name)
         except Exception as exc:
             if is_recoverable_vector_store_error(exc):
                 self._mark_unavailable(exc)
-                return 0
+                raise VectorStoreUnavailableError("Vector store count is unavailable") from exc
             raise
         return result.count
 
@@ -801,43 +839,65 @@ class VectorStore:
             client = await self._ensure_initialized()
 
             async with self._collection_lifecycle_lock:
-                collection_reset = await self._prepare_collection_for_rebuild(
+                plan = await self._prepare_collection_for_rebuild(
                     client,
                     recreate_on_mismatch=recreate_on_mismatch,
                 )
 
-                batch_size = 500
-                total = 0
-                if stale_delete_strategy not in ("precompute", "streaming"):
-                    raise ValueError("stale_delete_strategy must be 'precompute' or 'streaming'")
-                incoming_ids: set[str] = (
-                    {str(mem["id"]) for mem in memories}
-                    if stale_delete_strategy == "precompute"
-                    else set()
-                )
-                batch: list[tuple[str, list[float], dict[str, Any]]] = []
-                for mem in memories:
-                    memory_id = str(mem["id"])
-                    if stale_delete_strategy == "streaming":
-                        incoming_ids.add(memory_id)
-                    content = mem["content"]
-                    embedding = await embed_fn(content)
-                    payload = {k: v for k, v in mem.items() if k not in ("id",)}
-                    batch.append((memory_id, embedding, payload))
+                activation_started = False
+                try:
+                    batch_size = 500
+                    total = 0
+                    if stale_delete_strategy not in ("precompute", "streaming"):
+                        raise ValueError(
+                            "stale_delete_strategy must be 'precompute' or 'streaming'"
+                        )
+                    incoming_ids: set[str] = (
+                        {str(mem["id"]) for mem in memories}
+                        if stale_delete_strategy == "precompute"
+                        else set()
+                    )
+                    batch: list[tuple[str, list[float], dict[str, Any]]] = []
+                    for mem in memories:
+                        memory_id = str(mem["id"])
+                        if stale_delete_strategy == "streaming":
+                            incoming_ids.add(memory_id)
+                        content = mem["content"]
+                        embedding = await embed_fn(content)
+                        payload = {k: v for k, v in mem.items() if k not in ("id",)}
+                        batch.append((memory_id, embedding, payload))
 
-                    if len(batch) >= batch_size:
-                        await self.batch_upsert(batch)
+                        if len(batch) >= batch_size:
+                            if plan.target_name == self._collection_name:
+                                await self.batch_upsert(batch)
+                            else:
+                                await self.batch_upsert(batch, collection_name=plan.target_name)
+                            total += len(batch)
+                            logger.info("Rebuild progress: %s/%s vectors", total, len(memories))
+                            batch = []
+
+                    if batch:
+                        if plan.target_name == self._collection_name:
+                            await self.batch_upsert(batch)
+                        else:
+                            await self.batch_upsert(batch, collection_name=plan.target_name)
                         total += len(batch)
-                        logger.info("Rebuild progress: %s/%s vectors", total, len(memories))
-                        batch = []
 
-                if batch:
-                    await self.batch_upsert(batch)
-                    total += len(batch)
+                    if not plan.target_is_empty:
+                        await self._delete_stale_ids(client, incoming_ids, batch_size=batch_size)
 
-                if not collection_reset:
-                    await self._delete_stale_ids(client, incoming_ids, batch_size=batch_size)
+                    if plan.requires_swap:
+                        activation_started = True
+                        await self._activate_rebuild_collection(client, plan)
+                except BaseException:
+                    if plan.requires_swap and not activation_started:
+                        await self._delete_collection_best_effort(client, plan.target_name)
+                    raise
 
+                if plan.active_is_alias and plan.active_target is not None:
+                    await self._delete_collection_best_effort(client, plan.active_target)
+
+                self._status.mark_rebuild_complete()
                 logger.info("Rebuilt %s vectors in '%s'", total, self._collection_name)
 
     async def _delete_stale_ids(
@@ -877,11 +937,22 @@ class VectorStore:
             await self.delete_many(stale_ids[index : index + batch_size])
         logger.info("Deleted %s stale points from '%s'", len(stale_ids), self._collection_name)
 
-    async def scroll_ids(self, batch_size: int = 1000) -> list[str]:
-        """Return all point IDs in the collection."""
+    async def scroll_ids(
+        self,
+        batch_size: int = 1000,
+        filters: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Return point IDs in the collection, optionally filtered by payload."""
         client = await self._ensure_initialized()
         all_ids: list[str] = []
         offset = None
+        scroll_filter = None
+        if filters:
+            conditions = [
+                FieldCondition(key=key, match=MatchValue(value=value))
+                for key, value in filters.items()
+            ]
+            scroll_filter = Filter(must=conditions)
 
         while True:
             try:
@@ -890,6 +961,7 @@ class VectorStore:
                     collection_name=self._collection_name,
                     limit=batch_size,
                     offset=offset,
+                    scroll_filter=scroll_filter,
                     with_payload=False,
                     with_vectors=False,
                 )
@@ -908,70 +980,3 @@ class VectorStore:
         if self._client is not None:
             await asyncio.to_thread(self._client.close)
             self._client = None
-
-
-# ---------------------------------------------------------------------------
-# Collection name resolver for staged embedding switches
-# ---------------------------------------------------------------------------
-
-# Kinds of Qdrant embedding collections managed by the daemon.
-EMBEDDING_COLLECTION_KINDS: tuple[str, ...] = (
-    "memories",
-    "tool_embeddings",
-    "gobby_github_issues",
-)
-
-
-class CollectionNameResolver:
-    """Resolves active alias names vs versioned physical collection names.
-
-    During an embedding switch, new collections are built under versioned
-    physical names (e.g. ``memories@4096-abc123``) while the old collections
-    keep serving under the active alias (e.g. ``memories``). At flip time,
-    the alias is repointed to the new physical collection.
-
-    Build code operates on ``physical_name(kind, run_id)`` only.
-    Serving paths resolve ``active_alias(kind)`` only.
-    This separation prevents build code from accidentally touching the
-    live collection.
-    """
-
-    def __init__(self, kinds: tuple[str, ...] = EMBEDDING_COLLECTION_KINDS) -> None:
-        self._kinds = kinds
-
-    @property
-    def kinds(self) -> tuple[str, ...]:
-        return self._kinds
-
-    def active_alias(self, kind: str) -> str:
-        """Return the serving alias name for a collection kind.
-
-        This is the name that serving paths (search, upsert) use.
-        """
-        return kind
-
-    def physical_name(self, kind: str, run_id: str) -> str:
-        """Return the versioned physical collection name for a build run.
-
-        Format: ``{kind}@{run_id}`` (e.g. ``memories@4096-abc123``).
-        """
-        return f"{kind}@{run_id}"
-
-    def parse_physical_name(self, name: str) -> tuple[str, str] | None:
-        """Parse a physical name back into (kind, run_id), or None if not physical."""
-        if "@" not in name:
-            return None
-        kind, run_id = name.split("@", 1)
-        return kind, run_id
-
-    def is_physical_name(self, name: str) -> bool:
-        """Return True if the name is a versioned physical collection name."""
-        return "@" in name
-
-    def all_physical_names(self, run_id: str) -> list[str]:
-        """Return physical names for all managed kinds for a given run."""
-        return [self.physical_name(kind, run_id) for kind in self._kinds]
-
-    def all_active_aliases(self) -> list[str]:
-        """Return active alias names for all managed kinds."""
-        return [self.active_alias(kind) for kind in self._kinds]

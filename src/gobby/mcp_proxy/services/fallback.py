@@ -15,8 +15,10 @@ import psycopg
 from psycopg_pool import PoolTimeout
 
 from gobby.memory.vectorstore import (
-    VECTORSTORE_WARNING_INTERVAL_SECONDS,
     is_recoverable_vector_store_error,
+)
+from gobby.memory.vectorstore_logging import (
+    VECTORSTORE_WARNING_INTERVAL_SECONDS,
     log_rate_limited_warning,
 )
 

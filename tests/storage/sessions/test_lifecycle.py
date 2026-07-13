@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
@@ -116,6 +117,30 @@ class TestSessionManagerLifecycle:
         result = session_manager.delete(session.id)
         assert result is True
         assert session_manager.get(session.id) is None
+
+    def test_delete_session_preserves_sourced_memory(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="delete-memory-source",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        memory_manager = LocalMemoryManager(session_manager.db)
+        memory = memory_manager.create_memory(
+            content="Provenance can be cleared without deleting this content",
+            project_id=sample_project["id"],
+            source_session_id=session.id,
+        )
+
+        assert session_manager.delete(session.id) is True
+
+        surviving_memory = memory_manager.get_memory(memory.id)
+        assert surviving_memory.content == memory.content
+        assert surviving_memory.source_session_id is None
 
     def test_delete_nonexistent(self, session_manager: SessionManager) -> None:
         """Test deleting nonexistent session returns False."""

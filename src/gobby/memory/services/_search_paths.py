@@ -72,7 +72,7 @@ class SearchPathHost(Protocol):
         limit: int,
     ) -> list[Memory]: ...
 
-    def _emit_search_debug(
+    async def _emit_search_debug(
         self,
         *,
         query: str,
@@ -265,7 +265,7 @@ async def search_with_graph(
     results, candidates = await service._collect_active_results(
         limit=limit, collect=_collect, build=_build
     )
-    service._emit_search_debug(
+    await service._emit_search_debug(
         query=query,
         project_id=project_id,
         session_id=session_id,
@@ -420,7 +420,7 @@ async def search_qdrant_keyword(
     results, candidates = await service._collect_active_results(
         limit=limit, collect=_collect, build=_build
     )
-    service._emit_search_debug(
+    await service._emit_search_debug(
         query=query,
         project_id=project_id,
         session_id=session_id,

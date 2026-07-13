@@ -240,6 +240,49 @@ class TestAdminRoutes:
         assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
         mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
 
+    @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_reports_qdrant_dimension_rebuild_state(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_is_qdrant_healthy,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(rss=0, vms=0)
+        mock_process.num_threads.return_value = 1
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.0
+        mock_is_qdrant_healthy.return_value = True
+
+        vector_store = MagicMock()
+        vector_store._client = None
+        vector_store._url = "http://localhost:6333"
+        vector_store.status_snapshot.return_value = {
+            "state": "recreated_pending_rebuild",
+            "collection": "memories",
+            "configured_dimension": 768,
+            "rebuild_required": True,
+            "dimension_recovery": {
+                "action": "recreated",
+                "previous_dimension": 384,
+                "configured_dimension": 768,
+            },
+        }
+        mock_server.memory_manager._vector_store = vector_store
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        qdrant = response.json()["memory"]["qdrant"]
+        assert qdrant["healthy"] is True
+        assert qdrant["state"] == "recreated_pending_rebuild"
+        assert qdrant["rebuild_required"] is True
+        assert qdrant["dimension_recovery"]["previous_dimension"] == 384
+
     @patch("gobby.cli.services.get_falkordb_status", new_callable=AsyncMock)
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")

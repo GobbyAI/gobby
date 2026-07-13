@@ -123,6 +123,7 @@ class TestGobbyRunnerInit:
         runner = SimpleNamespace(
             config=SimpleNamespace(
                 memory=SimpleNamespace(),
+                knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
                 embeddings=SimpleNamespace(
                     model="text-embedding-3-small",
                     api_key="",

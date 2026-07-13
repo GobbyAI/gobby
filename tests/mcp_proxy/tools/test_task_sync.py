@@ -753,6 +753,7 @@ class TestGitIntegrationEdgeCases:
             {"sha": "abc123", "reason": "already linked"},
             {"sha": "def456", "reason": "task not found"},
         ]
+        mock_result.skipped_refs = {"#999": ["def456"]}
         mock_fn.return_value = mock_result
 
         registry = create_commit_registry(
@@ -767,6 +768,7 @@ class TestGitIntegrationEdgeCases:
 
         assert len(result["skipped"]) == 2
         assert result["skipped"][0]["reason"] == "already linked"
+        assert result["skipped_refs"] == {"#999": ["def456"]}
 
     def test_get_task_diff_no_commits(self, mock_sync_registry) -> None:
         """Test get_task_diff when task has no linked commits."""

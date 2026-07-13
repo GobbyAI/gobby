@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -54,6 +55,7 @@ class TestStartDetached:
         # by start_detached, not by the background execute() resume path.
         assert execution.status == ExecutionStatus.RUNNING
         mock_execution_manager.create_execution.assert_called_once()
+
         assert executor._detached_tasks, "background task must be retained"
 
         task = next(iter(executor._detached_tasks))
@@ -71,6 +73,22 @@ class TestStartDetached:
         # The background execute() resumed the pre-created record instead of
         # creating a second one.
         mock_execution_manager.create_execution.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_detached_rejects_disabled_pipeline(
+        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
+    ) -> None:
+        simple_pipeline.enabled = False
+        executor = _make_executor(mock_db, mock_execution_manager, mock_llm_service)
+
+        with pytest.raises(ValueError, match="Pipeline 'test-pipeline' is disabled"):
+            await executor.start_detached(
+                pipeline=simple_pipeline,
+                inputs={},
+                project_id="proj-123",
+            )
+
+        mock_execution_manager.create_execution.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_start_detached_failure_is_logged_and_discarded(
@@ -94,8 +112,8 @@ class TestStartDetached:
             task = next(iter(executor._detached_tasks))
             with pytest.raises(RuntimeError, match="boom"):
                 await task
-            # Done-callbacks run via call_soon; yield once so they fire.
-            await asyncio.sleep(0)
+            # Done-callbacks run via call_soon; drain scheduled callbacks.
+            await drain_asyncio_tasks()
 
         assert executor._detached_tasks == set()
         assert executor._detached_execution_ids == set()
@@ -131,7 +149,7 @@ class TestStartDetached:
             task = next(iter(executor._detached_tasks))
             with pytest.raises(ApprovalRequired):
                 await task
-            await asyncio.sleep(0)
+            await drain_asyncio_tasks()
 
         assert executor._detached_tasks == set()
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
@@ -178,6 +196,7 @@ class TestStartupSweep:
             project_id="proj-123",
         )
 
+        assert execution.id in executor._detached_execution_ids
         executor.startup_sweep()
         mock_execution_manager.fail_stale_running_executions.assert_called_once_with(
             exclude_ids={execution.id}
@@ -185,3 +204,4 @@ class TestStartupSweep:
 
         release.set()
         await next(iter(executor._detached_tasks))
+        assert executor._detached_execution_ids == set()

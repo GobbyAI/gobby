@@ -187,7 +187,7 @@ async def test_access_tracking_independent_memories(memory_manager):
     memory2 = await memory_manager.create_memory("Beta memory")
 
     # Access only the first memory directly
-    memory_manager._update_access_stats([memory_manager.get_memory(memory1.id)])
+    await memory_manager._update_access_stats([memory_manager.get_memory(memory1.id)])
 
     updated1 = memory_manager.get_memory(memory1.id)
     updated2 = memory_manager.get_memory(memory2.id)

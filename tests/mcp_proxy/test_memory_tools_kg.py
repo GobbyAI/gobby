@@ -66,7 +66,12 @@ class TestSearchKnowledgeGraphTool:
 
         assert result["success"] is True
         assert len(result["results"]) >= 1
-        kg_service.search_graph.assert_called_once_with("programming language", limit=5)
+        kg_service.search_graph.assert_called_once_with(
+            "programming language",
+            limit=5,
+            project_id=None,
+            include_global=True,
+        )
 
     @pytest.mark.asyncio
     async def test_search_knowledge_graph_returns_empty_when_no_kg_service(self) -> None:
