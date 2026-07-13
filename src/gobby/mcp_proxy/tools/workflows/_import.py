@@ -53,7 +53,7 @@ def _sync_imported_definition(
         "definition_json": json.dumps(data),
         "description": data.get("description", ""),
         "version": str(data.get("version", "1.0")),
-        "enabled": bool(data.get("enabled", False)),
+        "enabled": bool(data.get("enabled", True)),
         "priority": data.get("priority", 100),
         "sources": data.get("sources"),
         "source": "installed",

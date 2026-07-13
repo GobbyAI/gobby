@@ -70,7 +70,6 @@ async def test_imported_step_workflow_is_immediately_gettable_and_updatable(
         """name: source-step
 type: step
 version: 1.0
-enabled: true
 description: First version
 steps:
   - name: work
@@ -109,6 +108,7 @@ steps:
     row = LocalWorkflowDefinitionManager(temp_db).get(imported["definition_id"])
     assert row.workflow_type == "workflow"
     assert row.project_id == PROJECT_ID
+    assert row.enabled is True
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,6 @@ async def test_imported_pipeline_is_immediately_gettable_and_runnable(
         """name: imported-pipeline
 type: pipeline
 version: 1.0
-enabled: true
 steps:
   - id: work
     exec: echo imported
@@ -155,6 +154,8 @@ steps:
     execution = execution_manager.get_execution(started["execution_id"])
     assert execution is not None
     assert execution.project_id == PROJECT_ID
+    row = LocalWorkflowDefinitionManager(temp_db).get(imported["definition_id"])
+    assert row.enabled is True
     execute.assert_awaited_once()
 
 
@@ -171,7 +172,7 @@ async def test_global_import_is_immediately_gettable(
     source.write_text(
         """name: global-step
 type: step
-enabled: true
+enabled: false
 steps:
   - name: work
     allowed_tools: all
@@ -196,4 +197,5 @@ steps:
     assert fetched["success"] is True
     row = LocalWorkflowDefinitionManager(temp_db).get(imported["definition_id"])
     assert row.project_id is None
+    assert row.enabled is False
     assert Path(imported["destination"]).parent == global_dir
