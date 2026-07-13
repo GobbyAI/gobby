@@ -8,14 +8,27 @@ Falls back to simple storage when VectorStore is unavailable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from qdrant_client.models import (
+    FieldCondition,
+    Filter,
+    IsEmptyCondition,
+    IsNullCondition,
+    MatchValue,
+    PayloadField,
+)
+
+from gobby.memory.vectorstore import (
+    is_recoverable_vector_store_error,
+    memory_project_scope_filter,
+)
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -27,6 +40,7 @@ logger = logging.getLogger(__name__)
 NEAR_EXACT_THRESHOLD = 0.95  # Score above this → duplicate, skip
 SIMILAR_THRESHOLD = 0.85  # Score above this → update if new content is richer
 VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
+EMBEDDING_WARNING_INTERVAL_SECONDS = 60.0
 _DETAIL_MARKER_RE = re.compile(
     r"`[^`]+`|https?://\S+|[/~][\w./-]+|#[0-9]+|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?\b"
 )
@@ -35,13 +49,30 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]+(?:\s+|$)")
 _WORD_RE = re.compile(r"[A-Za-z0-9_'-]+")
 
 
+def _dedup_scope_filter(project_id: str | None) -> Filter:
+    """Limit dedup candidates to memories visible from the source scope."""
+    if project_id:
+        project_filter = memory_project_scope_filter(project_id)
+        if project_filter is None:
+            raise RuntimeError("project-scoped dedup filter was not created")
+        return project_filter
+
+    field = PayloadField(key="project_id")
+    return Filter(
+        should=[
+            FieldCondition(key="project_id", match=MatchValue(value="")),
+            IsNullCondition(is_null=field),
+            IsEmptyCondition(is_empty=field),
+        ]
+    )
+
+
 @dataclass
 class DedupResult:
     """Result of the dedup pipeline."""
 
     added: list[Memory] = field(default_factory=list)
     updated: list[Memory] = field(default_factory=list)
-    deleted: list[str] = field(default_factory=list)
 
 
 def _memory_richness_score(content: str) -> tuple[int, int, int, int, int]:
@@ -82,12 +113,19 @@ class DedupService:
         vector_store: VectorStore,
         storage: LocalMemoryManager,
         embed_fn: Callable[..., Any],
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ):
         self.vector_store = vector_store
         self.storage = storage
         self.embed_fn = embed_fn
-        self._embeddings_available: bool | None = None
+        self._run_db = run_db
+        self._last_embedding_warning_at = -EMBEDDING_WARNING_INTERVAL_SECONDS
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
+
+    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def process(
         self,
@@ -97,6 +135,7 @@ class DedupService:
         tags: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
+        exclude_memory_id: str | None = None,
     ) -> DedupResult:
         """
         Run vector similarity dedup on content.
@@ -108,35 +147,29 @@ class DedupService:
             tags: Optional tags
             source_type: Origin of memory
             source_session_id: Origin session
+            exclude_memory_id: Memory already stored by the caller, which must not deduplicate
+                against itself
 
         Returns:
-            DedupResult with lists of added, updated, and deleted memories
+            DedupResult with lists of added and updated memories
         """
         result = DedupResult()
 
         # Embed the new memory content
-        if self._embeddings_available is False:
-            return await self._fallback_store(
-                content, project_id, memory_type, tags, source_type, source_session_id
-            )
         try:
             embedding = await self.embed_fn(content)
-            self._embeddings_available = True
         except Exception as e:
-            if self._embeddings_available is None:
-                logger.warning(f"Embedding failed, falling back to simple store: {e}")
-                self._embeddings_available = False
+            self._log_embedding_failure("Embedding failed, falling back to simple store", e)
             return await self._fallback_store(
                 content, project_id, memory_type, tags, source_type, source_session_id
             )
 
         # Search for similar existing memories
         try:
-            filters = {"project_id": project_id} if project_id else None
             search_results = await self.vector_store.search(
                 query_embedding=embedding,
                 limit=5,
-                filters=filters,
+                filters=_dedup_scope_filter(project_id),
             )
         except Exception as e:
             if is_recoverable_vector_store_error(e):
@@ -151,6 +184,9 @@ class DedupService:
 
         # Deterministic threshold decisions
         for memory_id, score in search_results:
+            if memory_id == exclude_memory_id:
+                continue
+
             if score > NEAR_EXACT_THRESHOLD:
                 # Near-exact duplicate → NOOP
                 logger.debug(f"Near-exact duplicate found (score={score:.3f}), skipping")
@@ -159,11 +195,13 @@ class DedupService:
             if score > SIMILAR_THRESHOLD:
                 # Similar → UPDATE if new content is richer
                 try:
-                    existing = self.storage.get_memory(memory_id)
+                    existing = await self._run_storage(self.storage.get_memory, memory_id)
                 except ValueError:
                     continue
                 if existing and _is_richer_memory_content(content, existing.content):
-                    updated = self.storage.update_memory(memory_id, content=content)
+                    updated = await self._run_storage(
+                        self.storage.update_memory, memory_id, content=content
+                    )
                     await self._embed_and_upsert(memory_id, content, project_id)
                     result.updated.append(updated)
                     return result
@@ -180,15 +218,10 @@ class DedupService:
         project_id: str | None = None,
     ) -> None:
         """Embed content and upsert to VectorStore."""
-        if self._embeddings_available is False:
-            return  # Known-unavailable, skip silently
         try:
             embedding = await self.embed_fn(content)
-            self._embeddings_available = True
         except Exception as e:
-            if self._embeddings_available is None:
-                logger.warning(f"Embedding failed for {memory_id}: {e}")
-                self._embeddings_available = False
+            self._log_embedding_failure(f"Embedding failed for {memory_id}", e)
             return
 
         try:
@@ -205,6 +238,15 @@ class DedupService:
                 self._log_vector_store_failure(f"VectorStore upsert unavailable for {memory_id}", e)
             else:
                 logger.warning("VectorStore upsert failed for %s: %s", memory_id, e)
+
+    def _log_embedding_failure(self, message: str, error: BaseException) -> None:
+        """Rate-limit warnings without suppressing future embedding attempts."""
+        now = time.monotonic()
+        if now - self._last_embedding_warning_at >= EMBEDDING_WARNING_INTERVAL_SECONDS:
+            logger.warning("%s: %s", message, error)
+            self._last_embedding_warning_at = now
+        else:
+            logger.debug("%s: %s", message, error)
 
     def _log_vector_store_failure(self, message: str, error: BaseException) -> None:
         """Rate-limit noisy VectorStore availability warnings."""
@@ -226,7 +268,8 @@ class DedupService:
     ) -> DedupResult:
         """Fallback: store content directly without dedup."""
         logger.debug("Falling back to simple memory store (vector search unavailable)")
-        memory = self.storage.create_memory(
+        memory = await self._run_storage(
+            self.storage.create_memory,
             content=content,
             memory_type=memory_type,
             project_id=project_id,

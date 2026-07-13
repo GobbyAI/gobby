@@ -9,10 +9,17 @@ from typing import Any
 
 import pytest
 
-from gobby.plans.consumer_sweep import run_consumer_sweep
+from gobby.plans.consumer_sweep import (
+    ConsumerSweepResult,
+    _destructive_target_paths,
+    run_consumer_sweep,
+)
 from gobby.plans.parser import parse_plan
 
 pytestmark = pytest.mark.unit
+
+_DEFERRAL_SYMBOL_REF = "gobby.plans.deferral.validate_deferral"
+_DEFERRAL_TARGET = "src/gobby/plans/deferral.py"
 
 
 @dataclass(frozen=True)
@@ -26,7 +33,7 @@ class _Symbol:
 class _Storage:
     def __init__(self, *, indexed: bool = True) -> None:
         self.indexed = indexed
-        self.symbols = {
+        self.symbols: dict[str, tuple[_Symbol, ...]] = {
             "app.service.do_work": (
                 _Symbol(
                     id="sym-do-work",
@@ -41,6 +48,8 @@ class _Storage:
         self.depth_two_callers: dict[str, tuple[str, ...]] = {
             "sym-do-work": ("src/cli.py",),
         }
+        self.search_queries: list[str] = []
+        self.caller_queries: list[tuple[str, ...]] = []
 
     def get_project_stats(self, project_id: str) -> object | None:
         return object() if self.indexed and project_id == "project-1" else None
@@ -54,6 +63,7 @@ class _Storage:
         limit: int = 50,
     ) -> tuple[_Symbol, ...]:
         del kind, file_path, limit
+        self.search_queries.append(query)
         if project_id != "project-1":
             return ()
         return self.symbols.get(query, ())
@@ -65,6 +75,7 @@ class _Storage:
         callee_names: tuple[str, ...],
     ) -> list[dict[str, Any]]:
         del callee_names
+        self.caller_queries.append(symbol_ids)
         if project_id != "project-1":
             return []
         return [
@@ -98,11 +109,33 @@ class _Storage:
 
 @dataclass(frozen=True)
 class _CodeIndex:
-    storage: _Storage
+    storage: object
     graph: object = object()
 
 
-def _write_plan(tmp_path: Path, targets: str) -> Path:
+def _leaf_only_storage() -> _Storage:
+    storage = _Storage()
+    storage.symbols = {
+        "validate_deferral": (
+            _Symbol(
+                id="sym-validate-deferral",
+                name="validate_deferral",
+                qualified_name="validate_deferral",
+                file_path=_DEFERRAL_TARGET,
+            ),
+        )
+    }
+    storage.callers = {"sym-validate-deferral": ("src/gobby/plans/consumer.py",)}
+    return storage
+
+
+def _write_plan(
+    tmp_path: Path,
+    targets: str,
+    *,
+    symbol_ref: str = "app.service.do_work",
+    file_path: str = "src/service.py",
+) -> Path:
     path = tmp_path / "plan.md"
     header = textwrap.dedent(
         """
@@ -120,13 +153,13 @@ def _write_plan(tmp_path: Path, targets: str) -> Path:
         """
     ).lstrip()
     body = textwrap.dedent(
-        """
+        f"""
 
-        Rename symbol: `app.service.do_work` and update the implementation.
+        Rename symbol: `{symbol_ref}` and update the implementation.
 
         **Acceptance:**
-        - 1.1.1 - Service symbol is renamed. symbol: `app.service.do_work`.
-        - 1.1.2 - Service file changes. file: `src/service.py`.
+        - 1.1.1 - Service symbol is renamed. symbol: `{symbol_ref}`.
+        - 1.1.2 - Service file changes. file: `{file_path}`.
         """
     )
     path.write_text(
@@ -134,6 +167,26 @@ def _write_plan(tmp_path: Path, targets: str) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _run_leaf_symbol_sweep(
+    tmp_path: Path,
+    storage: _Storage,
+) -> ConsumerSweepResult:
+    plan = parse_plan(
+        _write_plan(
+            tmp_path,
+            f"- `{_DEFERRAL_TARGET}`",
+            symbol_ref=_DEFERRAL_SYMBOL_REF,
+            file_path=_DEFERRAL_TARGET,
+        ),
+        parse_mode="draft",
+    )
+    return run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
 
 
 def _write_file_plan(
@@ -166,6 +219,54 @@ def _write_file_plan(
     return path
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "deletions only",
+        "Delete File",
+        "remove file",
+        "DROP FILE",
+        "Renamed File",
+        "MOVED\tFILE",
+        "deleted entirely",
+        "Removed Entirely",
+    ],
+)
+def test_destructive_file_marker_matrix(marker: str) -> None:
+    assert _destructive_target_paths(f"`src/service.py` ({marker})") == {"src/service.py"}
+
+
+@pytest.mark.parametrize("near_miss", ["UNRENAMED FILE", "MOVED FILES"])
+def test_destructive_file_marker_respects_word_boundaries(near_miss: str) -> None:
+    assert _destructive_target_paths(f"`src/service.py` ({near_miss})") == set()
+
+
+@pytest.mark.parametrize("marker", ["RENAMED FILE", "MOVED FILE"])
+def test_renamed_and_moved_markers_trigger_file_level_sweep(
+    tmp_path: Path,
+    marker: str,
+) -> None:
+    storage = _Storage()
+    storage.file_consumers = {"src/service.py": ("src/api.py",)}
+    plan = parse_plan(
+        _write_file_plan(
+            tmp_path,
+            "Update the service file.",
+            target_line=f"Target: `src/service.py` ({marker})",
+        ),
+        parse_mode="draft",
+    )
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert result.valid is False
+    assert result.issues[0].missing_consumers == ("src/api.py",)
+
+
 def test_destructive_symbol_change_with_unlisted_direct_caller_fails(tmp_path: Path) -> None:
     plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
 
@@ -177,6 +278,57 @@ def test_destructive_symbol_change_with_unlisted_direct_caller_fails(tmp_path: P
 
     assert result.valid is False
     assert any("src/api.py" in error for error in result.errors)
+
+
+def test_module_qualified_symbol_requeries_leaf_only_index(tmp_path: Path) -> None:
+    storage = _leaf_only_storage()
+    result = _run_leaf_symbol_sweep(tmp_path, storage)
+
+    assert storage.search_queries == [_DEFERRAL_SYMBOL_REF, "validate_deferral"]
+    assert storage.caller_queries == [("sym-validate-deferral",)]
+    assert result.valid is False
+    assert any("src/gobby/plans/consumer.py" in error for error in result.errors)
+
+
+@pytest.mark.parametrize(
+    "symbols",
+    [
+        (
+            _Symbol(
+                id="sym-validate-deferral",
+                name="validate_deferral",
+                qualified_name="validate_deferral",
+                file_path="src/gobby/plans/other.py",
+            ),
+        ),
+        (
+            _Symbol(
+                id="sym-validate-deferral",
+                name="validate_deferral",
+                qualified_name="validate_deferral",
+                file_path=_DEFERRAL_TARGET,
+            ),
+            _Symbol(
+                id="sym-other-validate-deferral",
+                name="validate_deferral",
+                qualified_name="validate_deferral",
+                file_path="src/gobby/plans/other.py",
+            ),
+        ),
+    ],
+    ids=["defined-outside-targets", "ambiguous-exact-names"],
+)
+def test_leaf_fallback_requires_unique_symbol_defined_in_target(
+    tmp_path: Path,
+    symbols: tuple[_Symbol, ...],
+) -> None:
+    storage = _leaf_only_storage()
+    storage.symbols["validate_deferral"] = symbols
+    result = _run_leaf_symbol_sweep(tmp_path, storage)
+
+    assert storage.search_queries == [_DEFERRAL_SYMBOL_REF, "validate_deferral"]
+    assert storage.caller_queries == []
+    assert result.valid is True
 
 
 def test_listed_direct_caller_passes(tmp_path: Path) -> None:
@@ -294,6 +446,33 @@ def test_destructive_file_intent_excludes_test_consumers(tmp_path: Path) -> None
     assert len(result.issues) == 1
     assert result.issues[0].missing_consumers == ("src/api.py",)
     assert all("tests/test_service.py" not in error for error in result.errors)
+
+
+def test_pathless_target_bullet_does_not_hide_later_file_deletion(tmp_path: Path) -> None:
+    storage = _Storage()
+    storage.file_consumers = {"src/b.py": ("src/api.py",)}
+    plan = parse_plan(
+        _write_file_plan(
+            tmp_path,
+            "Remove the obsolete service file.",
+            target_line=(
+                "Targets:\n"
+                "- Coordinate the rollout with downstream owners.\n"
+                "- `src/b.py` (DELETE FILE)"
+            ),
+        ),
+        parse_mode="draft",
+    )
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert result.valid is False
+    assert len(result.issues) == 1
+    assert result.issues[0].missing_consumers == ("src/api.py",)
 
 
 def test_missing_index_skips_without_failing(tmp_path: Path) -> None:

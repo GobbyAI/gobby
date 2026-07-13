@@ -146,6 +146,9 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 embedding_dim=emb_cfg.dim,
                 collection_prefix=db_cfg.qdrant.collection_prefix,
                 run_db=runner.db_executor.run,
+                max_graph_deterministic_attempts=(
+                    runner.config.knowledge_graph_queue.max_deterministic_attempts
+                ),
             )
         except Exception as e:
             logger.error(f"Failed to initialize MemoryManager: {e}")

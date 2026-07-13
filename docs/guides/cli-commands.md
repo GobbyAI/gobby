@@ -404,18 +404,24 @@ gobby plan coverage --plan PLAN.md --plan-id ID --plan-hash HASH --task-tree db 
   --root-task TASK --project-id PROJECT
 
 gobby plan coverage --plan PLAN.md --plan-id ID --plan-hash HASH \
-  --task-tree matrix-file --matrix-file MATRIX.json
+  --task-tree matrix-file --matrix-file MATRIX.coverage.yaml
 ```
+
+`db` mode reads the live task database and requires both `--root-task` and
+`--project-id`. `matrix-file` mode reads a YAML or JSON mapping with `header`
+and `rows` from `--matrix-file`; it does not accept DB scope flags. Both modes
+write a coverage manifest and print its path. Use `--manifest` to choose that
+path explicitly; otherwise Gobby writes beneath `.gobby/plans/coverage/`.
 
 | Option | Purpose |
 | --- | --- |
 | `--plan PATH` | Plan file to evaluate. |
 | `--plan-id ID` | Stable plan identifier. |
 | `--plan-hash HASH` | Expected plan content hash. |
-| `--task-tree db\|matrix-file` | Choose DB-backed task tree or matrix-file input. |
+| `--task-tree db\|matrix-file` | Choose live DB evaluation or a supplied coverage matrix. |
 | `--root-task TASK` | Root task ref for `db` mode. |
 | `--project-id PROJECT` | Project UUID for `db` mode. |
-| `--matrix-file PATH` | Matrix file for `matrix-file` mode. |
+| `--matrix-file PATH` | YAML/JSON matrix with `header` and `rows`; required for `matrix-file`. |
 | `--evidence SPEC` | Evidence source for coverage validation. |
 | `--manifest PATH` | Write manifest to a specific path. |
 | `--regenerate` | Regenerate an existing manifest. |

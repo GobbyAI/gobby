@@ -17,6 +17,13 @@ from gobby.utils.datetime import parse_stored_datetime, to_aware_utc, utc_now
 logger = logging.getLogger(__name__)
 
 
+def _content_scope_predicate(project_id: str | None) -> tuple[str, tuple[str, ...]]:
+    """Return the content-dedup scope visible from a target project."""
+    if project_id is None:
+        return "project_id IS NULL", ()
+    return "(project_id = %s OR project_id IS NULL)", (project_id,)
+
+
 class MemoryCrudMixin(MemoryStoreBase):
     def create_memory(
         self,
@@ -59,6 +66,24 @@ class MemoryCrudMixin(MemoryStoreBase):
         changed = False
         row: Any | None = None
         with self.db.transaction() as conn:
+            if memory_id is None:
+                scope_predicate, scope_params = _content_scope_predicate(project_id)
+                visible_duplicate = conn.execute(
+                    f"""
+                    SELECT * FROM memories
+                     WHERE content = %s
+                       AND {scope_predicate}
+                       AND deleted_at IS NULL
+                     ORDER BY CASE WHEN project_id IS NULL THEN 1 ELSE 0 END,
+                              created_at ASC,
+                              id ASC
+                     LIMIT 1
+                    """,  # nosec B608 - predicate is selected from fixed SQL literals
+                    (normalized_content, *scope_params),
+                ).fetchone()
+                if visible_duplicate is not None:
+                    return Memory.from_row(visible_duplicate)
+
             # source_id proximity dedup: if the same session created a very similar
             # memory within the last 60 seconds, treat it as a duplicate.
             if source_session_id:
@@ -327,12 +352,12 @@ class MemoryCrudMixin(MemoryStoreBase):
     ) -> bool:
         """Check if a memory with identical content already exists.
 
-        Scopes duplicate detection to the exact project, treating ``NULL`` as
-        the global scope.
+        Project-scoped lookups include visible global memories. Global lookups
+        remain limited to the global scope.
 
         Args:
             content: The content to check for
-            project_id: Project scope to check. ``None`` checks global memories.
+            project_id: Project scope to check plus globals. ``None`` checks globals only.
 
         Returns:
             True if a memory with identical content exists
@@ -340,15 +365,16 @@ class MemoryCrudMixin(MemoryStoreBase):
         normalized_content = content.strip()
         vis = visibility_predicate(visibility)
         vis_clause = f" AND {vis}" if vis else ""
+        scope_predicate, scope_params = _content_scope_predicate(project_id)
         row = self.db.fetchone(
             f"""
             SELECT 1 FROM memories
              WHERE content = %s
-               AND project_id IS NOT DISTINCT FROM %s{vis_clause}
+               AND {scope_predicate}{vis_clause}
              ORDER BY created_at ASC, id ASC
              LIMIT 1
-            """,
-            (normalized_content, project_id),
+            """,  # nosec B608 - predicate and visibility clauses are fixed SQL literals
+            (normalized_content, *scope_params),
         )
         return row is not None
 
@@ -357,11 +383,11 @@ class MemoryCrudMixin(MemoryStoreBase):
     ) -> Memory | None:
         """Get a memory by its exact content.
 
-        Uses project-scoped lookup, matching the behavior of content_exists().
+        Uses project-plus-global lookup, matching the behavior of content_exists().
 
         Args:
             content: The exact content to look up (will be normalized)
-            project_id: Project scope to check. ``None`` checks global memories.
+            project_id: Project scope to check plus globals. ``None`` checks globals only.
 
         Returns:
             The Memory object if found, None otherwise
@@ -369,15 +395,18 @@ class MemoryCrudMixin(MemoryStoreBase):
         normalized_content = content.strip()
         vis = visibility_predicate(visibility)
         vis_clause = f" AND {vis}" if vis else ""
+        scope_predicate, scope_params = _content_scope_predicate(project_id)
         row = self.db.fetchone(
             f"""
             SELECT * FROM memories
              WHERE content = %s
-               AND project_id IS NOT DISTINCT FROM %s{vis_clause}
-             ORDER BY created_at ASC, id ASC
+               AND {scope_predicate}{vis_clause}
+             ORDER BY CASE WHEN project_id IS NULL THEN 1 ELSE 0 END,
+                      created_at ASC,
+                      id ASC
              LIMIT 1
-            """,
-            (normalized_content, project_id),
+            """,  # nosec B608 - predicate and visibility clauses are fixed SQL literals
+            (normalized_content, *scope_params),
         )
         if row:
             return Memory.from_row(row)
@@ -398,7 +427,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                 raise ValueError("Memory content cannot be empty")
             with self.db.transaction() as conn:
                 current = conn.execute(
-                    "SELECT project_id FROM memories WHERE id = %s",
+                    "SELECT project_id, content FROM memories WHERE id = %s",
                     (memory_id,),
                 ).fetchone()
                 if current is None:
@@ -417,6 +446,8 @@ class MemoryCrudMixin(MemoryStoreBase):
                     raise ValueError("Memory content already exists in this project/global scope")
             updates.append("content = %s")
             params.append(content)
+            if content != current["content"]:
+                updates.append("vector_needs_reindex = TRUE")
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))
@@ -437,6 +468,34 @@ class MemoryCrudMixin(MemoryStoreBase):
 
         self._notify_listeners()
         return self.get_memory(memory_id)
+
+    def list_vector_reindex_ids(self) -> list[str]:
+        """Return memories whose stored content is newer than their vector."""
+        rows = self.db.fetchall(
+            "SELECT id FROM memories WHERE vector_needs_reindex IS TRUE ORDER BY id"
+        )
+        return [str(row["id"]) for row in rows]
+
+    def mark_vectors_reindexed(self, indexed_content: dict[str, str]) -> int:
+        """Clear stale state only when the indexed content is still current."""
+        if not indexed_content:
+            return 0
+        cleared = 0
+        with self.db.transaction() as conn:
+            for memory_id, content in indexed_content.items():
+                cursor = conn.execute(
+                    """
+                    UPDATE memories
+                    SET vector_needs_reindex = (content IS DISTINCT FROM %s)
+                    WHERE id = %s
+                    RETURNING content IS NOT DISTINCT FROM %s AS content_matched
+                    """,
+                    (content, memory_id, content),
+                )
+                row = cursor.fetchone()
+                if row is not None and row["content_matched"]:
+                    cleared += 1
+        return cleared
 
     def update_memory_project(self, memory_id: str, project_id: str) -> Memory:
         """Update a memory's project assignment and notify storage listeners."""
@@ -474,6 +533,18 @@ class MemoryCrudMixin(MemoryStoreBase):
     def delete_memory(self, memory_id: str) -> bool:
         with self.db.transaction() as conn:
             cursor = conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+            if cursor.rowcount == 0:
+                return False
+        self._notify_listeners()
+        return True
+
+    def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+        """Delete a memory only when it is visible in the requested project scope."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM memories WHERE id = %s AND (project_id = %s OR project_id IS NULL)",
+                (memory_id, project_id),
+            )
             if cursor.rowcount == 0:
                 return False
         self._notify_listeners()

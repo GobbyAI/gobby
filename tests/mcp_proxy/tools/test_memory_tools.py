@@ -75,6 +75,7 @@ def mock_memory_manager():
     manager.create_memory = AsyncMock(return_value=MockMemory())
     manager.search_memories = AsyncMock(return_value=[MockMemory()])
     manager.delete_memory = AsyncMock(return_value=True)
+    manager.delete_memory_scoped = AsyncMock(return_value=True)
     manager.list_memories = MagicMock(return_value=[MockMemory()])
     manager.get_memory = MagicMock(return_value=MockMemory())
     manager.get_related = AsyncMock(return_value=[MockMemory()])
@@ -500,15 +501,17 @@ class TestDeleteMemory:
     @pytest.mark.asyncio
     async def test_delete_memory_success(self, memory_registry, mock_memory_manager):
         """Test successful memory deletion."""
-        result = await memory_registry.call("delete_memory", {"memory_id": "mem-123"})
+        with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "project-a", "name": "Project A"}
+            result = await memory_registry.call("delete_memory", {"memory_id": "mem-123"})
 
         assert result == {"success": True}  # Success response
-        mock_memory_manager.delete_memory.assert_called_once_with("mem-123")
+        mock_memory_manager.delete_memory_scoped.assert_awaited_once_with("mem-123", "project-a")
 
     @pytest.mark.asyncio
     async def test_delete_memory_not_found(self, memory_registry, mock_memory_manager):
         """Test deletion when memory not found."""
-        mock_memory_manager.delete_memory.return_value = False
+        mock_memory_manager.delete_memory_scoped.return_value = False
 
         result = await memory_registry.call("delete_memory", {"memory_id": "nonexistent"})
 
@@ -518,7 +521,7 @@ class TestDeleteMemory:
     @pytest.mark.asyncio
     async def test_delete_memory_error(self, memory_registry, mock_memory_manager):
         """Test deletion error handling."""
-        mock_memory_manager.delete_memory.side_effect = Exception("Delete error")
+        mock_memory_manager.delete_memory_scoped.side_effect = Exception("Delete error")
 
         result = await memory_registry.call("delete_memory", {"memory_id": "mem-123"})
 

@@ -214,8 +214,8 @@ async def test_set_node_vector_uses_inline_vecf32_assignment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vector_search_uses_label_property_signature() -> None:
-    """Vector queryNodes uses label and property arguments, not an index name."""
+async def test_vector_search_uses_project_filtered_exact_cosine_query() -> None:
+    """Vector ranking filters project scope before exact cosine distance."""
     client, _ = _new_falkor_stub()
     client.query = AsyncMock(return_value=[])
 
@@ -223,11 +223,17 @@ async def test_vector_search_uses_label_property_signature() -> None:
 
     cypher, params = client.query.await_args.args
     compact = _compact(cypher)
-    assert "CALL db.idx.vector.queryNodes('_Entity', 'embedding'," in compact
+    assert "MATCH (node:_Entity)" in compact
+    assert "node.project_id = $project_id" in compact
+    assert "$include_global AND node.project_id IS NULL" in compact
+    assert "vec.cosineDistance(node.embedding, vecf32($embedding))" in compact
+    assert "ORDER BY distance ASC LIMIT $limit" in compact
     assert "vecf32(" in compact
-    assert "db.index.vector.queryNodes" not in compact
+    assert "db.idx.vector.queryNodes" not in compact
     assert "entity_embedding_index" not in compact
-    assert params["candidate_limit"] >= 2
+    assert params["project_id"] == "proj-1"
+    assert params["include_global"] is True
+    assert params["limit"] == 2
     assert params["min_score"] == 0.4
 
 

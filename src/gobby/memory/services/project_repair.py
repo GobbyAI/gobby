@@ -86,7 +86,7 @@ class NullProjectMemoryRepairService:
         db: HubDatabase,
         storage_provider: Callable[[], LocalMemoryManager],
         run_db: Callable[..., Awaitable[Any]],
-        embed_and_upsert: Callable[..., Awaitable[None]],
+        embed_and_upsert: Callable[..., Awaitable[bool]],
     ) -> None:
         self._db = db
         self._storage_provider = storage_provider

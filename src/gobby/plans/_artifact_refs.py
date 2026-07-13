@@ -16,6 +16,9 @@ _BARE_FILE_RE = re.compile(
     r"(?<![A-Za-z0-9_./-])(?P<file>[A-Za-z0-9_.-]+\.(?:md|py|ya?ml|toml|json))"
 )
 _ARTIFACT_MARKERS = ("file:", "symbol:", "test:", "behavior:")
+_IDENTIFIER_BOUNDARY_CHARS = r"A-Za-z0-9_"
+_PATH_LEFT_BOUNDARY_CHARS = r"A-Za-z0-9_.-"
+_PATH_RIGHT_CONTINUATION = r"(?:[A-Za-z0-9_-]|\.[A-Za-z0-9_-]|/)"
 
 
 def artifact_referenced(item: AcceptanceItem, validation_criteria: str) -> bool:
@@ -32,7 +35,7 @@ def artifact_referenced(item: AcceptanceItem, validation_criteria: str) -> bool:
 
 def _file_referenced(artifact_ref: str, validation_criteria: str) -> bool:
     candidates = _path_candidates(artifact_ref) | _extract_path_candidates(artifact_ref)
-    if any(_contains_ref(validation_criteria, candidate) for candidate in candidates):
+    if any(_contains_path_ref(validation_criteria, candidate) for candidate in candidates):
         return True
     if any(_path_parts_referenced(validation_criteria, candidate) for candidate in candidates):
         return True
@@ -54,7 +57,7 @@ def _test_referenced(artifact_ref: str, validation_criteria: str) -> bool:
         return True
     return any(
         (
-            _contains_ref(validation_criteria, path)
+            _contains_path_ref(validation_criteria, path)
             or _path_parts_referenced(validation_criteria, path)
         )
         and _contains_ref(validation_criteria, test_name)
@@ -70,7 +73,7 @@ def _behavior_referenced(item: AcceptanceItem, validation_criteria: str) -> bool
     )
     path_candidates |= _bare_file_candidates(item.prose) | _bare_file_candidates(item.artifact_ref)
     if any(
-        _contains_ref(validation_criteria, candidate)
+        _contains_path_ref(validation_criteria, candidate)
         or _path_parts_referenced(validation_criteria, candidate)
         for candidate in path_candidates
     ):
@@ -81,13 +84,32 @@ def _behavior_referenced(item: AcceptanceItem, validation_criteria: str) -> bool
     )
 
 
-def _contains_ref(text: str, ref: str, *, case_sensitive: bool = True) -> bool:
+def _contains_ref(
+    text: str,
+    ref: str,
+    *,
+    case_sensitive: bool = True,
+) -> bool:
     cleaned_ref = _clean_ref(ref)
     if not cleaned_ref:
         return False
-    if case_sensitive:
-        return cleaned_ref in text
-    return cleaned_ref.lower() in text.lower()
+    pattern = (
+        rf"(?<![{_IDENTIFIER_BOUNDARY_CHARS}]){re.escape(cleaned_ref)}"
+        rf"(?![{_IDENTIFIER_BOUNDARY_CHARS}])"
+    )
+    flags = 0 if case_sensitive else re.IGNORECASE
+    return re.search(pattern, text, flags) is not None
+
+
+def _contains_path_ref(text: str, ref: str) -> bool:
+    cleaned_ref = _clean_ref(ref)
+    if not cleaned_ref:
+        return False
+    pattern = (
+        rf"(?<![{_PATH_LEFT_BOUNDARY_CHARS}]){re.escape(cleaned_ref)}"
+        rf"(?!{_PATH_RIGHT_CONTINUATION})"
+    )
+    return re.search(pattern, text) is not None
 
 
 def _path_candidates(artifact_ref: str) -> set[str]:
@@ -128,10 +150,14 @@ def _path_parts_referenced(text: str, path_value: str) -> bool:
     normalized_text = re.sub(r"[`'/\\]+", " ", text.casefold()).replace(chr(34), " ")
     position = 0
     for part in parts[-2:]:
-        found = normalized_text.find(part.casefold(), position)
-        if found == -1:
+        pattern = re.compile(
+            rf"(?<![{_PATH_LEFT_BOUNDARY_CHARS}]){re.escape(part.casefold())}"
+            rf"(?!{_PATH_RIGHT_CONTINUATION})"
+        )
+        match = pattern.search(normalized_text, position)
+        if match is None:
             return False
-        position = found + len(part)
+        position = match.end()
     return True
 
 

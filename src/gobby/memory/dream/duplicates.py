@@ -9,11 +9,11 @@ from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
 
 def find_duplicate_groups(candidates: list[DreamCandidate]) -> list[DuplicateGroup]:
     """Find exact duplicate content groups among dream candidates."""
-    grouped: dict[str, list[DreamCandidate]] = defaultdict(list)
+    grouped: dict[tuple[str | None, str], list[DreamCandidate]] = defaultdict(list)
     for candidate in candidates:
         normalized = _normalize_content(candidate.content)
         if normalized:
-            grouped[normalized].append(candidate)
+            grouped[(candidate.project_id, normalized)].append(candidate)
 
     duplicate_groups: list[DuplicateGroup] = []
     for entries in grouped.values():

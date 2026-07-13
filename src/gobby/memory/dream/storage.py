@@ -310,7 +310,76 @@ class MemoryDreamStore:
             return None
         data = dict(row)
         data["tags"] = _decode(data.get("tags")) or []
+        data["_crossrefs"] = self._get_crossref_rows(memory_id)
         return data
+
+    def _get_crossref_rows(self, memory_id: str) -> list[dict[str, Any]]:
+        rows = self.db.fetchall(
+            """
+            SELECT source_id, target_id, similarity, created_at
+              FROM memory_crossrefs
+             WHERE source_id = %s OR target_id = %s
+            """,
+            (memory_id, memory_id),
+        )
+        return [dict(row) for row in rows]
+
+    def restore_crossrefs(self, memory_rows: list[dict[str, Any]]) -> None:
+        """Restore the exact crossref set captured for the supplied memory rows."""
+        memory_ids = {str(row["id"]) for row in memory_rows}
+        desired: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in memory_rows:
+            for crossref in row.get("_crossrefs", []):
+                key = (str(crossref["source_id"]), str(crossref["target_id"]))
+                current = desired.get(key)
+                if current is None or float(crossref["similarity"]) > float(current["similarity"]):
+                    desired[key] = crossref
+
+        for memory_id in memory_ids:
+            self.db.execute(
+                "DELETE FROM memory_crossrefs WHERE source_id = %s OR target_id = %s",
+                (memory_id, memory_id),
+            )
+        for crossref in desired.values():
+            self.db.execute(
+                """
+                INSERT INTO memory_crossrefs (source_id, target_id, similarity, created_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT(source_id, target_id) DO UPDATE SET
+                    similarity = excluded.similarity,
+                    created_at = excluded.created_at
+                """,
+                (
+                    crossref["source_id"],
+                    crossref["target_id"],
+                    crossref["similarity"],
+                    crossref["created_at"],
+                ),
+            )
+
+    def transfer_crossrefs(self, duplicate_id: str, keeper_id: str) -> int:
+        """Copy a duplicate's crossrefs to the keeper before cascade deletion."""
+        transferred = 0
+        for crossref in self._get_crossref_rows(duplicate_id):
+            source_id = (
+                keeper_id if crossref["source_id"] == duplicate_id else crossref["source_id"]
+            )
+            target_id = (
+                keeper_id if crossref["target_id"] == duplicate_id else crossref["target_id"]
+            )
+            if source_id == target_id:
+                continue
+            self.db.execute(
+                """
+                INSERT INTO memory_crossrefs (source_id, target_id, similarity, created_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT(source_id, target_id) DO UPDATE SET
+                    similarity = GREATEST(memory_crossrefs.similarity, excluded.similarity)
+                """,
+                (source_id, target_id, crossref["similarity"], crossref["created_at"]),
+            )
+            transferred += 1
+        return transferred
 
     def insert_snapshot(
         self,

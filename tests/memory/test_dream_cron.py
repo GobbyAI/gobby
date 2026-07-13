@@ -6,11 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.cron import (
     MEMORY_DREAM_CRON_HANDLER,
     MEMORY_DREAM_CRON_JOB_NAME,
     register_memory_dream_cron,
 )
+from gobby.memory.dream.service import DreamRunOptions
 
 pytestmark = pytest.mark.unit
 
@@ -193,8 +195,14 @@ def _patch_dream_service(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("allow_unattended_mutations", "expected_dry_run"),
+    [(False, True), (True, False)],
+)
 async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
     monkeypatch: pytest.MonkeyPatch,
+    allow_unattended_mutations: bool,
+    expected_dry_run: bool,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
@@ -207,7 +215,9 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
         memory_manager=memory_manager,
-        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        dream_config=MemoryDreamConfig(
+            allow_unattended_mutations=allow_unattended_mutations,
+        ),
         project_id="daemon-proj",
         daemon_config=SimpleNamespace(),
     )
@@ -222,6 +232,11 @@ async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
     assert captured["init"]["memory_manager"] is memory_manager
     # Nightly runs stay cooldown-throttled (full_sweep is not forced).
     assert captured["call"].get("full_sweep", False) is False
+    assert captured["call"]["dry_run"] is expected_dry_run
+
+
+def test_dream_run_options_default_to_plan_only() -> None:
+    assert DreamRunOptions().dry_run is True
 
 
 @pytest.mark.asyncio
@@ -239,7 +254,7 @@ async def test_memory_dream_cron_handler_reports_failed_targets(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
         memory_manager=memory_manager,
-        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
@@ -264,7 +279,7 @@ async def test_memory_dream_cron_handler_raises_when_aggregate_failed(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
         memory_manager=memory_manager,
-        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        dream_config=MemoryDreamConfig(),
         project_id="proj-1",
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]

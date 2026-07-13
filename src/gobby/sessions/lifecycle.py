@@ -286,6 +286,11 @@ class SessionLifecycleManager:
             return 0
 
         processed = 0
+        max_deterministic_attempts = (
+            getattr(self._kg_queue_config, "max_deterministic_attempts", 3)
+            if self._kg_queue_config
+            else 3
+        )
         for memory in pending:
             try:
                 result = await kg_service.add_to_graph(
@@ -293,11 +298,43 @@ class SessionLifecycleManager:
                     memory_id=memory.id,
                     project_id=memory.project_id,
                 )
+            except Exception as e:
+                logger.warning(f"KG processing failed for memory {memory.id}: {e}")
+                try:
+                    await self._run_memory_db(
+                        self.memory_manager.record_graph_failure,
+                        memory.id,
+                        deterministic=False,
+                        max_attempts=max_deterministic_attempts,
+                    )
+                except Exception as record_error:
+                    logger.warning(
+                        "Failed to persist KG retry state for memory %s: %s",
+                        memory.id,
+                        record_error,
+                    )
+                continue
+
+            try:
                 if result.status in ("success", "noop_no_entities"):
                     await self._run_memory_db(self.memory_manager.mark_graph_processed, memory.id)
                     processed += 1
+                else:
+                    deterministic = result.status == "deterministic_failure"
+                    queue_status = await self._run_memory_db(
+                        self.memory_manager.record_graph_failure,
+                        memory.id,
+                        deterministic=deterministic,
+                        max_attempts=max_deterministic_attempts,
+                    )
+                    if queue_status == "failed":
+                        logger.error(
+                            "KG processing permanently failed for memory %s after %s attempts",
+                            memory.id,
+                            max_deterministic_attempts,
+                        )
             except Exception as e:
-                logger.warning(f"KG processing failed for memory {memory.id}: {e}")
+                logger.warning("Failed to persist KG state for memory %s: %s", memory.id, e)
 
         if processed > 0:
             logger.debug(f"Processed {processed} memories for knowledge graph")

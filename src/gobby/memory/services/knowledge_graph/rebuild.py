@@ -38,10 +38,14 @@ class KnowledgeGraphRebuildService:
         list_memories: Callable[..., list[Memory]],
         fetch_all_project_memories: Callable[[str], Awaitable[list[Memory]]],
         mark_graph_processed: Callable[[str], None],
+        record_graph_failure: Callable[..., str],
         max_rebuild_concurrency: int = 2,
+        max_deterministic_attempts: int = 3,
     ) -> None:
         if max_rebuild_concurrency < 1:
             raise ValueError("max_rebuild_concurrency must be >= 1")
+        if max_deterministic_attempts < 1:
+            raise ValueError("max_deterministic_attempts must be >= 1")
         self._storage_provider = storage_provider
         self._kg_service_provider = kg_service_provider
         self._falkor_client_provider = falkor_client_provider
@@ -49,7 +53,9 @@ class KnowledgeGraphRebuildService:
         self._list_memories = list_memories
         self._fetch_all_project_memories = fetch_all_project_memories
         self._mark_graph_processed = mark_graph_processed
+        self._record_graph_failure = record_graph_failure
         self._max_rebuild_concurrency = max_rebuild_concurrency
+        self._max_deterministic_attempts = max_deterministic_attempts
 
     @property
     def storage(self) -> LocalMemoryManager:
@@ -148,13 +154,30 @@ class KnowledgeGraphRebuildService:
                     await self._run_db(self._mark_graph_processed, mem.id)
                     processed += 1
                 else:
+                    failure_errors = list(result.errors)
+                    try:
+                        await self._run_db(
+                            self._record_graph_failure,
+                            mem.id,
+                            deterministic=(
+                                result.status == KnowledgeGraphStatus.DETERMINISTIC_FAILURE
+                            ),
+                            max_attempts=self._max_deterministic_attempts,
+                        )
+                    except Exception as state_error:
+                        logger.warning(
+                            "Failed to persist KG retry state for memory %s: %s",
+                            mem.id,
+                            state_error,
+                        )
+                        failure_errors.append(f"Failed to persist graph retry state: {state_error}")
                     errors += 1
                     failed_memories.append(
                         {
                             "memory_id": mem.id,
                             "project_id": mem.project_id,
                             "status": result.status.value,
-                            "errors": list(result.errors),
+                            "errors": failure_errors,
                         }
                     )
                 await _emit_progress()

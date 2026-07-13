@@ -1796,11 +1796,16 @@ class TestDigestConfig:
         assert config.profile == FeatureProfile.LOW
         assert "claude/haiku" in candidate_labels(config.candidates)
         assert config.timeout == 30
+        assert config.num_pairs == 50
 
     def test_timeout_validation(self) -> None:
         """Test digest timeout must be positive."""
         with pytest.raises(ValidationError):
             DigestConfig(timeout=0)
+
+    def test_num_pairs_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            DigestConfig(num_pairs=0)
 
     def test_rejects_removed_session_title_section(self) -> None:
         """Legacy session_title config is a hard validation failure."""

@@ -51,7 +51,10 @@ async def build_raw_plan(
     planner_errors: list[str] = []
     actions: list[dict[str, Any]] = []
 
-    duplicate_ids = {memory_id for group in duplicate_groups for memory_id in group.memory_ids}
+    scoped_duplicate_groups = _same_project_duplicate_groups(candidates, duplicate_groups)
+    duplicate_ids = {
+        memory_id for group in scoped_duplicate_groups for memory_id in group.memory_ids
+    }
     llm_candidates = [candidate for candidate in candidates if candidate.id not in duplicate_ids]
 
     if llm_service is not None and llm_candidates and not skip_consolidation:
@@ -88,7 +91,7 @@ async def build_raw_plan(
                 planner_errors.append(error)
 
     if not skip_consolidation:
-        actions.extend(_duplicate_merge_actions(duplicate_groups, actions))
+        actions.extend(_duplicate_merge_actions(scoped_duplicate_groups, actions))
 
     return {"actions": actions, "planner_errors": planner_errors}
 
@@ -234,6 +237,24 @@ def _duplicate_merge_actions(
             }
         )
     return actions
+
+
+def _same_project_duplicate_groups(
+    candidates: list[DreamCandidate],
+    duplicate_groups: list[DuplicateGroup],
+) -> list[DuplicateGroup]:
+    """Keep only complete duplicate groups contained in one project scope."""
+    project_by_id = {candidate.id: candidate.project_id for candidate in candidates}
+    scoped: list[DuplicateGroup] = []
+    for group in duplicate_groups:
+        if not group.memory_ids or any(
+            memory_id not in project_by_id for memory_id in group.memory_ids
+        ):
+            continue
+        projects = {project_by_id[memory_id] for memory_id in group.memory_ids}
+        if len(projects) == 1:
+            scoped.append(group)
+    return scoped
 
 
 def _referenced_ids(actions: list[dict[str, Any]]) -> set[str]:

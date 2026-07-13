@@ -58,6 +58,7 @@ class MemoryRepository:
             deleted_at=record.deleted_at,
             dream_action=cast(Literal["review", "delete"] | None, record.dream_action),
             last_dreamed_at=record.last_dreamed_at,
+            vector_needs_reindex=record.vector_needs_reindex,
         )
 
     def count_memories(

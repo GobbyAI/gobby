@@ -57,6 +57,8 @@ class TestDedupServiceInitialization:
         """DedupService is initialized when LLM, VectorStore, and embed_fn are all available."""
         manager = _make_manager(has_llm=True, has_vector_store=True, has_embed_fn=True)
         assert manager._dedup_service is not None
+        assert manager._dedup_service._run_db is not None
+        assert manager._dedup_service._run_db.__self__ is manager
 
     def test_dedup_service_created_without_llm(self) -> None:
         """DedupService is created even without LLM (uses vector similarity only)."""
@@ -117,6 +119,7 @@ class TestBackgroundDedupTask:
         manager._dedup_service.process.assert_called_once()
         assert manager._dedup_service.process.call_count == 1
         assert manager._dedup_service.process.call_args is not None
+        assert manager._dedup_service.process.call_args.kwargs["exclude_memory_id"] == "mem-1"
 
     @pytest.mark.asyncio
     async def test_background_task_tracked_and_cleaned(self) -> None:

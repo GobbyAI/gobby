@@ -92,6 +92,10 @@ class Session:
     chat_mode: str = "plan"
     # Idempotency guard for digest pipeline
     last_digest_input_hash: str | None = None
+    # Explicit cursor across the transcript's digestible user/assistant pairs
+    last_digested_pair_index: int = 0
+    # Digest identity last used for contentless title recovery
+    last_title_synthesis_digest_hash: str | None = None
     # Stats fields
     message_count: int = 0
     turn_count: int = 0
@@ -181,6 +185,14 @@ class Session:
             last_digest_input_hash=row["last_digest_input_hash"]
             if "last_digest_input_hash" in row.keys()
             else None,
+            last_digested_pair_index=(
+                int(row["last_digested_pair_index"] or 0)
+                if "last_digested_pair_index" in row.keys()
+                else 0
+            ),
+            last_title_synthesis_digest_hash=cls._get_optional(
+                row, "last_title_synthesis_digest_hash"
+            ),
             message_count=row["message_count"] if "message_count" in row.keys() else 0,
             turn_count=row["turn_count"] if "turn_count" in row.keys() else 0,
             tool_call_count=row["tool_call_count"] if "tool_call_count" in row.keys() else 0,
@@ -311,6 +323,8 @@ class Session:
             "last_turn_markdown": self.last_turn_markdown,
             "chat_mode": self.chat_mode,
             "last_digest_input_hash": self.last_digest_input_hash,
+            "last_digested_pair_index": self.last_digested_pair_index,
+            "last_title_synthesis_digest_hash": self.last_title_synthesis_digest_hash,
             "message_count": self.message_count,
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,

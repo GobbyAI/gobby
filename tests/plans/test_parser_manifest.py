@@ -33,6 +33,7 @@ def _plan_with_manifest(
     *,
     deliverables: str = "",
     manifest_yaml: str = "",
+    trailing_sections: str = "",
     plan_id: str = "test-plan",
     name: str = "plan.md",
 ) -> Path:
@@ -40,6 +41,8 @@ def _plan_with_manifest(
     if manifest_yaml:
         body += "\n## M1 Task Manifest\n`kind: manifest`\n\n```yaml\n"
         body += manifest_yaml.rstrip() + "\n```\n"
+    if trailing_sections:
+        body += "\n" + trailing_sections.rstrip() + "\n"
     return _write_plan(tmp_path, body, name)
 
 
@@ -472,6 +475,51 @@ def test_manifest_depends_on_resolves_to_manifest_entry_source_section(
     entries_by_section = {entry.source_section: entry for entry in document.manifest_entries}
     assert entries_by_section["A1"].depends_on == ("A2",)
     assert entries_by_section["A2"].depends_on == ()
+
+
+def test_manifest_rejects_self_dependency(tmp_path: Path) -> None:
+    manifest_yaml = _MINIMAL_MANIFEST.replace("depends_on: []", 'depends_on: ["A1"]')
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=manifest_yaml,
+    )
+
+    with pytest.raises(PlanParseError, match="cannot depend on itself"):
+        parse_plan(plan)
+
+
+def test_manifest_rejects_multi_entry_dependency_cycle(tmp_path: Path) -> None:
+    manifest_yaml = _LINKED_MANIFEST.replace("depends_on: []", 'depends_on: ["A1"]')
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_TWO_DELIVERABLES,
+        manifest_yaml=manifest_yaml,
+    )
+
+    with pytest.raises(PlanParseError, match="manifest dependency cycle") as exc_info:
+        parse_plan(plan)
+
+    assert "A1" in str(exc_info.value)
+    assert "A2" in str(exc_info.value)
+
+
+def test_manifest_must_be_last_section(tmp_path: Path) -> None:
+    trailing_deliverable = """
+## A2 Later Section
+`kind: deliverable`
+**Acceptance:**
+- A2.1 — file: `later.py`
+"""
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=_MINIMAL_DELIVERABLE,
+        manifest_yaml=_MINIMAL_MANIFEST,
+        trailing_sections=trailing_deliverable,
+    )
+
+    with pytest.raises(PlanParseError, match="manifest section must be last"):
+        parse_plan(plan)
 
 
 def test_test_category_with_tdd_true_fails(tmp_path: Path) -> None:

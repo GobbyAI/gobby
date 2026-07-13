@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.plans import parser
+from gobby.plans.coverage import parse_covers_label
 from gobby.plans.parser import (
     PLAN_HEADING_REGEX,
     AcceptanceItem,
@@ -69,15 +70,15 @@ def _fixture_plan(name: str) -> Path:
 
 
 def test_public_api_exports_parser_contract() -> None:
-    assert PlanDocument
-    assert PlanSection
-    assert AcceptanceItem
-    assert Deferral
-    assert Kind
-    assert ArtifactKind
-    assert PlanParseError
-    assert parse_plan
-    assert PLAN_HEADING_REGEX
+    assert parser.PlanDocument is PlanDocument
+    assert parser.PlanSection is PlanSection
+    assert parser.AcceptanceItem is AcceptanceItem
+    assert parser.Deferral is Deferral
+    assert parser.Kind is Kind
+    assert parser.ArtifactKind is ArtifactKind
+    assert parser.PlanParseError is PlanParseError
+    assert parser.parse_plan is _real_parse_plan
+    assert parser.PLAN_HEADING_REGEX == PLAN_HEADING_REGEX
 
 
 def test_parses_task_13173_recovery() -> None:
@@ -237,6 +238,30 @@ def test_deliverable_without_acceptance_raises(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+@pytest.mark.parametrize("section_kind", ["framing", "verification"])
+def test_acceptance_block_under_non_deliverable_fails(
+    tmp_path: Path,
+    section_kind: str,
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1 Mistyped Deliverable
+        `kind: {section_kind}`
+        **Acceptance:**
+        - A1.1 — file: `src/feature.py`
+        """,
+    )
+
+    with pytest.raises(PlanParseError) as exc_info:
+        parse_plan(plan)
+
+    message = str(exc_info.value)
+    assert "section 'A1'" in message
+    assert f"kind '{section_kind}'" in message
+    assert "must not contain an **Acceptance:** block" in message
+
+
 def test_acceptance_item_id_must_prefix_section(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -252,6 +277,95 @@ def test_acceptance_item_id_must_prefix_section(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+def test_duplicate_acceptance_item_ids_raise(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## 1
+        `kind: deliverable`
+        **Acceptance:**
+        - 1.1 — first item. file: src/first.py.
+        - 1.1 — second item. file: src/second.py.
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="duplicate acceptance item ID '1.1'"):
+        parse_plan(plan)
+
+
+@pytest.mark.parametrize(
+    "malformed_bullet",
+    [
+        "- A1.2: second item. file: src/second.py.",
+        "- A1.2 – second item. file: src/second.py.",
+    ],
+    ids=["colon", "en-dash"],
+)
+def test_acceptance_item_rejects_wrong_separator(tmp_path: Path, malformed_bullet: str) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — first item. file: src/first.py.
+        {malformed_bullet}
+        """,
+    )
+
+    with pytest.raises(
+        PlanParseError,
+        match=r"malformed acceptance item 'A1\.2'.*separator",
+    ):
+        parse_plan(plan)
+
+
+def test_acceptance_item_id_must_match_covers_grammar(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## 1.1
+        `kind: deliverable`
+        **Acceptance:**
+        - 1.1.foo — invalid suffix. file: invalid.py
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="acceptance item ID '1.1.foo'.*dotted-ID grammar"):
+        parse_plan(plan)
+
+
+@pytest.mark.parametrize(
+    ("section_id", "item_id"),
+    [
+        ("A1", "A1.1"),
+        ("AB12", "AB12.3"),
+        ("1.1", "1.1.2"),
+        ("1.1a", "1.1a.2b"),
+        ("A1a", "A1a.2b"),
+    ],
+)
+def test_parsed_acceptance_ids_round_trip_through_covers_labels(
+    tmp_path: Path, section_id: str, item_id: str
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## {section_id}
+        `kind: deliverable`
+        **Acceptance:**
+        - {item_id} — valid item. file: valid.py
+        """,
+    )
+
+    document = parse_plan(plan)
+    parsed_item_id = document.sections[0].acceptance_items[0].item_id
+    record = parse_covers_label(f"covers:plan:{section_id}:{parsed_item_id}")
+
+    assert record.section_id == section_id
+    assert record.item_id == item_id
+
+
 def test_deferred_without_object_raises(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -265,6 +379,107 @@ def test_deferred_without_object_raises(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+def test_deferred_with_unlabeled_fence_raises_parse_error(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deferred`
+        ```
+        deferred prose
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="missing YAML deferral object"):
+        parse_plan(plan)
+
+
+def test_documented_deferral_wrapper_and_scalar_ids_round_trip(tmp_path: Path) -> None:
+    canonical_block = """\
+deferral:
+  task_ref: "#12345"
+  reason: "Why this work is outside the current epic."
+  owner: "team-or-agent"
+  original_acceptance_items:
+    - A7.3"""
+    repo_root = Path(__file__).resolve().parents[2]
+    contract = (repo_root / "docs/contracts/plan-coverage.md").read_text(encoding="utf-8")
+    draft_skill = (repo_root / "src/gobby/install/shared/skills/plan-draft/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert canonical_block in contract
+    assert canonical_block in draft_skill
+    plan = _write_plan(
+        tmp_path,
+        f"""> **Plan ID:** plan
+
+## A7 Deferred work
+`kind: deferred`
+
+```yaml
+{canonical_block}
+```
+""",
+    )
+
+    deferral = parse_plan(plan).sections[0].deferral
+
+    assert deferral is not None
+    assert deferral.task_ref == "#12345"
+    assert deferral.reason == "Why this work is outside the current epic."
+    assert deferral.owner == "team-or-agent"
+    assert deferral.raw_block == canonical_block
+    assert deferral.original_acceptance_items == (
+        AcceptanceItem(
+            item_id="A7.3",
+            prose="A7.3",
+            artifact_kind=ArtifactKind.behavior,
+            artifact_ref="A7.3",
+            source_line=6,
+        ),
+    )
+
+
+def test_unwrapped_deferral_block_names_required_wrapper(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        > **Plan ID:** plan
+
+        ## A7 Deferred work
+        `kind: deferred`
+
+        ```yaml
+        task_ref: "#12345"
+        reason: "Why this work is outside the current epic."
+        owner: "team-or-agent"
+        original_acceptance_items:
+          - A7.3
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="required top-level 'deferral:' wrapper"):
+        parse_plan(plan)
+
+
+def test_manifest_with_unlabeled_fence_raises_parse_error(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## M1
+        `kind: manifest`
+        ```
+        manifest prose
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="manifest section missing YAML block"):
+        parse_plan(plan)
+
+
 def test_deferred_object_parsed(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -273,14 +488,12 @@ def test_deferred_object_parsed(tmp_path: Path) -> None:
         `kind: deferred`
 
         ```yaml
-        task_ref: "#999"
-        reason: "covered by follow-up"
-        owner: "agent"
-        original_acceptance_items:
-          - item_id: A1.1
-            prose: "implement later"
-            artifact_kind: file
-            artifact_ref: "src/later.py"
+        deferral:
+          task_ref: "#999"
+          reason: "covered by follow-up"
+          owner: "agent"
+          original_acceptance_items:
+            - A1.1
         ```
         """,
     )
@@ -295,15 +508,15 @@ def test_deferred_object_parsed(tmp_path: Path) -> None:
     assert deferral.original_acceptance_items == (
         AcceptanceItem(
             item_id="A1.1",
-            prose="implement later",
-            artifact_kind=ArtifactKind.file,
-            artifact_ref="src/later.py",
+            prose="A1.1",
+            artifact_kind=ArtifactKind.behavior,
+            artifact_ref="A1.1",
             source_line=4,
         ),
     )
 
 
-def test_invalid_deferred_artifact_kind_raises(tmp_path: Path) -> None:
+def test_deferred_acceptance_items_require_scalar_ids(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
         """
@@ -311,19 +524,39 @@ def test_invalid_deferred_artifact_kind_raises(tmp_path: Path) -> None:
         `kind: deferred`
 
         ```yaml
-        task_ref: "#999"
-        reason: "covered by follow-up"
-        owner: "agent"
-        original_acceptance_items:
-          - item_id: A1.1
-            prose: "implement later"
-            artifact_kind: package
-            artifact_ref: "src/later.py"
+        deferral:
+          task_ref: "#999"
+          reason: "covered by follow-up"
+          owner: "agent"
+          original_acceptance_items:
+            - item_id: A1.1
         ```
         """,
     )
 
-    with pytest.raises(PlanParseError, match="invalid artifact_kind"):
+    with pytest.raises(PlanParseError, match="must be a scalar acceptance-item ID"):
+        parse_plan(plan)
+
+
+def test_deferred_acceptance_item_id_must_match_covers_grammar(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## 1.1
+        `kind: deferred`
+
+        ```yaml
+        deferral:
+          task_ref: "#999"
+          reason: "covered by follow-up"
+          owner: "agent"
+          original_acceptance_items:
+            - 1.1.foo
+        ```
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="acceptance item ID '1.1.foo'.*dotted-ID grammar"):
         parse_plan(plan)
 
 
@@ -342,6 +575,61 @@ def test_acceptance_item_without_artifact_raises(tmp_path: Path) -> None:
         parse_plan(plan)
 
 
+def test_acceptance_list_stops_before_unindented_prose_after_blank(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item. file: src/accepted.py.
+
+        Narrative after the list mentions file: src/unrelated.py.
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_ref == "src/accepted.py"
+    assert "unrelated.py" not in item.prose
+
+
+def test_trailing_prose_cannot_supply_missing_acceptance_artifact(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item without reference.
+
+        Narrative after the list mentions file: src/unrelated.py.
+        """,
+    )
+
+    with pytest.raises(PlanParseError, match="no artifact reference"):
+        parse_plan(plan)
+
+
+def test_acceptance_item_preserves_indented_continuation_after_blank(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item continued below.
+
+          Continued details name file: src/continued.py.
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_ref == "src/continued.py"
+    assert "Continued details" in item.prose
+
+
 def test_acceptance_item_with_multiple_artifacts_uses_first(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -357,6 +645,60 @@ def test_acceptance_item_with_multiple_artifacts_uses_first(tmp_path: Path) -> N
 
     assert item.artifact_kind is ArtifactKind.test
     assert item.artifact_ref == "tests/first.py::test_one"
+
+
+@pytest.mark.parametrize(
+    "quoted_ref",
+    ["`src/a.py`", '"src/a.py"', "'src/a.py'"],
+    ids=["backtick", "double-quote", "single-quote"],
+)
+def test_quoted_artifact_ref_stops_before_trailing_prose(
+    tmp_path: Path,
+    quoted_ref: str,
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — file: {quoted_ref} and the tests pass
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_kind is ArtifactKind.file
+    assert item.artifact_ref == "src/a.py"
+
+
+@pytest.mark.parametrize(
+    ("artifact_prose", "expected_ref"),
+    [
+        ("file: src/a.py", "src/a.py"),
+        ("file: src/a.py symbol: gobby.plans.parser.parse_plan", "src/a.py"),
+    ],
+    ids=["end-of-line", "next-artifact"],
+)
+def test_unquoted_artifact_ref_uses_existing_terminators(
+    tmp_path: Path,
+    artifact_prose: str,
+    expected_ref: str,
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        f"""
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — {artifact_prose}
+        """,
+    )
+
+    item = parse_plan(plan).sections[0].acceptance_items[0]
+
+    assert item.artifact_kind is ArtifactKind.file
+    assert item.artifact_ref == expected_ref
 
 
 def test_strategy_kind_permissive_no_raise_on_narrative_headings(tmp_path: Path) -> None:
@@ -451,6 +793,31 @@ def test_fenced_headings_are_masked(tmp_path: Path) -> None:
     assert len(document.sections[0].acceptance_items) == 1
 
 
+def test_unclosed_fence_names_opening_line_in_draft_parse_error(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 — real item. file: a.py.
+
+        ```markdown
+        ignored fenced content
+        ## A2
+        `kind: deliverable`
+        **Acceptance:**
+        - A2.1 — swallowed item. file: b.py.
+        """,
+    )
+
+    with pytest.raises(
+        PlanParseError,
+        match=r"line 6: unclosed fence opened at line 6",
+    ):
+        parse_plan(plan, parse_mode="draft")
+
+
 def test_fenced_plan_id_is_masked(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,
@@ -503,10 +870,11 @@ def test_fenced_deferral_yaml_outside_deferred_is_ignored(tmp_path: Path) -> Non
         - A1.1 \u2014 real item. file: a.py.
 
         ```yaml
-        task_ref: "#999"
-        reason: "ignore me"
-        owner: "agent"
-        original_acceptance_items: []
+        deferral:
+          task_ref: "#999"
+          reason: "ignore me"
+          owner: "agent"
+          original_acceptance_items: []
         ```
         """,
     )
