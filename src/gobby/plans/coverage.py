@@ -297,6 +297,7 @@ def evaluate(
         root_task_ref=root_task_ref,
         project_id=project_id,
         records=scoped_records,
+        project_records=records,
         evidence=evidence_rows,
         recovery_epic_ref=recovery_epic_ref or root_task_ref,
     )
@@ -312,10 +313,11 @@ def _evaluate_records(
     root_task_ref: str,
     project_id: str,
     records: Sequence[_TaskRecord],
+    project_records: Sequence[_TaskRecord],
     evidence: tuple[EvidenceRow, ...],
     recovery_epic_ref: str,
 ) -> CoverageReport:
-    store = _TaskRecordStore(records)
+    store = _TaskRecordStore(project_records)
     rows: list[CoverageRow] = []
     for section in plan_doc.sections:
         for item in _coverage_items(section):

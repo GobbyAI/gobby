@@ -68,16 +68,16 @@ def _plan(*sections: PlanSection, plan_id: str = "plan", source_hash: str = "has
     )
 
 
-def _deferred_plan(tmp_path: Path) -> tuple[Path, str]:
+def _deferred_plan(tmp_path: Path, *, task_ref: str = "#999") -> tuple[Path, str]:
     path = tmp_path / "deferred-plan.md"
     path.write_text(
-        """> **Plan ID:** plan
+        f"""> **Plan ID:** plan
 
 ## A1 Deferred Work
 `kind: deferred`
 
 ```yaml
-task_ref: "#999"
+task_ref: "{task_ref}"
 reason: "covered by follow-up"
 owner: "backend"
 original_acceptance_items:
@@ -381,6 +381,83 @@ def test_db_source_loads_live_task_records(
 
     assert report.rows[0].status is CoverageStatus.covered
     assert report.rows[0].leaves[0].leaf_task_ref == f"#{leaf.seq_num}"
+
+
+def test_db_deferral_uses_project_records_without_widening_root_scope(
+    tmp_path: Path,
+    temp_db: Any,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.task_dependencies import TaskDependencyManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    projects = LocalProjectManager(temp_db)
+    project = projects.create("project")
+    foreign_project = projects.create("foreign-project")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project.id, "Root")
+    deferral = manager.create_task(
+        project.id,
+        "Project-wide deferral",
+        labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
+        validation_criteria="Follow-up owns src/later.py.",
+    )
+    foreign_deferral = manager.create_task(
+        foreign_project.id,
+        "Foreign deferral",
+        labels=["deferred-from:plan:A1", "covers:plan:A1:A1.1"],
+        validation_criteria="Follow-up owns src/later.py.",
+    )
+    dependencies = TaskDependencyManager(temp_db)
+    dependencies.add_dependency(root.id, deferral.id)
+    dependencies.add_dependency(root.id, foreign_deferral.id)
+    plan_path, plan_hash = _deferred_plan(tmp_path, task_ref=f"#{deferral.seq_num}")
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert report.rows[0].status is CoverageStatus.deferred
+    assert report.rows[0].deferral_target == f"#{deferral.seq_num}"
+    scoped_hash = report.header.task_tree_source_hash
+
+    manager.create_task(project.id, "Unrelated project task")
+    report_with_outsider = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert report_with_outsider.rows[0].status is CoverageStatus.deferred
+    assert report_with_outsider.header.task_tree_source_hash == scoped_hash
+
+    foreign_plan_dir = tmp_path / "foreign"
+    foreign_plan_dir.mkdir()
+    foreign_plan, foreign_plan_hash = _deferred_plan(
+        foreign_plan_dir,
+        task_ref=f"#{foreign_deferral.seq_num}",
+    )
+    foreign_report = evaluate(
+        plan=foreign_plan,
+        plan_id="plan",
+        plan_hash=foreign_plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert foreign_report.rows[0].status is CoverageStatus.invalid
 
 
 def test_evaluate_root_scope_excludes_other_subtree() -> None:
