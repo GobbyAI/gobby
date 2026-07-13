@@ -164,6 +164,58 @@ def test_cli_exit_codes_per_status(tmp_path: Path, status: str, expected_exit: i
     assert result.exit_code == expected_exit
 
 
+def test_cli_malformed_plan_exits_with_invalid_input_code(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text(
+        """> **Plan ID:** plan
+
+## A1 Work [category: code]
+`kind: deliverable`
+
+This section has no acceptance block.
+""",
+        encoding="utf-8",
+    )
+    plan_hash = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    matrix = tmp_path / "input.coverage.yaml"
+    matrix.write_text("rows: []\n", encoding="utf-8")
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 3
+    assert "Error:" in result.output
+    assert "missing **Acceptance:** block" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_malformed_matrix_exits_with_invalid_input_code(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = tmp_path / "broken.coverage.yaml"
+    matrix.write_text("rows: [", encoding="utf-8")
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 3
+    assert "Error:" in result.output
+    assert "while parsing a flow node" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_missing_matrix_file_fails_click_validation(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = tmp_path / "missing.coverage.yaml"
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--matrix-file'" in result.output
+    assert "does not exist" in result.output
+    assert "Traceback" not in result.output
+
+
 @pytest.mark.parametrize(
     ("label", "expected_section"),
     [

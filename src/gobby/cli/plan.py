@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import click
+import yaml
 
 from gobby.plans.coverage import (
     CoverageReport,
@@ -31,6 +32,7 @@ from gobby.plans.evidence import (
     InvalidEvidenceError,
     resolve_evidence,
 )
+from gobby.plans.parser import PlanParseError
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.tasks.commits import get_task_diff
 
@@ -61,7 +63,7 @@ def plan() -> None:
 @click.option("--project-id", help="Project UUID (required for db mode).")
 @click.option(
     "--matrix-file",
-    type=click.Path(dir_okay=False, path_type=Path),
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help="Coverage matrix YAML/JSON (required for matrix-file mode).",
 )
 @click.option("--evidence")
@@ -116,6 +118,8 @@ def coverage(
     except PathIdentityMismatchError as exc:
         _fail(str(exc), 8)
     except InvalidEvidenceError as exc:
+        _fail(str(exc), 3)
+    except (PlanParseError, OSError, yaml.YAMLError) as exc:
         _fail(str(exc), 3)
 
     click.echo(output_path)
