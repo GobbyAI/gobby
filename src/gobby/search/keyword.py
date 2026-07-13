@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Collection, Mapping, Sequence
@@ -231,21 +232,23 @@ class KeywordAsyncSearchBackend:
         return None
 
     async def search_async(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        return self.search(query, top_k)
+        return await asyncio.to_thread(self.search, query, top_k)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        if self._fitted_items is None or self._fitted_ids is None:
+        fitted_items = self._fitted_items
+        fitted_id_values = self._fitted_ids
+        if fitted_items is None or fitted_id_values is None:
             return []
-        if not self._fitted_ids:
+        if not fitted_id_values:
             return []
-        fitted_ids = set(self._fitted_ids)
+        fitted_ids = set(fitted_id_values)
         try:
             hits = [
                 (hit.id, hit.score)
                 for hit in self._backend.search(
                     query,
                     top_k,
-                    allowed_ids=self._fitted_ids,
+                    allowed_ids=fitted_id_values,
                 )
                 if hit.id in fitted_ids
             ]
@@ -254,7 +257,7 @@ class KeywordAsyncSearchBackend:
             hits = []
         if hits:
             return hits
-        return _search_fitted_items(query, self._fitted_items, top_k)
+        return _search_fitted_items(query, fitted_items, top_k)
 
     def needs_refit(self) -> bool:
         return self._needs_refit
@@ -263,10 +266,12 @@ class KeywordAsyncSearchBackend:
         self._needs_refit = True
 
     def get_stats(self) -> dict[str, Any]:
-        get_stats = getattr(self._backend, "get_stats", None)
-        if callable(get_stats):
-            return dict(get_stats())
-        return {"backend_type": "keyword", "table": self._table, "fitted": True}
+        return {
+            "backend_type": "pg_search_bm25",
+            "table": self._table,
+            "document_count": len(self._fitted_ids or ()),
+            "fitted": self._fitted_ids is not None,
+        }
 
     def clear(self) -> None:
         clear = getattr(self._backend, "clear", None)

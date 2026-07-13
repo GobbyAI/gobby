@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
+import threading
+import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +20,9 @@ from gobby.search import (
     SearchMode,
     UnifiedSearcher,
 )
+from gobby.search.backends import embedding as embedding_module
 from gobby.search.keyword import BM25SearchBackend, KeywordAsyncSearchBackend, SearchHit
+from gobby.search.similarity import cosine_similarity
 
 pytestmark = pytest.mark.unit
 
@@ -500,6 +506,65 @@ class TestDeprecatedSqliteKeywordSearch:
 
 class TestKeywordAsyncSearchBackend:
     @pytest.mark.asyncio
+    async def test_search_async_runs_database_search_off_event_loop(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        await backend.fit_async([("inside", "shared query")])
+        loop_thread = threading.get_ident()
+        worker_threads: list[int] = []
+
+        def blocking_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
+            worker_threads.append(threading.get_ident())
+            time.sleep(0.05)
+            return [SearchHit(id="inside", score=1.0)]
+
+        backend._backend.search = blocking_search
+
+        search_task = asyncio.create_task(backend.search_async("shared query", top_k=10))
+        await asyncio.sleep(0.01)
+
+        assert not search_task.done(), "blocking search stalled the event loop"
+        assert await search_task == [("inside", 1.0)]
+        assert len(worker_threads) == 1
+        assert worker_threads[0] != loop_thread
+
+    @pytest.mark.asyncio
+    async def test_search_async_uses_consistent_fit_snapshot_during_clear(self) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        await backend.fit_async([("inside", "shared query")])
+        search_started = threading.Event()
+        release_search = threading.Event()
+
+        def blocking_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
+            search_started.set()
+            assert release_search.wait(timeout=1)
+            return []
+
+        backend._backend.search = blocking_search
+
+        search_task = asyncio.create_task(backend.search_async("shared query", top_k=10))
+        assert await asyncio.to_thread(search_started.wait, 1)
+        backend.clear()
+        release_search.set()
+
+        assert await search_task == [("inside", 1.0)]
+
+    @pytest.mark.asyncio
+    async def test_get_stats_uses_fitted_count_without_database_query(self) -> None:
+        fetchone = MagicMock(side_effect=AssertionError("get_stats queried the database"))
+        backend = KeywordAsyncSearchBackend(
+            SimpleNamespace(dialect="postgres", fetchone=fetchone),
+            "skills",
+        )
+        await backend.fit_async([("one", "first"), ("two", "second")])
+
+        stats = backend.get_stats()
+
+        assert stats["backend_type"] == "pg_search_bm25"
+        assert stats["document_count"] == 2
+        assert stats["fitted"] is True
+        fetchone.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_search_restricts_database_hits_to_fitted_ids(self) -> None:
         backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
         native_search = MagicMock(
@@ -632,6 +697,111 @@ class TestEmbeddingBackend:
             assert len(results) == 2
             # id1 should have higher similarity (identical embedding)
             assert results[0][0] == "id1"
+
+    @pytest.mark.asyncio
+    async def test_normalized_scan_matches_cosine_and_preserves_ties(self) -> None:
+        backend = EmbeddingBackend()
+        item_embeddings = [
+            [3.0, 4.0],
+            [6.0, 8.0],
+            [4.0, 3.0],
+            [0.0, 0.0],
+            [-3.0, -4.0],
+        ]
+        query_embedding = [3.0, 4.0]
+        items = [(f"id{index}", str(index)) for index in range(len(item_embeddings))]
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=item_embeddings,
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new_callable=AsyncMock,
+                return_value=query_embedding,
+            ),
+        ):
+            await backend.fit_async(items)
+            with patch.object(
+                embedding_module,
+                "_normalize_vector",
+                wraps=embedding_module._normalize_vector,
+            ) as normalize_query:
+                results = await backend.search_async("query", top_k=10)
+
+        expected: list[tuple[str, float]] = []
+        for (item_id, _content), item_embedding in zip(items, item_embeddings, strict=True):
+            similarity = cosine_similarity(query_embedding, item_embedding)
+            if similarity > 0:
+                expected.append((item_id, similarity))
+        expected.sort(key=lambda result: result[1], reverse=True)
+
+        assert [item_id for item_id, _score in results] == [item_id for item_id, _score in expected]
+        assert [score for _item_id, score in results] == pytest.approx(
+            [score for _item_id, score in expected]
+        )
+        assert normalize_query.call_count == 1
+        assert results[0][0] == "id0"
+        assert results[1][0] == "id1"
+        normalized_norms = [
+            math.sqrt(sum(value * value for value in vector)) for vector in backend._item_embeddings
+        ]
+        assert normalized_norms == pytest.approx([1.0, 1.0, 1.0, 0.0, 1.0])
+
+    @pytest.mark.asyncio
+    async def test_large_embedding_scan_runs_off_event_loop(self) -> None:
+        backend = EmbeddingBackend()
+        item_count = 400
+        dimensions = 128
+        items = [(f"id{index}", str(index)) for index in range(item_count)]
+        item_embeddings = [
+            [1.0, *([float(index % 2)] * (dimensions - 1))] for index in range(item_count)
+        ]
+        query_embedding = [1.0] * dimensions
+        loop_thread = threading.get_ident()
+        worker_threads: list[int] = []
+        rank_embeddings = embedding_module._rank_embeddings
+
+        def blocking_rank(
+            item_ids: list[str],
+            normalized_embeddings: list[list[float]],
+            normalized_query: list[float],
+            top_k: int,
+        ) -> list[tuple[str, float]]:
+            worker_threads.append(threading.get_ident())
+            time.sleep(0.05)
+            return rank_embeddings(
+                item_ids,
+                normalized_embeddings,
+                normalized_query,
+                top_k,
+            )
+
+        with (
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                new_callable=AsyncMock,
+                return_value=item_embeddings,
+            ),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embedding",
+                new_callable=AsyncMock,
+                return_value=query_embedding,
+            ),
+        ):
+            await backend.fit_async(items)
+            with patch.object(embedding_module, "_rank_embeddings", side_effect=blocking_rank):
+                search_task = asyncio.create_task(backend.search_async("query", top_k=10))
+                await asyncio.sleep(0.01)
+
+                assert not search_task.done(), "embedding scan stalled the event loop"
+                results = await search_task
+
+        assert len(results) == 10
+        assert len(worker_threads) == 1
+        assert worker_threads[0] != loop_thread
 
     @pytest.mark.asyncio
     async def test_fit_dimension_mismatch_raises(self) -> None:
