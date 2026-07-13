@@ -507,6 +507,56 @@ class TestAddToGraph:
             == "memory.kg.select_outdated_relations"
         )
 
+    async def test_add_to_graph_ignores_noncanonical_relation_deletions(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+        mock_llm: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Only exact existing triples are accepted from the LLM delete selector."""
+        mock_falkor.query = AsyncMock(
+            return_value=[
+                {"source": "Josh", "rel_type": "uses", "target": "Python 3.12"},
+            ]
+        )
+        valid = {"source": "Josh", "relationship": "uses", "destination": "Python 3.12"}
+        mock_llm.call_json_feature = AsyncMock(
+            side_effect=[
+                {
+                    "entities": [
+                        {"entity": "Josh", "entity_type": "person"},
+                        {"entity": "Python 3.13", "entity_type": "tool"},
+                    ]
+                },
+                {
+                    "relations": [
+                        {"source": "Josh", "relationship": "uses", "destination": "Python 3.13"},
+                    ]
+                },
+                {
+                    "relations_to_delete": [
+                        valid,
+                        dict(valid),
+                        {"source": "Joshua", "relationship": "uses", "destination": "Python 3.12"},
+                        {"source": "Josh", "relationship": "uses", "destination": "Python 2.7"},
+                        {"source": "Josh", "relationship": "uses"},
+                        "not-an-object",
+                    ]
+                },
+            ]
+        )
+
+        await service.add_to_graph("Josh uses Python 3.13")
+
+        delete_calls = [
+            call for call in mock_falkor.query.call_args_list if "DELETE" in call.args[0]
+        ]
+        assert len(delete_calls) == 1
+        assert delete_calls[0].args[1]["source_key"].endswith(":josh")
+        assert delete_calls[0].args[1]["target_key"].endswith(":python 3.12")
+        assert "Ignored 4 noncanonical relationship deletion selection(s)" in caplog.text
+
     @pytest.mark.asyncio
     async def test_supersede_selection_compares_normalized_new_and_stored_relation_types(
         self,
