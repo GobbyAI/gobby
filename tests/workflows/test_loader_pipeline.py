@@ -890,6 +890,29 @@ class TestDiscoverPipelineWorkflows:
 
         assert [pipeline.name for pipeline in result] == ["enabled-pipeline"]
 
+    async def test_discovery_uses_database_enabled_state(self, loader, def_manager) -> None:
+        """An enabled row must override stale disabled JSON during discovery."""
+        def_manager.create(
+            name="toggled-enabled-pipeline",
+            definition_json=json.dumps(
+                {
+                    "name": "toggled-enabled-pipeline",
+                    "type": "pipeline",
+                    "enabled": False,
+                    "expose_as_tool": True,
+                    "steps": [{"id": "step1", "exec": "echo test"}],
+                }
+            ),
+            workflow_type="pipeline",
+            enabled=True,
+        )
+
+        result = await loader.discover_pipeline_workflows()
+
+        assert len(result) == 1
+        assert result[0].definition.enabled is True
+        assert result[0].definition.expose_as_tool is True
+
     @pytest.mark.asyncio
     async def test_discovers_pipelines_in_project_dir(self, loader, def_manager, project) -> None:
         """Test that project-scoped pipelines are discovered."""

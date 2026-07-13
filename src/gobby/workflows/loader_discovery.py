@@ -96,6 +96,9 @@ def _merge_db_pipelines(
     for row in db_rows:
         try:
             data = json.loads(row.definition_json)
+            # Mutable row metadata is authoritative; definition_json may still
+            # contain the value from import time after a later enable toggle.
+            data["enabled"] = row.enabled
             loader._validate_pipeline_references(data)
             definition = PipelineDefinition(**data)
 
