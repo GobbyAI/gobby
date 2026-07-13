@@ -429,6 +429,22 @@ def test_import_from_yaml(manager: LocalWorkflowDefinitionManager) -> None:
     assert data["steps"][0]["id"] == "research"
 
 
+def test_import_from_yaml_defaults_enabled_to_true(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    row = manager.import_from_yaml(SAMPLE_YAML.replace("enabled: true\n", ""))
+
+    assert row.enabled is True
+
+
+def test_import_from_yaml_preserves_explicit_disabled(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    row = manager.import_from_yaml(SAMPLE_YAML.replace("enabled: true", "enabled: false"))
+
+    assert row.enabled is False
+
+
 def test_import_from_yaml_pipeline(manager: LocalWorkflowDefinitionManager) -> None:
     """Test importing a pipeline from YAML."""
     row = manager.import_from_yaml(SAMPLE_PIPELINE_YAML)

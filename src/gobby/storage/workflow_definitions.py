@@ -402,7 +402,7 @@ class LocalWorkflowDefinitionManager:
         description = data.get("description", "")
         workflow_type = validate_workflow_definition_data(data)
         version = str(data.get("version", "1.0"))
-        enabled = bool(data.get("enabled", False))
+        enabled = bool(data.get("enabled", True))
         priority = data.get("priority", 100)
         sources_list = data.get("sources")
 

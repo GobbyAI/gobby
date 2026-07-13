@@ -121,6 +121,7 @@ class TestCreateWorkflow:
     def test_create_valid_workflow(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
     ) -> None:
+        loader.db = def_manager.db
         result = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
 
         assert result["success"] is True
@@ -129,6 +130,10 @@ class TestCreateWorkflow:
         assert defn["workflow_type"] == "pipeline"
         assert defn["description"] == "A test workflow"
         assert defn["version"] == "1.0"
+        assert defn["enabled"] is True
+        pipeline = loader.load_pipeline_sync("test-workflow")
+        assert pipeline is not None
+        assert pipeline.enabled is True
 
     def test_create_valid_pipeline(
         self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader

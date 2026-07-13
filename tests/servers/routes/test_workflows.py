@@ -260,6 +260,23 @@ class TestExportWorkflow:
 
 
 class TestImportWorkflow:
+    def test_import_defaults_enabled_to_true(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/workflows/import",
+            json={
+                "yaml_content": """\
+name: imported-pipeline
+type: pipeline
+steps:
+  - id: run
+    exec: echo ok
+""",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["definition"]["enabled"] is True
+
     def test_import_invalid_yaml(self, client: TestClient) -> None:
         resp = client.post(
             "/api/workflows/import",
