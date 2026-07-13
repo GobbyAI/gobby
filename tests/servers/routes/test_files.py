@@ -1,12 +1,13 @@
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.servers.routes.files import create_files_router
+from gobby.servers.routes.files import MAX_READ_SIZE, create_files_router
 
 pytestmark = pytest.mark.unit
 
@@ -176,10 +177,29 @@ class TestFilesRoutes:
         )
         assert resp.status_code == 404
 
-    def test_read_truncation(self, client: TestClient, project_dir: Path) -> None:
+    def test_read_truncation(
+        self,
+        client: TestClient,
+        project_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         # Create a file larger than max_size
         large_content = "x" * 1000
-        (project_dir / "large.txt").write_text(large_content)
+        large_path = project_dir / "large.txt"
+        large_path.write_text(large_content)
+
+        bounded_reader = MagicMock()
+        bounded_reader.__enter__.return_value = bounded_reader
+        bounded_reader.read.side_effect = lambda byte_limit: large_content.encode()[:byte_limit]
+        original_open = Path.open
+
+        def instrumented_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            if path == large_path:
+                return bounded_reader
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", instrumented_open)
+
         resp = client.get(
             "/api/files/read",
             params={"project_id": PROJECT_ID, "path": "large.txt", "max_size": 100},
@@ -188,6 +208,19 @@ class TestFilesRoutes:
         data = resp.json()
         assert data["truncated"] is True
         assert len(data["content"]) == 100
+        bounded_reader.read.assert_called_once_with(101)
+
+    @pytest.mark.parametrize("max_size", [-1, MAX_READ_SIZE + 1])
+    def test_read_rejects_out_of_range_max_size(
+        self,
+        client: TestClient,
+        max_size: int,
+    ) -> None:
+        resp = client.get(
+            "/api/files/read",
+            params={"project_id": PROJECT_ID, "path": "README.md", "max_size": max_size},
+        )
+        assert resp.status_code == 422
 
     # -- /image --
 

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Max file size to read (1MB default)
 DEFAULT_MAX_SIZE = 1_048_576
+MAX_READ_SIZE = 16 * DEFAULT_MAX_SIZE
 GIT_PORCELAIN_STATUS_MIN_LINE_LENGTH = 4
 GIT_PORCELAIN_PATH_OFFSET = 3
 
@@ -88,6 +89,12 @@ def _resolve_safe_path(project_path: str, relative_path: str) -> Path:
     if not target.is_relative_to(base):
         raise HTTPException(403, "Path traversal not allowed")
     return target
+
+
+def _read_prefix(path: Path, byte_limit: int) -> bytes:
+    """Read at most ``byte_limit`` bytes from a file."""
+    with path.open("rb") as handle:
+        return handle.read(byte_limit)
 
 
 def _get_project_manager(server: "HTTPServer") -> LocalProjectManager:
@@ -253,7 +260,12 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
     async def read_file(
         project_id: str = Query(..., description="Project ID"),
         path: str = Query(..., description="Relative path within project"),
-        max_size: int = Query(DEFAULT_MAX_SIZE, description="Max bytes to read"),
+        max_size: int = Query(
+            DEFAULT_MAX_SIZE,
+            ge=0,
+            le=MAX_READ_SIZE,
+            description="Max bytes to read",
+        ),
     ) -> dict[str, Any]:
         """Read file content.
 
@@ -293,11 +305,10 @@ def create_files_router(server: "HTTPServer") -> APIRouter:
             result["content"] = None
             return result
 
-        # Read text content
         # Read text content (async)
         try:
             loop = asyncio.get_running_loop()
-            raw = await loop.run_in_executor(None, target.read_bytes)
+            raw = await loop.run_in_executor(None, _read_prefix, target, max_size + 1)
             truncated = len(raw) > max_size
             if truncated:
                 raw = raw[:max_size]
