@@ -311,11 +311,11 @@ async def _read_undigested_turns(
             return [], digested_pair_index
 
         segment_turn_offset = len(turns) - len(segment)
-        prefix_turns = (
-            turns[:segment_turn_offset]
-            if segment_turn_offset >= 0 and turns[segment_turn_offset:] == segment
-            else []
-        )
+        # Parsers return the active transcript suffix, but may sanitize records
+        # in that suffix (for example Claude removes orphaned tool results).
+        # Content equality therefore cannot identify the raw prefix reliably;
+        # the preserved turn count is the stable boundary coordinate.
+        prefix_turns = turns[:segment_turn_offset] if segment_turn_offset >= 0 else []
         segment_pair_offset = len(_extract_digest_pairs(parser, prefix_turns))
         start_index = digested_pair_index - segment_pair_offset
         if start_index < 0 or start_index > len(pairs):

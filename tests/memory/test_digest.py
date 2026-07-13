@@ -2295,6 +2295,57 @@ class TestReadUndigestedTurns:
         assert later == [("Later question", "Later answer")]
         assert later_index == 3
 
+    async def test_clear_cursor_survives_claude_segment_sanitization(self, tmp_path) -> None:
+        import json
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript, [("Old question", "Old answer")])
+        with open(transcript, "a") as transcript_file:
+            for record in (
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": "<command-name>/clear</command-name>",
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "missing-tool-use",
+                                "content": "orphaned result",
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": "New question"},
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "New answer"}],
+                    },
+                },
+            ):
+                transcript_file.write(json.dumps(record) + "\n")
+
+        result, next_index = await _read_undigested_turns(str(transcript), "claude", 1)
+        repeated, repeated_index = await _read_undigested_turns(
+            str(transcript), "claude", next_index
+        )
+
+        assert result == [("New question", "New answer")]
+        assert next_index == 2
+        assert repeated == []
+        assert repeated_index == 2
+
     @pytest.mark.asyncio
     async def test_interrupted_turn_pairs_with_empty_response(self, tmp_path) -> None:
         """An interrupted turn (user without assistant) gets empty response."""
