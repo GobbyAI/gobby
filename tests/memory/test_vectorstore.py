@@ -14,7 +14,9 @@ import pytest
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.models import Distance, VectorParams
 
+from gobby.config.persistence import MemoryConfig
 from gobby.memory import vectorstore as vectorstore_module
+from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import (
     VectorStore,
     VectorStoreCollectionDimensionError,
@@ -22,6 +24,7 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     memory_project_scope_filter,
 )
+from gobby.storage.memories import LocalMemoryManager
 
 pytestmark = pytest.mark.unit
 
@@ -365,6 +368,81 @@ async def test_search_with_memory_project_scope_filter_includes_globals(
     assert MEM_1 in result_ids, "explicit project_id=None global must be returned"
     assert MEM_2 in result_ids, "absent project_id key global must be returned"
     assert MEM_3 not in result_ids, "other project's memory must be excluded (no leak)"
+
+
+@pytest.mark.asyncio
+async def test_crossref_create_fills_links_from_project_and_global_only(
+    vector_store: VectorStore,
+    temp_db,
+) -> None:
+    db = temp_db
+    project_a = "11111111-1111-4111-8111-111111111111"
+    project_b = "22222222-2222-4222-8222-222222222222"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_b, "Project B"))
+    storage = LocalMemoryManager(db)
+    source = storage.create_memory(content="source", project_id=project_a)
+    same_project = storage.create_memory(content="same project", project_id=project_a)
+    global_memory = storage.create_memory(content="global", project_id=None)
+    foreign = storage.create_memory(content="foreign", project_id=project_b)
+    query = _make_embedding(1.0)
+
+    await vector_store.upsert(source.id, query, {"project_id": project_a})
+    await vector_store.upsert(foreign.id, query, {"project_id": project_b})
+    await vector_store.upsert(same_project.id, _make_embedding(1.01), {"project_id": project_a})
+    await vector_store.upsert(global_memory.id, _make_embedding(1.02), {"project_id": None})
+
+    service = CrossrefService(
+        storage=storage,
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=query),
+        config=MemoryConfig(crossref_threshold=0.1, crossref_max_links=2),
+    )
+    created = await service.create(source)
+
+    assert created == 2
+    refs = storage.get_crossrefs(source.id, limit=10)
+    targets = {ref.target_id if ref.source_id == source.id else ref.source_id for ref in refs}
+    assert targets == {same_project.id, global_memory.id}
+    assert foreign.id not in targets
+
+    # A legacy bad edge is still hidden by the existing scoped read path.
+    storage.create_crossref(source.id, foreign.id, 0.99)
+    related = service.get_related(source.id, limit=10, project_id=project_a)
+    assert {memory.id for memory in related} == {same_project.id, global_memory.id}
+
+
+@pytest.mark.asyncio
+async def test_crossref_create_for_global_source_links_global_candidates_only(
+    vector_store: VectorStore,
+    temp_db,
+) -> None:
+    db = temp_db
+    project_a = "11111111-1111-4111-8111-111111111111"
+    db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
+    storage = LocalMemoryManager(db)
+    source = storage.create_memory(content="global source", project_id=None)
+    global_target = storage.create_memory(content="global target", project_id=None)
+    project_target = storage.create_memory(content="project target", project_id=project_a)
+    query = _make_embedding(2.0)
+
+    await vector_store.upsert(source.id, query, {"project_id": None})
+    await vector_store.upsert(project_target.id, query, {"project_id": project_a})
+    await vector_store.upsert(global_target.id, _make_embedding(2.01), {})
+
+    service = CrossrefService(
+        storage=storage,
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=query),
+        config=MemoryConfig(crossref_threshold=0.1, crossref_max_links=1),
+    )
+    created = await service.create(source)
+
+    assert created == 1
+    refs = storage.get_crossrefs(source.id, limit=10)
+    targets = {ref.target_id if ref.source_id == source.id else ref.source_id for ref in refs}
+    assert targets == {global_target.id}
+    assert project_target.id not in targets
 
 
 @pytest.mark.asyncio
