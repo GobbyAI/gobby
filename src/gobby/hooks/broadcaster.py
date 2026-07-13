@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.config.app import DaemonConfig
+from gobby.hooks.background_tasks import create_background_task
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.hook_types import (
     HOOK_INPUT_MODELS,
@@ -71,7 +72,10 @@ def schedule_hook_broadcast(
 
     try:
         running_loop = asyncio.get_running_loop()
-        running_loop.create_task(broadcaster.broadcast_event(event, response))
+        create_background_task(
+            broadcaster.broadcast_event(event, response),
+            loop=running_loop,
+        )
     except RuntimeError:
         if loop:
             coro = broadcaster.broadcast_event(event, response)

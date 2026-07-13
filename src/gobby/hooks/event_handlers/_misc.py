@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import CancelledError as FutureCancelledError
+from concurrent.futures import Future
 from pathlib import Path
+from typing import Any
 
 from gobby.app_context import get_app_context
 from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -21,6 +24,35 @@ from gobby.worktrees.git import WorktreeGitManager
 
 class MiscEventHandlerMixin(EventHandlersBase):
     """Mixin for handling miscellaneous events."""
+
+    def _schedule_session_usage_broadcast(
+        self,
+        websocket_server: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        """Schedule a usage broadcast on the daemon loop from a hook worker thread."""
+        coro = websocket_server.broadcast_session_usage_updated(payload)
+        loop = self._event_loop
+        if loop is None or not loop.is_running():
+            coro.close()
+            self.logger.debug("No captured daemon loop for typed-JSON usage broadcast")
+            return
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+        except Exception:
+            coro.close()
+            self.logger.warning("Failed to schedule typed-JSON usage broadcast", exc_info=True)
+            return
+        future.add_done_callback(self._log_session_usage_broadcast_result)
+
+    def _log_session_usage_broadcast_result(self, future: Future[None]) -> None:
+        try:
+            future.result()
+        except FutureCancelledError:
+            self.logger.debug("Typed-JSON usage broadcast cancelled")
+        except Exception:
+            self.logger.warning("Typed-JSON usage broadcast failed", exc_info=True)
 
     def _log_observe_only_event(self, event_name: str, event: HookEvent) -> None:
         """Log an observe-only Claude event without side effects."""
@@ -137,16 +169,9 @@ class MiscEventHandlerMixin(EventHandlersBase):
                                     ),
                                 },
                             )
-                            try:
-                                loop = asyncio.get_running_loop()
-                                loop.create_task(ws_server.broadcast_session_usage_updated(payload))
-                            except RuntimeError:
-                                self.logger.debug(
-                                    "No running event loop for Gemini usage broadcast",
-                                    exc_info=True,
-                                )
+                            self._schedule_session_usage_broadcast(ws_server, payload)
                     except Exception as e:
-                        self.logger.warning(f"Failed to update Gemini session usage: {e}")
+                        self.logger.warning(f"Failed to update typed-JSON session usage: {e}")
         else:
             self.logger.debug("AFTER_MODEL")
 

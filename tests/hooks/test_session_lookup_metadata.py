@@ -159,7 +159,12 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     assert result == "mapped-platform-session"
     assert event.project_id == "project-from-cwd"
     assert event.metadata["_platform_session_id"] == "mapped-platform-session"
-    session_manager.get_session_id.assert_any_call("claude-external", "claude")
+    session_manager.get_session_id.assert_any_call(
+        "claude-external",
+        "claude",
+        machine_id="machine-id",
+        project_id="project-from-cwd",
+    )
 
 
 def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registering() -> None:

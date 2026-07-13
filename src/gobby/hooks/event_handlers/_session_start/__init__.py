@@ -181,9 +181,6 @@ class SessionStartMixin(EventHandlersBase):
         additional_context: list[str] | None = None,
         is_pre_created: bool = False,
         terminal_context: dict[str, Any] | None = None,
-        agent_info: AgentActivationResult | None = None,
-        session_source: str | None = None,
-        claimed_tasks_info: list[tuple[str, str, str]] | None = None,
     ) -> HookResponse:
         """Delegate to module-level compose_session_response."""
         from gobby.hooks.event_handlers._session_responses import compose_session_response
@@ -200,7 +197,4 @@ class SessionStartMixin(EventHandlersBase):
             additional_context=additional_context,
             is_pre_created=is_pre_created,
             terminal_context=terminal_context,
-            agent_info=agent_info,
-            session_source=session_source,
-            claimed_tasks_info=claimed_tasks_info,
         )

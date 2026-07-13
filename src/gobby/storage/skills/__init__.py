@@ -11,7 +11,7 @@ from gobby.storage.skills._bundled import (
 )
 from gobby.storage.skills._manager import LocalSkillManager
 from gobby.storage.skills._models import ChangeEvent, Skill, SkillFile, SkillSourceType
-from gobby.storage.skills._notifier import SkillChangeNotifier
+from gobby.storage.skills._notifier import SkillChangeNotifier, get_skill_change_notifier
 
 __all__ = [
     "BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR",
@@ -20,6 +20,7 @@ __all__ = [
     "SkillFile",
     "SkillSourceType",
     "SkillChangeNotifier",
+    "get_skill_change_notifier",
     "LocalSkillManager",
     "is_bundled_template_path",
 ]

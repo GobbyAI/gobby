@@ -57,10 +57,10 @@ sources:
   - claude
   - gemini
 steps:
-  - name: research
-    tools: [Read, Grep]
-  - name: implement
-    tools: [all]
+  - id: research
+    exec: echo research
+  - id: implement
+    exec: echo implement
 """
 
 SAMPLE_PIPELINE_YAML = """\
@@ -69,8 +69,7 @@ description: A pipeline from YAML
 type: pipeline
 steps:
   - id: build
-    exec:
-      command: make build
+    exec: make build
 """
 
 
@@ -427,7 +426,25 @@ def test_import_from_yaml(manager: LocalWorkflowDefinitionManager) -> None:
     # Verify definition_json round-trips
     data = json.loads(row.definition_json)
     assert data["name"] == "yaml-workflow"
-    assert data["steps"][0]["name"] == "research"
+    assert data["steps"][0]["id"] == "research"
+
+
+def test_import_from_yaml_defaults_enabled_to_true(
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    row = manager.import_from_yaml(SAMPLE_YAML.replace("enabled: true\n", ""))
+
+    assert row.enabled is True
+
+
+@pytest.mark.parametrize("enabled_yaml", ["enabled: false", 'enabled: "false"'])
+def test_import_from_yaml_preserves_explicit_disabled(
+    manager: LocalWorkflowDefinitionManager,
+    enabled_yaml: str,
+) -> None:
+    row = manager.import_from_yaml(SAMPLE_YAML.replace("enabled: true", enabled_yaml))
+
+    assert row.enabled is False
 
 
 def test_import_from_yaml_pipeline(manager: LocalWorkflowDefinitionManager) -> None:
@@ -437,6 +454,49 @@ def test_import_from_yaml_pipeline(manager: LocalWorkflowDefinitionManager) -> N
     assert row.name == "yaml-pipeline"
     assert row.workflow_type == "pipeline"
     assert row.source == "installed"
+
+
+@pytest.mark.parametrize(
+    ("yaml_content", "expected_type"),
+    [
+        (
+            "name: imported-rule\ntype: rule\nevent: before_tool\n"
+            "effects:\n  - type: block\n    reason: imported\n",
+            "rule",
+        ),
+        (
+            "name: imported-variable\ntype: variable\nvariable: imported\nvalue: 1\n",
+            "variable",
+        ),
+        ("name: imported-agent\ntype: agent\nrole: Imported agent\n", "agent"),
+    ],
+)
+def test_import_from_yaml_accepts_supported_non_pipeline_types(
+    manager: LocalWorkflowDefinitionManager,
+    yaml_content: str,
+    expected_type: str,
+) -> None:
+    row = manager.import_from_yaml(yaml_content)
+
+    assert row.workflow_type == expected_type
+
+
+@pytest.mark.parametrize("workflow_type", ["rule", "variable", "agent"])
+def test_import_from_yaml_rejects_junk_non_pipeline_body(
+    manager: LocalWorkflowDefinitionManager, workflow_type: str
+) -> None:
+    valid_fields = {
+        "rule": "event: before_tool\neffects:\n  - type: block\n    reason: imported\n",
+        "variable": "variable: imported\nvalue: 1\n",
+        "agent": "role: Imported agent\n",
+    }
+    yaml_content = (
+        f"name: invalid-{workflow_type}\ntype: {workflow_type}\n"
+        f"{valid_fields[workflow_type]}junk: true\n"
+    )
+
+    with pytest.raises(ValueError, match="extra_forbidden"):
+        manager.import_from_yaml(yaml_content)
 
 
 def test_import_from_yaml_invalid(manager: LocalWorkflowDefinitionManager) -> None:

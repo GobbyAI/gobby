@@ -173,6 +173,37 @@ class TestHealthStatusReporting:
         assert len(errors) == 0, f"Thread errors: {errors}"
         assert len(results) == 50  # 5 threads * 10 reads
 
+    def test_concurrent_fresh_checks_share_one_daemon_request(self) -> None:
+        """Concurrent callers share the same in-flight health request."""
+        request_started = threading.Event()
+        release_request = threading.Event()
+        mock_client = MagicMock(spec=["check_status"])
+
+        def check_status() -> tuple[bool, str, str, None]:
+            request_started.set()
+            assert release_request.wait(timeout=2)
+            return True, "Ready", "ready", None
+
+        mock_client.check_status.side_effect = check_status
+        monitor = HealthMonitor(daemon_client=mock_client)
+        results: list[bool] = []
+
+        first = threading.Thread(target=lambda: results.append(monitor.check_now()))
+        second = threading.Thread(target=lambda: results.append(monitor.check_now()))
+        first.start()
+        assert request_started.wait(timeout=2)
+        second.start()
+        wait_for_condition(lambda: monitor._fresh_check_waiters == 1)
+        release_request.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert results == [True, True]
+        mock_client.check_status.assert_called_once_with()
+        assert monitor.get_cached_status() == (True, "Ready", "ready", None)
+
 
 class TestHealthCheckScheduling:
     """Test health check scheduling/timing."""

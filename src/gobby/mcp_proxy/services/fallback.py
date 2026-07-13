@@ -6,9 +6,13 @@ using semantic similarity and success rate weighting.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+import psycopg
+from psycopg_pool import PoolTimeout
 
 from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
@@ -43,7 +47,9 @@ class FallbackSuggestion:
             "tool_name": self.tool_name,
             "description": self.description,
             "similarity": round(self.similarity, 4),
-            "success_rate": round(self.success_rate, 4) if self.success_rate else None,
+            "success_rate": (
+                round(self.success_rate, 4) if self.success_rate is not None else None
+            ),
             "score": round(self.score, 4),
         }
 
@@ -158,7 +164,9 @@ class ToolFallbackResolver:
         # Enrich with success rates and compute combined scores
         suggestions = []
         for result in search_results[:top_k]:
-            success_rate = self._get_success_rate(result.server_name, result.tool_name, project_id)
+            success_rate = await asyncio.to_thread(
+                self._get_success_rate, result.server_name, result.tool_name, project_id
+            )
 
             score = self._compute_score(result.similarity, success_rate)
 
@@ -325,5 +333,12 @@ class ToolFallbackResolver:
                 (server_name, tool_name),
             )
             return row["description"] if row else None
-        except Exception:
+        except (psycopg.Error, PoolTimeout) as exc:
+            logger.debug(
+                "Failed to look up description for %s.%s: %s",
+                server_name,
+                tool_name,
+                exc,
+                exc_info=True,
+            )
             return None

@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.cli.utils import get_install_dir as get_real_install_dir
+
 pytestmark = pytest.mark.unit
 
 
@@ -42,14 +44,8 @@ class TestInstallClaude:
         (shared_hooks_dir / "hook_dispatcher.py").write_text("# mock hook dispatcher")
         (shared_hooks_dir / "validate_settings.py").write_text("# mock validate settings")
 
-        # Create hooks-template.json
-        hooks_template = {
-            "hooks": {
-                "SessionStart": [{"hooks": [{"type": "command", "command": "test"}]}],
-                "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "test"}]}],
-            }
-        }
-        (claude_dir / "hooks-template.json").write_text(json.dumps(hooks_template))
+        source_template = get_real_install_dir() / "claude" / "hooks-template.json"
+        (claude_dir / "hooks-template.json").write_text(source_template.read_text())
 
         with patch(
             "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
@@ -197,10 +193,35 @@ class TestInstallClaude:
         # Create existing settings.json with custom config
         claude_path = temp_project / ".claude"
         claude_path.mkdir(parents=True)
+        template_hooks = json.loads(
+            (mock_install_dir / "claude" / "hooks-template.json").read_text()
+        )["hooks"]
+        user_hooks = {
+            hook_type: {"type": "command", "command": f"user-{hook_type}"}
+            for hook_type in template_hooks
+        }
         existing_settings = {
             "allowedTools": ["tool1", "tool2"],
-            "hooks": {"CustomHook": [{"hooks": [{"type": "command", "command": "custom"}]}]},
+            "hooks": {
+                hook_type: [
+                    {
+                        "matcher": "*",
+                        "custom": "preserve-group-metadata",
+                        "hooks": [
+                            user_hook,
+                            {
+                                "type": "command",
+                                "command": ("/old/ghook --gobby-owned --cli=claude --type=stale"),
+                            },
+                        ],
+                    }
+                ]
+                for hook_type, user_hook in user_hooks.items()
+            },
         }
+        existing_settings["hooks"]["CustomHook"] = [
+            {"hooks": [{"type": "command", "command": "custom"}]}
+        ]
         (claude_path / "settings.json").write_text(json.dumps(existing_settings))
 
         with patch.object(Path, "home", return_value=mock_home_dir):
@@ -214,9 +235,14 @@ class TestInstallClaude:
 
         # Verify existing content is preserved
         assert merged["allowedTools"] == ["tool1", "tool2"]
-        # Verify gobby hooks were added
-        assert "SessionStart" in merged["hooks"]
-        assert "PreToolUse" in merged["hooks"]
+        assert "CustomHook" in merged["hooks"]
+        for hook_type, user_hook in user_hooks.items():
+            groups = merged["hooks"][hook_type]
+            assert groups[0]["custom"] == "preserve-group-metadata"
+            commands = [handler["command"] for group in groups for handler in group["hooks"]]
+            assert user_hook["command"] in commands
+            assert not any("--type=stale" in command for command in commands)
+            assert sum("--gobby-owned" in command for command in commands) == 1
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.install_shared_content")

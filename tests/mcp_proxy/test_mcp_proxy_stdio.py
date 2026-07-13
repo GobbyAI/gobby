@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any
@@ -294,13 +295,61 @@ class TestStartDaemonProcess:
                             assert result["success"] is True
                             assert result["pid"] == 12345
                             assert "started successfully" in result["output"]
+                            _, kwargs = mock_exec.call_args
+                            assert kwargs["stdout"] is asyncio.subprocess.DEVNULL
+                            assert kwargs["stderr"] is asyncio.subprocess.DEVNULL
+
+    @pytest.mark.asyncio
+    async def test_noisy_start_child_cannot_block_on_output_pipes(self) -> None:
+        """A child writing more than pipe capacity exits without a reader."""
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+        spawned: list[asyncio.subprocess.Process] = []
+
+        async def spawn_noisy_child(*_args: str, **kwargs: Any) -> asyncio.subprocess.Process:
+            proc = await real_create_subprocess_exec(
+                sys.executable,
+                "-c",
+                (
+                    "import os,time; data=b'x'*(256*1024); "
+                    "os.write(1,data); os.write(2,data); time.sleep(1)"
+                ),
+                **kwargs,
+            )
+            spawned.append(proc)
+            return proc
+
+        with (
+            patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
+            patch(
+                "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
+                side_effect=spawn_noisy_child,
+            ),
+            patch(
+                "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345),
+        ):
+            result = await start_daemon_process(60887, 60888)
+
+        assert result["success"] is True, result
+        assert len(spawned) == 1
+        proc = spawned[0]
+        try:
+            assert proc.stdout is None
+            assert proc.stderr is None
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.communicate()
 
     @pytest.mark.asyncio
     async def test_handles_start_failure(self) -> None:
         """Test handles daemon start failure."""
         mock_proc = MagicMock()
         mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"Start failed"))
 
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
             with patch(
@@ -313,7 +362,7 @@ class TestStartDaemonProcess:
 
                     assert result["success"] is False
                     assert "process exited immediately" in result["message"]
-                    assert result["error"] == "Start failed"
+                    assert result["error"] == "Process exited with code 1"
 
     @pytest.mark.asyncio
     async def test_handles_timeout(self) -> None:
@@ -321,6 +370,7 @@ class TestStartDaemonProcess:
         mock_proc = MagicMock()
         mock_proc.returncode = None
         mock_proc.pid = 12345
+        mock_proc.wait = AsyncMock(return_value=0)
 
         with patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False):
             with patch(
@@ -341,6 +391,38 @@ class TestStartDaemonProcess:
 
                             assert result["success"] is False
                             assert "unhealthy" in result["message"]
+                            mock_proc.terminate.assert_called_once_with()
+                            mock_proc.wait.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_child_is_killed_if_termination_times_out(self) -> None:
+        """A stubborn startup child is killed and reaped before failure returns."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_proc.pid = 12345
+        mock_proc.wait = AsyncMock(side_effect=[TimeoutError, 0])
+
+        with (
+            patch("gobby.mcp_proxy.daemon_control.is_daemon_running", return_value=False),
+            patch(
+                "gobby.mcp_proxy.daemon_control.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch(
+                "gobby.mcp_proxy.daemon_control.check_daemon_http_health",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=None),
+            patch("gobby.mcp_proxy.daemon_control.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await start_daemon_process(60887, 60888)
+
+        assert result["success"] is False
+        mock_proc.terminate.assert_called_once_with()
+        mock_proc.kill.assert_called_once_with()
+        assert mock_proc.wait.await_count == 2
 
     @pytest.mark.asyncio
     async def test_handles_exception(self) -> None:
@@ -1134,6 +1216,37 @@ class TestDaemonProxy:
                 )
 
     @pytest.mark.asyncio
+    async def test_call_tool_uses_default_for_nonnumeric_wait_timeout(self) -> None:
+        """Nonnumeric wait timeouts fall back to the default plus HTTP buffer."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-agents",
+                    "wait_for_agent",
+                    {"run_id": "run-123", "timeout": "5m"},
+                )
+
+                assert result == {"success": True}
+                assert result["success"] is True
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/tools/call",
+                    json={
+                        "server_name": "gobby-agents",
+                        "tool_name": "wait_for_agent",
+                        "arguments": {"run_id": "run-123", "timeout": "5m"},
+                    },
+                    timeout=330.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
     async def test_call_tool_treats_wait_for_summary_as_wait_tool(self) -> None:
         """wait_for_summary uses generic wait-tool proxying and timeout buffering."""
         from gobby.mcp_proxy.stdio import DaemonProxy
@@ -1232,7 +1345,7 @@ class TestDaemonProxyMethods:
         with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy.get_tool_schema("srv", "tool")
 
@@ -1265,7 +1378,7 @@ class TestDaemonProxyMethods:
         ):
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
@@ -1297,7 +1410,7 @@ class TestDaemonProxyMethods:
             mock_bootstrap.return_value = "bootstrapped-session"
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
@@ -1330,7 +1443,7 @@ class TestDaemonProxyMethods:
         ):
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 
@@ -1361,7 +1474,7 @@ class TestDaemonProxyMethods:
         ):
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_response)
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client_cls.return_value = mock_client
 
             result = await proxy._request("GET", "/api/status")
 

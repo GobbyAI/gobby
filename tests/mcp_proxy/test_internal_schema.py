@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -155,6 +156,20 @@ async def test_call_coerces_string_args_to_declared_types() -> None:
     assert isinstance(result["threshold"], float)
 
 
+@pytest.mark.asyncio
+async def test_call_offloads_sync_tool_from_event_loop_thread() -> None:
+    registry = InternalToolRegistry(name="test-registry")
+    event_loop_thread = threading.get_ident()
+
+    @registry.tool(name="thread_id", description="Return the current thread ID")
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    worker_thread = await registry.call("thread_id", {})
+
+    assert worker_thread != event_loop_thread
+
+
 def test_decorator_required_vs_optional() -> None:
     """Parameters without defaults should be required."""
     registry = InternalToolRegistry(name="test-registry")
@@ -286,6 +301,25 @@ async def test_context_param_is_ignored() -> None:
     ctx = {"session_id": "sess-1", "conversation_id": "conv-1"}
     result = await registry.call("simple", {"query": "hello"}, context=ctx)
     assert result["query"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_sync_internal_tool_runs_off_event_loop() -> None:
+    """Synchronous registry tools must run in a worker thread."""
+    registry = InternalToolRegistry(name="test-registry")
+    event_loop_thread = threading.get_ident()
+    tool_threads: list[int] = []
+
+    @registry.tool(name="sync_tool", description="Synchronous tool")
+    def sync_tool() -> dict[str, bool]:
+        tool_threads.append(threading.get_ident())
+        return {"ok": True}
+
+    result = await registry.call("sync_tool", {})
+
+    assert result == {"ok": True}
+    assert tool_threads
+    assert tool_threads[0] != event_loop_thread
 
 
 def test_normalize_internal_success_result_strips_legacy_success() -> None:

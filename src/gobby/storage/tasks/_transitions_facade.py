@@ -86,9 +86,22 @@ class TaskTransitionsMixin:
         self._notify_listeners()
         return task
 
-    def claim_task(self, task_id: str, session_id: str, force: bool = False) -> Task:
+    def claim_task(
+        self,
+        task_id: str,
+        session_id: str,
+        force: bool = False,
+        *,
+        expected_owner: str | None = None,
+    ) -> Task:
         """Claim a task for a session, preserving non-open lifecycle states."""
-        task = _claim_task(self.db, task_id=task_id, session_id=session_id, force=force)
+        task = _claim_task(
+            self.db,
+            task_id=task_id,
+            session_id=session_id,
+            force=force,
+            expected_owner=expected_owner,
+        )
         self._notify_listeners()
         return task
 
@@ -232,6 +245,7 @@ class TaskTransitionsMixin:
         review_notes: str | None = None,
         *,
         by_session_id: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> Task:
         """Submit a stage for review and release ownership."""
         task = _submit_for_review(
@@ -240,6 +254,7 @@ class TaskTransitionsMixin:
             stage_name=stage_name,
             review_notes=review_notes,
             by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
         return task
@@ -251,6 +266,7 @@ class TaskTransitionsMixin:
         approval_notes: str | None = None,
         *,
         by_session_id: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> Task:
         """Approve review on a stage and release ownership."""
         task = _approve_review(
@@ -259,6 +275,7 @@ class TaskTransitionsMixin:
             stage_name=stage_name,
             approval_notes=approval_notes,
             by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
         return task
@@ -271,6 +288,7 @@ class TaskTransitionsMixin:
         round_number: int | None = None,
         *,
         by_session_id: str | None = None,
+        dispatch_run_id: str | None = None,
     ) -> Task:
         """Reject review on a stage and return it to ready."""
         task = _reject_review(
@@ -280,6 +298,7 @@ class TaskTransitionsMixin:
             rejection_notes=rejection_notes,
             round_number=round_number,
             by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
         )
         self._notify_listeners()
         return task

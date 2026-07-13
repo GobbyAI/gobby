@@ -288,6 +288,60 @@ class TestExpansionRuns:
         assert refreshed is not None
         assert refreshed.status == "cancelled"
 
+        repeated = await expansion_registry.call(
+            "cancel_expansion_run",
+            {"run_id": run.id},
+        )
+
+        assert repeated["success"] is True
+        assert repeated["run"]["status"] == "cancelled"
+        after_repeated = run_manager.get(run.id)
+        assert after_repeated is not None
+        assert after_repeated.error == refreshed.error
+        assert after_repeated.completed_at == refreshed.completed_at
+
+    @pytest.mark.parametrize("terminal_status", ["completed", "failed"])
+    @pytest.mark.asyncio
+    async def test_cancel_expansion_run_preserves_terminal_status(
+        self,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        terminal_status: str,
+    ) -> None:
+        """The MCP cancellation handler is a no-op for terminal runs."""
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
+        )
+        if terminal_status == "completed":
+            before = run_manager.save_apply_result(
+                run.id,
+                task_id_map={},
+                created_task_ids=[],
+            )
+        else:
+            before = run_manager.fail(run.id, "compile failed")
+        assert before is not None
+
+        result = await expansion_registry.call(
+            "cancel_expansion_run",
+            {"run_id": run.id},
+        )
+
+        assert result["success"] is True
+        assert result["run"]["status"] == terminal_status
+        refreshed = run_manager.get(run.id)
+        assert refreshed is not None
+        assert refreshed.status == terminal_status
+        assert refreshed.error == before.error
+        assert refreshed.completed_at == before.completed_at
+
     @pytest.mark.asyncio
     async def test_resume_expansion_run_restarts_failed_run(
         self,

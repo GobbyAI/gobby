@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.autonomous.stuck_detector import StuckDetector
+from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -64,9 +65,9 @@ def _get_ready_descendants(
         List of ready Task objects that are descendants of parent_task_id
     """
     # Get all ready tasks first
-    all_ready = task_manager.list_ready_tasks(
+    all_ready = collect_task_query_pages(
+        task_manager.list_ready_tasks,
         task_type=task_type,
-        limit=200,  # Get more since we'll filter
         project_id=project_id,
     )
 
@@ -80,7 +81,10 @@ def _get_ready_descendants(
     while to_check:
         current_id = to_check.pop()
         # Get direct children of this task
-        children = task_manager.list_tasks(parent_task_id=current_id, limit=100)
+        children = collect_task_query_pages(
+            task_manager.list_tasks,
+            parent_task_id=current_id,
+        )
         for child in children:
             if child.id not in descendant_ids:
                 descendant_ids.add(child.id)
@@ -252,12 +256,17 @@ def _resolve_ready_tasks(
             parent_task = task_manager.get_task(parent_task_id)
             if parent_task and not is_task_closed(parent_task) and not parent_task.is_escalated:
                 if task_type is None or parent_task.task_type == task_type:
-                    ready_check = task_manager.list_ready_tasks(project_id=project_id, limit=200)
+                    ready_check = collect_task_query_pages(
+                        task_manager.list_ready_tasks,
+                        project_id=project_id,
+                    )
                     if any(t.id == parent_task_id for t in ready_check):
                         ready_tasks = [parent_task]
     else:
-        ready_tasks = task_manager.list_ready_tasks(
-            task_type=task_type, limit=50, project_id=project_id
+        ready_tasks = collect_task_query_pages(
+            task_manager.list_ready_tasks,
+            task_type=task_type,
+            project_id=project_id,
         )
 
     if not ready_tasks:
@@ -278,15 +287,15 @@ def _resolve_ready_tasks(
             }
         }
 
-    in_progress_tasks = task_manager.list_tasks(
+    in_progress_tasks = collect_task_query_pages(
+        task_manager.list_tasks,
         current_stage_state="in_progress",
-        limit=50,
         project_id=project_id,
     )
-    claimed_tasks = task_manager.list_tasks(
+    claimed_tasks = collect_task_query_pages(
+        task_manager.list_tasks,
         claimed=True,
         closed=False,
-        limit=50,
         project_id=project_id,
     )
     seen_active_ids = {task.id for task in in_progress_tasks}

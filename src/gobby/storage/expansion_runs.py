@@ -146,6 +146,11 @@ class LocalExpansionRunManager:
     def __init__(self, db: HubDatabase):
         self.db = db
 
+    @classmethod
+    def is_active_status(cls, status: ExpansionRunStatus) -> bool:
+        """Return whether a run status can still transition to a terminal state."""
+        return status in cls._ACTIVE_STATUSES
+
     def create(
         self,
         *,
@@ -211,16 +216,15 @@ class LocalExpansionRunManager:
 
     def get_active_for_task(self, task_id: str) -> ExpansionRun | None:
         """Get the most recent non-terminal expansion run for a task."""
-        placeholders = ", ".join("%s" for _ in self._ACTIVE_STATUSES)
         row = self.db.fetchone(
-            f"""
+            """
             SELECT * FROM expansion_runs
             WHERE parent_task_id = %s
-              AND status IN ({placeholders})
+              AND status = ANY(%s)
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            (task_id, *self._ACTIVE_STATUSES),
+            (task_id, list(self._ACTIVE_STATUSES)),
         )
         return ExpansionRun.from_row(row) if row else None
 
@@ -401,14 +405,15 @@ class LocalExpansionRunManager:
         return self.get(run_id)
 
     def cancel(self, run_id: str, error: str | None = None) -> ExpansionRun | None:
-        """Mark a run cancelled."""
+        """Mark an active run cancelled without overwriting terminal state."""
         now = utc_now()
         self.db.execute(
             """
             UPDATE expansion_runs
             SET status = 'cancelled', error = %s, completed_at = %s, updated_at = %s
             WHERE id = %s
+              AND status = ANY(%s)
             """,
-            (error, now, now, run_id),
+            (error, now, now, run_id, list(self._ACTIVE_STATUSES)),
         )
         return self.get(run_id)

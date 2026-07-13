@@ -2,6 +2,7 @@
 Gobby Daemon Tools MCP Server.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -24,9 +25,50 @@ from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
 from gobby.utils import project_context as project_context_utils
-from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
+from gobby.utils.session_context import (
+    SeededContextTokens,
+    get_session_context,
+    reset_seeded_contexts,
+    resolve_and_seed_contexts,
+    set_session_context,
+)
 
 logger = logging.getLogger("gobby.mcp.server")
+
+
+def _resolve_context_values(**kwargs: Any) -> tuple[str | None, str | None, Any, Any]:
+    """Resolve DB-backed context in a worker and capture the seeded values."""
+    worker_tokens = resolve_and_seed_contexts(**kwargs)
+    try:
+        session_context = get_session_context()
+        project_context = project_context_utils.get_project_context()
+        return (
+            worker_tokens.resolved_session_id,
+            worker_tokens.resolved_project_id,
+            session_context,
+            dict(project_context) if project_context is not None else None,
+        )
+    finally:
+        reset_seeded_contexts(worker_tokens)
+
+
+async def _resolve_and_seed_contexts_off_loop(**kwargs: Any) -> SeededContextTokens:
+    """Resolve synchronously backed context off-loop, then seed the caller context."""
+    (
+        resolved_session_id,
+        resolved_project_id,
+        session_context,
+        project_context,
+    ) = await asyncio.to_thread(_resolve_context_values, **kwargs)
+    tokens = SeededContextTokens(
+        resolved_session_id=resolved_session_id,
+        resolved_project_id=resolved_project_id,
+    )
+    if session_context is not None:
+        tokens.session_token = set_session_context(session_context)
+    if project_context is not None:
+        tokens.project_token = project_context_utils.set_project_context(project_context)
+    return tokens
 
 
 class GobbyDaemonTools:
@@ -127,7 +169,7 @@ class GobbyDaemonTools:
         for config in mgr.server_configs:
             health = mgr.health.get(config.name)
             state = health.state.value if health else "unknown"
-            is_connected = config.name in mgr.connections
+            is_connected = mgr.is_connected(config.name)
             if is_connected:
                 connected_count += 1
             entry: dict[str, Any] = {
@@ -152,7 +194,7 @@ class GobbyDaemonTools:
                 "connected": connected_count,
             }
         )
-        self.tool_proxy.record_servers_listed(session_id)
+        await asyncio.to_thread(self.tool_proxy.record_servers_listed, session_id)
         return result
 
     # --- Tool Proxying ---
@@ -241,7 +283,7 @@ class GobbyDaemonTools:
         session_scope_ref = (
             self._caller_project_ref() if session_id and session_id.lstrip("#").isdigit() else None
         )
-        tokens = resolve_and_seed_contexts(
+        tokens = await _resolve_and_seed_contexts_off_loop(
             session_ref=session_id,
             session_manager=self._session_manager,
             project_ref=project_id,
@@ -259,6 +301,18 @@ class GobbyDaemonTools:
                         type="text",
                         text=f"Error: project_id '{project_id}' not found. "
                         "Use a valid project UUID or name.",
+                    )
+                ],
+                isError=True,
+            )
+        if session_id and tokens.resolved_session_id is None:
+            reset_seeded_contexts(tokens)
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Error: session_id '{session_id}' not found. "
+                        "Use a valid session UUID or local #N reference.",
                     )
                 ],
                 isError=True,
@@ -337,11 +391,7 @@ class GobbyDaemonTools:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(
-            server_name,
-            tool_name,
-            session_id=session_id,
-        )
+        return await self.tool_proxy.get_tool_schema(server_name, tool_name)
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
@@ -439,10 +489,7 @@ class GobbyDaemonTools:
                 "query": query,
             }
 
-        project_id = self._mcp_manager.project_id
-        if not project_id:
-            ctx = project_context_utils.get_project_context()
-            project_id = ctx.get("id") if ctx else None
+        project_id = self._caller_project_ref()
         if not project_id:
             return {
                 "success": False,
@@ -481,6 +528,7 @@ class GobbyDaemonTools:
                 description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
             ),
         ],
+        workflow: str | None = None,
     ) -> dict[str, Any]:
         """Set a variable. Session-scoped by default. Pass workflow param to scope to a specific workflow instance."""
         if not self._session_manager or not self._session_manager.db:
@@ -488,13 +536,14 @@ class GobbyDaemonTools:
 
         from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
 
-        return _set_var(
+        return await asyncio.to_thread(
+            _set_var,
             self._session_manager,
             self._session_manager.db,
             name,
             value,
             session_id,
-            workflow=None,
+            workflow=workflow,
         )
 
     async def get_variable(
@@ -507,6 +556,7 @@ class GobbyDaemonTools:
                 description="Your Gobby Session ID (e.g. #3439). Use the value from 'Gobby Session ID: #N' in your system prompt."
             ),
         ],
+        workflow: str | None = None,
     ) -> dict[str, Any]:
         """Get a variable (or all variables). Session-scoped by default. Pass workflow param to read from a specific workflow instance."""
         if not self._session_manager or not self._session_manager.db:
@@ -514,12 +564,13 @@ class GobbyDaemonTools:
 
         from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
 
-        return _get_var(
+        return await asyncio.to_thread(
+            _get_var,
             self._session_manager,
             self._session_manager.db,
             name,
             session_id,
-            workflow=None,
+            workflow=workflow,
         )
 
     # Hook Extension tools migrated to gobby-plugins internal registry

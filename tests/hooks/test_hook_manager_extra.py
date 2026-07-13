@@ -141,28 +141,28 @@ class TestDedupMemoryResults:
     def test_filters_already_injected(self, MockSVM):
         """Previously injected memories are excluded from results."""
         mock_svm = MockSVM.return_value
-        mock_svm.get_variables.return_value = {"injected_memory_ids": ["a", "b"]}
+        mock_svm.claim_set_variable_values.return_value = ["c"]
 
         manager = self._make_manager()
         result = manager._dedup_memory_results(self._make_result("a", "b", "c"), "sess-1")
 
         assert len(result["memories"]) == 1
         assert result["memories"][0]["id"] == "c"
-        mock_svm.append_to_set_variable.assert_called_once_with(
-            "sess-1", "injected_memory_ids", ["c"]
+        mock_svm.claim_set_variable_values.assert_called_once_with(
+            "sess-1", "injected_memory_ids", ["a", "b", "c"]
         )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_first_prompt_no_filtering(self, MockSVM):
         """First prompt (empty injected_memory_ids) injects all memories."""
         mock_svm = MockSVM.return_value
-        mock_svm.get_variables.return_value = {"injected_memory_ids": []}
+        mock_svm.claim_set_variable_values.return_value = ["a", "b"]
 
         manager = self._make_manager()
         result = manager._dedup_memory_results(self._make_result("a", "b"), "sess-1")
 
         assert len(result["memories"]) == 2
-        mock_svm.append_to_set_variable.assert_called_once_with(
+        mock_svm.claim_set_variable_values.assert_called_once_with(
             "sess-1", "injected_memory_ids", ["a", "b"]
         )
 
@@ -170,13 +170,13 @@ class TestDedupMemoryResults:
     def test_no_variable_set_yet(self, MockSVM):
         """Session with no injected_memory_ids variable injects all."""
         mock_svm = MockSVM.return_value
-        mock_svm.get_variables.return_value = {}
+        mock_svm.claim_set_variable_values.return_value = ["x"]
 
         manager = self._make_manager()
         result = manager._dedup_memory_results(self._make_result("x"), "sess-1")
 
         assert len(result["memories"]) == 1
-        mock_svm.append_to_set_variable.assert_called_once_with(
+        mock_svm.claim_set_variable_values.assert_called_once_with(
             "sess-1", "injected_memory_ids", ["x"]
         )
 
@@ -184,13 +184,15 @@ class TestDedupMemoryResults:
     def test_all_filtered_returns_empty(self, MockSVM):
         """When all memories were already injected, returns empty list."""
         mock_svm = MockSVM.return_value
-        mock_svm.get_variables.return_value = {"injected_memory_ids": ["a", "b"]}
+        mock_svm.claim_set_variable_values.return_value = []
 
         manager = self._make_manager()
         result = manager._dedup_memory_results(self._make_result("a", "b"), "sess-1")
 
         assert result["memories"] == []
-        mock_svm.append_to_set_variable.assert_not_called()
+        mock_svm.claim_set_variable_values.assert_called_once_with(
+            "sess-1", "injected_memory_ids", ["a", "b"]
+        )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_db_error_fails_open(self, MockSVM):
@@ -208,10 +210,32 @@ class TestDedupMemoryResults:
     def test_empty_memories_skips_tracking(self, MockSVM):
         """Empty memory list doesn't call append_to_set_variable."""
         mock_svm = MockSVM.return_value
-        mock_svm.get_variables.return_value = {}
-
         manager = self._make_manager()
         result = manager._dedup_memory_results({"success": True, "memories": []}, "sess-1")
 
         assert result["memories"] == []
-        mock_svm.append_to_set_variable.assert_not_called()
+        mock_svm.claim_set_variable_values.assert_not_called()
+
+
+class TestDedupSkillResults:
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    @patch("gobby.hooks.hook_manager.HookManagerFactory.create")
+    def test_filters_skills_not_atomically_claimed(self, mock_create, MockSVM):
+        mock_create.return_value = MagicMock()
+        mock_svm = MockSVM.return_value
+        mock_svm.claim_set_variable_values.return_value = ["new-skill"]
+        manager = HookManager()
+        payload = {
+            "results": [
+                {"skill_name": "already-seen", "score": 0.9},
+                {"skill_name": "new-skill", "score": 0.8},
+            ]
+        }
+
+        result = manager._dedup_skill_results(payload, "sess-1")
+
+        assert result["results"] == [{"skill_name": "new-skill", "score": 0.8}]
+        assert result["count"] == 1
+        mock_svm.claim_set_variable_values.assert_called_once_with(
+            "sess-1", "suggested_skill_names", ["already-seen", "new-skill"]
+        )

@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from gobby.cli.daemon import (
     _services_start,
     _services_stop,
+    health,
     status,
     stop,
 )
@@ -324,3 +325,34 @@ class TestStatusCommand:
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
         assert "Stale" in result.output
+
+
+class TestHealthCommand:
+    @patch("gobby.cli.daemon.httpx.get")
+    @patch("gobby.cli.daemon._is_process_alive", return_value=True)
+    @patch("gobby.cli.daemon.get_gobby_home")
+    def test_health_surfaces_hook_runtime_degradation(
+        self,
+        mock_home: MagicMock,
+        _alive: MagicMock,
+        mock_get: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_home.return_value = tmp_path
+        (tmp_path / "gobby.pid").write_text("12345")
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "status": "degraded",
+            "hook_runtime": {
+                "state": "schema_mismatch",
+                "detail": "ghook envelope schema 2 does not match daemon schema 1.",
+            },
+        }
+        config = MagicMock(daemon_port=60887)
+
+        result = runner.invoke(health, [], obj={"config": config}, catch_exceptions=False)
+
+        assert result.exit_code == 1
+        assert "Gobby daemon: degraded" in result.output
+        assert "hook runtime: schema_mismatch" in result.output

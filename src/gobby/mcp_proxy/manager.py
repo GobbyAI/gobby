@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
 from typing import Any
 
 from mcp import ClientSession
@@ -56,12 +55,11 @@ _truncate_tool_brief = truncate_tool_brief
 
 
 class MCPClientManager:
-    """Manages multiple MCP client connections with shared authentication."""
+    """Manage multiple MCP client connections."""
 
     def __init__(
         self,
         server_configs: list[MCPServerConfig] | None = None,
-        token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
         health_check_interval: float = 60.0,
         external_id: str | None = None,
         project_path: str | None = None,
@@ -76,12 +74,12 @@ class MCPClientManager:
     ):
         self._connections: dict[str, BaseTransportConnection] = {}
         self._configs: dict[str, MCPServerConfig] = {}
+        self._tool_schema_cache: dict[str, list[dict[str, Any]]] = {}
+        self._tool_cache_dirty: set[str] = set()
         self.health: dict[str, MCPConnectionHealth] = {}
-        self._token_refresh_callback = token_refresh_callback
         self._health_check_interval = health_check_interval
         self._health_check_task: asyncio.Task[None] | None = None
         self._reconnect_tasks: set[asyncio.Task[None]] = set()
-        self._auth_token: str | None = None
         self._running = False
         self.external_id = external_id
         self.project_path = project_path
@@ -159,6 +157,9 @@ class MCPClientManager:
     ) -> dict[str, Any]:
         return await server_registry.update_server(self, name, config, project_id)
 
+    async def set_server_description(self, name: str, description: str) -> None:
+        await server_registry.set_server_description(self, name, description)
+
     async def set_server_enabled(
         self, name: str, enabled: bool, project_id: str | None = None
     ) -> dict[str, Any]:
@@ -183,15 +184,9 @@ class MCPClientManager:
         return secrets.resolve_secrets_in_config(self, config, logger)
 
     async def _connect_server(self, config: MCPServerConfig) -> ClientSession | None:
-        def create_connection(
-            resolved_config: MCPServerConfig,
-            auth_token: str | None,
-            token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None,
-        ) -> BaseTransportConnection:
+        def create_connection(resolved_config: MCPServerConfig) -> BaseTransportConnection:
             return create_transport_connection(
                 resolved_config,
-                auth_token,
-                token_refresh_callback,
                 stdio_errlog_path=self.stdio_errlog_path,
             )
 

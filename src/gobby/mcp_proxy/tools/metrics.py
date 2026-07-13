@@ -179,20 +179,27 @@ def create_metrics_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def require_calling_project_id() -> str:
+        from gobby.utils.project_context import get_project_context
+
+        project_context = get_project_context()
+        project_id = project_context.get("id") if project_context else None
+        if not isinstance(project_id, str) or not project_id:
+            raise ValueError("A project context is required to reset metrics")
+        return project_id
+
     @registry.tool(
         name="reset_metrics",
-        description="Reset/delete metrics for a project, server, or specific tool.",
+        description="Reset metrics in the calling project, optionally filtered by server/tool.",
     )
     def reset_metrics(
-        project_id: str | None = None,
         server_name: str | None = None,
         tool_name: str | None = None,
     ) -> dict[str, Any]:
         """
-        Reset/delete metrics.
+        Reset/delete metrics in the calling project.
 
         Args:
-            project_id: Reset only for this project
             server_name: Reset only for this server
             tool_name: Reset only for this specific tool
 
@@ -200,6 +207,7 @@ def create_metrics_registry(
             Number of rows deleted
         """
         try:
+            project_id = require_calling_project_id()
             deleted = metrics_manager.reset_metrics(
                 project_id=project_id,
                 server_name=server_name,
@@ -211,14 +219,14 @@ def create_metrics_registry(
 
     @registry.tool(
         name="reset_tool_metrics",
-        description="Admin tool to reset/delete metrics for a specific tool.",
+        description="Reset metrics for a specific tool in the calling project.",
     )
     def reset_tool_metrics(
         server_name: str | None = None,
         tool_name: str | None = None,
     ) -> dict[str, Any]:
         """
-        Reset/delete metrics for a specific tool (admin operation).
+        Reset/delete metrics for a specific tool in the calling project.
 
         Args:
             server_name: Server containing the tool
@@ -228,7 +236,9 @@ def create_metrics_registry(
             Number of rows deleted
         """
         try:
+            project_id = require_calling_project_id()
             deleted = metrics_manager.reset_metrics(
+                project_id=project_id,
                 server_name=server_name,
                 tool_name=tool_name,
             )

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -25,6 +26,7 @@ from gobby.hooks.envelope_dedupe import (
     mark_envelope_processed,
     read_envelope_marker,
 )
+from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.servers.responses import JSONResponse
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
@@ -48,12 +50,16 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
     "AskUserQuestion": "AskUserQuestion",
 }
 
-SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 # Fail-safe hook calls are synchronous CLI-path gates; keep this short enough
 # that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
 NON_CRITICAL_HOOK_TIMEOUT_SECONDS = 25.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
+HOOK_ADAPTER_MAX_WORKERS = 8
+_HOOK_ADAPTER_EXECUTOR = ThreadPoolExecutor(
+    max_workers=HOOK_ADAPTER_MAX_WORKERS,
+    thread_name_prefix="gobby-hook-adapter",
+)
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
 
 
@@ -214,12 +220,17 @@ def _hook_log_extra(
     return combined
 
 
+def _is_fail_safe_hook(hook_type: str | None, metadata: dict[str, Any]) -> bool:
+    """Return whether hook failures must block for safety."""
+    normalized_hook_type = hook_type.casefold() if hook_type is not None else None
+    return normalized_hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True
+
+
 def _fail_safe_hook_timeout_seconds(
     hook_type: str | None, metadata: dict[str, Any]
 ) -> float | None:
     """Return the bounded execution timeout for hooks that must fail safe."""
-    normalized_hook_type = hook_type.casefold() if hook_type is not None else None
-    if normalized_hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True:
+    if _is_fail_safe_hook(hook_type, metadata):
         return FAIL_SAFE_HOOK_TIMEOUT_SECONDS
     return None
 
@@ -229,20 +240,18 @@ def _adapter_hook_timeout_seconds(hook_type: str | None, metadata: dict[str, Any
     return _fail_safe_hook_timeout_seconds(hook_type, metadata) or NON_CRITICAL_HOOK_TIMEOUT_SECONDS
 
 
-def _hook_timeout_response(
-    adapter: Any,
+def _hook_block_response(
+    adapter: Any | None,
     hook_type: str,
     source: str | None,
-    timeout_seconds: float,
+    reason: str,
 ) -> dict[str, Any]:
-    """Build a provider-native timeout response without waiting on hook internals."""
+    """Translate a fail-safe block, falling back to the shared route shape."""
     from gobby.hooks.events import HookResponse
 
-    reason = (
-        f"Gobby hook evaluation timed out after {timeout_seconds:g}s; "
-        "blocking this critical hook for safety. Try again after the daemon recovers."
-    )
     response = HookResponse(decision="block", reason=reason)
+    if adapter is None:
+        return {"continue": False, "decision": "block", "reason": reason}
 
     try:
         translated = adapter.translate_from_hook_response(response, hook_type=hook_type)
@@ -250,7 +259,7 @@ def _hook_timeout_response(
         translated = adapter.translate_from_hook_response(response)
     except Exception:
         logger.warning(
-            "Failed to translate hook timeout response for %s/%s",
+            "Failed to translate hook block response for %s/%s",
             source,
             hook_type,
             exc_info=True,
@@ -260,6 +269,38 @@ def _hook_timeout_response(
     return cast(dict[str, Any], translated)
 
 
+def _hook_timeout_response(
+    adapter: Any,
+    hook_type: str,
+    source: str | None,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Build a provider-native timeout response without waiting on hook internals."""
+    reason = (
+        f"Gobby hook evaluation timed out after {timeout_seconds:g}s; "
+        "blocking this critical hook for safety. Try again after the daemon recovers."
+    )
+    return _hook_block_response(adapter, hook_type, source, reason)
+
+
+def _hook_exception_response(
+    adapter: Any | None,
+    hook_type: str,
+    source: str | None,
+    metadata: dict[str, Any],
+    error: str,
+) -> dict[str, Any]:
+    """Fail closed for safety-critical hooks and degrade all other hook errors."""
+    if not _is_fail_safe_hook(hook_type, metadata):
+        return _graceful_error_response(hook_type, error, source=source)
+
+    reason = (
+        f"Gobby hook evaluation failed: {error}; blocking this critical hook for safety. "
+        "Try again after the daemon recovers."
+    )
+    return _hook_block_response(adapter, hook_type, source, reason)
+
+
 async def _run_adapter_hook(
     adapter: Any,
     payload: dict[str, Any],
@@ -267,8 +308,14 @@ async def _run_adapter_hook(
     *,
     timeout_seconds: float | None,
 ) -> dict[str, Any]:
-    """Run blocking hook adapter work without occupying the DB executor."""
-    pending = asyncio.to_thread(adapter.handle_native, payload, hook_manager)
+    """Run blocking hook work in the bounded adapter executor."""
+    loop = asyncio.get_running_loop()
+    pending = loop.run_in_executor(
+        _HOOK_ADAPTER_EXECUTOR,
+        adapter.handle_native,
+        payload,
+        hook_manager,
+    )
     if timeout_seconds is None:
         result = await pending
     else:
@@ -281,6 +328,28 @@ def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
     if not hook_type:
         return None
     return HOLD_OPEN_HOOK_TYPE_MAP.get(hook_type)
+
+
+def _result_encodes_denial(result: dict[str, Any]) -> bool:
+    """Return whether an adapter result already denies the hook operation."""
+    if result.get("continue") is False:
+        return True
+
+    decision = result.get("decision")
+    if isinstance(decision, str) and decision.casefold() in {"block", "deny"}:
+        return True
+
+    permission_decision = result.get("permissionDecision")
+    if isinstance(permission_decision, str) and permission_decision.casefold() == "deny":
+        return True
+
+    hook_output = result.get("hookSpecificOutput")
+    if isinstance(hook_output, dict):
+        permission_decision = hook_output.get("permissionDecision")
+        if isinstance(permission_decision, str) and permission_decision.casefold() == "deny":
+            return True
+
+    return False
 
 
 def _is_codex_root_context_miss(
@@ -502,6 +571,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         inc_counter("hooks_total")
         hook_type: str | None = None  # Track for error handling
         source: str | None = None  # Track for error handling
+        adapter: Any | None = None
         request_metadata: dict[str, Any] = {
             "request_shape": "unknown",
             "schema_version": None,
@@ -600,7 +670,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             # Select adapter based on source
             from gobby.adapters.agy import AgyAdapter
-            from gobby.adapters.base import BaseAdapter
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.droid import DroidAdapter
@@ -608,7 +677,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.qwen import QwenAdapter
 
             if source == "claude":
-                adapter: BaseAdapter = ClaudeCodeAdapter(hook_manager=hook_manager)
+                adapter = ClaudeCodeAdapter(hook_manager=hook_manager)
             elif source == "qwen":
                 adapter = QwenAdapter(hook_manager=hook_manager)
             elif source == "grok":
@@ -645,6 +714,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     hook_manager,
                     timeout_seconds=hook_timeout,
                 )
+
+                # Rule and adapter denials are final. Never let web-chat approval,
+                # auto-approval, or browser interaction overwrite them.
+                if _result_encodes_denial(result):
+                    return mark_processed_and_return(result)
 
                 # After existing hook processing, check for web chat hold-open.
                 # Terminal sessions pass straight through; only web_chat sessions
@@ -693,7 +767,13 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                     )
                 return mark_processed_and_return(
-                    _graceful_error_response(hook_type, str(e), source=source)
+                    _hook_exception_response(
+                        adapter,
+                        hook_type,
+                        source,
+                        request_metadata,
+                        str(e),
+                    )
                 )
 
             except TimeoutError:
@@ -743,7 +823,13 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     extra=_hook_log_extra(hook_type, request_metadata),
                 )
                 return mark_processed_and_return(
-                    _graceful_error_response(hook_type, str(e), source=source)
+                    _hook_exception_response(
+                        adapter,
+                        hook_type,
+                        source,
+                        request_metadata,
+                        str(e),
+                    )
                 )
 
         except HTTPException:
@@ -759,7 +845,13 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             )
             if hook_type:
                 return mark_processed_and_return(
-                    _graceful_error_response(hook_type, str(e), source=source)
+                    _hook_exception_response(
+                        adapter,
+                        hook_type,
+                        source,
+                        request_metadata,
+                        str(e),
+                    )
                 )
             # Fallback: return basic success to prevent CLI hook failure
             return {"continue": True, "decision": "approve"}

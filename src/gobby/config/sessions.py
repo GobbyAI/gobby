@@ -276,6 +276,10 @@ class SessionLifecycleConfig(BaseModel):
         default=10,
         description="Maximum sessions to process per batch",
     )
+    workflow_audit_retention_days: int = Field(
+        default=7,
+        description="Days to retain workflow audit rows before maintenance prunes them",
+    )
     transcript_archive_dir: str = Field(
         default="~/.gobby/session_transcripts",
         description="Directory for gzip-compressed transcript backups",
@@ -287,6 +291,7 @@ class SessionLifecycleConfig(BaseModel):
         "expire_check_interval_minutes",
         "transcript_processing_interval_minutes",
         "transcript_processing_batch_size",
+        "workflow_audit_retention_days",
     )
     @classmethod
     def validate_positive(cls, v: int) -> int:

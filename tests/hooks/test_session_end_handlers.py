@@ -163,12 +163,11 @@ class TestSessionEndHandling:
         assert mock_dependencies["message_processor"].unregister_session.call_count == 1
         assert mock_dependencies["message_processor"].unregister_session.call_args is not None
 
-    def test_session_end_unregister_uses_external_id_as_fallback(
+    def test_session_end_unregister_maps_external_id_to_platform_id(
         self, mock_dependencies: dict
     ) -> None:
-        """Test unregister uses external_id when session_id lookup returns None."""
-        # Make lookup return None so external_id is used as fallback
-        mock_dependencies["session_manager"].lookup_session_id.return_value = None
+        """An event without metadata unregisters the mapped platform session ID."""
+        mock_dependencies["session_manager"].lookup_session_id.return_value = "mapped-sess-123"
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -179,10 +178,27 @@ class TestSessionEndHandling:
 
         handlers.handle_session_end(event)
 
-        # When session_id is None, external_id is used as fallback for unregister
-        mock_dependencies["message_processor"].unregister_session.assert_called_once_with("ext-123")
+        mock_dependencies["message_processor"].unregister_session.assert_called_once_with(
+            "mapped-sess-123"
+        )
         assert mock_dependencies["message_processor"].unregister_session.call_count == 1
         assert mock_dependencies["message_processor"].unregister_session.call_args is not None
+
+    def test_session_end_lookup_miss_does_not_unregister_external_id(
+        self, mock_dependencies: dict
+    ) -> None:
+        """An unknown external ID is never used as a processor registration key."""
+        mock_dependencies["session_manager"].lookup_session_id.return_value = None
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="unknown-ext-123",
+            metadata={},
+        )
+
+        handlers.handle_session_end(event)
+
+        mock_dependencies["message_processor"].unregister_session.assert_not_called()
 
     def test_session_end_unregister_error(self, mock_dependencies: dict) -> None:
         """Test error unregistering from message processor is handled."""

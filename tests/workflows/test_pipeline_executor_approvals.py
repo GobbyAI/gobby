@@ -338,7 +338,7 @@ class TestApproveMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -353,11 +353,15 @@ class TestApproveMethod:
             llm_service=mock_llm_service,
         )
 
-        await executor.approve("test-token-xyz", approved_by="user@example.com")
+        result = await executor.approve("test-token-xyz", approved_by="user@example.com")
 
-        mock_execution_manager.get_step_by_approval_token.assert_called_once_with("test-token-xyz")
-        assert mock_execution_manager.get_step_by_approval_token.call_count == 1
-        assert mock_execution_manager.get_step_by_approval_token.call_args is not None
+        assert result.id == "pe-test-123"
+        assert result.status == ExecutionStatus.WAITING_APPROVAL
+        mock_execution_manager.consume_step_approval.assert_called_once_with(
+            "test-token-xyz",
+            status=StepStatus.COMPLETED,
+            approved_by="user@example.com",
+        )
 
     @pytest.mark.asyncio
     async def test_approve_invalid_token_raises_error(
@@ -366,7 +370,7 @@ class TestApproveMethod:
         """Test that approve() raises ValueError for invalid token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
-        mock_execution_manager.get_step_by_approval_token.return_value = None
+        mock_execution_manager.consume_step_approval.return_value = None
 
         executor = PipelineExecutor(
             db=mock_db,
@@ -391,7 +395,7 @@ class TestApproveMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -406,12 +410,15 @@ class TestApproveMethod:
             llm_service=mock_llm_service,
         )
 
-        await executor.approve("test-token-xyz", approved_by="user@example.com")
+        result = await executor.approve("test-token-xyz", approved_by="user@example.com")
 
-        update_calls = mock_execution_manager.update_step_execution.call_args_list
-        approval_calls = [c for c in update_calls if c.kwargs.get("approved_by") is not None]
-        assert len(approval_calls) >= 1
-        assert approval_calls[0].kwargs["approved_by"] == "user@example.com"
+        assert result.id == "pe-test-123"
+        assert result.status == ExecutionStatus.WAITING_APPROVAL
+        mock_execution_manager.consume_step_approval.assert_called_once_with(
+            "test-token-xyz",
+            status=StepStatus.COMPLETED,
+            approved_by="user@example.com",
+        )
 
     @pytest.mark.asyncio
     async def test_approve_returns_execution(
@@ -427,7 +434,7 @@ class TestApproveMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -465,7 +472,7 @@ class TestRejectMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -480,11 +487,15 @@ class TestRejectMethod:
             llm_service=mock_llm_service,
         )
 
-        await executor.reject("test-token-xyz", rejected_by="user@example.com")
+        result = await executor.reject("test-token-xyz", rejected_by="user@example.com")
 
-        mock_execution_manager.get_step_by_approval_token.assert_called_once_with("test-token-xyz")
-        assert mock_execution_manager.get_step_by_approval_token.call_count == 1
-        assert mock_execution_manager.get_step_by_approval_token.call_args is not None
+        assert result.id == "pe-test-123"
+        assert result.status == ExecutionStatus.CANCELLED
+        mock_execution_manager.consume_step_approval.assert_called_once_with(
+            "test-token-xyz",
+            status=StepStatus.FAILED,
+            error="Rejected by user@example.com",
+        )
 
     @pytest.mark.asyncio
     async def test_reject_invalid_token_raises_error(
@@ -493,7 +504,7 @@ class TestRejectMethod:
         """Test that reject() raises ValueError for invalid token."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
-        mock_execution_manager.get_step_by_approval_token.return_value = None
+        mock_execution_manager.consume_step_approval.return_value = None
 
         executor = PipelineExecutor(
             db=mock_db,
@@ -518,7 +529,7 @@ class TestRejectMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -555,7 +566,7 @@ class TestRejectMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -589,7 +600,7 @@ class TestRejectMethod:
         mock_step.step_id = "deploy"
         mock_step.approval_token = "test-token-xyz"
         mock_step.status = StepStatus.WAITING_APPROVAL
-        mock_execution_manager.get_step_by_approval_token.return_value = mock_step
+        mock_execution_manager.consume_step_approval.return_value = mock_step
 
         mock_execution = MagicMock()
         mock_execution.id = "pe-test-123"
@@ -604,11 +615,15 @@ class TestRejectMethod:
             llm_service=mock_llm_service,
         )
 
-        await executor.reject("test-token-xyz", rejected_by="admin@example.com")
+        result = await executor.reject("test-token-xyz", rejected_by="admin@example.com")
 
-        step_calls = mock_execution_manager.update_step_execution.call_args_list
-        failed_calls = [c for c in step_calls if c.kwargs.get("status") == StepStatus.FAILED]
-        assert len(failed_calls) >= 1
+        assert result.id == "pe-test-123"
+        assert result.status == ExecutionStatus.CANCELLED
+        mock_execution_manager.consume_step_approval.assert_called_once_with(
+            "test-token-xyz",
+            status=StepStatus.FAILED,
+            error="Rejected by admin@example.com",
+        )
 
 
 class TestApproveReject:

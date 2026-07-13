@@ -48,6 +48,36 @@ class TestIndentHelper:
 class TestHooksRun:
     """Tests for hooks run command (lines 137-256)."""
 
+    def test_hooks_run_fails_for_undefined_configured_command(self, runner: CliRunner) -> None:
+        from gobby.hooks.verification_runner import VerificationRunner
+
+        stage_config = MagicMock(
+            enabled=True,
+            run=["unit_tets"],
+            timeout=10,
+            fail_fast=False,
+        )
+        hooks_config = MagicMock()
+        hooks_config.get_stage.return_value = stage_config
+        verification_config = MagicMock()
+        verification_config.get_command.return_value = None
+        verification_runner = VerificationRunner(
+            verification_config=verification_config,
+            hooks_config=hooks_config,
+        )
+
+        with patch.object(
+            VerificationRunner,
+            "from_project",
+            return_value=verification_runner,
+        ):
+            result = runner.invoke(hooks, ["run", "pre-commit"])
+
+        assert result.exit_code == 1
+        assert "unit_tets" in result.output
+        assert "not defined in verification config" in result.output
+        assert "Failed: 1" in result.output
+
     @patch("gobby.hooks.verification_runner.VerificationRunner")
     def test_hooks_run_dry_run_with_commands(
         self, mock_vr_cls: MagicMock, runner: CliRunner

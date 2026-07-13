@@ -262,6 +262,19 @@ class TestRunPipeline:
         )
         assert response.status_code == 404
 
+    def test_run_pipeline_disabled(self, client: TestClient, mock_server: MagicMock) -> None:
+        mock_pipeline = MagicMock(enabled=False)
+        mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
+
+        response = client.post(
+            "/api/pipelines/run",
+            json={"name": "disabled", "project_id": "proj-1"},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Pipeline 'disabled' is disabled"
+        mock_server.services.get_pipeline_executor.return_value.execute.assert_not_called()
+
     def test_run_pipeline_success(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_pipeline = MagicMock()
         mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
@@ -280,6 +293,9 @@ class TestRunPipeline:
         assert response.status_code == 200
         data = response.json()
         assert data["execution_id"] == "pe-123"
+        mock_server.services.workflow_loader.load_pipeline.assert_awaited_once_with(
+            "test-pipeline", "proj-1"
+        )
 
     def test_run_pipeline_approval_required(
         self, client: TestClient, mock_server: MagicMock

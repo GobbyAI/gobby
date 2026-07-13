@@ -16,6 +16,7 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.tasks.state_semantics import projected_task_state
@@ -97,7 +98,10 @@ def create_validation_registry(
             return {"success": False, "error": f"Task not found: {task_id}"}
 
         # Check if task has children (is a parent task)
-        children = task_manager.list_tasks(parent_task_id=task.id, limit=1000)
+        children = collect_task_query_pages(
+            task_manager.list_tasks,
+            parent_task_id=task.id,
+        )
 
         if children:
             # Parent task: validate based on child completion

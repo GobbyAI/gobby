@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -490,6 +491,57 @@ class TestAcpHandlerEdgeCases:
             cache_read_tokens=750,
             model="qwen3-coder",
         )
+
+    @pytest.mark.asyncio
+    async def test_after_model_worker_thread_broadcasts_usage_on_daemon_loop(
+        self, mock_dependencies: dict
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        handlers = EventHandlers(event_loop=loop, **mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_MODEL,
+            source="qwen",
+            data={
+                "response": {
+                    "usageMetadata": {
+                        "promptTokenCount": 120,
+                        "candidatesTokenCount": 30,
+                    }
+                },
+                "model_name": "qwen3-coder",
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        refreshed = MagicMock(
+            project_id="project-1",
+            model="qwen3-coder",
+            context_window=262_144,
+            usage_input_tokens=120,
+            usage_output_tokens=30,
+            usage_cache_creation_tokens=0,
+            usage_cache_read_tokens=0,
+        )
+        mock_dependencies["session_manager"].get.return_value = refreshed
+        broadcasts = []
+        broadcasted = asyncio.Event()
+
+        async def broadcast_usage(payload: dict) -> None:
+            broadcasts.append(payload)
+            broadcasted.set()
+
+        websocket_server = MagicMock()
+        websocket_server.broadcast_session_usage_updated = broadcast_usage
+        app_context = MagicMock(websocket_server=websocket_server)
+
+        with patch("gobby.hooks.event_handlers._misc.get_app_context", return_value=app_context):
+            response = await asyncio.to_thread(handlers.handle_after_model, event)
+            await asyncio.wait_for(broadcasted.wait(), timeout=1)
+
+        assert response.decision == "allow"
+        assert len(broadcasts) == 1
+        assert broadcasts[0]["session_id"] == "sess-123"
+        assert broadcasts[0]["usage_input_tokens"] == 120
+        assert broadcasts[0]["usage_output_tokens"] == 30
 
 
 class TestSubagentHandlerWithSessionId:

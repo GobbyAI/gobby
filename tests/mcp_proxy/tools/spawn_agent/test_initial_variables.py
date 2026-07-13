@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,7 @@ import pytest
 import yaml
 
 from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
@@ -17,7 +19,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _bundled_agent_body(name: str, repo_root) -> AgentDefinitionBody:
+def _bundled_agent_body(name: str, repo_root: Path) -> AgentDefinitionBody:
     agents_dir = repo_root / "src/gobby/install/shared/workflows/agents"
     data = yaml.safe_load((agents_dir / f"{name}.yaml").read_text())
     return AgentDefinitionBody.model_validate(data)
@@ -29,7 +31,7 @@ def test_initial_transition_condition_value_error_fails_closed(
     from gobby.mcp_proxy.tools.spawn_agent import _implementation
 
     monkeypatch.setattr(
-        _implementation.SafeExpressionEvaluator,
+        SafeExpressionEvaluator,
         "evaluate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad condition")),
     )
@@ -43,7 +45,7 @@ def test_initial_transition_condition_unexpected_error_propagates(
     from gobby.mcp_proxy.tools.spawn_agent import _implementation
 
     monkeypatch.setattr(
-        _implementation.SafeExpressionEvaluator,
+        SafeExpressionEvaluator,
         "evaluate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
@@ -114,7 +116,9 @@ class TestSpawnAgentPipelineInjection:
     """Tests for _assigned_pipeline injection when workflow resolves to PipelineDefinition."""
 
     @pytest.mark.asyncio
-    async def test_assigned_pipeline_set_for_pipeline_workflow(self, mock_runner) -> None:
+    async def test_assigned_pipeline_set_for_pipeline_workflow(
+        self, mock_runner: MagicMock
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.workflows.definitions import PipelineDefinition
 
@@ -168,7 +172,9 @@ class TestSpawnAgentPipelineInjection:
             assert spawn_request.initial_variables["_assigned_pipeline"] == "my-pipeline"
 
     @pytest.mark.asyncio
-    async def test_assigned_pipeline_not_set_for_non_pipeline_workflow(self, mock_runner) -> None:
+    async def test_assigned_pipeline_not_set_for_non_pipeline_workflow(
+        self, mock_runner: MagicMock
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.workflows.definitions import WorkflowDefinition
 
@@ -226,7 +232,7 @@ class TestSpawnAgentStepVariables:
     """Tests for initial_variables (_agent_type, _agent_rules) from agent definition."""
 
     @pytest.mark.asyncio
-    async def test_agent_type_set_in_initial_variables(self, mock_runner) -> None:
+    async def test_agent_type_set_in_initial_variables(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         agent_body = AgentDefinitionBody(
@@ -274,8 +280,8 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.asyncio
     async def test_auto_claimed_task_starts_step_workflow_after_claim(
         self,
-        db,
-        mock_runner,
+        db: Any,
+        mock_runner: MagicMock,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.storage.projects import LocalProjectManager
@@ -388,9 +394,9 @@ class TestSpawnAgentStepVariables:
     async def _spawn_bundled_developer_agent(
         self,
         *,
-        db,
-        mock_runner,
-        repo_root,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
         agent_name: str,
         additional_skills: list[str] | None = None,
     ) -> tuple[dict[str, Any], LocalTaskManager, Task, WorkflowInstance | None]:
@@ -484,9 +490,9 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_without_additional_skills_loads_required_skill(
         self,
-        db,
-        mock_runner,
-        repo_root,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
         agent_name: str,
     ) -> None:
         result, task_manager, task, instance = await self._spawn_bundled_developer_agent(
@@ -503,6 +509,7 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [
             "development-discipline",
+            "restraint",
             "task-transitions",
         ]
         assert instance.variables["required_skills_loaded"] is False
@@ -513,9 +520,9 @@ class TestSpawnAgentStepVariables:
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_with_optional_skill_still_loads_required_first(
         self,
-        db,
-        mock_runner,
-        repo_root,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
         agent_name: str,
     ) -> None:
         result, _task_manager, _task, instance = await self._spawn_bundled_developer_agent(
@@ -532,6 +539,7 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["task_claimed"] is True
         assert instance.variables["required_skills"] == [
             "development-discipline",
+            "restraint",
             "task-transitions",
         ]
         assert instance.variables["required_skills_loaded"] is False
@@ -545,8 +553,8 @@ class TestDispatchBatchIsolationParity:
     @pytest.mark.asyncio
     async def test_dispatch_batch_honors_explicit_suggestion_contract(
         self,
-        mock_runner,
-        build_agent_body,
+        mock_runner: MagicMock,
+        build_agent_body: Any,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -616,8 +624,8 @@ class TestDispatchBatchIsolationParity:
     @pytest.mark.asyncio
     async def test_dispatch_batch_rejects_taskless_suggestions(
         self,
-        mock_runner,
-        build_agent_body,
+        mock_runner: MagicMock,
+        build_agent_body: Any,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -652,7 +660,9 @@ class TestDispatchBatchIsolationParity:
         mock_spawn_impl.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dispatch_batch_forwards_clone_params(self, mock_runner, agent_body) -> None:
+    async def test_dispatch_batch_forwards_clone_params(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         mock_clone_storage = MagicMock()
@@ -739,7 +749,9 @@ class TestDispatchBatchIsolationParity:
             mock_clone_storage.get.assert_called_once_with("clone-abc")
 
     @pytest.mark.asyncio
-    async def test_dispatch_batch_without_isolation_params(self, mock_runner, agent_body) -> None:
+    async def test_dispatch_batch_without_isolation_params(
+        self, mock_runner: MagicMock, agent_body: AgentDefinitionBody
+    ) -> None:
         """dispatch_batch still works when no isolation params are provided (backwards compat)."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 

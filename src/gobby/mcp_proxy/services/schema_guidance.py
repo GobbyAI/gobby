@@ -103,7 +103,7 @@ def build_invalid_arguments_response(
     response: dict[str, Any] = {
         "success": False,
         "error": error_message or f"Invalid arguments: {errors}",
-        "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value.lower(),
+        "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
         "validation_errors": errors,
         "server_name": server_name,
         "tool_name": tool_name,

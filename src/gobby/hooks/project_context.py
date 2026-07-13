@@ -137,12 +137,11 @@ def resolve_hook_project_context(
         apply_project_id_to_event(event, GLOBAL_PROJECT_ID)
         return HookProjectResolution(GLOBAL_PROJECT_ID, source="contract-probe")
 
-    project_id = _project_id_from_current_context()
-    if project_id:
-        apply_project_id_to_event(event, project_id)
-        return HookProjectResolution(project_id, source="current-context")
-
     if is_unusable_hook_cwd(cwd):
+        project_id = _project_id_from_current_context()
+        if project_id:
+            apply_project_id_to_event(event, project_id)
+            return HookProjectResolution(project_id, source="current-context")
         return HookProjectResolution(
             None,
             skipped=True,
@@ -194,7 +193,12 @@ def _project_id_from_existing_session(
         return None
 
     try:
-        cached_session_id = session_manager.get_session_id(event.session_id, event.source.value)
+        cached_session_id = session_manager.get_session_id(
+            event.session_id,
+            event.source.value,
+            machine_id=event.machine_id,
+            project_id=event.project_id,
+        )
     except Exception as exc:
         if logger:
             logger.debug("Failed to read hook session cache for %s: %s", event.session_id, exc)

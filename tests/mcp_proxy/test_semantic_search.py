@@ -1,5 +1,7 @@
 """Tests for the SemanticToolSearch module."""
 
+import logging
+from typing import Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -16,6 +18,16 @@ from gobby.mcp_proxy.semantic_search import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 
+
+class SampleTool(TypedDict):
+    id: str
+    name: str
+    description: str | None
+    input_schema: dict[str, Any] | None
+    server_name: str
+    project_id: str
+
+
 pytestmark = pytest.mark.unit
 
 
@@ -28,8 +40,8 @@ def semantic_search(temp_db: HubDatabase) -> SemanticToolSearch:
 @pytest.fixture
 def sample_tool(
     mcp_manager: LocalMCPManager,
-    sample_project: dict,
-) -> dict:
+    sample_project: dict[str, Any],
+) -> SampleTool:
     """Create a sample tool for testing."""
     mcp_manager.upsert(
         name="test-server",
@@ -261,17 +273,20 @@ class TestSemanticToolSearch:
 
     @pytest.mark.asyncio
     async def test_store_embedding_no_vectorstore(
-        self, semantic_search: SemanticToolSearch
+        self,
+        semantic_search: SemanticToolSearch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test store_embedding warns when no VectorStore configured."""
-        # No vector_store set — should just log warning and return None
-        result = await semantic_search.store_embedding(
-            tool_id="tool-1",
-            server_name="test-server",
-            project_id="proj-1",
-            embedding=[0.1] * 768,
-        )
-        assert result is None
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.semantic_search"):
+            await semantic_search.store_embedding(
+                tool_id="tool-1",
+                server_name="test-server",
+                project_id="proj-1",
+                embedding=[0.1] * 768,
+            )
+
+        assert "No VectorStore configured - cannot store embedding for tool tool-1" in caplog.text
 
     @pytest.mark.asyncio
     async def test_has_embeddings_true(self, temp_db: HubDatabase) -> None:
@@ -285,15 +300,41 @@ class TestSemanticToolSearch:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_has_embeddings_false(self, temp_db: HubDatabase) -> None:
+    async def test_has_embeddings_false(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test has_embeddings returns False when no points exist."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
         mock_vs.search = AsyncMock(return_value=[])
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
-        result = await search.has_embeddings("proj-1")
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.semantic_search"):
+            result = await search.has_embeddings("proj-1")
+
         assert result is False
+        assert caplog.records == []
+
+    async def test_has_embeddings_logs_backend_failure(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
+        mock_vs.search = AsyncMock(side_effect=RuntimeError("qdrant unavailable"))
+        search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.semantic_search"):
+            result = await search.has_embeddings("proj-1")
+
+        assert result is False
+        assert "Failed to check embeddings for project proj-1" in caplog.text
+        assert search._collection_name in caplog.text
+        assert "RuntimeError: qdrant unavailable" in caplog.text
+        assert "dimension conflict" not in caplog.text.lower()
 
     @pytest.mark.asyncio
     async def test_has_embeddings_no_vectorstore(self, semantic_search: SemanticToolSearch) -> None:
@@ -309,7 +350,7 @@ class TestEmbeddingGeneration:
     async def test_embed_text(
         self,
         semantic_search: SemanticToolSearch,
-    ):
+    ) -> None:
         """Test generating embedding for text delegates to shared router."""
         with patch(
             "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
@@ -325,7 +366,7 @@ class TestEmbeddingGeneration:
     async def test_embed_text_error(
         self,
         semantic_search: SemanticToolSearch,
-    ):
+    ) -> None:
         """Test embed_text raises RuntimeError on failure."""
         with patch(
             "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
@@ -339,8 +380,8 @@ class TestEmbeddingGeneration:
     async def test_embed_tool(
         self,
         semantic_search: SemanticToolSearch,
-        sample_tool: dict,
-    ):
+        sample_tool: SampleTool,
+    ) -> None:
         """Test generating and storing embedding for a tool."""
         mock_embedding = [0.1] * DEFAULT_EMBEDDING_DIM
 
@@ -362,8 +403,8 @@ class TestEmbeddingGeneration:
     async def test_embed_tool_always_embeds(
         self,
         semantic_search: SemanticToolSearch,
-        sample_tool: dict,
-    ):
+        sample_tool: SampleTool,
+    ) -> None:
         """Test that embed_tool always embeds (no hash check skip)."""
         mock_embedding = [0.1] * DEFAULT_EMBEDDING_DIM
 
@@ -397,8 +438,8 @@ class TestEmbeddingGeneration:
         self,
         semantic_search: SemanticToolSearch,
         mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test embedding all tools for a project."""
         # Create server with multiple tools
         mcp_manager.upsert(
@@ -437,8 +478,8 @@ class TestEmbeddingGeneration:
         self,
         semantic_search: SemanticToolSearch,
         mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test embed_all_tools includes internal registry tools."""
         # Create a mock internal registry
         mock_registry = MagicMock()
@@ -475,8 +516,8 @@ class TestEmbeddingGeneration:
         self,
         semantic_search: SemanticToolSearch,
         mcp_manager: LocalMCPManager,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test that embed_all_tools handles errors gracefully."""
         mcp_manager.upsert(
             name="error-server",
@@ -577,15 +618,21 @@ class TestSearchTools:
             vector_store=mock_vs,
         )
 
+    @staticmethod
+    def _vector_store_mock(search: SemanticToolSearch) -> MagicMock:
+        """Narrow the fixture's deliberately mocked VectorStore."""
+        return cast(MagicMock, search._vector_store)
+
     @pytest.mark.asyncio
     async def test_search_tools_basic(
         self,
         search_with_vs: SemanticToolSearch,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test basic tool search delegates to VectorStore and reads payload."""
         # Mock VectorStore to return ranked results with payload
-        search_with_vs._vector_store.search_with_payload.return_value = [
+        mock_vs = self._vector_store_mock(search_with_vs)
+        mock_vs.search_with_payload.return_value = [
             (
                 "tool-id-1",
                 0.95,
@@ -621,16 +668,17 @@ class TestSearchTools:
             assert results[0].server_name == "search-server"
             assert results[0].description == "Search for things"
             assert results[0].similarity > results[1].similarity
-            search_with_vs._vector_store.search_with_payload.assert_called_once()
+            mock_vs.search_with_payload.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_search_tools_with_min_similarity(
         self,
         search_with_vs: SemanticToolSearch,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test search filters by minimum similarity."""
-        search_with_vs._vector_store.search_with_payload.return_value = [
+        mock_vs = self._vector_store_mock(search_with_vs)
+        mock_vs.search_with_payload.return_value = [
             (
                 "tool-id-1",
                 0.90,
@@ -667,10 +715,11 @@ class TestSearchTools:
     async def test_search_tools_passes_server_filter(
         self,
         search_with_vs: SemanticToolSearch,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test search passes server_filter to VectorStore."""
-        search_with_vs._vector_store.search_with_payload.return_value = []
+        mock_vs = self._vector_store_mock(search_with_vs)
+        mock_vs.search_with_payload.return_value = []
 
         with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
             mock_embed.return_value = [0.5] * 768
@@ -681,7 +730,7 @@ class TestSearchTools:
                 server_filter="server-a",
             )
 
-            call_kwargs = search_with_vs._vector_store.search_with_payload.call_args[1]
+            call_kwargs = mock_vs.search_with_payload.call_args[1]
             assert call_kwargs["filters"]["server_name"] == "server-a"
             assert call_kwargs["collection_name"] == SemanticToolSearch.TOOL_COLLECTION
 
@@ -689,8 +738,8 @@ class TestSearchTools:
     async def test_search_tools_no_vectorstore(
         self,
         semantic_search: SemanticToolSearch,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test search returns empty when no VectorStore configured."""
         with patch.object(semantic_search, "embed_text", new_callable=AsyncMock) as mock_embed:
             mock_embed.return_value = [0.5] * 768
@@ -706,14 +755,15 @@ class TestSearchTools:
     async def test_search_tools_internal_tools_resolved(
         self,
         search_with_vs: SemanticToolSearch,
-        sample_project: dict,
-    ):
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test that internal tools (not in PostgreSQL) resolve names from payload."""
         import uuid
 
         internal_tool_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "gobby-tasks/create_task"))
 
-        search_with_vs._vector_store.search_with_payload.return_value = [
+        mock_vs = self._vector_store_mock(search_with_vs)
+        mock_vs.search_with_payload.return_value = [
             (
                 internal_tool_id,
                 0.92,
@@ -772,13 +822,12 @@ class TestSearchTools:
     async def test_search_tools_repairs_runtime_dimension_conflict_and_retries(
         self,
         search_with_vs: SemanticToolSearch,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         """search_tools recreates a mismatched tool collection and retries once."""
-        search_with_vs._vector_store.get_collection_dimension = AsyncMock(
-            side_effect=[DEFAULT_EMBEDDING_DIM, 1]
-        )
-        search_with_vs._vector_store.search_with_payload = AsyncMock(
+        mock_vs = self._vector_store_mock(search_with_vs)
+        mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
+        mock_vs.search_with_payload = AsyncMock(
             side_effect=[
                 RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
                 [
@@ -806,8 +855,8 @@ class TestSearchTools:
 
         assert len(results) == 1
         assert results[0].tool_id == "tool-1"
-        assert search_with_vs._vector_store.search_with_payload.await_count == 2
-        assert search_with_vs._vector_store.ensure_collection.await_args_list == [
+        assert mock_vs.search_with_payload.await_count == 2
+        assert mock_vs.ensure_collection.await_args_list == [
             call(
                 "tool_embeddings",
                 DEFAULT_EMBEDDING_DIM,

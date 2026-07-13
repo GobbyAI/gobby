@@ -175,6 +175,29 @@ async def test_required_session_id_injection_resolves_wrapper_session_ref(
 
 
 @pytest.mark.asyncio
+async def test_unresolvable_explicit_wrapper_session_is_rejected(
+    resolving_tool_proxy: tuple[ToolProxyService, MagicMock, MagicMock],
+) -> None:
+    proxy, mcp_manager, session_manager = resolving_tool_proxy
+    session_manager.resolve_session_reference.side_effect = ValueError("Session not found")
+    proxy._tool_filter = MagicMock()
+    _use_schema(proxy, {"type": "object", "properties": {}})
+
+    result = await proxy.call_tool(
+        "gobby-sessions",
+        "get_session_messages",
+        arguments={},
+        session_id="#99999",
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "INVALID_ARGUMENTS"
+    assert "Invalid session reference '#99999'" in result["error"]
+    mcp_manager.call_tool.assert_not_awaited()
+    proxy._tool_filter.is_tool_allowed.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_required_session_id_uses_ambient_session_context(
     tool_proxy: tuple[ToolProxyService, MagicMock],
 ) -> None:
@@ -214,7 +237,7 @@ async def test_injected_session_id_does_not_mask_missing_required_parameters(
     )
 
     assert result["success"] is False
-    assert result["error_code"] == "invalid_arguments"
+    assert result["error_code"] == "INVALID_ARGUMENTS"
     assert "Missing required parameter 'name'" in result["error"]
     mcp_manager.call_tool.assert_not_awaited()
 

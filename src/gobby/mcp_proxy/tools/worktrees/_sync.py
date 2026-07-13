@@ -144,7 +144,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not result.success:
             return {"success": False, "error": result.error or "Sync failed"}
 
-        ctx.worktree_storage.update(worktree_id)
+        ctx.worktree_storage.touch(worktree_id)
 
         return {
             "success": True,
@@ -339,13 +339,31 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             merge_cleanup_required = False
 
         async def _source_is_merged_into_target() -> bool:
-            ancestor_result = await asyncio.to_thread(
+            ancestor_result = await run_thread_to_completion(
                 resolved_git_mgr.run_git_command,
                 [
                     "merge-base",
                     "--is-ancestor",
                     source_ref,
                     target_ref,
+                ],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            return ancestor_result.returncode == 0
+
+        async def _worktree_branch_is_merged_into_base(
+            effective_merge_result: bool,
+        ) -> bool:
+            if effective_source == worktree.branch_name and merge_target == worktree.base_branch:
+                return effective_merge_result
+            ancestor_result = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                [
+                    "merge-base",
+                    "--is-ancestor",
+                    f"refs/heads/{worktree.branch_name}",
+                    f"refs/heads/{worktree.base_branch}",
                 ],
                 cwd=merge_cwd,
                 timeout=10,
@@ -375,7 +393,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "pushed": False,
                 }
             reconciled_target_sha = target_sha_result.stdout.strip()
-            ctx.worktree_storage.mark_merged(worktree_id)
+            if await _worktree_branch_is_merged_into_base(True):
+                ctx.worktree_storage.mark_merged(worktree_id)
             return {
                 "success": True,
                 "message": (
@@ -592,6 +611,30 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "target_branch": merge_target,
                 }
 
+            merge_head_result = await run_thread_to_completion(
+                resolved_git_mgr.run_git_command,
+                ["rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=merge_cwd,
+                timeout=10,
+            )
+            if (
+                merge_head_result.returncode != 0
+                or merge_head_result.stdout.strip() != merge_target
+            ):
+                observed_branch = merge_head_result.stdout.strip() or "unknown"
+                return {
+                    "success": False,
+                    "error": (
+                        f"Target checkout moved to '{observed_branch}' before merge; "
+                        f"expected '{merge_target}'"
+                    ),
+                    "worktree_path": wt_path,
+                    "project_path": repo_path,
+                    "target_worktree_path": target_worktree_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
+
             # Git can leave MERGE_HEAD/index state behind even when the command
             # raises instead of returning a nonzero result (for example, timeout).
             # Treat the transaction as cleanup-required before starting merge and
@@ -681,7 +724,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             git_merged = await _source_is_merged_into_target()
             if git_merged:
-                ctx.worktree_storage.mark_merged(worktree_id)
+                if await _worktree_branch_is_merged_into_base(git_merged):
+                    ctx.worktree_storage.mark_merged(worktree_id)
                 target_sha_result = await run_thread_to_completion(
                     resolved_git_mgr.run_git_command,
                     ["rev-parse", "HEAD"],

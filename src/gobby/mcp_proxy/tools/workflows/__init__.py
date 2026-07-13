@@ -10,7 +10,7 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.workflows._agents import (
@@ -56,7 +56,7 @@ from gobby.mcp_proxy.tools.workflows._variables import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.utils.project_context import get_workflow_project_path
+from gobby.utils.project_context import get_project_context, get_workflow_project_path
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import (
     SessionVariableManager,
@@ -153,22 +153,34 @@ def create_workflows_registry(
         name="get_workflow",
         description="Get details about a specific workflow definition.",
     )
-    async def _get_workflow(
-        name: str,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
-        return await get_workflow(_loader, name, project_path)
+    async def _get_workflow(name: str) -> dict[str, Any]:
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        return await get_workflow(_loader, name, project_id)
 
     @registry.tool(
         name="list_workflows",
-        description="List available workflow definitions from project and global directories.",
+        description=(
+            "List visible step or lifecycle workflow definitions for the current project."
+        ),
     )
     def _list_workflows(
-        project_path: str | None = None,
-        workflow_type: str | None = None,
+        workflow_type: Literal["step", "lifecycle"] | None = None,
         global_only: bool = False,
     ) -> dict[str, Any]:
-        return list_workflows(_loader, project_path, workflow_type, global_only, db=_db)
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        project_path = None
+        if project_ctx:
+            project_path = project_ctx.get("project_path") or project_ctx.get("path")
+        return list_workflows(
+            _loader,
+            project_path,
+            workflow_type,
+            global_only,
+            db=_db,
+            project_id=project_id,
+        )
 
     @registry.tool(
         name="get_workflow_status",
@@ -191,10 +203,7 @@ def create_workflows_registry(
         name="evaluate_workflow",
         description="Validate a workflow definition — structural and semantic checks without executing.",
     )
-    async def _evaluate_workflow(
-        name: str,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
+    async def _evaluate_workflow(name: str) -> dict[str, Any]:
         """
         Validate a workflow definition for structural and semantic issues.
 
@@ -205,8 +214,6 @@ def create_workflows_registry(
 
         Args:
             name: Workflow name to evaluate.
-            project_path: Optional project path for resolution.
-
         Returns:
             Dict with valid bool, items list, step_trace, and lifecycle_path.
         """
@@ -214,22 +221,24 @@ def create_workflows_registry(
 
         mcp_inventory = _workflow_mcp_inventory(internal_manager, mcp_manager)
 
-        resolved_path: str | None = project_path
-        if not resolved_path:
-            path = get_workflow_project_path()
-            resolved_path = str(path) if path else None
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
 
         eval_result = await evaluate_workflow(
             name,
             _loader,
-            resolved_path,
+            project_id,
             mcp_inventory,
         )
 
         # Fall back to agent-definition evaluation when the name is an agent,
         # so `gobby workflows check <agent>` lints agent-level tool gates.
         if not eval_result.valid and any(i.code == "WORKFLOW_NOT_FOUND" for i in eval_result.items):
-            agent_row = _def_manager.get_by_name(name) if _def_manager is not None else None
+            agent_row = (
+                _def_manager.get_by_name(name, project_id=project_id)
+                if _def_manager is not None
+                else None
+            )
             if agent_row is not None and agent_row.workflow_type == "agent":
                 import json as _json
 
@@ -255,9 +264,21 @@ def create_workflows_registry(
         source_path: str,
         workflow_name: str | None = None,
         is_global: bool = False,
-        project_path: str | None = None,
     ) -> dict[str, Any]:
-        return import_workflow(_loader, source_path, workflow_name, is_global, project_path)
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        project_path = None
+        if project_ctx:
+            project_path = project_ctx.get("project_path") or project_ctx.get("path")
+        return import_workflow(
+            _loader,
+            source_path,
+            workflow_name,
+            is_global,
+            project_path,
+            db=_db,
+            project_id=project_id,
+        )
 
     @registry.tool(
         name="reload_cache",
@@ -268,7 +289,10 @@ def create_workflows_registry(
 
     @registry.tool(
         name="create_workflow",
-        description="Create a workflow or pipeline definition from YAML content. Validates with Pydantic before inserting into the database.",
+        description=(
+            "Create a rule, variable, agent, or pipeline definition from YAML content. "
+            "The YAML must declare one of those four types and pass its type-specific validation."
+        ),
     )
     def _create_workflow(
         yaml_content: str,

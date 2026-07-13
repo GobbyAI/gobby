@@ -89,3 +89,30 @@ def test_validate_verification_evidence_requires_type_and_success() -> None:
         )
         == "verification evidence requires a boolean success field"
     )
+
+
+def test_validate_verification_evidence_accepts_unknown_success() -> None:
+    assert (
+        validate_verification_evidence(
+            {
+                "summary": "Shell outcome omitted an explicit success signal",
+                "evidence_type": VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
+                "success": None,
+            }
+        )
+        is None
+    )
+    assert append_verification_evidence(
+        [],
+        {
+            "summary": "Shell outcome omitted an explicit success signal",
+            "evidence_type": VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
+            "success": None,
+        },
+    ) == [
+        {
+            "summary": "Shell outcome omitted an explicit success signal",
+            "evidence_type": VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
+            "success": None,
+        }
+    ]

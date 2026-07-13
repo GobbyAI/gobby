@@ -1,6 +1,6 @@
 """Tests for HookSkillManager."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -268,3 +268,56 @@ class TestLoadFromDbProjectScoping:
         call_args = mock_conn.execute.call_args
         query = call_args[0][0]
         assert "project_id IS NULL" in query
+
+
+class TestProjectScopedSkillCache:
+    """Hook skill discovery stays isolated and refreshable per project."""
+
+    def test_project_skill_is_cached_only_for_its_project(self) -> None:
+        from gobby.hooks.skill_manager import HookSkillManager
+
+        manager = HookSkillManager(db=MagicMock())
+        project_skill = _make_mock_skill(name="project-only")
+        manager._load_from_db = MagicMock(  # type: ignore[method-assign]
+            side_effect=lambda project_id: [project_skill] if project_id == "project-a" else []
+        )
+
+        assert manager.resolve_skill_name("project-only", project_id="project-a") is project_skill
+        assert manager.resolve_skill_name("project-only", project_id="project-b") is None
+        assert manager._load_from_db.call_args_list == [  # type: ignore[attr-defined]
+            call("project-a"),
+            call("project-b"),
+        ]
+
+    def test_cache_expires_and_mutation_refreshes_immediately(self) -> None:
+        from gobby.hooks.skill_manager import HookSkillManager
+        from gobby.storage.skills import get_skill_change_notifier
+
+        now = [10.0]
+        db = MagicMock()
+        manager = HookSkillManager(db=db, cache_ttl_seconds=5.0, clock=lambda: now[0])
+        manager._load_from_db = MagicMock(return_value=[])  # type: ignore[method-assign]
+
+        manager.discover_core_skills("project-a")
+        manager.discover_core_skills("project-a")
+        assert manager._load_from_db.call_count == 1  # type: ignore[attr-defined]
+
+        now[0] = 16.0
+        manager.discover_core_skills("project-a")
+        assert manager._load_from_db.call_count == 2  # type: ignore[attr-defined]
+
+        get_skill_change_notifier(db).fire_change("update", "skill-1", "changed")
+        manager.discover_core_skills("project-a")
+        assert manager._load_from_db.call_count == 3  # type: ignore[attr-defined]
+
+    def test_filesystem_fallback_is_never_cached(self) -> None:
+        from gobby.hooks.skill_manager import HookSkillManager
+
+        manager = HookSkillManager(db=MagicMock())
+        manager._load_from_db = MagicMock(side_effect=RuntimeError("transient"))  # type: ignore[method-assign]
+        manager._loader.load_directory = MagicMock(side_effect=[[], []])
+
+        manager.discover_core_skills("project-a")
+        manager.discover_core_skills("project-a")
+
+        assert manager._loader.load_directory.call_count == 2

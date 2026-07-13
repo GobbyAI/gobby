@@ -326,6 +326,7 @@ class TestSuggestNextTask:
             closed=None,
             claimed=None,
             limit=None,
+            offset=None,
             project_id=None,
         ):
             if parent_task_id == "parent-1":
@@ -357,7 +358,8 @@ class TestSuggestNextTask:
 
         task_manager.list_ready_tasks.assert_called_once_with(
             task_type="bug",
-            limit=50,
+            limit=200,
+            offset=0,
             project_id="test-project-id",
         )
         assert task_manager.list_ready_tasks.call_count == 1
@@ -908,6 +910,59 @@ class TestIsDescendantOf:
 
         result = is_descendant_of(task_manager, "missing-task", "parent-1")
         assert result is False
+
+
+def test_ready_descendants_paginates_large_ready_sibling_set() -> None:
+    """Readiness includes every ready child beyond both historical caps."""
+    from gobby.mcp_proxy.tools.task_readiness import _get_ready_descendants
+
+    task_manager = MagicMock()
+    children = []
+    for index in range(205):
+        child = MagicMock()
+        child.id = f"child-{index:03d}"
+        children.append(child)
+
+    def list_ready_tasks(*, limit: int, offset: int, **_filters):
+        return children[offset : offset + limit]
+
+    def list_tasks(*, parent_task_id: str, limit: int, offset: int, **_filters):
+        if parent_task_id == "parent":
+            return children[offset : offset + limit]
+        return []
+
+    task_manager.list_ready_tasks.side_effect = list_ready_tasks
+    task_manager.list_tasks.side_effect = list_tasks
+
+    result = _get_ready_descendants(task_manager, "parent", project_id="project")
+
+    assert [task.id for task in result] == [task.id for task in children]
+    assert [call.kwargs["offset"] for call in task_manager.list_ready_tasks.call_args_list] == [
+        0,
+        200,
+    ]
+    parent_calls = [
+        call
+        for call in task_manager.list_tasks.call_args_list
+        if call.kwargs["parent_task_id"] == "parent"
+    ]
+    assert [call.kwargs["offset"] for call in parent_calls] == [0, 200]
+
+
+def test_task_query_pagination_fails_loudly_when_offset_is_ignored() -> None:
+    from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
+
+    repeated_page = []
+    for index in range(200):
+        task = MagicMock()
+        task.id = f"task-{index:03d}"
+        repeated_page.append(task)
+    query = MagicMock(return_value=repeated_page)
+
+    with pytest.raises(RuntimeError, match="did not advance at offset=200"):
+        collect_task_query_pages(query)
+
+    assert [call.kwargs["offset"] for call in query.call_args_list] == [0, 200]
 
 
 @pytest.fixture

@@ -1,25 +1,28 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.metrics import ToolMetricsManager
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_metrics_manager():
+def mock_metrics_manager() -> MagicMock:
     return MagicMock(spec=ToolMetricsManager)
 
 
 @pytest.fixture
-def metrics_tools(mock_metrics_manager):
+def metrics_tools(mock_metrics_manager: MagicMock) -> InternalToolRegistry:
     return create_metrics_registry(metrics_manager=mock_metrics_manager)
 
 
 class TestMetricsTools:
-    def test_get_tool_metrics(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_get_tool_metrics(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["get_tool_metrics"]
 
         expected_metrics = {
@@ -37,7 +40,9 @@ class TestMetricsTools:
             project_id="test-proj", server_name=None, tool_name=None
         )
 
-    def test_get_tool_metrics_error(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_get_tool_metrics_error(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["get_tool_metrics"]
         mock_metrics_manager.get_metrics.side_effect = Exception("DB error")
 
@@ -46,7 +51,9 @@ class TestMetricsTools:
         assert result["success"] is False
         assert "DB error" in result["error"]
 
-    def test_get_top_tools(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_get_top_tools(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["get_top_tools"]
         expected_tools = [{"name": "tool1", "call_count": 100}]
         mock_metrics_manager.get_top_tools.return_value = expected_tools
@@ -60,7 +67,9 @@ class TestMetricsTools:
             project_id="p1", limit=5, order_by="success_count"
         )
 
-    def test_get_failing_tools(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_get_failing_tools(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["get_failing_tools"]
         expected_tools = [{"name": "bad_tool", "failure_rate": 0.8}]
         mock_metrics_manager.get_failing_tools.return_value = expected_tools
@@ -74,7 +83,9 @@ class TestMetricsTools:
             project_id="p1", threshold=0.7, limit=10
         )
 
-    def test_get_tool_success_rate(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_get_tool_success_rate(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["get_tool_success_rate"]
         mock_metrics_manager.get_tool_success_rate.return_value = 0.95
 
@@ -86,11 +97,17 @@ class TestMetricsTools:
             server_name="srv", tool_name="tool", project_id="p1"
         )
 
-    def test_reset_metrics(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_reset_metrics(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["reset_metrics"]
         mock_metrics_manager.reset_metrics.return_value = 5
 
-        result = tool.func(project_id="p1", server_name="s1")
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "p1"},
+        ):
+            result = tool.func(server_name="s1")
 
         assert result["success"] is True
         assert result["deleted_count"] == 5
@@ -98,17 +115,27 @@ class TestMetricsTools:
             project_id="p1", server_name="s1", tool_name=None
         )
 
-    def test_reset_tool_metrics(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_reset_tool_metrics(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["reset_tool_metrics"]
         mock_metrics_manager.reset_metrics.return_value = 2
 
-        result = tool.func(server_name="s1", tool_name="t1")
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "p1"},
+        ):
+            result = tool.func(server_name="s1", tool_name="t1")
 
         assert result["success"] is True
         assert result["deleted_count"] == 2
-        mock_metrics_manager.reset_metrics.assert_called_with(server_name="s1", tool_name="t1")
+        mock_metrics_manager.reset_metrics.assert_called_with(
+            project_id="p1", server_name="s1", tool_name="t1"
+        )
 
-    def test_cleanup_old_metrics(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_cleanup_old_metrics(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["cleanup_old_metrics"]
         mock_metrics_manager.cleanup_old_metrics.return_value = 100
 
@@ -118,7 +145,9 @@ class TestMetricsTools:
         assert result["deleted_count"] == 100
         mock_metrics_manager.cleanup_old_metrics.assert_called_with(retention_days=30)
 
-    def test_get_retention_stats(self, metrics_tools, mock_metrics_manager) -> None:
+    def test_get_retention_stats(
+        self, metrics_tools: InternalToolRegistry, mock_metrics_manager: MagicMock
+    ) -> None:
         tool = metrics_tools._tools["get_retention_stats"]
         expected_stats = {"total_rows": 1000, "oldest_entry": "2023-01-01"}
         mock_metrics_manager.get_retention_stats.return_value = expected_stats
@@ -134,7 +163,7 @@ class TestTokenMetricsTools:
     """Tests for usage reporting tools."""
 
     @pytest.fixture
-    def mock_session_storage(self):
+    def mock_session_storage(self) -> MagicMock:
         """Create a mock session storage."""
         from datetime import UTC, datetime, timedelta
 
@@ -169,18 +198,26 @@ class TestTokenMetricsTools:
         return storage
 
     @pytest.fixture
-    def token_metrics_tools(self, mock_metrics_manager, mock_session_storage):
+    def token_metrics_tools(
+        self,
+        mock_metrics_manager: MagicMock,
+        mock_session_storage: MagicMock,
+    ) -> InternalToolRegistry:
         """Create registry with usage reporting support."""
         return create_metrics_registry(
             metrics_manager=mock_metrics_manager,
             session_storage=mock_session_storage,
         )
 
-    def test_removed_metrics_tool_not_registered(self, token_metrics_tools) -> None:
+    def test_removed_metrics_tool_not_registered(
+        self, token_metrics_tools: InternalToolRegistry
+    ) -> None:
         """Removed legacy metrics tools stay absent from the registry."""
         assert "get_budget_status" not in token_metrics_tools._tools
 
-    def test_get_usage_report(self, token_metrics_tools, mock_session_storage) -> None:
+    def test_get_usage_report(
+        self, token_metrics_tools: InternalToolRegistry, mock_session_storage: MagicMock
+    ) -> None:
         """get_usage_report returns usage summary for specified days."""
         tool = token_metrics_tools._tools["get_usage_report"]
 
@@ -193,7 +230,9 @@ class TestTokenMetricsTools:
         assert result["usage"]["session_count"] == 2
         mock_session_storage.get_sessions_since.assert_called_once()
 
-    def test_get_usage_report_default_days(self, token_metrics_tools, mock_session_storage) -> None:
+    def test_get_usage_report_default_days(
+        self, token_metrics_tools: InternalToolRegistry, mock_session_storage: MagicMock
+    ) -> None:
         """get_usage_report defaults to 1 day."""
         tool = token_metrics_tools._tools["get_usage_report"]
 
@@ -203,7 +242,9 @@ class TestTokenMetricsTools:
         # Verify it was called (days=1 default)
         mock_session_storage.get_sessions_since.assert_called_once()
 
-    def test_get_usage_report_error(self, token_metrics_tools, mock_session_storage) -> None:
+    def test_get_usage_report_error(
+        self, token_metrics_tools: InternalToolRegistry, mock_session_storage: MagicMock
+    ) -> None:
         """get_usage_report handles errors gracefully."""
         tool = token_metrics_tools._tools["get_usage_report"]
         mock_session_storage.get_sessions_since.side_effect = Exception("DB error")

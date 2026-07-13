@@ -2,10 +2,11 @@
 
 import subprocess
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commits import (
     AutoLinkResult,
     TaskDiffResult,
@@ -577,6 +578,52 @@ class TestAutoLinkCommits:
 
             # Should not crash, just skip the task
             assert "#999" not in result.linked_tasks
+            assert result.skipped_refs == {"#999": ["abc123"]}
+
+    def test_mixed_history_links_valid_refs_and_reports_unknown_refs(
+        self,
+        mock_task_manager,
+    ) -> None:
+        """Unknown project-scoped refs do not abort linking later valid refs."""
+        task1 = MagicMock(id="task-1", commits=[])
+        task2 = MagicMock(id="task-2", commits=[])
+
+        def resolve_task_reference(task_ref: str, project_id: str) -> str:
+            assert project_id == "project-1"
+            if task_ref == "#1":
+                return task1.id
+            if task_ref == "#2":
+                return task2.id
+            raise TaskNotFoundError(f"Task {task_ref} not found in project")
+
+        mock_task_manager.resolve_task_reference.side_effect = resolve_task_reference
+        mock_task_manager.get_task.side_effect = lambda task_id: {
+            task1.id: task1,
+            task2.id: task2,
+        }[task_id]
+
+        with patch("gobby.tasks.commits.run_git_command") as mock_git:
+            mock_git.return_value = (
+                "abc123|[gobby-#1] first valid task\n"
+                "def456|[gobby-#999] removed task\n"
+                "fed987|Fixes gobby-#2"
+            )
+
+            result = auto_link_commits(
+                mock_task_manager,
+                cwd="/tmp/repo",
+                project_name="gobby",
+                project_id="project-1",
+            )
+
+        assert result.linked_tasks == {"#1": ["abc123"], "#2": ["fed987"]}
+        assert result.total_linked == 2
+        assert result.skipped == 1
+        assert result.skipped_refs == {"#999": ["def456"]}
+        assert mock_task_manager.link_commit.call_args_list == [
+            call(task1.id, "abc123", cwd="/tmp/repo"),
+            call(task2.id, "fed987", cwd="/tmp/repo"),
+        ]
 
     def test_returns_count_of_linked_commits(self, mock_task_manager) -> None:
         """Test that result includes count of newly linked commits."""

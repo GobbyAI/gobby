@@ -161,6 +161,21 @@ class TestUpdateExecutionStatus:
         assert manager.update_execution_status(other_execution.id, ExecutionStatus.RUNNING) is None
         assert other_manager.get_execution(other_execution.id).status == ExecutionStatus.PENDING
 
+    def test_claim_failed_execution_for_resume_is_atomic(self, manager) -> None:
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        failed = manager.update_execution_status(execution.id, ExecutionStatus.FAILED)
+        assert failed is not None
+        assert failed.completed_at is not None
+
+        winner = manager.claim_failed_execution_for_resume(execution.id)
+        loser = manager.claim_failed_execution_for_resume(execution.id)
+
+        assert winner is not None
+        assert winner.status == ExecutionStatus.RUNNING
+        assert winner.completed_at is None
+        assert loser is None
+        assert manager.get_execution(execution.id).status == ExecutionStatus.RUNNING
+
     def test_update_status_to_waiting_approval(self, manager) -> None:
         """Test updating status to waiting_approval with resume token."""
         execution = manager.create_execution(pipeline_name="test-pipeline")
@@ -489,6 +504,52 @@ class TestGetByToken:
         """Test approval token lookup returns None for unknown token."""
         result = manager.get_step_by_approval_token("nonexistent-token")
         assert result is None
+
+    @pytest.mark.parametrize(
+        ("decision", "approved_by", "error"),
+        [
+            (StepStatus.COMPLETED, "reviewer", None),
+            (StepStatus.FAILED, None, "Rejected by reviewer"),
+        ],
+    )
+    def test_consume_step_approval_is_single_use(
+        self,
+        manager,
+        decision: StepStatus,
+        approved_by: str | None,
+        error: str | None,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        step = manager.create_step_execution(execution_id=execution.id, step_id="approve")
+        manager.update_step_execution(
+            step.id,
+            status=StepStatus.WAITING_APPROVAL,
+            approval_token="single-use-token",
+        )
+
+        consumed = manager.consume_step_approval(
+            "single-use-token",
+            status=decision,
+            approved_by=approved_by,
+            error=error,
+        )
+
+        assert consumed is not None
+        assert consumed.status == decision
+        assert consumed.approval_token is None
+        assert consumed.approved_by == approved_by
+        assert consumed.error == error
+        assert manager.consume_step_approval("single-use-token", status=decision) is None
+
+    def test_consume_step_approval_rejects_non_waiting_step(self, manager) -> None:
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        step = manager.create_step_execution(execution_id=execution.id, step_id="approve")
+        manager.update_step_execution(step.id, approval_token="stale-token")
+
+        assert manager.consume_step_approval("stale-token", status=StepStatus.COMPLETED) is None
+        unchanged = manager.get_step_by_approval_token("stale-token")
+        assert unchanged is not None
+        assert unchanged.status == StepStatus.PENDING
 
 
 class TestResolveExecutionReference:

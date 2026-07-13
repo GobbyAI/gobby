@@ -126,21 +126,54 @@ def claim_task(
     session_id: str,
     *,
     force: bool = False,
+    expected_owner: str | None = None,
 ) -> Task:
-    """Claim a task for a session."""
-    task = get_task(db, task_id)
-    current_owner = get_effective_claim_owner(task)
-
-    if is_task_closed(task):
+    """Claim a task for a session with an atomic ownership guard."""
+    if force and expected_owner is not None:
+        raise ValueError("force and expected_owner are mutually exclusive")
+    if is_task_closed(get_task(db, task_id)):
         raise TaskClosedError(f"Cannot claim task {task_id}: task is closed")
-    if current_owner and current_owner != session_id and not force:
+
+    params: tuple[Any, ...]
+    if force:
+        sql = """
+            UPDATE tasks
+            SET claimed_by_session_id = %s, updated_at = %s
+            WHERE id = %s AND closed_at IS NULL
+        """
+        params = (session_id, utc_now(), task_id)
+    else:
+        permitted_owners = [session_id]
+        if expected_owner is not None:
+            permitted_owners.append(expected_owner)
+        sql = """
+            UPDATE tasks
+            SET claimed_by_session_id = %s, updated_at = %s
+            WHERE id = %s
+              AND closed_at IS NULL
+              AND (
+                  claimed_by_session_id IS NULL
+                  OR claimed_by_session_id = ANY(%s::uuid[])
+              )
+        """
+        params = (
+            session_id,
+            utc_now(),
+            task_id,
+            permitted_owners,
+        )
+    with db.transaction() as conn:
+        cursor = conn.execute(sql, params)
+
+    if cursor.rowcount == 0:
+        task = get_task(db, task_id)
+        if is_task_closed(task):
+            raise TaskClosedError(f"Cannot claim task {task_id}: task is closed")
+        current_owner = get_effective_claim_owner(task)
+        if current_owner is None:
+            raise RuntimeError(f"Task {task_id} claim failed without a conflicting owner")
         raise TaskAlreadyClaimedError(task_id, current_owner)
 
-    update_task(
-        db,
-        task_id,
-        claimed_by_session_id=session_id,
-    )
     return get_task(db, task_id)
 
 
@@ -461,6 +494,7 @@ def submit_for_review(
     *,
     review_notes: str | None = None,
     by_session_id: str | None = None,
+    dispatch_run_id: str | None = None,
 ) -> Task:
     """Submit a stage for review and release ownership."""
     task = get_task(db, task_id)
@@ -475,6 +509,7 @@ def submit_for_review(
         stage_name,
         by_session_id=by_session_id,
         notes=review_notes,
+        dispatch_run_id=dispatch_run_id,
     )
     description: MaybeUnset[str | None] = UNSET
     if review_notes:
@@ -500,6 +535,7 @@ def approve_review(
     *,
     approval_notes: str | None = None,
     by_session_id: str | None = None,
+    dispatch_run_id: str | None = None,
 ) -> Task:
     """Approve review on a stage and release ownership."""
     task = get_task(db, task_id)
@@ -514,6 +550,7 @@ def approve_review(
         stage_name,
         by_session_id=by_session_id,
         notes=approval_notes,
+        dispatch_run_id=dispatch_run_id,
     )
     description: MaybeUnset[str | None] = UNSET
     if approval_notes:
@@ -538,6 +575,7 @@ def reject_review(
     plan_hash: str | None = None,
     cited_subtasks: list[str] | None = None,
     by_session_id: str | None = None,
+    dispatch_run_id: str | None = None,
 ) -> Task:
     """Reject review on a stage and release ownership."""
     task = get_task(db, task_id)
@@ -565,6 +603,7 @@ def reject_review(
         reason=rejection_notes or "review_rejected",
         by_session_id=by_session_id,
         notes=notes,
+        dispatch_run_id=dispatch_run_id,
     )
 
     description: MaybeUnset[str | None] = UNSET

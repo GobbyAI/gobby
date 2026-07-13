@@ -52,25 +52,27 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-        worktree = ctx.worktree_storage.get(worktree_id)
-        if not worktree:
-            return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
-
-        if worktree.agent_session_id and worktree.agent_session_id != resolved_session_id:
-            return {
-                "success": False,
-                "error": f"Worktree already claimed by session '{worktree.agent_session_id}'",
-            }
-
-        updated = ctx.worktree_storage.claim(worktree_id, resolved_session_id)
+        updated = ctx.worktree_storage.claim_if_available(
+            worktree_id,
+            resolved_session_id,
+            allowed_existing_session_ids=(None, resolved_session_id),
+        )
         if not updated:
+            worktree = ctx.worktree_storage.get(worktree_id)
+            if not worktree:
+                return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+            if worktree.agent_session_id:
+                return {
+                    "success": False,
+                    "error": f"Worktree already claimed by session '{worktree.agent_session_id}'",
+                }
             return {"success": False, "error": "Failed to claim worktree"}
 
         event = emit_worktree_event(
             "worktree_claimed",
             worktree_id=worktree_id,
-            project_id=worktree.project_id,
-            branch_name=worktree.branch_name,
+            project_id=updated.project_id,
+            branch_name=updated.branch_name,
             session_id=resolved_session_id,
         )
         return {"success": True, "event": event}
@@ -112,6 +114,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     async def delete_worktree(
         worktree_id: str,
         force: bool | str = False,
+        force_delete_branch: bool | str = False,
         project_path: str | None = None,
     ) -> dict[str, Any]:
         """Delete a worktree completely (handles all cleanup).
@@ -127,12 +130,18 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Args:
             worktree_id: The worktree ID (uuid) to delete.
             force: Force deletion even if there are uncommitted changes.
+            force_delete_branch: Force-delete the branch even if it is unmerged.
             project_path: Optional path to project root to resolve git context.
 
         Returns:
             Dict with success status.
         """
         force = force in (True, "true", "True", "1") if isinstance(force, str) else force
+        force_delete_branch = (
+            force_delete_branch in (True, "true", "True", "1")
+            if isinstance(force_delete_branch, str)
+            else force_delete_branch
+        )
 
         worktree = ctx.worktree_storage.get(worktree_id)
 
@@ -153,6 +162,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         worktree_exists = Path(worktree.worktree_path).exists()
 
+        if worktree_exists and resolved_git_mgr is None:
+            return {
+                "success": False,
+                "error": (
+                    "Cannot delete an on-disk worktree without a resolved git manager; "
+                    "the worktree record was preserved"
+                ),
+            }
+
         # Check for uncommitted changes if not forcing
         if resolved_git_mgr and worktree_exists:
             status = resolved_git_mgr.get_worktree_status(worktree.worktree_path)
@@ -163,12 +181,13 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "uncommitted_changes": True,
                 }
 
-        # Delete git worktree
-        if resolved_git_mgr and worktree_exists:
+        # Delete or prune the git worktree registration.
+        if resolved_git_mgr:
             result = resolved_git_mgr.delete_worktree(
                 worktree.worktree_path,
                 force=force,
                 delete_branch=True,
+                force_delete_branch=force_delete_branch,
                 branch_name=worktree.branch_name,
             )
             if not result.success:
@@ -178,8 +197,19 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "error": result.error or "Failed to delete git worktree",
                     }
                 prune = getattr(resolved_git_mgr, "prune_worktrees", None)
-                if callable(prune):
-                    prune()
+                if not callable(prune):
+                    return {
+                        "success": False,
+                        "error": result.error or "Failed to prune missing git worktree",
+                    }
+                prune_result = prune()
+                if not prune_result.success:
+                    return {
+                        "success": False,
+                        "error": prune_result.error
+                        or result.error
+                        or "Failed to prune missing git worktree",
+                    }
         elif not worktree_exists:
             logger.info(
                 f"Worktree path {worktree.worktree_path} doesn't exist, cleaning up DB record only"

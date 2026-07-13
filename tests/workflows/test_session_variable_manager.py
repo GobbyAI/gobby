@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -188,6 +190,42 @@ def test_merge_variables_empty_updates(db: Any) -> None:
     assert result is True
 
 
+def test_adjust_counter_and_derive_boolean_tracks_overlapping_subagents(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", 1, boolean_name="is_subagent")
+        == 1
+    )
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", 1, boolean_name="is_subagent")
+        == 2
+    )
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", -1, boolean_name="is_subagent")
+        == 1
+    )
+    variables = mgr.get_variables(S1)
+    assert variables["subagent_count"] == 1
+    assert variables["is_subagent"] is True
+
+
+def test_adjust_counter_and_derive_boolean_clamps_at_zero(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    assert (
+        mgr.adjust_counter_and_derive_boolean(S1, "subagent_count", -1, boolean_name="is_subagent")
+        == 0
+    )
+    variables = mgr.get_variables(S1)
+    assert variables["subagent_count"] == 0
+    assert variables["is_subagent"] is False
+
+
 def test_delete_variables(db: Any) -> None:
     """Test delete_variables removes all variables for a session."""
     from gobby.workflows.state_manager import SessionVariableManager
@@ -324,6 +362,41 @@ def test_append_to_set_variable_noop_on_empty(db: Any) -> None:
 
     result = mgr.get_variables(NO_ROW_SESSION_ID)
     assert result == {}
+
+
+def test_claim_set_variable_values_returns_only_new_values(db: Any) -> None:
+    """Claims are deduplicated atomically and preserve input order."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.append_to_set_variable(S1, "injected", ["existing"])
+
+    first = mgr.claim_set_variable_values(S1, "injected", ["new-b", "existing", "new-a"])
+    second = mgr.claim_set_variable_values(S1, "injected", ["new-a", "new-b"])
+
+    assert first == ["new-b", "new-a"]
+    assert second == []
+    assert mgr.get_variables(S1)["injected"] == ["existing", "new-a", "new-b"]
+
+
+def test_claim_set_variable_values_serializes_concurrent_claims(db: Any) -> None:
+    """Only one concurrent caller can claim a newly injected value."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    barrier = threading.Barrier(3)
+
+    def claim() -> list[str]:
+        barrier.wait()
+        return mgr.claim_set_variable_values(S1, "injected", ["shared"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(claim) for _ in range(2)]
+        barrier.wait()
+        claims = [future.result() for future in futures]
+
+    assert sorted(claims) == [[], ["shared"]]
+    assert mgr.get_variables(S1)["injected"] == ["shared"]
 
 
 def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -> None:

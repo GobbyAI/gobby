@@ -295,9 +295,17 @@ class TestMarkTaskReviewRejected:
         )
         mock_task_manager.reject_review.side_effect = ValueError("Cannot reject review")
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
-            return_value=sample_task_open.id,
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review.resolve_task_id_for_mcp",
+                return_value=sample_task_open.id,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review._auto_link_session_commits"
+            ) as auto_link,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._stage_review._release_current_agent_dispatch_mutex"
+            ) as release,
         ):
             result = await registry.call(
                 "reject_review",
@@ -307,6 +315,8 @@ class TestMarkTaskReviewRejected:
         assert "error" in result
         assert "Cannot reject review" in result["error"]
         mock_task_manager.reject_review.assert_called_once()
+        auto_link.assert_not_called()
+        release.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reject_writes_explicit_signoff_summary_to_session_var(

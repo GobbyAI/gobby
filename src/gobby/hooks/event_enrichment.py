@@ -169,6 +169,12 @@ class EventEnricher:
             except Exception as e:
                 logger.debug(f"Piggyback message injection failed: {e}")
 
+        if event.event_type == HookEventType.SESSION_END and event.metadata.get(
+            "_platform_session_id"
+        ):
+            session_key = f"{event.metadata['_platform_session_id']}:{event.source.value}"
+            self._injected_sessions.discard(session_key)
+
     def _inject_pending_messages(self, platform_session_id: str, response: HookResponse) -> None:
         """Check for and inject undelivered messages into response context.
 
@@ -187,11 +193,6 @@ class EventEnricher:
         for msg in undelivered:
             msg_type = getattr(msg, "message_type", "message") or "message"
             groups.setdefault(msg_type, []).append(msg)
-            # Mark as delivered
-            try:
-                self._inter_session_msg_manager.mark_delivered(msg.id)
-            except Exception:
-                pass
 
         # Format each group
         sections: list[str] = []
@@ -210,6 +211,18 @@ class EventEnricher:
             response.context = f"{response.context}\n\n{pending_context}"
         else:
             response.context = pending_context
+
+        # Mark only after every message has been formatted and attached. A failed
+        # mark deliberately leaves the message retryable (at-least-once delivery).
+        for msg in undelivered:
+            try:
+                self._inter_session_msg_manager.mark_delivered(msg.id)
+            except Exception:
+                logger.warning(
+                    "Failed to mark piggyback message %s delivered; it will be retried",
+                    msg.id,
+                    exc_info=True,
+                )
 
     @staticmethod
     def _group_header(message_type: str) -> str:

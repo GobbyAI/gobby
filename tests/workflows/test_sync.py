@@ -453,6 +453,7 @@ steps: []
             """
 name: test-pipeline
 type: pipeline
+enabled: "false"
 description: A test pipeline
 steps:
   - id: step1
@@ -465,6 +466,9 @@ steps:
         ):
             result = sync_bundled_pipelines(db)
             assert result["synced"] == 1
+            row = LocalWorkflowDefinitionManager(db).get_by_name("test-pipeline")
+            assert row is not None
+            assert row.enabled is False
 
     def test_syncs_root_pipeline_files(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines
