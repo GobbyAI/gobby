@@ -1,6 +1,7 @@
 """Tests for memory-related feature configurations."""
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.config.features import (
     KnowledgeGraphQueueConfig,
@@ -20,14 +21,21 @@ class TestKnowledgeGraphQueueConfig:
         config = KnowledgeGraphQueueConfig()
         assert config.interval_minutes == 30
         assert config.batch_size == 20
+        assert config.max_deterministic_attempts == 3
 
     def test_overridable(self) -> None:
         config = KnowledgeGraphQueueConfig(
             interval_minutes=15,
             batch_size=50,
+            max_deterministic_attempts=5,
         )
         assert config.interval_minutes == 15
         assert config.batch_size == 50
+        assert config.max_deterministic_attempts == 5
+
+    def test_max_deterministic_attempts_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError):
+            KnowledgeGraphQueueConfig(max_deterministic_attempts=0)
 
 
 class TestDaemonConfigIntegration:

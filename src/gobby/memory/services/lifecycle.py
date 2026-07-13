@@ -160,6 +160,20 @@ class MemoryLifecycleService:
         """Mark a memory as having been processed by the KG pipeline."""
         self.storage.mark_graph_processed(memory_id)
 
+    def record_graph_failure(
+        self,
+        memory_id: str,
+        *,
+        deterministic: bool,
+        max_attempts: int,
+    ) -> str:
+        """Persist a graph failure and return the resulting queue status."""
+        return self.storage.record_graph_failure(
+            memory_id,
+            deterministic=deterministic,
+            max_attempts=max_attempts,
+        )
+
     async def create_memory(
         self,
         content: str,

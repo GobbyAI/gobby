@@ -85,6 +85,9 @@ class Memory:
     source_session_id: str | None = None
     access_count: int = 0
     last_accessed_at: datetime | None = None
+    graph_processed: bool = True
+    graph_attempts: int = 0
+    graph_status: Literal["pending", "completed", "failed"] = "completed"
     tags: list[str] | None = None
     deleted_at: datetime | None = None  # NULL = visible; non-NULL = dream-hidden (recoverable)
     dream_action: Literal["review", "delete"] | None = None  # why dream hid the row
@@ -123,6 +126,12 @@ class Memory:
             source_session_id=row["source_session_id"],
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
+            graph_processed=bool(row.get("graph_processed", True)),
+            graph_attempts=int(row.get("graph_attempts", 0)),
+            graph_status=cast(
+                Literal["pending", "completed", "failed"],
+                row.get("graph_status", "completed"),
+            ),
             tags=tags,
             deleted_at=row.get("deleted_at"),
             dream_action=row.get("dream_action"),
@@ -141,6 +150,9 @@ class Memory:
             "source_session_id": self.source_session_id,
             "access_count": self.access_count,
             "last_accessed_at": self.last_accessed_at,
+            "graph_processed": self.graph_processed,
+            "graph_attempts": self.graph_attempts,
+            "graph_status": self.graph_status,
             "tags": self.tags,
             "deleted_at": self.deleted_at,
             "dream_action": self.dream_action,

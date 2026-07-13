@@ -760,7 +760,11 @@ CREATE TABLE memories (
     access_count INTEGER DEFAULT 0,
     last_accessed_at TIMESTAMPTZ,
 tags JSONB,
-graph_processed BOOLEAN DEFAULT TRUE,
+    graph_processed BOOLEAN DEFAULT TRUE,
+    graph_attempts INTEGER NOT NULL DEFAULT 0,
+    graph_status TEXT NOT NULL DEFAULT 'completed'
+        CONSTRAINT memories_graph_status_check
+        CHECK (graph_status IN ('pending', 'completed', 'failed')),
 created_at TIMESTAMPTZ NOT NULL,
 updated_at TIMESTAMPTZ NOT NULL,
 deleted_at TIMESTAMPTZ,
@@ -777,6 +781,8 @@ CREATE INDEX idx_memories_project ON memories(project_id);
 CREATE INDEX idx_memories_type ON memories(memory_type);
 
 CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph_processed IS FALSE;
+CREATE INDEX idx_memories_graph_status_pending ON memories(created_at)
+    WHERE graph_status = 'pending';
 
 CREATE INDEX idx_memories_source_session ON memories(source_session_id);
 

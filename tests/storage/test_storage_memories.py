@@ -387,6 +387,93 @@ def test_mark_pending_graphs_without_project_resets_all(memory_manager, db) -> N
     assert {row["graph_processed"] for row in rows} == {0}
 
 
+def test_deterministic_graph_failures_become_terminal_at_cap(memory_manager, db) -> None:
+    """A deterministic poison memory leaves the pending queue at the configured cap."""
+    memory = memory_manager.create_memory(content="Deterministic poison")
+    memory_manager.mark_pending_graph(memory.id)
+
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+        == "pending"
+    )
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+        == "pending"
+    )
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+        == "failed"
+    )
+
+    row = db.fetchone(
+        "SELECT graph_processed, graph_attempts, graph_status FROM memories WHERE id = %s",
+        (memory.id,),
+    )
+    assert row is not None
+    assert row["graph_processed"] is True
+    assert row["graph_attempts"] == 3
+    assert row["graph_status"] == "failed"
+    assert memory_manager.get_pending_graph_memories() == []
+
+
+def test_terminal_poison_memory_does_not_starve_newer_pending_memory(memory_manager, db) -> None:
+    """After terminal failure, the queue advances beyond its former oldest row."""
+    poison = memory_manager.create_memory(content="Old poison")
+    newer = memory_manager.create_memory(content="New valid memory")
+    db.execute(
+        "UPDATE memories SET created_at = created_at - INTERVAL '1 hour' WHERE id = %s",
+        (poison.id,),
+    )
+    memory_manager.mark_pending_graph(poison.id)
+    memory_manager.mark_pending_graph(newer.id)
+
+    memory_manager.record_graph_failure(poison.id, deterministic=True, max_attempts=1)
+
+    pending = memory_manager.get_pending_graph_memories(limit=1)
+    assert [memory.id for memory in pending] == [newer.id]
+
+
+def test_transient_graph_failure_stays_pending_without_consuming_attempt(
+    memory_manager, db
+) -> None:
+    """Retryable, partial, and unexpected failures retain their queue position and budget."""
+    memory = memory_manager.create_memory(content="Transient graph outage")
+    memory_manager.mark_pending_graph(memory.id)
+
+    assert (
+        memory_manager.record_graph_failure(memory.id, deterministic=False, max_attempts=3)
+        == "pending"
+    )
+
+    row = db.fetchone(
+        "SELECT graph_processed, graph_attempts, graph_status FROM memories WHERE id = %s",
+        (memory.id,),
+    )
+    assert row is not None
+    assert row["graph_processed"] is False
+    assert row["graph_attempts"] == 0
+    assert row["graph_status"] == "pending"
+    assert [item.id for item in memory_manager.get_pending_graph_memories()] == [memory.id]
+
+
+def test_mark_graph_processed_resets_retry_state(memory_manager, db) -> None:
+    """Success and no-entity outcomes complete the queue row and clear old attempts."""
+    memory = memory_manager.create_memory(content="Eventually succeeds")
+    memory_manager.mark_pending_graph(memory.id)
+    memory_manager.record_graph_failure(memory.id, deterministic=True, max_attempts=3)
+
+    memory_manager.mark_graph_processed(memory.id)
+
+    row = db.fetchone(
+        "SELECT graph_processed, graph_attempts, graph_status FROM memories WHERE id = %s",
+        (memory.id,),
+    )
+    assert row is not None
+    assert row["graph_processed"] is True
+    assert row["graph_attempts"] == 0
+    assert row["graph_status"] == "completed"
+
+
 def test_list_all_ids_applies_offset_without_limit(memory_manager, monkeypatch) -> None:
     fetchall = MagicMock(return_value=[{"id": "mem-3"}])
     monkeypatch.setattr(memory_manager.db, "fetchall", fetchall)

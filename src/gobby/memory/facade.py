@@ -120,6 +120,19 @@ class MemoryManagerFacadeMethods:
     def mark_graph_processed(self, memory_id: str) -> None:
         self._lifecycle_service.mark_graph_processed(memory_id)
 
+    def record_graph_failure(
+        self,
+        memory_id: str,
+        *,
+        deterministic: bool,
+        max_attempts: int,
+    ) -> str:
+        return self._lifecycle_service.record_graph_failure(
+            memory_id,
+            deterministic=deterministic,
+            max_attempts=max_attempts,
+        )
+
     async def create_memory(
         self,
         content: str,

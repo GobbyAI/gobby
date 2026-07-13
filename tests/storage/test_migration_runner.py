@@ -110,6 +110,7 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (311, "model_costs_provider_key"),
         (312, "session_digest_pair_index"),
         (313, "memory_source_session_set_null"),
+        (314, "memory_graph_retry_state"),
     ]
 
 
@@ -158,6 +159,55 @@ def test_memory_source_session_upgrade_preserves_memory(postgres_db) -> None:
             assert row is not None
             assert row["content"] == "Keep this memory"
             assert row["source_session_id"] is None
+    finally:
+        postgres_db.execute(
+            f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'  # nosec B608 - generated UUID suffix
+        )
+
+
+def test_memory_graph_retry_state_upgrade_backfills_pending_and_completed(postgres_db) -> None:
+    """Migration 314 backfills explicit graph queue state from the legacy boolean."""
+    schema = f"migration_314_{uuid.uuid4().hex}"
+    migration_path = (
+        Path(__file__).parents[2]
+        / "src"
+        / "gobby"
+        / "storage"
+        / "migrations"
+        / "314_memory_graph_retry_state.sql"
+    )
+    pending_id = str(uuid.uuid4())
+    completed_id = str(uuid.uuid4())
+
+    postgres_db.execute(f'CREATE SCHEMA "{schema}"')  # nosec B608 - generated UUID suffix
+    try:
+        with postgres_db.transaction() as conn:
+            conn.execute(f'SET LOCAL search_path TO "{schema}"')  # nosec B608
+            conn.execute(
+                """
+                CREATE TABLE memories (
+                    id UUID PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    graph_processed BOOLEAN NOT NULL DEFAULT TRUE
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO memories (id, graph_processed) VALUES (%s, FALSE), (%s, TRUE)",
+                (pending_id, completed_id),
+            )
+            for statement in _split(migration_path.read_text(encoding="utf-8")):
+                conn.execute(statement)
+
+            rows = conn.execute(
+                "SELECT id, graph_attempts, graph_status FROM memories ORDER BY id"
+            ).fetchall()
+            by_id = {str(row["id"]): row for row in rows}
+
+            assert by_id[pending_id]["graph_attempts"] == 0
+            assert by_id[pending_id]["graph_status"] == "pending"
+            assert by_id[completed_id]["graph_attempts"] == 0
+            assert by_id[completed_id]["graph_status"] == "completed"
     finally:
         postgres_db.execute(
             f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'  # nosec B608 - generated UUID suffix

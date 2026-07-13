@@ -638,6 +638,15 @@ class TestSessionLifecycleManager:
             def mark_graph_processed(self, memory_id: str) -> None:
                 self.marked.append(memory_id)
 
+            def record_graph_failure(
+                self,
+                memory_id: str,
+                *,
+                deterministic: bool,
+                max_attempts: int,
+            ) -> str:
+                raise AssertionError("success must not record a failure")
+
         memory_manager = MemoryManagerStub()
         with patch(_SESSION_MANAGER_PATCH):
             manager = SessionLifecycleManager(mock_db, mock_config, memory_manager=memory_manager)
@@ -654,6 +663,72 @@ class TestSessionLifecycleManager:
             memory_manager.mark_graph_processed,
         ]
         to_thread.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("result_or_error", "deterministic"),
+        [
+            ("deterministic_failure", True),
+            ("retryable_failure", False),
+            ("partial_failure", False),
+            (RuntimeError("provider unavailable"), False),
+        ],
+    )
+    async def test_pending_graph_failure_policy_is_persisted(
+        self,
+        mock_db,
+        mock_config,
+        result_or_error: str | Exception,
+        deterministic: bool,
+    ) -> None:
+        """Only deterministic extraction failures consume the bounded attempt budget."""
+
+        class MemoryManagerStub:
+            def __init__(self) -> None:
+                self.kg_service = AsyncMock()
+                if isinstance(result_or_error, Exception):
+                    self.kg_service.add_to_graph.side_effect = result_or_error
+                else:
+                    self.kg_service.add_to_graph.return_value = SimpleNamespace(
+                        status=result_or_error
+                    )
+                self.memory = SimpleNamespace(
+                    id="mem-failure",
+                    content="poisoned content",
+                    project_id="proj-1",
+                )
+                self.failures: list[tuple[str, bool, int]] = []
+
+            async def run_db(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+                return func(*args, **kwargs)
+
+            def get_pending_graph_memories(self, limit: int = 20) -> list[SimpleNamespace]:
+                return [self.memory]
+
+            def mark_graph_processed(self, memory_id: str) -> None:
+                raise AssertionError("failed extraction must not be completed")
+
+            def record_graph_failure(
+                self,
+                memory_id: str,
+                *,
+                deterministic: bool,
+                max_attempts: int,
+            ) -> str:
+                self.failures.append((memory_id, deterministic, max_attempts))
+                return "pending"
+
+        memory_manager = MemoryManagerStub()
+        queue_config = SimpleNamespace(max_deterministic_attempts=4)
+        with patch(_SESSION_MANAGER_PATCH):
+            manager = SessionLifecycleManager(
+                mock_db,
+                mock_config,
+                memory_manager=memory_manager,
+                kg_queue_config=queue_config,
+            )
+
+        assert await manager._process_pending_graph_memories() == 0
+        assert memory_manager.failures == [("mem-failure", deterministic, 4)]
 
 
 class TestBackgroundLoops:

@@ -82,6 +82,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        max_graph_deterministic_attempts: int = 3,
     ):
         self.db = db
         self.config = config
@@ -178,7 +179,11 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 project_id
             ),
             mark_graph_processed=lambda memory_id: self.mark_graph_processed(memory_id),
+            record_graph_failure=lambda memory_id, **kwargs: self.record_graph_failure(
+                memory_id, **kwargs
+            ),
             max_rebuild_concurrency=config.kg.max_rebuild_concurrency,
+            max_deterministic_attempts=max_graph_deterministic_attempts,
         )
         self._project_repair_service = NullProjectMemoryRepairService(
             db=db,
