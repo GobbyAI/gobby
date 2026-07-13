@@ -1,5 +1,6 @@
 """Focused coverage tests for task MCP tools."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -9,6 +10,7 @@ from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
+TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
 
 
 class TestCloseTaskTool:
@@ -49,7 +51,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
             MockSVManager.return_value.get_variables.return_value = {
@@ -95,7 +97,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -140,7 +142,7 @@ class TestCloseTaskTool:
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -179,7 +181,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -223,7 +225,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "ambient-head"
 
@@ -266,7 +268,7 @@ class TestCloseTaskTool:
             patch("gobby.utils.git.run_git_command", return_value="abc123"),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -367,7 +369,7 @@ class TestCloseTaskTool:
             ),
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             MockSessionVarManager.return_value.get_variables.return_value = {
                 "verification_evidence": [
@@ -422,7 +424,7 @@ class TestCloseTaskTool:
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -437,6 +439,141 @@ class TestCloseTaskTool:
             )
 
         assert result == {"error": "Invalid or unresolved commit SHA: bad-sha"}
+        assert mock_task_manager.link_commit.call_count == 1
+        assert mock_task_manager.close_task.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_close_task_rejects_commit_when_repo_path_is_unresolved(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Commit operations fail closed when the task repository cannot be resolved."""
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = None
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
+        mock_task.validation_criteria = None
+        mock_task.claimed_by_session_id = None
+        mock_task_manager.get_task.return_value = mock_task
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
+            patch("gobby.utils.git.normalize_commit_sha") as mock_normalize,
+            patch("gobby.utils.git.run_git_command") as mock_run_git,
+        ):
+            MockProjManager.return_value.get.return_value = None
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": mock_task.id,
+                    "commit_sha": "abc1234",
+                    "changes_summary": "test changes",
+                },
+            )
+
+        assert result == {
+            "success": False,
+            "error": "task_repo_path_unavailable",
+            "message": (
+                "close_task requires a resolvable task repository path for commit operations. "
+                "Configure the task project's repo_path or pass project_path."
+            ),
+        }
+        assert mock_task_manager.link_commit.call_count == 0
+        assert mock_run_git.call_count == 0
+        mock_task_manager.link_commit.assert_not_called()
+        mock_autolink.assert_not_called()
+        mock_normalize.assert_not_called()
+        mock_run_git.assert_not_called()
+        mock_task_manager.close_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_task_rejects_linked_commit_when_repo_path_is_unresolved(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Linked commits are not normalized against the daemon working directory."""
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = ["abc1234"]
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
+        mock_task.validation_criteria = None
+        mock_task.claimed_by_session_id = None
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
+            patch("gobby.utils.git.normalize_commit_sha") as mock_normalize,
+            patch("gobby.utils.git.run_git_command") as mock_run_git,
+        ):
+            MockProjManager.return_value.get.return_value = None
+            MockSVM.return_value.get_variables.return_value = {}
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": mock_task.id,
+                    "changes_summary": "test changes",
+                },
+            )
+
+        assert result["error"] == "task_repo_path_unavailable"
+        assert result["success"] is False
+        mock_autolink.assert_not_called()
+        mock_normalize.assert_not_called()
+        mock_run_git.assert_not_called()
+        mock_task_manager.close_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_task_rejects_claim_autolink_when_repo_path_is_unresolved(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Claim-window commit discovery requires the task repository path."""
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = None
+        mock_task.project_id = "11111111-1111-4111-8111-111111110001"
+        mock_task.validation_criteria = None
+        mock_task.claimed_by_session_id = "test-session"
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as MockSTM,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
+        ):
+            MockProjManager.return_value.get.return_value = None
+            MockSessionManager.return_value.resolve_session_reference.return_value = "test-session"
+            MockSTM.return_value.get_task_sessions.return_value = [
+                {
+                    "action": "claimed",
+                    "session_id": "test-session",
+                    "created_at": "2026-07-12T10:00:00+00:00",
+                }
+            ]
+            MockSVM.return_value.get_variables.return_value = {}
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": mock_task.id,
+                    "changes_summary": "test changes",
+                },
+            )
+
+        assert result["error"] == "task_repo_path_unavailable"
+        assert result["success"] is False
+        mock_autolink.assert_not_called()
+        mock_task_manager.close_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_blocked_when_target_task_has_edits(
@@ -469,7 +606,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             mock_session_instance = MagicMock()
@@ -532,7 +669,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             mock_session_instance = MagicMock()
@@ -554,6 +691,8 @@ class TestCloseTaskTool:
             )
 
             assert result == {"success": True}
+            assert mock_task_manager.close_task.call_count == 1
+            assert mock_task_manager.link_commit.call_count == 0
             mock_task_manager.close_task.assert_called_once()
 
     @pytest.mark.asyncio
@@ -586,7 +725,7 @@ class TestCloseTaskTool:
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -656,7 +795,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -737,7 +876,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 
@@ -805,7 +944,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -879,7 +1018,7 @@ class TestCloseTaskTool:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -1123,7 +1262,7 @@ class TestSessionVariableMirroring:
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_proj_instance.get.return_value = MagicMock(repo_path=TEST_REPO_PATH)
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
 

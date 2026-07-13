@@ -384,12 +384,20 @@ def _register_lifecycle_tools(registry: InternalToolRegistry, ctx: RegistryConte
 
     async def cancel_expansion_run(run_id: str) -> dict[str, Any]:
         run_manager = LocalExpansionRunManager(ctx.task_manager.db)
+        run = run_manager.get(run_id)
+        if run is None:
+            return {"error": f"Expansion run {run_id} not found"}
+        if not run_manager.is_active_status(run.status):
+            return {"success": True, "run": _summarize_run(run)}
+
         task = _background_run_tasks.get(run_id)
         if task is not None and not task.done():
             task.cancel()
         run = run_manager.cancel(run_id, error="Expansion run cancelled by user")
         if run is None:
             return {"error": f"Expansion run {run_id} not found"}
+        if run.status != "cancelled":
+            return {"success": True, "run": _summarize_run(run)}
         await _notify_completion(
             ctx,
             run_id,

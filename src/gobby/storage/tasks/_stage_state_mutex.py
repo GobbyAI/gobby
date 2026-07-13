@@ -29,6 +29,7 @@ class StageStateMutexFactory:
         action: str,
         *,
         expected_stage: StageState | None = None,
+        dispatch_run_id: str | None = None,
         preheld_run_id: str | None = None,
     ) -> AbstractContextManager[object | None]:
         if preheld_run_id is not None:
@@ -44,6 +45,7 @@ class StageStateMutexFactory:
                 holder=holder,
                 action_kind=f"stage_state:{action}",
                 ttl_seconds=30,
+                borrowed_run_id=dispatch_run_id,
             )
         return RuntimeDispatchMutex(
             storage=self.storage,
@@ -55,6 +57,7 @@ class StageStateMutexFactory:
             expected_stage_state=snapshot_state(expected_stage.state),
             expected_stage_updated_at=expected_stage.updated_at,
             candidate_loader=self.rows.current_stage,
+            borrowed_run_id=dispatch_run_id,
         )
 
 

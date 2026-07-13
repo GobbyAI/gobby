@@ -145,11 +145,18 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             )
 
         try:
-            updated = ctx.task_manager.claim_task(
-                resolved_id,
-                session_id=resolved_session_id,
-                force=force or delegated_claim,
-            )
+            if delegated_claim:
+                updated = ctx.task_manager.claim_task(
+                    resolved_id,
+                    session_id=resolved_session_id,
+                    expected_owner=current_owner,
+                )
+            else:
+                updated = ctx.task_manager.claim_task(
+                    resolved_id,
+                    session_id=resolved_session_id,
+                    force=force,
+                )
         except TaskClosedError as e:
             return task_error(str(e), TaskToolErrorCode.TASK_CLOSED)
         except TaskAlreadyClaimedError as e:

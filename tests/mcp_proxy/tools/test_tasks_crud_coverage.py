@@ -299,6 +299,117 @@ class TestUpdateTaskTool:
         assert "error" in result
 
     @pytest.mark.asyncio
+    async def test_update_task_rejects_code_category_without_criteria(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """A category flip must satisfy the effective code-task invariant."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.get_task.return_value = SimpleNamespace(
+            category="manual",
+            validation_criteria=None,
+            implementation_domain=None,
+        )
+
+        result = await registry.call(
+            "update_task",
+            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "category": "code"},
+        )
+
+        assert result == {
+            "error": "Code tasks require validation_criteria. "
+            "Describe what 'done' looks like so validate_task can check your diff against it."
+        }
+        assert mock_task_manager.get_task.call_count == 2
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_task_rejects_code_category_without_domain(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """A category flip with criteria must still provide an implementation domain."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.get_task.return_value = SimpleNamespace(
+            category="manual",
+            validation_criteria=None,
+            implementation_domain=None,
+        )
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "category": "code",
+                "validation_criteria": "Focused tests pass",
+            },
+        )
+
+        assert result == {
+            "error": "Code tasks require implementation_domain "
+            "('backend', 'frontend', or 'fullstack')."
+        }
+        assert mock_task_manager.get_task.call_count == 2
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_task_rejects_clearing_code_task_criteria(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """An existing code task cannot clear its validation criteria."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.get_task.return_value = SimpleNamespace(
+            category="code",
+            validation_criteria="Focused tests pass",
+            implementation_domain="backend",
+        )
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "validation_criteria": "",
+            },
+        )
+
+        assert result == {
+            "error": "Code tasks require validation_criteria. "
+            "Describe what 'done' looks like so validate_task can check your diff against it."
+        }
+        assert mock_task_manager.get_task.call_count == 2
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_task_accepts_valid_code_category_flip(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """A category flip succeeds when the effective code-task state is valid."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        mock_task_manager.get_task.return_value = SimpleNamespace(
+            category="manual",
+            validation_criteria=None,
+            implementation_domain=None,
+        )
+        mock_task_manager.update_task.return_value = MagicMock()
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "category": "code",
+                "validation_criteria": "Focused tests pass",
+                "implementation_domain": "backend",
+            },
+        )
+
+        assert result == {}
+        assert mock_task_manager.get_task.call_count == 2
+        mock_task_manager.update_task.assert_called_once_with(
+            "550e8400-e29b-41d4-a716-446655440000",
+            category="code",
+            validation_criteria="Focused tests pass",
+            implementation_domain="backend",
+        )
+
+    @pytest.mark.asyncio
     async def test_update_task_all_fields(self, mock_task_manager, mock_sync_manager):
         """Test update_task with all updatable fields.
 

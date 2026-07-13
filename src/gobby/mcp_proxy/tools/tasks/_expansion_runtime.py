@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.mcp_proxy.tools._background_task_lifecycle import register_background_task
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -58,18 +59,13 @@ class ExpansionRunResult:
 
 
 def _register_background_task(run_id: str, task: asyncio.Task[None]) -> None:
-    _background_run_tasks[run_id] = task
-
-    def _on_done(done_task: asyncio.Task[None]) -> None:
-        current = _background_run_tasks.get(run_id)
-        if current is done_task:
-            _background_run_tasks.pop(run_id, None)
-        if not done_task.cancelled():
-            exc = done_task.exception()
-            if exc is not None:
-                logger.error("Expansion background task %s failed: %s", run_id, exc, exc_info=True)
-
-    task.add_done_callback(_on_done)
+    register_background_task(
+        _background_run_tasks,
+        run_id,
+        task,
+        logger=logger,
+        description="Expansion background task",
+    )
 
 
 def _build_expansion_service(ctx: RegistryContext) -> ExpansionService:

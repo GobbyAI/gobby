@@ -11,6 +11,7 @@ from gobby.build.controls import cleanup_successful_merge_artifacts
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
+    _current_agent_dispatch_mutex_run_id,
     _release_current_agent_dispatch_mutex,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
@@ -43,7 +44,22 @@ def _session_id(ctx: RegistryContext) -> str | None:
     try:
         return ctx.resolve_session_id(session_ref)
     except Exception:
-        return session_ref
+        return None
+
+
+def _dispatch_run_kwargs(
+    ctx: RegistryContext,
+    task_id: str,
+    session_id: str | None,
+) -> dict[str, Any]:
+    if session_id is None:
+        return {}
+    run_id = _current_agent_dispatch_mutex_run_id(
+        ctx,
+        task_id=task_id,
+        session_id=session_id,
+    )
+    return {"dispatch_run_id": run_id} if run_id is not None else {}
 
 
 def _manifest_error(error: IllegalManifestMutationError) -> dict[str, Any]:
@@ -145,18 +161,24 @@ def _complete_ready_merge_stage(
     task_id: str,
     session_id: str | None,
     merge_sha: str,
+    dispatch_run_id: str | None,
 ) -> StageState:
+    dispatch_kwargs: dict[str, Any] = (
+        {"dispatch_run_id": dispatch_run_id} if dispatch_run_id else {}
+    )
     ctx.task_manager.stage_states.start_stage(
         task_id,
         "merge",
         by_session_id=session_id,
         notes="Reconciling successful merge result after a prior merge attempt.",
+        **dispatch_kwargs,
     )
     return ctx.task_manager.stage_states.complete_stage(
         task_id,
         "merge",
         by_session_id=session_id,
         commit_sha=merge_sha,
+        **dispatch_kwargs,
     )
 
 
@@ -277,12 +299,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_id = _resolve_task(ctx, task_id)
         resolved_session_id = _session_id(ctx)
         prior_owner_session_id = _get_prior_claim(ctx, resolved_id)
-        if resolved_session_id:
-            _release_current_agent_dispatch_mutex(
-                ctx,
-                task_id=resolved_id,
-                session_id=resolved_session_id,
-            )
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
         stage = ctx.task_manager.stage_states.complete_stage(
             resolved_id,
             stage_name,
@@ -290,7 +307,15 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             commit_sha=commit_sha,
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
+            **dispatch_kwargs,
         )
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+                run_id=dispatch_kwargs.get("dispatch_run_id"),
+            )
         _release_prior_claim(ctx, resolved_id, prior_owner_session_id, action="complete_stage")
         return _operation_response(resolved_id, stage)
 
@@ -320,12 +345,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_id = _resolve_task(ctx, task_id)
         resolved_session_id = _session_id(ctx)
         prior_owner_session_id = _get_prior_claim(ctx, resolved_id)
-        if resolved_session_id:
-            _release_current_agent_dispatch_mutex(
-                ctx,
-                task_id=resolved_id,
-                session_id=resolved_session_id,
-            )
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
         cited_ids = (
             [_resolve_task(ctx, cited_subtask) for cited_subtask in cited_subtasks]
             if cited_subtasks
@@ -338,7 +358,15 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             needs_human=needs_human,
             by_session_id=resolved_session_id,
             cited_subtasks=cited_ids,
+            **dispatch_kwargs,
         )
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+                run_id=dispatch_kwargs.get("dispatch_run_id"),
+            )
         _release_prior_claim(ctx, resolved_id, prior_owner_session_id, action="fail_stage")
         return _operation_response(resolved_id, stage)
 
@@ -430,47 +458,26 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         findings_body = _findings_text(findings)
         payload = {"verdict": verdict, "findings": findings, "report_ref": report_ref}
         delivery = TaskDeliveryStateManager(ctx.task_manager.db)
-        delivery.record_campaign(
-            resolved_id,
-            state=(
-                "ready_to_merge"
-                if verdict == "approve"
-                else "needs_discussion"
-                if verdict == "needs_discussion"
-                else "blocked"
-            ),
-            structured_pr_verdict=payload,
-            pr_report_ref=report_ref or findings_body,
-            last_error="" if verdict == "approve" else findings_body,
-        )
         if verdict == "approve":
             resolved_session_id = _session_id(ctx)
-            if resolved_session_id:
-                _release_current_agent_dispatch_mutex(
-                    ctx,
-                    task_id=resolved_id,
-                    session_id=resolved_session_id,
-                )
+            dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
             stage = ctx.task_manager.stage_states.approve_review(
                 resolved_id,
                 "pr",
                 by_session_id=resolved_session_id,
                 notes=findings_body,
+                **dispatch_kwargs,
             )
         elif verdict == "request_changes":
             resolved_session_id = _session_id(ctx)
-            if resolved_session_id:
-                _release_current_agent_dispatch_mutex(
-                    ctx,
-                    task_id=resolved_id,
-                    session_id=resolved_session_id,
-                )
+            dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
             stage = ctx.task_manager.stage_states.reject_review(
                 resolved_id,
                 "pr",
                 reason=findings_body,
                 by_session_id=resolved_session_id,
                 notes=findings_body,
+                **dispatch_kwargs,
             )
         else:
             task = ctx.task_manager.escalate_task(
@@ -478,6 +485,13 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 reason=f"needs_human:pr_delivery:{findings_body}",
             )
             current_stage = ctx.task_manager.stage_states.get(resolved_id, "pr")
+            delivery.record_campaign(
+                resolved_id,
+                state="needs_discussion",
+                structured_pr_verdict=payload,
+                pr_report_ref=report_ref or findings_body,
+                last_error=findings_body,
+            )
             return {
                 "ok": True,
                 "task_id": resolved_id,
@@ -487,6 +501,20 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     stage_state_operation_view(current_stage) if current_stage is not None else None
                 ),
             }
+        delivery.record_campaign(
+            resolved_id,
+            state="ready_to_merge" if verdict == "approve" else "blocked",
+            structured_pr_verdict=payload,
+            pr_report_ref=report_ref or findings_body,
+            last_error="" if verdict == "approve" else findings_body,
+        )
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+                run_id=dispatch_kwargs.get("dispatch_run_id"),
+            )
         return _operation_response(resolved_id, stage)
 
     _register_stage_tool(
@@ -579,26 +607,29 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if failure_reason is not None:
             if merge_sha is not None:
                 raise ValueError("merge_sha cannot be provided with failure_reason")
-            delivery.record_campaign(
-                resolved_id,
-                state="failed",
-                merge_report_ref=report_ref or failure_reason,
-                last_error=failure_reason,
-            )
             resolved_session_id = _session_id(ctx)
-            if resolved_session_id:
-                _release_current_agent_dispatch_mutex(
-                    ctx,
-                    task_id=resolved_id,
-                    session_id=resolved_session_id,
-                )
+            dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
             stage = ctx.task_manager.stage_states.fail_stage(
                 resolved_id,
                 "merge",
                 reason=failure_reason,
                 needs_human=False,
                 by_session_id=resolved_session_id,
+                **dispatch_kwargs,
             )
+            delivery.record_campaign(
+                resolved_id,
+                state="failed",
+                merge_report_ref=report_ref or failure_reason,
+                last_error=failure_reason,
+            )
+            if resolved_session_id:
+                _release_current_agent_dispatch_mutex(
+                    ctx,
+                    task_id=resolved_id,
+                    session_id=resolved_session_id,
+                    run_id=dispatch_kwargs.get("dispatch_run_id"),
+                )
             return _operation_response(resolved_id, stage)
 
         if not merge_sha:
@@ -621,27 +652,18 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 last_error="",
             )
             return _idempotent_operation_response(resolved_id, existing_stage)
-        delivery.record_campaign(
-            resolved_id,
-            state="merged",
-            merge_sha=merge_sha,
-            merge_report_ref=report_ref or "",
-            last_error="",
-        )
         resolved_session_id = _session_id(ctx)
-        if resolved_session_id:
-            _release_current_agent_dispatch_mutex(
-                ctx,
-                task_id=resolved_id,
-                session_id=resolved_session_id,
-            )
+        dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        dispatch_run_id = dispatch_kwargs.get("dispatch_run_id")
         reconciled_ready_merge = False
+        idempotent_completed_merge = False
         try:
             stage = ctx.task_manager.stage_states.complete_stage(
                 resolved_id,
                 "merge",
                 by_session_id=resolved_session_id,
                 commit_sha=merge_sha,
+                **dispatch_kwargs,
             )
         except IllegalStageTransitionError as exc:
             if _is_ready_merge_transition(exc) and _can_reconcile_ready_merge(
@@ -653,6 +675,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     task_id=resolved_id,
                     session_id=resolved_session_id,
                     merge_sha=merge_sha,
+                    dispatch_run_id=dispatch_run_id,
                 )
                 reconciled_ready_merge = True
             elif not _is_completed_merge_transition(exc):
@@ -661,7 +684,24 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 completed_stage = _get_stage_state(ctx, resolved_id, "merge")
                 if completed_stage is None:
                     raise
-                return _idempotent_operation_response(resolved_id, completed_stage)
+                stage = completed_stage
+                idempotent_completed_merge = True
+        delivery.record_campaign(
+            resolved_id,
+            state="merged",
+            merge_sha=merge_sha,
+            merge_report_ref=report_ref or "",
+            last_error="",
+        )
+        if resolved_session_id:
+            _release_current_agent_dispatch_mutex(
+                ctx,
+                task_id=resolved_id,
+                session_id=resolved_session_id,
+                run_id=dispatch_kwargs.get("dispatch_run_id"),
+            )
+        if idempotent_completed_merge:
+            return _idempotent_operation_response(resolved_id, stage)
         try:
             cleanup_successful_merge_artifacts(ctx.task_manager.db, resolved_id)
         except Exception:

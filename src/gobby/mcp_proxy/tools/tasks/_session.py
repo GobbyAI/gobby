@@ -29,12 +29,13 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
     def link_task_to_session(
         task_id: str,
         action: str = "worked_on",
+        session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Link a task to the current session."""
+        """Link a task to an explicit session or the current session."""
         from gobby.utils.session_context import get_current_session_id
 
-        session_id = get_current_session_id()
-        if not session_id:
+        effective_session_id = session_id if session_id is not None else get_current_session_id()
+        if not effective_session_id:
             return {"error": "No session context available. Ensure session_id is set."}
 
         try:
@@ -44,9 +45,9 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:
-            resolved_session_id = ctx.resolve_session_id(session_id)
+            resolved_session_id = ctx.resolve_session_id(effective_session_id)
         except ValueError as e:
-            return {"error": f"Invalid session_id '{session_id}': {e}"}
+            return {"error": f"Invalid session_id '{effective_session_id}': {e}"}
 
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, action)

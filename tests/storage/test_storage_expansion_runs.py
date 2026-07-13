@@ -82,3 +82,50 @@ def test_append_log_is_atomic_against_stale_reads(run_manager, parent_task) -> N
     assert persisted is not None
     assert persisted.logs is not None
     assert [entry["message"] for entry in persisted.logs] == ["first", "second"]
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "failed"])
+def test_cancel_preserves_terminal_run(run_manager, parent_task, terminal_status: str) -> None:
+    """Late cancellation cannot overwrite a completed or failed run."""
+    run = run_manager.create(
+        parent_task_id=parent_task.id,
+        project_id=parent_task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    if terminal_status == "completed":
+        before = run_manager.save_apply_result(
+            run.id,
+            task_id_map={},
+            created_task_ids=[],
+        )
+    else:
+        before = run_manager.fail(run.id, "compile failed")
+    assert before is not None
+
+    after = run_manager.cancel(run.id, error="late cancellation")
+
+    assert after is not None
+    assert after.status == terminal_status
+    assert after.error == before.error
+    assert after.completed_at == before.completed_at
+
+
+def test_cancel_is_idempotent_after_first_transition(run_manager, parent_task) -> None:
+    """Repeated cancellation preserves the first cancellation metadata."""
+    run = run_manager.create(
+        parent_task_id=parent_task.id,
+        project_id=parent_task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+
+    first = run_manager.cancel(run.id, error="first cancellation")
+    second = run_manager.cancel(run.id, error="second cancellation")
+
+    assert first is not None
+    assert second is not None
+    assert first.status == "cancelled"
+    assert second.status == "cancelled"
+    assert second.error == "first cancellation"
+    assert second.completed_at == first.completed_at

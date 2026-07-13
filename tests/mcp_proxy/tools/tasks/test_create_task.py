@@ -2,17 +2,91 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import logging
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._crud import build_task_tree, create_crud_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from tests.storage.tasks._stage_test_helpers import stage_row
+
+
+@pytest.mark.asyncio
+async def test_create_task_fails_closed_when_session_project_lookup_errors(
+    temp_db,
+    sample_project,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fallback_project = LocalProjectManager(temp_db).create(
+        "task-create-fallback",
+        repo_path="/tmp/task-create-fallback",
+    )
+    session = SessionManager(temp_db).register(
+        external_id="task-create-project-error",
+        machine_id="test-machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalTaskManager(temp_db)
+    ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    registry = create_crud_registry(ctx)
+    session_count = manager.count_tasks(project_id=sample_project["id"])
+    fallback_count = manager.count_tasks(project_id=fallback_project.id)
+    ctx.session_manager.get = MagicMock(side_effect=RuntimeError("session database unavailable"))
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.get_project_context",
+            return_value={"id": fallback_project.id},
+        ),
+        caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._crud"),
+        session_context_for_test(session.id),
+    ):
+        result = await registry.call(
+            "create_task",
+            {"title": "Must not cross projects", "category": "test"},
+        )
+
+    assert "session database unavailable" in result["error"]
+    ctx.session_manager.get.assert_called_once_with(session.id)
+    assert manager.count_tasks(project_id=sample_project["id"]) == session_count
+    assert manager.count_tasks(project_id=fallback_project.id) == fallback_count
+    assert "Cannot resolve project" in caplog.text
+
+
+def test_build_task_tree_fails_closed_when_session_project_lookup_errors(
+    temp_db,
+    sample_project,
+) -> None:
+    session = SessionManager(temp_db).register(
+        external_id="task-tree-project-error",
+        machine_id="test-machine",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalTaskManager(temp_db)
+    ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    before_count = manager.count_tasks(project_id=sample_project["id"])
+    ctx.session_manager.get = MagicMock(side_effect=RuntimeError("session database unavailable"))
+
+    result = build_task_tree(
+        ctx,
+        {"title": "Must not build", "task_type": "epic", "children": []},
+        session.id,
+    )
+
+    assert result["success"] is False
+    assert result["tasks_created"] == 0
+    assert "session database unavailable" in result["error"]
+    assert manager.count_tasks(project_id=sample_project["id"]) == before_count
+
 
 pytestmark = pytest.mark.unit
 
