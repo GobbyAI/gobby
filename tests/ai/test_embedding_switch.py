@@ -23,7 +23,7 @@ from gobby.ai.embedding_switch import (
     record_switch_error,
     start_switch,
 )
-from gobby.memory.vectorstore import EMBEDDING_COLLECTION_KINDS, CollectionNameResolver
+from gobby.memory.collection_names import EMBEDDING_COLLECTION_KINDS, CollectionNameResolver
 
 pytestmark = pytest.mark.unit
 

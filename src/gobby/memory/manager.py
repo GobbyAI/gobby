@@ -34,7 +34,7 @@ from gobby.memory.services.project_repair import (
 )
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import SearchService
-from gobby.memory.vectorstore import (
+from gobby.memory.vectorstore_logging import (
     VECTORSTORE_WARNING_INTERVAL_SECONDS,
     log_rate_limited_warning,
 )

@@ -565,7 +565,7 @@ async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> 
 
 
 @pytest.mark.asyncio
-async def test_initialize_existing_collection_dimension_mismatch_recreates() -> None:
+async def test_initialize_dimension_mismatch_preserves_active_collection() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
@@ -574,15 +574,15 @@ async def test_initialize_existing_collection_dimension_mismatch_recreates() -> 
 
     await store.initialize()
 
-    client.delete_collection.assert_called_once_with(collection_name="mock_memories")
-    assert client.create_collection.call_args.kwargs["vectors_config"].size == 4
+    client.delete_collection.assert_not_called()
+    client.create_collection.assert_not_called()
     assert store.status_snapshot() == {
-        "state": "recreated_pending_rebuild",
+        "state": "dimension_mismatch_pending_rebuild",
         "collection": "mock_memories",
         "configured_dimension": 4,
         "rebuild_required": True,
         "dimension_recovery": {
-            "action": "recreated",
+            "action": "temp_rebuild_required",
             "previous_dimension": 3,
             "configured_dimension": 4,
         },
@@ -700,37 +700,60 @@ async def test_rebuild_deletes_stale_point_ids_in_batches_under_lifecycle_lock()
 
 
 @pytest.mark.asyncio
-async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> None:
+async def test_rebuild_dimension_mismatch_populates_before_atomic_alias_swap() -> None:
     store = VectorStore(collection_name="mock_memories", embedding_dim=4)
     client = MagicMock()
     client.collection_exists.return_value = True
     client.get_collection.return_value = _collection_info(3)
+    client.get_aliases.return_value = SimpleNamespace(
+        aliases=[SimpleNamespace(alias_name="mock_memories", collection_name="mock_memories@old")]
+    )
     store._client = client
-
-    def delete_collection(*, collection_name: str) -> None:
-        assert collection_name == "mock_memories"
-        assert store._collection_lifecycle_lock.locked()
+    target_name: str | None = None
+    populated = False
 
     def create_collection(*, collection_name: str, vectors_config: VectorParams) -> None:
-        assert collection_name == "mock_memories"
+        nonlocal target_name
+        assert collection_name.startswith("mock_memories@rebuild-")
+        target_name = collection_name
         assert vectors_config.size == 4
         assert store._collection_lifecycle_lock.locked()
 
-    client.delete_collection.side_effect = delete_collection
+    async def batch_upsert(
+        items: list[tuple[str, list[float], dict[str, object]]],
+        collection_name: str | None = None,
+    ) -> None:
+        nonlocal populated
+        assert collection_name == target_name
+        assert items[0][0] == MEM_1
+        client.update_collection_aliases.assert_not_called()
+        populated = True
+
+    def update_aliases(*, change_aliases_operations: list[object]) -> None:
+        assert populated is True
+        assert store._collection_lifecycle_lock.locked()
+        assert len(change_aliases_operations) == 2
+        assert change_aliases_operations[0].delete_alias.alias_name == "mock_memories"
+        assert change_aliases_operations[1].create_alias.collection_name == target_name
+        assert change_aliases_operations[1].create_alias.alias_name == "mock_memories"
+
     client.create_collection.side_effect = create_collection
+    client.update_collection_aliases.side_effect = update_aliases
+    store.batch_upsert = AsyncMock(side_effect=batch_upsert)  # type: ignore[method-assign]
 
     async def embed_fn(_text: str) -> list[float]:
         return _make_embedding()
 
-    await store.rebuild([], embed_fn)
+    await store.rebuild([{"id": MEM_1, "content": "one"}], embed_fn)
 
-    client.delete_collection.assert_called_once_with(collection_name="mock_memories")
     client.create_collection.assert_called_once()
+    client.update_collection_aliases.assert_called_once()
+    client.delete_collection.assert_called_once_with(collection_name="mock_memories@old")
 
 
 @pytest.mark.asyncio
 async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_path) -> None:
-    """initialize() recreates a mismatched collection and leaves it operational."""
+    """A completed rebuild replaces the old collection through a serving alias."""
     # Create a collection with dim=4
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -741,8 +764,8 @@ async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_p
     await store.upsert(MEM_1, _make_embedding(1.0, dim=4), {"content": "test"})
     await store.close()
 
-    # Reopen with a different dimension. Startup recreates the stale collection and
-    # exposes that existing memories still need to be re-embedded.
+    # Reopen with a different dimension. Startup keeps the stale collection serving
+    # and exposes that existing memories still need to be re-embedded.
     store2 = VectorStore(
         path=str(tmp_path / "qdrant"),
         collection_name="dim_test",
@@ -750,11 +773,10 @@ async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_p
     )
     await store2.initialize()
 
-    assert store2.status_snapshot()["state"] == "recreated_pending_rebuild"
+    assert store2.status_snapshot()["state"] == "dimension_mismatch_pending_rebuild"
     assert store2.status_snapshot()["rebuild_required"] is True
-    await store2.upsert(MEM_2, _make_embedding(2.0, dim=768), {"content": "new"})
-    results = await store2.search(_make_embedding(2.0, dim=768))
-    assert [result[0] for result in results] == [MEM_2]
+    old_results = await store2.search(_make_embedding(1.0, dim=4))
+    assert [result[0] for result in old_results] == [MEM_1]
 
     async def embed_fn(_text: str) -> list[float]:
         return _make_embedding(2.0, dim=768)
@@ -762,8 +784,57 @@ async def test_dimension_mismatch_recovers_and_supports_writes_and_queries(tmp_p
     await store2.rebuild([{"id": MEM_2, "content": "new"}], embed_fn)
     assert store2.status_snapshot()["state"] == "ready"
     assert store2.status_snapshot()["rebuild_required"] is False
+    results = await store2.search(_make_embedding(2.0, dim=768))
+    assert [result[0] for result in results] == [MEM_2]
+    aliases = await store2.get_aliases()
+    assert aliases["dim_test"].startswith("dim_test@rebuild-")
 
     await store2.close()
+
+
+@pytest.mark.asyncio
+async def test_dimension_rebuild_failure_keeps_old_collection_serving(tmp_path) -> None:
+    store = VectorStore(
+        path=str(tmp_path / "qdrant"),
+        collection_name="dim_test",
+        embedding_dim=4,
+    )
+    await store.initialize()
+    await store.upsert(MEM_1, _make_embedding(1.0, dim=4), {"content": "old"})
+    await store.close()
+
+    replacement = VectorStore(
+        path=str(tmp_path / "qdrant"),
+        collection_name="dim_test",
+        embedding_dim=8,
+    )
+    await replacement.initialize()
+    embed_calls = 0
+
+    async def failing_embed(_text: str) -> list[float]:
+        nonlocal embed_calls
+        embed_calls += 1
+        if embed_calls == 2:
+            raise RuntimeError("embedding failed")
+        return _make_embedding(2.0, dim=8)
+
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        await replacement.rebuild(
+            [
+                {"id": MEM_1, "content": "updated"},
+                {"id": MEM_2, "content": "new"},
+            ],
+            failing_embed,
+        )
+
+    old_results = await replacement.search(_make_embedding(1.0, dim=4))
+    assert [result[0] for result in old_results] == [MEM_1]
+    assert await replacement.get_aliases() == {}
+    client = replacement._client
+    assert client is not None
+    collections = await asyncio.to_thread(client.get_collections)
+    assert [collection.name for collection in collections.collections] == ["dim_test"]
+    await replacement.close()
 
 
 @pytest.mark.asyncio

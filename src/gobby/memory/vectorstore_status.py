@@ -23,17 +23,17 @@ class VectorStoreStatus:
         if not self.rebuild_required:
             self.state = "ready"
 
-    def mark_dimension_recreated(self, previous_dimension: int) -> None:
-        self.state = "recreated_pending_rebuild"
+    def mark_dimension_mismatch(self, previous_dimension: int) -> None:
+        self.state = "dimension_mismatch_pending_rebuild"
         self.rebuild_required = True
         self.dimension_recovery = {
-            "action": "recreated",
+            "action": "temp_rebuild_required",
             "previous_dimension": previous_dimension,
             "configured_dimension": self.configured_dimension,
         }
         logger.warning(
-            "Recreated Qdrant collection '%s' after embedding dimension change %s->%s; "
-            "existing memories require re-embedding",
+            "Qdrant collection '%s' uses embedding dimension %s instead of %s; "
+            "keeping it active until a replacement rebuild succeeds",
             self.collection,
             previous_dimension,
             self.configured_dimension,
