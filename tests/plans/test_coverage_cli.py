@@ -280,7 +280,9 @@ def test_cli_fails_for_invalid_covers_label(
     )
 
 
-def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
+def test_cli_writes_evidence_from_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cli_module = importlib.import_module("gobby.cli")
+    monkeypatch.setattr(cli_module, "load_full_config_from_db", lambda _config=None: None)
     plan_path, plan_hash = _plan_file(tmp_path)
     matrix = _matrix_file(tmp_path, "covered", plan_hash=plan_hash)
     manifest = tmp_path / "out.coverage.yaml"
@@ -297,7 +299,7 @@ def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
     assert result.exit_code == 0
     raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     assert raw["header"]["evidence_summary"] == ["none:none:resolved"]
-    assert raw["rows"][0]["evidence"] == [
+    assert raw["header"]["evidence"] == [
         {
             "kind": "none",
             "ref": "none",
@@ -306,6 +308,7 @@ def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
             "artifacts_touched": [],
         }
     ]
+    assert all("evidence" not in row for row in raw["rows"])
 
 
 @pytest.mark.parametrize(

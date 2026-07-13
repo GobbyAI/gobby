@@ -295,13 +295,16 @@ def _required_header(report: object, field: str) -> str:
 
 
 def _manifest_payload(report: object) -> dict[str, object]:
+    rows = list(_iter_attr(report, "rows"))
+    header = _header_payload(_attr(report, "header"))
+    header["evidence"] = _manifest_evidence(rows)
     return {
-        "header": _header_payload(_attr(report, "header")),
-        "rows": [_row_payload(row) for row in _iter_attr(report, "rows")],
+        "header": header,
+        "rows": [_row_payload(row) for row in rows],
     }
 
 
-_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target", "evidence")
+_PRESERVED_ROW_FIELDS = ("status", "leaves", "deferral_target")
 _PRESERVABLE_ROW_STATUSES = frozenset({"covered", "deferred"})
 
 
@@ -318,6 +321,7 @@ def _preserve_stable_rows(
 
     prior_rows = _prior_rows_by_item(existing)
     preserved_rows: list[object] = []
+    preserved_any = False
     for row in rows:
         if not isinstance(row, dict):
             preserved_rows.append(row)
@@ -336,8 +340,25 @@ def _preserve_stable_rows(
             if field in prior:
                 preserved[field] = prior[field]
         preserved_rows.append(preserved)
+        preserved_any = True
 
-    return {**payload, "rows": preserved_rows}
+    result = {**payload, "rows": preserved_rows}
+    if preserved_any:
+        return _preserve_header_evidence(result, existing)
+    return result
+
+
+def _preserve_header_evidence(
+    payload: dict[str, object], existing: Mapping[str, object]
+) -> dict[str, object]:
+    header = payload.get("header")
+    existing_header = existing.get("header")
+    if not isinstance(header, dict) or not isinstance(existing_header, Mapping):
+        return payload
+    existing_evidence = existing_header.get("evidence")
+    if header.get("evidence") or not isinstance(existing_evidence, list):
+        return payload
+    return {**payload, "header": {**header, "evidence": existing_evidence}}
 
 
 def _prior_rows_by_item(raw: Mapping[str, object]) -> dict[tuple[str, str], Mapping[str, object]]:
@@ -393,7 +414,6 @@ def _row_payload(row: object) -> dict[str, object]:
         "status": _value(_attr(row, "status")),
         "leaves": [_leaf_payload(leaf) for leaf in _iter_attr(row, "leaves")],
         "deferral_target": _attr(row, "deferral_target"),
-        "evidence": [_evidence_payload(evidence) for evidence in _iter_attr(row, "evidence")],
     }
 
 
@@ -413,6 +433,16 @@ def _evidence_payload(evidence: object) -> dict[str, object]:
         "detail": _attr(evidence, "detail"),
         "artifacts_touched": list(_iter_attr(evidence, "artifacts_touched")),
     }
+
+
+def _manifest_evidence(rows: Iterable[object]) -> list[dict[str, object]]:
+    evidence_payloads: list[dict[str, object]] = []
+    for row in rows:
+        for evidence in _iter_attr(row, "evidence"):
+            payload = _evidence_payload(evidence)
+            if payload not in evidence_payloads:
+                evidence_payloads.append(payload)
+    return evidence_payloads
 
 
 def _value(raw: object) -> object:

@@ -127,6 +127,11 @@ def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
 
 
 def _resolve_commits(range_: str, *, ctx: EvidenceContextProtocol) -> EvidenceBundle:
+    if ".." not in range_:
+        raise InvalidEvidenceError(
+            "commits evidence requires an explicit revision range containing '..'; "
+            f"single revision {range_!r} is not allowed"
+        )
     rev_list = _run_git(ctx.repo_root, ["rev-list", "--reverse", range_])
     if rev_list.returncode != 0:
         detail = rev_list.stderr.strip() or f"commit range {range_} did not resolve"
@@ -262,6 +267,9 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise InvalidEvidenceError(f"Invalid coverage matrix {path_ref}: {exc}") from exc
+    header_evidence = _coverage_header_evidence(raw, path_ref=path_ref)
+    if header_evidence:
+        return _bundle(*header_evidence)
     rows_data = _manifest_rows(raw)
     evidence_rows: list[EvidenceRow] = []
     for index, row_data in enumerate(rows_data):
@@ -296,6 +304,28 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
         )
 
     return _bundle(*evidence_rows)
+
+
+def _coverage_header_evidence(raw: Any, *, path_ref: str) -> list[EvidenceRow]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("header"), dict):
+        return []
+    evidence = raw["header"].get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return []
+    rows: list[EvidenceRow] = []
+    for index, item in enumerate(evidence, start=1):
+        if not isinstance(item, dict):
+            raise InvalidEvidenceError(
+                f"Invalid coverage matrix {path_ref}: header evidence {index} must be a mapping"
+            )
+        rows.append(
+            _coverage_embedded_row(
+                cast(dict[str, Any], item),
+                f"{path_ref}#header-evidence-{index}",
+                (),
+            )
+        )
+    return rows
 
 
 def _manifest_rows(raw: Any) -> list[Any]:
@@ -338,12 +368,18 @@ def _coverage_embedded_row(
         )
     except ValueError:
         status = EvidenceResolveStatus.invalid
+    embedded_touched = evidence.get("artifacts_touched")
+    resolved_touched = (
+        _dedupe(str(value) for value in embedded_touched)
+        if isinstance(embedded_touched, list)
+        else touched
+    )
     return EvidenceRow(
         kind=kind,
         ref=str(evidence.get("ref") or fallback_ref),
         status=status,
         detail=str(evidence.get("detail") or evidence.get("reason") or "coverage evidence"),
-        artifacts_touched=touched,
+        artifacts_touched=resolved_touched,
     )
 
 

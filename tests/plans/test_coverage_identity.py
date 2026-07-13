@@ -231,9 +231,53 @@ def test_regenerate_preserves_stable_row_decisions(tmp_path: Path) -> None:
     row = manifest["rows"][0]
     assert manifest["header"]["plan_hash"] == "new"
     assert manifest["header"]["task_tree_source_hash"] == "stable-tree"
+    assert manifest["header"]["evidence"][0]["detail"] == "manual acceptance"
     assert row["status"] == "covered"
     assert row["leaves"][0]["leaf_task_ref"] == "#2"
-    assert row["evidence"][0]["detail"] == "manual acceptance"
+    assert "evidence" not in row
+
+
+def test_manifest_stores_shared_evidence_once_in_header(tmp_path: Path) -> None:
+    evidence = EvidenceRow(
+        kind=EvidenceKind.commits,
+        ref="abc123",
+        status=EvidenceResolveStatus.resolved,
+        detail="commit abc123",
+        artifacts_touched=("src/example.py",),
+    )
+    first = CoverageRow(
+        section_id="A1",
+        item_id="A1.1",
+        status=CoverageStatus.covered,
+        evidence=(evidence,),
+    )
+    report = _report(row=first)
+    report = CoverageReport(
+        header=report.header,
+        rows=(
+            first,
+            CoverageRow(
+                section_id="A1",
+                item_id="A1.2",
+                status=CoverageStatus.covered,
+                evidence=(evidence,),
+            ),
+        ),
+    )
+
+    path = write_manifest(report, tmp_path)
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    assert manifest["header"]["evidence"] == [
+        {
+            "kind": "commits",
+            "ref": "abc123",
+            "status": "resolved",
+            "detail": "commit abc123",
+            "artifacts_touched": ["src/example.py"],
+        }
+    ]
+    assert all("evidence" not in row for row in manifest["rows"])
 
 
 @pytest.mark.parametrize(

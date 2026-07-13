@@ -66,6 +66,17 @@ def test_commits_option_ref_is_rejected_before_git(tmp_path: Path) -> None:
     run_git.assert_not_called()
 
 
+def test_commits_single_revision_is_rejected_before_git(tmp_path: Path) -> None:
+    with patch("gobby.plans.evidence.subprocess.run") as run_git:
+        with pytest.raises(
+            InvalidEvidenceError,
+            match="commits evidence requires an explicit revision range",
+        ):
+            resolve_evidence("commits:HEAD", ctx=EvidenceContext(tmp_path))
+
+    run_git.assert_not_called()
+
+
 def test_cli_commit_diff_rejects_option_ref_before_git(tmp_path: Path) -> None:
     ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=None)
 
@@ -181,6 +192,37 @@ rows:
     assert bundle.rows[0].status is EvidenceResolveStatus.resolved
     assert bundle.rows[0].artifacts_touched == ("tests/plans/test_evidence.py",)
     assert bundle.rows[1].status is EvidenceResolveStatus.invalid
+
+
+def test_resolve_coverage_matrix_reads_header_evidence_once(tmp_path: Path) -> None:
+    manifest = tmp_path / "coverage.yaml"
+    manifest.write_text(
+        """\
+header:
+  evidence:
+    - kind: commits
+      ref: abc123
+      status: resolved
+      detail: commit abc123
+      artifacts_touched:
+        - src/example.py
+rows:
+  - section_id: A1
+    item_id: A1.1
+    status: covered
+  - section_id: A1
+    item_id: A1.2
+    status: covered
+""",
+        encoding="utf-8",
+    )
+
+    bundle = resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
+
+    assert len(bundle.rows) == 1
+    assert bundle.rows[0].kind is EvidenceKind.commits
+    assert bundle.rows[0].ref == "abc123"
+    assert bundle.rows[0].artifacts_touched == ("src/example.py",)
 
 
 def test_resolve_coverage_matrix_invalid_yaml_raises_invalid_evidence(tmp_path: Path) -> None:
