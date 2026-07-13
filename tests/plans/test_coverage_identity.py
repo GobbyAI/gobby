@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-import gobby.plans.coverage_manifest as coverage_manifest_module
 from gobby.plans.coverage import (
     CoverageHeader,
     CoverageReport,
@@ -166,10 +165,10 @@ def test_manifest_write_uses_same_directory_temp_and_replace(
         source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
     ) -> None:
-        replace_calls.append((Path(source), Path(target)))
+        replace_calls.append((Path(os.fsdecode(source)), Path(os.fsdecode(target))))
         real_replace(source, target)
 
-    monkeypatch.setattr(coverage_manifest_module.os, "replace", track_replace)
+    monkeypatch.setattr("gobby.plans.coverage_manifest.os.replace", track_replace)
 
     path = write_manifest(_report(), tmp_path)
 

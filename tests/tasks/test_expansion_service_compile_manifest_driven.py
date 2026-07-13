@@ -12,6 +12,7 @@ import pytest
 
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.storage.expansion_runs import LocalExpansionRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.expansion._contract import _assigned_agent_for_entry
 from gobby.tasks.expansion_service import ExpansionService
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def service(temp_db) -> ExpansionService:
+def service(temp_db: HubDatabase) -> ExpansionService:
     return ExpansionService(
         task_manager=LocalTaskManager(temp_db),
         llm_service=MagicMock(),
@@ -64,7 +65,7 @@ def test_manifest_entry_rejects_unknown_implementation_domain(tmp_path: Path) ->
 
 def test_manifest_documentation_task_type_normalizes_to_chore(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -234,7 +235,7 @@ Final body copied into the generated task description.
 
 def test_manifest_entry_source_section_must_resolve_to_deliverable(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -251,7 +252,7 @@ def test_manifest_entry_source_section_must_resolve_to_deliverable(
 
 def test_non_tdd_manifest_entry_uses_single_task_id(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -264,7 +265,7 @@ def test_non_tdd_manifest_entry_uses_single_task_id(
 
 def test_entry_fields_preserved(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -309,7 +310,7 @@ def test_entry_fields_preserved(
 
 def test_cross_tdd_mode_dependencies(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -325,7 +326,7 @@ def test_cross_tdd_mode_dependencies(
 
 def test_phase_nesting_p1_p2_p3(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -344,7 +345,7 @@ def test_phase_nesting_p1_p2_p3(
 
 def test_compile_uses_plan_doc_plan_id_not_file_stem(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -360,7 +361,7 @@ def test_compile_uses_plan_doc_plan_id_not_file_stem(
 
 def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -408,7 +409,7 @@ def test_parse_contract_plan_uses_task_filename_plan_id_fallback(
 
 def test_missing_manifest_synthesizes_manifest_for_contract_plan(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
@@ -443,7 +444,7 @@ def test_missing_manifest_synthesizes_manifest_for_contract_plan(
 
 def test_deferrals_preserved(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)

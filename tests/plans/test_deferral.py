@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
@@ -27,7 +28,7 @@ class FakeStore:
     def __init__(
         self,
         *,
-        tasks: dict[str, dict] | None = None,
+        tasks: dict[str, dict[str, Any]] | None = None,
         labels: dict[str, list[str]] | None = None,
         dependencies: dict[str, list[str]] | None = None,
     ) -> None:
@@ -38,7 +39,7 @@ class FakeStore:
         self.label_calls: list[str] = []
         self.dependency_calls: list[str] = []
 
-    def get_task(self, task_ref: str) -> dict | None:
+    def get_task(self, task_ref: str) -> dict[str, Any] | None:
         self.task_calls.append(task_ref)
         return self.tasks.get(task_ref)
 
@@ -67,7 +68,7 @@ def _deferral(
     )
 
 
-def _task(*, state: str = "ready", criteria: str = "Validate src/deferred.py") -> dict:
+def _task(*, state: str = "ready", criteria: str = "Validate src/deferred.py") -> dict[str, Any]:
     return {"state": state, "validation_criteria": criteria}
 
 
