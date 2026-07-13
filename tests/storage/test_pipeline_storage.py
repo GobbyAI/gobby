@@ -505,6 +505,52 @@ class TestGetByToken:
         result = manager.get_step_by_approval_token("nonexistent-token")
         assert result is None
 
+    @pytest.mark.parametrize(
+        ("decision", "approved_by", "error"),
+        [
+            (StepStatus.COMPLETED, "reviewer", None),
+            (StepStatus.FAILED, None, "Rejected by reviewer"),
+        ],
+    )
+    def test_consume_step_approval_is_single_use(
+        self,
+        manager,
+        decision: StepStatus,
+        approved_by: str | None,
+        error: str | None,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        step = manager.create_step_execution(execution_id=execution.id, step_id="approve")
+        manager.update_step_execution(
+            step.id,
+            status=StepStatus.WAITING_APPROVAL,
+            approval_token="single-use-token",
+        )
+
+        consumed = manager.consume_step_approval(
+            "single-use-token",
+            status=decision,
+            approved_by=approved_by,
+            error=error,
+        )
+
+        assert consumed is not None
+        assert consumed.status == decision
+        assert consumed.approval_token is None
+        assert consumed.approved_by == approved_by
+        assert consumed.error == error
+        assert manager.consume_step_approval("single-use-token", status=decision) is None
+
+    def test_consume_step_approval_rejects_non_waiting_step(self, manager) -> None:
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        step = manager.create_step_execution(execution_id=execution.id, step_id="approve")
+        manager.update_step_execution(step.id, approval_token="stale-token")
+
+        assert manager.consume_step_approval("stale-token", status=StepStatus.COMPLETED) is None
+        unchanged = manager.get_step_by_approval_token("stale-token")
+        assert unchanged is not None
+        assert unchanged.status == StepStatus.PENDING
+
 
 class TestResolveExecutionReference:
     """Tests for resolve_execution_reference method."""

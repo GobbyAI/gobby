@@ -761,7 +761,6 @@ def get_pipeline_status(
             "created_at": execution.created_at,
             "updated_at": execution.updated_at,
             "completed_at": execution.completed_at,
-            "resume_token": execution.resume_token,
             "session_id": execution.session_id,
             "review": review,
         }
@@ -785,7 +784,6 @@ def get_pipeline_status(
                     "completed_at": step.completed_at,
                     "output": step_output,
                     "error": step.error,
-                    "approval_token": step.approval_token,
                     "approved_by": step.approved_by,
                     "approved_at": step.approved_at,
                 }

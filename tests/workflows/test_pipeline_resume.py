@@ -84,7 +84,7 @@ class TestPipelineResume:
         waiting_step.approval_token = "valid-token"
         waiting_step.status = StepStatus.WAITING_APPROVAL
 
-        mock_execution_manager.get_step_by_approval_token.return_value = waiting_step
+        mock_execution_manager.consume_step_approval.return_value = waiting_step
 
         # The execution record
         execution = MagicMock()
@@ -123,9 +123,11 @@ class TestPipelineResume:
         # 4. Assertions
         mock_loader.load_pipeline.assert_awaited_once_with("resume-pipeline", "test-project")
 
-        # Verify step1 was marked approved
-        mock_execution_manager.update_step_execution.assert_any_call(
-            step_execution_id=101, status=StepStatus.COMPLETED, approved_by=None
+        # Verify step1's token was atomically consumed while marking it approved.
+        mock_execution_manager.consume_step_approval.assert_called_once_with(
+            "valid-token",
+            status=StepStatus.COMPLETED,
+            approved_by=None,
         )
 
         # Verify step2 was executed (create_step_execution called for step2)

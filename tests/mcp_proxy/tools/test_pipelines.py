@@ -914,6 +914,7 @@ class TestGetPipelineStatusTool:
             pipeline_name="deploy",
             project_id="11111111-1111-4111-8111-111111110001",
             status=ExecutionStatus.RUNNING,
+            resume_token="secret-resume-token",
             created_at=TEST_TIME,
             updated_at=TEST_TIME,
             inputs_json='{"env": "prod"}',
@@ -972,6 +973,7 @@ class TestGetPipelineStatusTool:
             execution_id="pe-abc123",
             step_id="step2",
             status=StepStatus.RUNNING,
+            approval_token="secret-approval-token",
         )
 
         mock_execution_manager.get_execution.return_value = execution
@@ -995,6 +997,8 @@ class TestGetPipelineStatusTool:
         assert result["steps"][0]["status"] == "completed"
         assert result["steps"][1]["step_id"] == "step2"
         assert result["steps"][1]["status"] == "running"
+        assert "resume_token" not in result["execution"]
+        assert all("approval_token" not in step for step in result["steps"])
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_not_found(
