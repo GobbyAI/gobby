@@ -10,7 +10,11 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.plans.manifest_emitter import EmitOutcome, emit_stub_manifest
+from gobby.plans.manifest_emitter import (
+    EmitOutcome,
+    ManifestSynthesisError,
+    emit_stub_manifest,
+)
 from gobby.plans.parser import (
     MISSING_PLAN_ID_SENTINEL,
     PlanKind,
@@ -142,6 +146,29 @@ def test_signature() -> None:
         "noop_existing_valid",
         "fallback_force_approve",
     }
+
+
+def test_strategy_rejected_before_file_access(tmp_path: Path) -> None:
+    missing_plan = tmp_path / "missing.md"
+
+    with pytest.raises(ManifestSynthesisError, match="strategy"):
+        emit_stub_manifest(missing_plan, plan_kind=PlanKind.strategy)
+
+    assert missing_plan.exists() is False
+
+
+def test_repeated_strategy_calls_leave_plan_byte_identical(tmp_path: Path) -> None:
+    plan = _plan_two_deliverables(tmp_path)
+    original = plan.read_bytes()
+
+    for _ in range(2):
+        with pytest.raises(ManifestSynthesisError, match="strategy"):
+            emit_stub_manifest(plan, plan_kind=PlanKind.strategy)
+
+    assert plan.read_bytes() == original
+    text = plan.read_text(encoding="utf-8")
+    assert "kind: manifest" not in text
+    assert "## Yolo Fallbacks" not in text
 
 
 def test_fresh_emission(tmp_path: Path) -> None:

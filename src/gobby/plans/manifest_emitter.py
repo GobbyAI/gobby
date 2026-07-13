@@ -92,6 +92,8 @@ def emit_stub_manifest(
     5. File or parse failures → append a ``## Yolo Fallbacks`` audit section →
        ``"fallback_force_approve"``.
     """
+    if plan_kind is PlanKind.strategy:
+        raise ManifestSynthesisError("strategy plans do not support manifest emission")
 
     path = Path(plan_path)
     try:
