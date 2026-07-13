@@ -51,6 +51,23 @@ def test_refresh_verification_preview_does_not_write(
     assert (tmp_path / ".gobby" / "project.json").read_text(encoding="utf-8") == before
 
 
+def test_refresh_verification_from_subdirectory_uses_project_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_project(tmp_path)
+    add_python_project(tmp_path)
+    subdirectory = tmp_path / "src" / "example"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
+
+    result = CliRunner().invoke(projects, ["refresh-verification", "--ai", "off"])
+
+    assert result.exit_code == 0
+    assert "Previewing verification refresh" in result.output
+    assert f"gobby init -C {subdirectory}" not in result.output
+
+
 def test_refresh_verification_fix_writes_project_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
