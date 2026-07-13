@@ -8,9 +8,14 @@ from gobby.review_learning.lessons import (
     derive_lesson_identity,
     has_verified_fix,
     normalize_lesson,
+    validate_guardrail_target,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_tool_config_is_a_valid_guardrail_target() -> None:
+    assert validate_guardrail_target("tool-config") == "tool-config"
 
 
 def test_pattern_id_derives_from_lesson_type_and_principle() -> None:

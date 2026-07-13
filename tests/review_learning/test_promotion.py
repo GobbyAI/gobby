@@ -5,7 +5,11 @@ import asyncio
 import pytest
 
 from gobby.review_learning.lessons import normalize_lesson
-from gobby.review_learning.promotion import PromotionDecision, _create_or_update_task
+from gobby.review_learning.promotion import (
+    PromotionDecision,
+    _create_or_update_task,
+    resolve_promotion,
+)
 from gobby.review_learning.service import ReviewLearningService
 from tests.review_learning.conftest import FakeTaskManager
 
@@ -192,6 +196,40 @@ async def test_confirmed_second_occurrence_creates_test_guardrail_task(
     assert "mem-2" in fake_task_manager.tasks[0].description
     assert "review-learning pattern" in fake_task_manager.tasks[0].description
     assert "repeated review-learning pattern" not in fake_task_manager.tasks[0].description
+
+
+@pytest.mark.parametrize(
+    "occurrence_count, expected_tier",
+    [
+        pytest.param(2, "confirmed-2", id="second-occurrence"),
+        pytest.param(3, "confirmed-3", id="third-occurrence"),
+        pytest.param(5, "confirmed-3", id="later-occurrence"),
+    ],
+)
+def test_confirmed_thresholds_preserve_explicit_tool_config_target(
+    occurrence_count: int,
+    expected_tier: str,
+) -> None:
+    lesson = normalize_lesson(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(guardrail_target="tool-config"),
+        evidence={"commit": "abc"},
+        finding_fingerprint="fingerprint",
+        occurrence_key="occurrence",
+        repo=None,
+        language=None,
+        risk="medium",
+    )
+
+    decision = resolve_promotion(lesson, occurrence_count)
+
+    assert decision.tier == expected_tier
+    assert decision.guardrail_target == "tool-config"
+    assert decision.category == "config"
+    assert decision.should_create_task is True
 
 
 @pytest.mark.asyncio
