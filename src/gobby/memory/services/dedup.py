@@ -8,10 +8,11 @@ Falls back to simple storage when VectorStore is unavailable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -112,12 +113,19 @@ class DedupService:
         vector_store: VectorStore,
         storage: LocalMemoryManager,
         embed_fn: Callable[..., Any],
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ):
         self.vector_store = vector_store
         self.storage = storage
         self.embed_fn = embed_fn
+        self._run_db = run_db
         self._last_embedding_warning_at = -EMBEDDING_WARNING_INTERVAL_SECONDS
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
+
+    async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        if self._run_db is None:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        return await self._run_db(func, *args, **kwargs)
 
     async def process(
         self,
@@ -187,11 +195,13 @@ class DedupService:
             if score > SIMILAR_THRESHOLD:
                 # Similar → UPDATE if new content is richer
                 try:
-                    existing = self.storage.get_memory(memory_id)
+                    existing = await self._run_storage(self.storage.get_memory, memory_id)
                 except ValueError:
                     continue
                 if existing and _is_richer_memory_content(content, existing.content):
-                    updated = self.storage.update_memory(memory_id, content=content)
+                    updated = await self._run_storage(
+                        self.storage.update_memory, memory_id, content=content
+                    )
                     await self._embed_and_upsert(memory_id, content, project_id)
                     result.updated.append(updated)
                     return result
@@ -258,7 +268,8 @@ class DedupService:
     ) -> DedupResult:
         """Fallback: store content directly without dedup."""
         logger.debug("Falling back to simple memory store (vector search unavailable)")
-        memory = self.storage.create_memory(
+        memory = await self._run_storage(
+            self.storage.create_memory,
             content=content,
             memory_type=memory_type,
             project_id=project_id,

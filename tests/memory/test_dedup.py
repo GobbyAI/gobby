@@ -1,6 +1,7 @@
 """Tests for DedupService (vector similarity dedup)."""
 
 import logging
+import threading
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -122,12 +123,24 @@ class TestProcess:
         mock_existing = MagicMock()
         mock_existing.id = "mem-old"
         mock_existing.content = "Short fact"  # 10 chars
-        mock_storage.get_memory.return_value = mock_existing
+        storage_thread_ids: list[int] = []
+
+        def get_memory(memory_id: str) -> Any:
+            storage_thread_ids.append(threading.get_ident())
+            return mock_existing
+
+        mock_storage.get_memory.side_effect = get_memory
 
         mock_updated = MagicMock()
         mock_updated.id = "mem-old"
         mock_updated.content = "Much longer and more detailed fact about something"
-        mock_storage.update_memory.return_value = mock_updated
+
+        def update_memory(memory_id: str, *, content: str) -> Any:
+            storage_thread_ids.append(threading.get_ident())
+            return mock_updated
+
+        mock_storage.update_memory.side_effect = update_memory
+        event_loop_thread_id = threading.get_ident()
 
         result = await dedup_service.process(
             content="Much longer and more detailed fact about something",
@@ -139,6 +152,8 @@ class TestProcess:
         mock_storage.update_memory.assert_called_once_with(
             "mem-old", content="Much longer and more detailed fact about something"
         )
+        assert storage_thread_ids
+        assert all(thread_id != event_loop_thread_id for thread_id in storage_thread_ids)
 
     @pytest.mark.asyncio
     async def test_process_skips_excluded_self_match_and_updates_distinct_duplicate(
@@ -274,7 +289,14 @@ class TestProcess:
         mock_mem = MagicMock()
         mock_mem.id = "mem-fallback"
         mock_mem.content = "Raw content"
-        mock_storage.create_memory = MagicMock(return_value=mock_mem)
+        storage_thread_ids: list[int] = []
+
+        def create_memory(**kwargs: Any) -> Any:
+            storage_thread_ids.append(threading.get_ident())
+            return mock_mem
+
+        mock_storage.create_memory = MagicMock(side_effect=create_memory)
+        event_loop_thread_id = threading.get_ident()
 
         result = await dedup_service.process(
             content="Raw content to store",
@@ -285,6 +307,8 @@ class TestProcess:
 
         assert len(result.added) == 1
         mock_storage.create_memory.assert_called_once()
+        assert storage_thread_ids
+        assert storage_thread_ids[0] != event_loop_thread_id
         assert mock_embed_fn.await_count == 2
         mock_vector_store.upsert.assert_awaited_once()
 

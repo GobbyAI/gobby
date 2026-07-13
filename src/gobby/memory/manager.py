@@ -223,6 +223,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 vector_store=vector_store,
                 storage=self.storage,
                 embed_fn=embed_fn,
+                run_db=self.run_db,
             )
             logger.debug("DedupService initialized")
             return dedup_service

@@ -57,6 +57,8 @@ class TestDedupServiceInitialization:
         """DedupService is initialized when LLM, VectorStore, and embed_fn are all available."""
         manager = _make_manager(has_llm=True, has_vector_store=True, has_embed_fn=True)
         assert manager._dedup_service is not None
+        assert manager._dedup_service._run_db is not None
+        assert manager._dedup_service._run_db.__self__ is manager
 
     def test_dedup_service_created_without_llm(self) -> None:
         """DedupService is created even without LLM (uses vector similarity only)."""
