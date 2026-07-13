@@ -13,6 +13,7 @@ from gobby.plans.coverage import (
     MissingScopeError,
     StaleHashError,
     TaskTreeSource,
+    _coerce_task_record,
     _plan_node_hash,
     evaluate,
 )
@@ -96,6 +97,65 @@ def test_exports_a4_public_api() -> None:
     assert EvidenceKind.none.value == "none"
     assert TaskTreeSource.db.value == "db"
     assert CoverageStatus.covered.value == "covered"
+
+
+@pytest.mark.parametrize(
+    ("raw_state", "expected"),
+    [
+        ({"is_closed": True, "is_escalated": True}, "closed"),
+        ({"is_closed": False, "is_escalated": True}, "escalated"),
+        (
+            {
+                "is_closed": False,
+                "is_escalated": False,
+                "current_stage": {"name": "development", "state": "in_progress"},
+            },
+            "in_progress",
+        ),
+        ("ready", "ready"),
+        (None, "unknown"),
+        ({"is_closed": "true", "current_stage": {"state": "ready"}}, "unknown"),
+        ({"current_stage": {"state": 3}}, "unknown"),
+    ],
+    ids=["closed", "escalated", "stage", "string", "none", "invalid-bool", "invalid-stage"],
+)
+def test_coerce_task_record_reads_serialized_state(raw_state: object, expected: str) -> None:
+    record = _coerce_task_record({"ref": "#1", "state": raw_state})
+
+    assert record.state == expected
+
+
+def test_coerce_task_record_missing_state_is_unknown() -> None:
+    assert _coerce_task_record({"ref": "#1"}).state == "unknown"
+
+
+def test_closed_serialized_task_record_rejects_deferral(tmp_path: Path) -> None:
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1", "dependencies": ["#999"]},
+            {
+                "ref": "#999",
+                "path_cache": "2.999",
+                "state": {
+                    "is_closed": True,
+                    "is_escalated": False,
+                    "current_stage": {"name": "development", "state": "ready"},
+                },
+                "labels": ["deferred-from:plan:A1"],
+                "validation_criteria": "Follow-up owns src/later.py.",
+            },
+        ],
+    )
+
+    assert report.rows[0].status is CoverageStatus.invalid
 
 
 def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:

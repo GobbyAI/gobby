@@ -16,6 +16,7 @@ import yaml
 
 from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans._identifiers import DOTTED_ID_PATTERN
+from gobby.plans._task_record_state import coerce_task_state
 from gobby.plans.evidence import EvidenceKind, EvidenceRow
 from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_plan
 from gobby.tasks.state_semantics import serialize_task_state
@@ -767,17 +768,7 @@ def _live_task_record(task: Any, task_ref_by_id: Mapping[str, str]) -> _TaskReco
 
 
 def _live_task_state(task: Any) -> str:
-    state = serialize_task_state(task)
-    if state["is_closed"]:
-        return "closed"
-    if state["is_escalated"]:
-        return "escalated"
-    current_stage = state["current_stage"]
-    if isinstance(current_stage, dict):
-        stage_state = current_stage.get("state")
-        if isinstance(stage_state, str) and stage_state:
-            return stage_state
-    return "ready"
+    return coerce_task_state(serialize_task_state(task), default="ready")
 
 
 def _live_task_ref(task: Any) -> str:
@@ -793,7 +784,7 @@ def _coerce_task_record(raw: Mapping[str, object]) -> _TaskRecord:
         ref=ref,
         labels=_labels(raw.get("labels")),
         validation_criteria=_first_string(raw, "validation_criteria", "validation", "description"),
-        state=_first_string(raw, "state", default="ready"),
+        state=coerce_task_state(raw.get("state")),
         parent_ref=_optional_ref(
             _first_string(raw, "parent_ref", "parent_task_ref", "parent", default="")
         ),
