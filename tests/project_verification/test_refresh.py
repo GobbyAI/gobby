@@ -475,6 +475,53 @@ def test_oversized_structured_evidence_is_skipped_with_warnings(tmp_path: Path) 
     assert bundle.packages == []
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param([], id="list"),
+        pytest.param("not-an-object", id="string"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_non_object_project_json_is_ignored_with_warning(
+    tmp_path: Path,
+    payload: object,
+) -> None:
+    gobby_dir = tmp_path / ".gobby"
+    gobby_dir.mkdir()
+    (gobby_dir / "project.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    bundle = collect_evidence(tmp_path)
+
+    assert bundle.existing_verification == {}
+    assert bundle.items == []
+    assert bundle.existing_project_json_intact is False
+    assert len(bundle.warnings) == 1
+    assert "top-level JSON value is not an object" in bundle.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param([], id="list"),
+        pytest.param("not-an-object", id="string"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_non_object_package_json_is_ignored_with_warning(
+    tmp_path: Path,
+    payload: object,
+) -> None:
+    (tmp_path / "package.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    bundle = collect_evidence(tmp_path)
+
+    assert bundle.packages == []
+    assert bundle.items == []
+    assert len(bundle.warnings) == 1
+    assert "top-level JSON value is not an object" in bundle.warnings[0]
+
+
 def test_taskfile_case_variants_collect_one_physical_file_once(tmp_path: Path) -> None:
     (tmp_path / "Taskfile.yml").write_text(
         "version: '3'\ntasks:\n  test:\n    cmds:\n      - go test ./...\n",
