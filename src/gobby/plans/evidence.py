@@ -163,7 +163,18 @@ def _resolve_commits(range_: str, *, ctx: EvidenceContextProtocol) -> EvidenceBu
 
 
 def _resolve_task_diff(task_ref: str, *, ctx: EvidenceContextProtocol) -> EvidenceBundle:
-    diff = ctx.get_task_diff(task_ref)
+    try:
+        diff = ctx.get_task_diff(task_ref)
+    except InvalidEvidenceError as error:
+        return _bundle(_invalid(EvidenceKind.task_diff, task_ref, str(error)))
+    if not diff.strip():
+        return _bundle(
+            _invalid(
+                EvidenceKind.task_diff,
+                task_ref,
+                f"task diff for {task_ref} is empty; link at least one commit to the task",
+            )
+        )
     return _bundle(
         EvidenceRow(
             kind=EvidenceKind.task_diff,

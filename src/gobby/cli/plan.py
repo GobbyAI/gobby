@@ -31,7 +31,7 @@ from gobby.plans.evidence import (
     InvalidEvidenceError,
     resolve_evidence,
 )
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.tasks.commits import get_task_diff
 
 logger = logging.getLogger(__name__)
@@ -222,7 +222,10 @@ class _CliEvidenceContext:
     def _resolve_task_id(self, task_ref: str) -> str:
         if self.project_id is None:
             raise InvalidEvidenceError(f"Evidence spec requires --project-id for {task_ref}")
-        return self.task_manager.resolve_task_reference(task_ref, self.project_id)
+        try:
+            return self.task_manager.resolve_task_reference(task_ref, self.project_id)
+        except TaskNotFoundError as error:
+            raise InvalidEvidenceError(str(error)) from error
 
 
 def _report_exit_code(report: CoverageReport) -> int:

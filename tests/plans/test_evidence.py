@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.cli.plan import _CliEvidenceContext
 from gobby.plans.evidence import (
     EvidenceKind,
     EvidenceResolveStatus,
@@ -70,7 +71,62 @@ index 1111111..2222222 100644
     )
 
     assert bundle.rows[0].kind is EvidenceKind.task_diff
+    assert bundle.rows[0].status is EvidenceResolveStatus.resolved
     assert bundle.rows[0].artifacts_touched == ("src/new.py",)
+
+
+@pytest.mark.parametrize("task_diff", ["", "  \n\t"], ids=["empty", "whitespace"])
+def test_task_diff_without_content_is_invalid(tmp_path: Path, task_diff: str) -> None:
+    bundle = resolve_evidence(
+        "task-diff:#13250",
+        ctx=EvidenceContext(tmp_path, task_diff=task_diff),
+    )
+
+    row = bundle.rows[0]
+    assert row.status is EvidenceResolveStatus.invalid
+    assert row.artifacts_touched == ()
+    assert "link at least one commit" in row.detail
+
+
+def test_cli_task_diff_with_no_commits_is_invalid(temp_db: Any, tmp_path: Path) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(project.id, "No commits")
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=project.id)
+    ctx.__dict__["task_manager"] = manager
+
+    bundle = resolve_evidence(f"task-diff:#{task.seq_num}", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.invalid
+    assert "link at least one commit" in bundle.rows[0].detail
+
+
+def test_cli_task_diff_missing_project_is_invalid(tmp_path: Path) -> None:
+    bundle = resolve_evidence(
+        "task-diff:#13250",
+        ctx=_CliEvidenceContext(repo_root=tmp_path, project_id=None),
+    )
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.invalid
+    assert "requires --project-id" in bundle.rows[0].detail
+
+
+def test_cli_task_diff_unknown_task_is_invalid(temp_db: Any, tmp_path: Path) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=project.id)
+    ctx.__dict__["task_manager"] = manager
+
+    bundle = resolve_evidence("task-diff:#999999", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.invalid
+    assert "999999" in bundle.rows[0].detail
 
 
 def test_resolve_coverage_matrix(tmp_path: Path) -> None:
