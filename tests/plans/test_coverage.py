@@ -156,6 +156,57 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
     assert report.rows[3].deferral_target == "#200"
 
 
+def test_evaluate_surfaces_invalid_covers_labels_without_cross_plan_leakage() -> None:
+    report = evaluate(
+        plan=_plan(_section(_item("A1.1", "src/covered.py"))),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1"},
+            {
+                "ref": "#101",
+                "path_cache": "1.101",
+                "labels": ["covers:plan:A1:A1.1"],
+                "validation_criteria": "Touches src/covered.py.",
+            },
+            {
+                "ref": "#102",
+                "path_cache": "1.102",
+                "labels": ["covers:plan:A9:A9.1"],
+            },
+            {
+                "ref": "#103",
+                "path_cache": "1.103",
+                "labels": ["covers:plan:A1:A1.9"],
+            },
+            {
+                "ref": "#104",
+                "path_cache": "1.104",
+                "labels": ["covers:plan:A1"],
+            },
+            {
+                "ref": "#105",
+                "path_cache": "1.105",
+                "labels": ["covers:other-plan:A9:A9.1"],
+            },
+        ],
+    )
+
+    assert report.rows[0].status is CoverageStatus.covered
+    invalid_rows = [row for row in report.rows if row.status is CoverageStatus.invalid]
+    assert len(invalid_rows) == 3
+    assert [(row.section_id, row.item_id) for row in invalid_rows[:2]] == [
+        ("A9", "A9.1"),
+        ("A1", "A1.9"),
+    ]
+    assert invalid_rows[2].leaves[0].matched_artifact_ref == "covers:plan:A1"
+    assert all("other-plan" not in row.leaves[0].matched_artifact_ref for row in invalid_rows)
+    assert report.is_complete is False
+
+
 @pytest.mark.parametrize(
     ("task_state", "labels", "expected_status"),
     [
@@ -203,6 +254,32 @@ def test_parsed_deferred_section_validates_task_and_provenance(
     assert report.rows[0].status is expected_status
     assert report.rows[0].deferral_target == "#999"
     assert report.is_complete is (expected_status is CoverageStatus.deferred)
+
+
+def test_parsed_deferred_item_accepts_valid_covers_label(tmp_path: Path) -> None:
+    plan_path, plan_hash = _deferred_plan(tmp_path)
+
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1"},
+            {
+                "ref": "#101",
+                "path_cache": "1.101",
+                "labels": ["covers:plan:A1:A1.1"],
+                "validation_criteria": "Implements src/later.py.",
+            },
+        ],
+    )
+
+    assert len(report.rows) == 1
+    assert report.rows[0].status is CoverageStatus.covered
+    assert report.rows[0].leaves[0].leaf_task_ref == "#101"
 
 
 def test_matrix_reconciliation_recognizes_parsed_deferred_items(tmp_path: Path) -> None:

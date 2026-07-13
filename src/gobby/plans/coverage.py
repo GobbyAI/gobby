@@ -332,6 +332,14 @@ def _evaluate_records(
                     recovery_epic_ref=recovery_epic_ref,
                 )
             )
+    rows.extend(
+        _invalid_cover_rows(
+            plan_doc=plan_doc,
+            plan_id=plan_id,
+            records=records,
+            evidence=evidence,
+        )
+    )
 
     return CoverageReport(
         header=CoverageHeader(
@@ -524,6 +532,60 @@ def _coverage_items(section: PlanSection) -> tuple[AcceptanceItem, ...]:
     return section.acceptance_items
 
 
+def _invalid_cover_rows(
+    *,
+    plan_doc: PlanDocument,
+    plan_id: str,
+    records: Sequence[_TaskRecord],
+    evidence: tuple[EvidenceRow, ...],
+) -> list[CoverageRow]:
+    rows: list[CoverageRow] = []
+    for task in records:
+        for label in task.labels:
+            if not label.startswith("covers:"):
+                continue
+            try:
+                record = parse_covers_label(label)
+            except InvalidCoversLabelError as exc:
+                rows.append(
+                    CoverageRow(
+                        section_id="<invalid-covers-label>",
+                        item_id=label,
+                        status=CoverageStatus.invalid,
+                        leaves=(
+                            CoverageRowLeaf(
+                                leaf_task_ref=task.ref,
+                                validation_criteria_snippet=str(exc),
+                                matched_artifact_ref=label,
+                            ),
+                        ),
+                        evidence=evidence,
+                    )
+                )
+                continue
+            if record.plan_id != plan_id:
+                continue
+            result = validate_covers(record, task.validation_criteria, task.ref, plan_doc)
+            if result.status not in ("missing_section", "missing_item"):
+                continue
+            rows.append(
+                CoverageRow(
+                    section_id=record.section_id,
+                    item_id=record.item_id,
+                    status=CoverageStatus.invalid,
+                    leaves=(
+                        CoverageRowLeaf(
+                            leaf_task_ref=task.ref,
+                            validation_criteria_snippet=result.detail,
+                            matched_artifact_ref=label,
+                        ),
+                    ),
+                    evidence=evidence,
+                )
+            )
+    return rows
+
+
 def _leaf_from_manifest(raw: object) -> CoverageRowLeaf:
     if not isinstance(raw, dict):
         return CoverageRowLeaf(
@@ -594,7 +656,7 @@ def _find_section(plan_doc: PlanDocument, section_id: str) -> PlanSection | None
 
 
 def _find_acceptance_item(section: PlanSection, item_id: str) -> AcceptanceItem | None:
-    for item in section.acceptance_items:
+    for item in _coverage_items(section):
         if item.item_id == item_id:
             return item
     return None

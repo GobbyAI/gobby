@@ -16,6 +16,7 @@ from gobby.plans.coverage import (
     CoverageStatus,
     TaskTreeSource,
     _plan_node_hash,
+    evaluate,
 )
 from gobby.plans.coverage_manifest import write_manifest
 from gobby.plans.parser import parse_plan
@@ -149,6 +150,70 @@ def test_cli_exit_codes_per_status(tmp_path: Path, status: str, expected_exit: i
     result = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, matrix, manifest))
 
     assert result.exit_code == expected_exit
+
+
+@pytest.mark.parametrize(
+    ("label", "expected_section"),
+    [
+        ("covers:plan:A9:A9.1", "A9"),
+        ("covers:plan:A1", "<invalid-covers-label>"),
+    ],
+    ids=["dangling", "malformed"],
+)
+def test_cli_fails_for_invalid_covers_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    expected_section: str,
+) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    report = evaluate(
+        plan=plan_path,
+        plan_id="plan",
+        plan_hash=plan_hash,
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id="project",
+        task_records=[
+            {"ref": "#1", "path_cache": "1"},
+            {
+                "ref": "#2",
+                "path_cache": "1.2",
+                "labels": [label],
+            },
+        ],
+    )
+    plan_module = importlib.import_module("gobby.cli.plan")
+    monkeypatch.setattr(plan_module, "evaluate", lambda **_kwargs: report)
+    manifest = tmp_path / "dangling.coverage.yaml"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "plan",
+            "coverage",
+            "--plan",
+            str(plan_path),
+            "--plan-id",
+            "plan",
+            "--plan-hash",
+            plan_hash,
+            "--task-tree",
+            "db",
+            "--root-task",
+            "#1",
+            "--project-id",
+            "project",
+            "--manifest",
+            str(manifest),
+        ],
+    )
+
+    assert result.exit_code == 3
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    assert any(
+        row["section_id"] == expected_section and row["status"] == "invalid" for row in raw["rows"]
+    )
 
 
 def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
