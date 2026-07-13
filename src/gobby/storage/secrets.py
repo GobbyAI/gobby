@@ -11,7 +11,9 @@ import hashlib
 import logging
 import os
 import re
+import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -52,6 +54,10 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 
 VALID_CATEGORIES = {"general", "llm", "mcp_server", "memory", "integration"}
+
+_LEGACY_FERNET_KEY_CACHE_MAX_SIZE = 8
+_legacy_fernet_key_cache: OrderedDict[bytes, bytes] = OrderedDict()
+_legacy_fernet_key_cache_lock = threading.Lock()
 
 
 class SecretKeyUnavailable(RuntimeError):
@@ -230,7 +236,7 @@ def _get_or_create_salt() -> bytes:
     return _read_secret_salt(salt_file)
 
 
-def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
+def _derive_fernet_key_uncached(machine_id: str, salt: bytes) -> bytes:
     """Derive the legacy Fernet key from machine ID using PBKDF2."""
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -240,6 +246,41 @@ def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
     )
     key_bytes = kdf.derive(machine_id.encode("utf-8"))
     return base64.urlsafe_b64encode(key_bytes)
+
+
+def _legacy_fernet_key_cache_key(machine_id: str, salt: bytes) -> bytes:
+    """Return a fixed-size cache key without retaining raw derivation inputs."""
+    machine_id_bytes = machine_id.encode("utf-8")
+    digest = hashlib.sha256()
+    digest.update(len(machine_id_bytes).to_bytes(8, "big"))
+    digest.update(machine_id_bytes)
+    digest.update(len(salt).to_bytes(8, "big"))
+    digest.update(salt)
+    return digest.digest()
+
+
+def _derive_fernet_key(machine_id: str, salt: bytes) -> bytes:
+    """Return a process-cached legacy Fernet key for stable derivation inputs."""
+    cache_key = _legacy_fernet_key_cache_key(machine_id, salt)
+    with _legacy_fernet_key_cache_lock:
+        cached = _legacy_fernet_key_cache.get(cache_key)
+        if cached is not None:
+            _legacy_fernet_key_cache.move_to_end(cache_key)
+            return cached
+
+        # Keep derivation inside the lock: concurrent first users must not each
+        # pay the 600k-iteration PBKDF2 cost for the same process-stable inputs.
+        key = _derive_fernet_key_uncached(machine_id, salt)
+        _legacy_fernet_key_cache[cache_key] = key
+        if len(_legacy_fernet_key_cache) > _LEGACY_FERNET_KEY_CACHE_MAX_SIZE:
+            _legacy_fernet_key_cache.popitem(last=False)
+        return key
+
+
+def _clear_legacy_fernet_key_cache() -> None:
+    """Clear the bounded process cache (primarily for isolated tests)."""
+    with _legacy_fernet_key_cache_lock:
+        _legacy_fernet_key_cache.clear()
 
 
 def _derive_scrypt_fernet_key(
@@ -311,6 +352,9 @@ class SecretStore:
     Secret values are encrypted by a random DEK. The DEK is wrapped by a KEK
     and stored in ``secret_key_material``. Only daemon-internal code can call
     ``get()``/``resolve()``; HTTP APIs expose write-only secret management.
+
+    Legacy migration's 600k-iteration PBKDF2 key uses a synchronized, bounded
+    process cache, so repeated store instances reuse the process-stable result.
 
     All secret names are normalized to lowercase for case-insensitive matching.
     """
